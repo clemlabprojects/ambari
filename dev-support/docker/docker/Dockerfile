@@ -10,19 +10,60 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-FROM centos:centos6
+FROM centos:centos7
 
 RUN echo root:changeme | chpasswd
 
 ## Install some basic utilities that aren't in the default image
 RUN yum clean all -y && yum update -y
-RUN yum -y install vim wget rpm-build sudo which telnet tar openssh-server openssh-clients ntp git python-setuptools python-devel httpd
+RUN yum -y install vim wget rpm-build sudo which telnet tar openssh-server openssh-clients ntp git python-setuptools python-devel httpd java-1.8.0-openjdk-devel
+RUN yum -q -y install \
+             curl \
+             gcc \
+             gcc-c++ \
+             git \
+             java-11-openjdk-devel \
+             make \
+             openssl \
+             python \
+             python-devel \
+             python-setuptools \
+             rpm-build \
+             which \
+             zip \
+             unzip \
+             python-setuptools \
+             rpm-build \
+             which \
+             autoconf automake cppunit-devel ant libtool \
+             fuse-devel fuse cmake fuse-libs lzo-devel openssl-devel \
+             cyrus-sasl-devel  cyrus-sasl-gssapi krb5-devel openldap-devel  sqlite-devel \
+           && yum clean all
 # phantomjs dependency
 RUN yum -y install fontconfig freetype libfreetype.so.6 libfontconfig.so.1 libstdc++.so.6
 RUN rpm -e --nodeps --justdb glibc-common
 RUN yum -y install glibc-common
 
+
+WORKDIR     /opt
+RUN         curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v2.5.0/protobuf-2.5.0.zip
+RUN         unzip protobuf-2.5.0.zip
+WORKDIR      /opt/protobuf-2.5.0
+RUN         ./configure
+RUN          make
+RUN         make install
+RUN        protoc --version
+
+WORKDIR     /opt
+RUN         curl -OL https://github.com/Kitware/CMake/releases/download/v3.15.3/cmake-3.15.3.tar.gz
+RUN         tar -xzf cmake-3.15.3.tar.gz
+WORKDIR     /opt/cmake-3.15.3
+RUN         ./bootstrap && make && make install
+
+
+
 ENV HOME /root
+ENV JAVA_HOME /usr/lib/jvm/java
 
 #Install JAVA
 RUN wget --no-check-certificate --no-cookies --header "Cookie:oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u60-b27/jdk-8u60-linux-x64.rpm -O jdk-8u60-linux-x64.rpm
