@@ -86,7 +86,7 @@ RUN sed -ri 's/UsePAM yes/UsePAM no/g' /etc/ssh/sshd_config
 RUN git config --global url."https://".insteadOf git://
 
 # Install python, nodejs and npm
-RUN yum -y install http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+RUN yum -y install epel-release
 RUN yum -y install nodejs npm --enablerepo=epel
 RUN npm install -g npm@2.1.11
 RUN npm install -g brunch@1.7.20
