@@ -22,7 +22,7 @@ RUN yum -q -y install \
              gcc \
              gcc-c++ \
              git \
-             java-11-openjdk-devel \
+             java-1.8.0-openjdk-devel \
              make \
              openssl \
              python \
@@ -65,19 +65,13 @@ RUN         ./bootstrap && make && make install
 ENV HOME /root
 ENV JAVA_HOME /usr/lib/jvm/java
 
-#Install JAVA
-RUN wget --no-check-certificate --no-cookies --header "Cookie:oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u60-b27/jdk-8u60-linux-x64.rpm -O jdk-8u60-linux-x64.rpm
-RUN rpm -ivh jdk-8u60-linux-x64.rpm
-ENV JAVA_HOME /usr/java/default/
-
 #Install Maven
 RUN mkdir -p /opt/maven
 WORKDIR /opt/maven
-RUN wget http://apache.cs.utah.edu/maven/maven-3/3.0.5/binaries/apache-maven-3.0.5-bin.tar.gz
-RUN tar -xvzf /opt/maven/apache-maven-3.0.5-bin.tar.gz
-RUN rm -rf /opt/maven/apache-maven-3.0.5-bin.tar.gz
-
-ENV M2_HOME /opt/maven/apache-maven-3.0.5
+RUN wget http://mirrors.standaloneinstaller.com/apache/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.tar.gz
+RUN tar -xvzf /opt/maven/apache-maven-3.6.3-bin.tar.gz
+RUN rm -rf /opt/maven/apache-maven-3.6.3-bin.tar.gz
+ENV M2_HOME /opt/maven/apache-maven-3.6.3
 ENV MAVEN_OPTS -Xmx2048m -XX:MaxPermSize=256m
 ENV PATH $PATH:$JAVA_HOME/bin:$M2_HOME/bin
 
