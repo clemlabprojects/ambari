@@ -1,0 +1,141 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+
+<configuration supports_final="false">
+  <property>
+    <name>anonymization-rules-content</name>
+    <display-name>Data anonymization rules</display-name>
+
+    <description>Rules that define what all to anonymize. Please be aware
+      that more rules can result in to slowness of bundle capture as well
+      as may consume more CPU. These rules are sensitive to formats, make
+      sure that the modified content is a valid json document.</description>
+    <value><![CDATA[{
+  "rules":[
+    {
+      "name": "IP Address",
+      "description": "Anonymize IP addresses like 123.123.12.34 from all non-binary files",
+      "rule_id": "Pattern",
+      "patterns": ["(?![\\-])((?<![a-z0-9\\.])[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(?!\\.[0-9])(?![a-z0-9]))"],
+      "exclude_files": ["hdp-select*.*", "*version.txt"]
+    },
+    {
+      "name": "Domain Names",
+      "rule_id": "Domain"
+    },
+    {
+      "name": "File Names",
+      "rule_id": "FileName",
+      "description": "Anonymize file names that have domain names and/or ip addresses",
+      "include_files": ["*.log*", "*.out*"],
+      "shared": true
+    },
+    {
+      "name": "SSN",
+      "description": "Anonymize social security numbers in format xxx-xx-xxxx from .log and .out files",
+      "rule_id": "Pattern",
+      "patterns": ["(?<![0-9x])([0-9x]{3}-[0-9x]{2}-[0-9]{4})(?![0-9x])"],
+      "include_files": ["*.log*", "*.out*"],
+      "exclude_files" : ["hst.log*", "hst.out*"],
+      "shared": false
+    },
+    {
+      "name": "Credit Card Numbers",
+      "description": "Anonymize credit card numbers from .log and .out files",
+      "rule_id": "Pattern",
+      "patterns": ["(?<![0-9x])(18|21|3[04678]|4[0-9x]|5[1-5]|60|65)[0-9x]{2}[- ]([0-9x]{4}[- ]){2}[0-9]{0,4}(?![0-9x])"],
+      "extract": "(?<![0-9x])([0-9x -]+)(?![0-9x])",
+      "include_files": ["*.log*", "*.out*"],
+      "exclude_files" : ["hst.log.*", "hst.out"],
+      "shared": false
+    },
+    {
+      "name": "email",
+      "description": "Anonymize based on standard email pattern from all files except metadata.json which is used by SmartSense to send bundle notifications",
+      "rule_id": "Pattern",
+      "patterns": ["(?<![a-z0-9._%+-])[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,6}(?![a-z0-9._%+-])$?"],
+      "exclude_files" : ["metadata.json"],
+      "shared": true
+    },
+    {
+      "name": "Core Site S3 Credentials",
+      "description": "Anonymize the value of properties from core-site.xml that might contain S3 credentials",
+      "rule_id": "Property",
+      "properties": ["fs.s3a.session.token","fs.s3a.proxy.host","fs.s3a.proxy.username"],
+      "include_files": ["core-site.xml"],
+      "action" : "REPLACE",
+      "replace_value": "Hidden"
+    },
+    {
+      "name": "Password Configurations",
+      "description": "Anonymize various password related properties from configuration files. Properties and configuration files are listed below",
+      "rule_id": "Property",
+      "properties": [".*password.*", ".*awsAccessKeyId.*",  ".*awsSecretAccessKey.*", "fs.azure.account.key.*", "ranger.service.https.attrib.keystore.pass","https.attrib.keystorePass", "HTTPS_KEYSTORE_PASS"],
+      "include_files": ["*.xml", "*.properties", "*.yaml", "*.ini", "*.json"],
+      "exclude_files" : ["capacity-scheduler.xml"],
+      "shared": false
+    },
+    {
+      "name": "KNOX LDAP Password",
+      "description": "Anonymize KNOX LDAP passwords from topology configurations xml",
+      "rule_id": "XPATH",
+      "paths": ["//name[contains(text(),'Password')]/following-sibling::value[1]/text()"],
+      "include_files": ["topologies/*.xml"],
+      "parentNode": "param",
+      "shared": false
+    },
+    {
+      "name": "Ranger KMS Oozie Ganglia Falcon Passwords",
+      "description": "Anomymize various password related properties for multiple services. Properties are listed below",
+      "rule_id": "Pattern",
+      "patterns": ["oozie.https.keystore.pass=([^\\s]*)", "OOZIE_HTTPS_KEYSTORE_PASS=([^\\s]*)", "ganglia_password=([^\\s]*)", "javax.jdo.option.ConnectionPassword=([^\\s]*)","KMS_SSL_KEYSTORE_PASS=([^\\s]*)","falcon.statestore.jdbc.password=([^\\s]*)"],
+      "extract": "=([^\\s]*)",
+      "include_files": ["java_process.txt", "pid.txt", "ambari-agent.log", "oozie-env.cmd", "hive_set_v.txt", "beeline_set_v.txt", "process_list.txt", "kms-env.sh", "statestore.credentials"],
+      "shared": false
+    },
+    {
+      "name": "MAC Addresses",
+      "description": "Anonymize MAC addresses like ab:12:3c:44:5d:6e from network_info.txt",
+      "rule_id": "Pattern",
+      "patterns": ["(([0-9a-f]{2}[:-]){5}[0-9a-f]{2})"],
+      "extract": "([0-9a-f:-]{17})",
+      "include_files": ["network_info.txt"],
+      "shared": true
+    },
+    {
+      "name":"IPv6 Addresses",
+      "description":"Anonymize IPv6 addresses like inet6 ab10::g457:6xxx:xxxx:6c9b/64 from network_info.txt",
+      "rule_id": "Pattern",
+      "patterns": ["inet6 addr:\\s((([\\da-f:\\/\\d]))*)"],
+      "extract": ":\\s((([\\da-f:\\/\\d]))*)",
+      "include_files": ["network_info.txt"],
+      "shared":true
+    },
+    {
+      "name": "Zeppelin Interpreter Passwords",
+      "description": "Anonymize password related properties from zeppelin interpreter.json",
+      "rule_id": "JSONPATH",
+      "paths": ["$.interpreterSettings..properties.['hive.password','phoenix.password','default.password','spark2.password','spark.password','psql.password','hive_interactive.password']"],
+      "include_files": ["interpreter.json"],
+      "shared": false
+    },
+    {
+      "name": "Zeppelin Interpreter Passwords",
+      "description": "Anonymize password related properties from zeppelin interpreter.json",
+      "rule_id": "JSONPATH",
+      "paths": ["$.interpreterSettings..properties.*[?(@.name=~/.*password.*/i)].value"],
+      "include_files": ["interpreter.json"],
+     "shared": false
+    }
+  ]
+}
+]]></value>
+  </property>
+</configuration>

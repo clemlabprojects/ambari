@@ -1,0 +1,76 @@
+{#
+# Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+# Except as expressly permitted in a written agreement between you
+# or your company and Hortonworks, Inc, any use, reproduction,
+# modification,
+# redistribution, sharing, lending or other exploitation
+# of all or any part of the contents of this file is strictly prohibited.
+#}
+{
+  "input":[
+    {
+      "type":"hst_agent",
+      "rowtype":"service",
+      "path":"{{default('/configurations/hst-log4j/hst.log.dir', '/var/log/hst')}}/hst-agent.log"
+    },
+    {
+      "type":"hst_server",
+      "rowtype":"service",
+      "path":"{{default('/configurations/hst-log4j/hst.log.dir', '/var/log/hst')}}/hst-server.log"
+    },
+    {
+      "type":"activity_analyser",
+      "rowtype":"service",
+      "path":"{{default('/configurations/activity-log4j/activity.log.dir', '/var/log/smartsense-activity')}}/activity-analyzer.log"
+    },
+    {
+      "type":"activity_explorer",
+      "rowtype":"service",
+      "path":"{{default('/configurations/activity-log4j/activity.log.dir', '/var/log/smartsense-activity')}}/activity-explorer.log"
+    }
+  ],
+  "filter":[
+    {
+      "filter":"grok",
+      "conditions":{
+        "fields":{
+          "type":[
+            "hst_server",
+            "activity_analyser",
+            "activity_explorer"
+          ]
+        }
+      },
+      "log4j_format":"%d %-5p - [%t:%x] ~ %m (%c{1}:%L)%n",
+      "multiline_pattern":"^(%{TIMESTAMP_ISO8601:logtime})",
+      "message_pattern":"(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}\\[%{DATA:thread_name}\\]%{SPACE}%{JAVACLASS:logger_name}:%{INT:line_number}%{SPACE}-%{SPACE}%{GREEDYDATA:log_message}",
+      "post_map_values":{
+        "logtime":{
+          "map_date":{
+            "target_date_pattern":"yyyy-MM-dd HH:mm:ss,SSS"
+          }
+        }
+      }
+    },
+    {
+      "filter":"grok",
+      "conditions":{
+        "fields":{
+          "type":[
+            "hst_agent"
+          ]
+        }
+      },
+      "log4j_format":"%d %-5p - [%t:%x] ~ %m (%c{1}:%L)%n",
+      "multiline_pattern":"^(%{LOGLEVEL:level}%{SPACE}%{TIMESTAMP_ISO8601:logtime})",
+      "message_pattern":"(?m)^%{LOGLEVEL:level}%{SPACE}%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{JAVAFILE:file}:%{INT:line_number}%{SPACE}-%{SPACE}%{GREEDYDATA:log_message}",
+      "post_map_values":{
+        "logtime":{
+          "map_date":{
+            "target_date_pattern":"yyyy-MM-dd HH:mm:ss,SSS"
+          }
+        }
+      }
+    }
+  ]
+}

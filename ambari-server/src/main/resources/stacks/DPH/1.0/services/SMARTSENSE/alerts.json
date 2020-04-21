@@ -1,0 +1,144 @@
+{
+   "SMARTSENSE":{
+      "HST_SERVER":[
+         {
+            "name":"smartsense_server_process",
+            "label":"SmartSense Server Process",
+            "description":"This alert is triggered if the SmartSense HST server process cannot be confirmed to be up and listening on the network for the configured critical threshold, given in seconds.",
+            "interval":1,
+            "scope":"ANY",
+            "enabled":true,
+            "source":{
+               "type":"PORT",
+               "uri":"{{hst-server-conf/server.port}}",
+               "default_port":9000,
+               "reporting":{
+                  "ok":{
+                     "text":"SmartSense HST Server connection successful  - {0:.3f}s response on port {1}"
+                  },
+                  "warning":{
+                     "text":"SmartSense HST Server connection successful - {0:.3f}s response on port {1}",
+                     "value":1.5
+                  },
+                  "critical":{
+                     "text":"SmartSense HST Server connection failed: {0} to {1}:{2}",
+                     "value":5.0
+                  }
+               }
+            }
+         },
+         {
+            "name":"smartsense_bundle_failed_or_timedout",
+            "label":"SmartSense Bundle Capture Failure",
+            "description":"This alert is triggered if the last triggered SmartSense bundle is failed or timed out.",
+            "interval":2,
+            "scope":"ANY",
+            "enabled":true,
+            "source":{
+               "type":"METRIC",
+               "uri":{
+                 "http" : "{{hst-server-conf/server.port}}",
+                 "default_port": 9000,
+                 "connection_timeout": 5.0
+               },
+               "reporting":{
+                  "ok":{
+                     "text":"Last SmartSense bundle is in good state.",
+                     "value":0
+                  },
+                  "warning":{
+                     "text":"Last SmartSense bundle is in good state.",
+                     "value":1
+                  },
+                  "critical":{
+                     "text":"Last SmartSense bundle was not successful. Bundle key:{2}, status: {1}.",
+                     "value":8
+                  }
+               },
+               "jmx": {
+                  "property_list": [
+                    "SmartSense:type=Bundle/lastBundleStatusCode",
+                    "SmartSense:type=Bundle/lastBundleStatusDesc",
+                    "SmartSense:type=Bundle/lastBundleId"
+                  ],
+                  "value": "{0}"
+               }
+            }
+         },
+         {
+            "name":"smartsense_long_running_bundle",
+            "label":"SmartSense Long Running Bundle",
+            "description":"This alert is triggered if the SmartSense in-progress bundle has possibility of not successfully completing in time.",
+            "interval":5,
+            "scope":"ANY",
+            "enabled":true,
+            "source":{
+               "type":"METRIC",
+               "uri":{
+                 "http" : "{{hst-server-conf/server.port}}",
+                 "default_port": 9000,
+                 "connection_timeout": 5.0
+               },
+               "reporting":{
+                  "ok":{
+                     "text":"All bundles are on track.",
+                     "value":0
+                  },
+                  "warning":{
+                     "text":"There are {0} bundle(s) ({1}) in-process state for more than {2} minutes. It is unusual for a bundle to take so long. Please review in-process bundles.",
+                     "value":1
+                  },
+                  "critical":{
+                     "text":"SmartSense bundle is timed out",
+                     "value":999999995
+                  }
+               },
+               "jmx": {
+                  "property_list": [
+                    "SmartSense:type=Bundle/inProcessBundlesCount",
+                    "SmartSense:type=Bundle/inProcessBundles",
+                    "SmartSense:type=Bundle/processingAlertInterval"
+                  ],
+                  "value": "{0}"
+               }
+            }
+         },
+         {
+            "name":"smartsense_gateway_status",
+            "label":"SmartSense Gateway Status",
+            "description":"This alert is triggered if the SmartSense gateway server process is enabled and unable to reach.",
+            "interval":1,
+            "scope":"ANY",
+            "enabled":true,
+            "source":{
+               "type":"METRIC",
+               "uri":{
+                 "http" : "{{hst-server-conf/server.port}}",
+                 "default_port": 9000,
+                 "connection_timeout": 5.0
+               },
+               "reporting":{
+                  "ok":{
+                     "text":"{1}"
+                  },
+                  "warning":{
+                     "text":"{1}",
+                     "value":1
+                  },
+                  "critical":{
+                     "text":"{1}",
+                     "value":5
+                  }
+               },
+               "jmx": {
+                  "property_list": [
+                    "SmartSense:type=Gateway/status",
+                    "SmartSense:type=Gateway/statusDescription"
+                  ],
+                  "value": "{0}"
+               }
+            }
+         }
+      ]
+   }
+}

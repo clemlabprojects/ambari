@@ -1,0 +1,181 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<reposinfo>
+  <latest>http://public-repo-1.hortonworks.com/HDP/hdp_urlinfo.json</latest>
+  <os family="redhat7">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/centos7/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>    
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/centos7/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/centos7</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="redhat-ppc7">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/centos7-ppc/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>    
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/centos7-ppc/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/centos7-ppc</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="amazonlinux2">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/amazonlinux2/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/amazonlinux2/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/amazonlinux2</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="suse12">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/sles12/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/sles12/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/sles12</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="debian9">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/debian9/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/debian9/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/debian9</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="ubuntu14">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/ubuntu14/3.x/updates/2.3.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/ubuntu14/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/ubuntu14</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+  <os family="ubuntu16">
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP/ubuntu16/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0</repoid>
+      <reponame>HDP</reponame>
+      <unique>true</unique>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-GPL/ubuntu16/3.x/updates/3.0.0.0</baseurl>
+      <repoid>HDP-3.0-GPL</repoid>
+      <reponame>HDP-GPL</reponame>
+      <unique>true</unique>
+      <tags>
+        <tag>GPL</tag>
+      </tags>
+    </repo>
+    <repo>
+      <baseurl>http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.22/repos/ubuntu16</baseurl>
+      <repoid>HDP-UTILS-1.1.0.22</repoid>
+      <reponame>HDP-UTILS</reponame>
+      <unique>false</unique>
+    </repo>
+  </os>
+</reposinfo>

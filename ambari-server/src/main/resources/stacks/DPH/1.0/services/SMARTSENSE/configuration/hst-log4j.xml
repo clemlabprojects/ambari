@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>hst_log_dir</name>
+        <display-name>Log directory</display-name>
+        <description>Directory where SmartSense hst log files would be created.</description>
+        <value>/var/log/hst</value>
+    </property>
+    <property>
+        <name>hst_max_file_size</name>
+        <display-name>SmartSense log file size</display-name>
+        <description>Max SmartSense hst log files size.</description>
+        <value>30</value>
+        <value-attributes>
+    <type>int</type>
+    <minimum>1</minimum>
+    <maximum>256</maximum>
+    <unit>MB</unit>
+  </value-attributes>
+    </property>
+        <property>
+        <name>hst_max_backup_index</name>
+        <display-name>SmartSense # of log files</display-name>
+        <description>Max # of SmartSense hst log files.</description>
+        <value>10</value>
+        <value-attributes>
+    <type>int</type>
+    <minimum>1</minimum>
+    <maximum>256</maximum>
+  </value-attributes>
+    </property>
+    <property>
+        <name>hst-log4j-content</name>
+        <description>Custom log4j properties</description>
+        <value><![CDATA[
+# Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+# Except as expressly permitted in a written agreement between you
+# or your company and Hortonworks, Inc, any use, reproduction,
+# modification, redistribution, sharing, lending or other exploitation
+# of all or any part of the contents of this file is strictly prohibited.
+
+# Define some default values that can be overridden by system properties
+# Root logger option
+log4j.rootLogger=INFO,file
+
+log4j.appender.file=org.apache.log4j.RollingFileAppender
+log4j.appender.file.File={{hst_log_dir}}/${log.file.name}
+log4j.appender.file.MaxFileSize={{hst_max_file_size}}MB
+log4j.appender.file.MaxBackupIndex={{hst_max_backup_index}}
+log4j.appender.file.layout=org.apache.log4j.PatternLayout
+log4j.appender.file.layout.ConversionPattern=%d{ISO8601} %5p [%t] %c{1}:%L - %m%n
+
+log4j.appender.analytics=org.apache.log4j.RollingFileAppender
+log4j.appender.analytics.File={{hst_log_dir}}/analytics.log
+log4j.appender.analytics.MaxFileSize={{hst_max_file_size}}MB
+log4j.appender.analytics.MaxBackupIndex={{hst_max_backup_index}}
+log4j.appender.analytics.layout=org.apache.log4j.PatternLayout
+log4j.appender.analytics.layout.ConversionPattern=%m%n
+
+# HST logger
+log4j.logger.com.hortonworks=INFO
+com.github.oxo42.stateless4j=WARN
+log4j.logger.com.sun.jersey=WARN
+log4j.logger.org.eclipse.jetty.server=INFO
+
+# Analytics logger
+log4j.logger.analytics=INFO,analytics
+log4j.additivity.analytics=false
+]]></value>
+    </property>
+</configuration>

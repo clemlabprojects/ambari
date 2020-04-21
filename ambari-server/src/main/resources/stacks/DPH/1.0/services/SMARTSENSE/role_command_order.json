@@ -1,0 +1,16 @@
+{
+  "_comment" : "Record format:",
+  "_comment" : "blockedRole-blockedCommand: [blockerRole1-blockerCommand1, blockerRole2-blockerCommand2, ...]",
+  "general_deps" : {
+    "_comment" : "dependencies for all cases",
+    "HST_AGENT-RESTART": ["HST_SERVER-RESTART"],
+    "HST_AGENT-START": ["HST_SERVER-START"],
+    "HST_SERVER-STOP": ["HST_AGENT-STOP"],
+    "HST_AGENT-STOP": ["ACTIVITY_ANALYZER-STOP"],
+    "ACTIVITY_ANALYZER-RESTART": ["METRICS_COLLECTOR-RESTART"],
+    "ACTIVITY_ANALYZER-START": ["METRICS_COLLECTOR-START"],
+    "ACTIVITY_EXPLORER-RESTART": ["METRICS_COLLECTOR-RESTART"],
+    "ACTIVITY_EXPLORER-START": ["METRICS_COLLECTOR-START"],
+    "METRICS_COLLECTOR-STOP": ["ACTIVITY_ANALYZER-STOP", "ACTIVITY_EXPLORER-STOP"]
+   }
+}

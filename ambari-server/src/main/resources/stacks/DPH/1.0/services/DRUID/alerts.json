@@ -1,0 +1,171 @@
+{
+  "DRUID": {
+    "service": [],
+    "DRUID_COORDINATOR": [
+      {
+        "name": "druid_coordinator_webui",
+        "label": "Druid Coordinator Web UI",
+        "description": "This host-level alert is triggered if the Druid Coordinator Web UI is unreachable.",
+        "interval": 1,
+        "scope": "ANY",
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-coordinator/druid.port}}",
+          "default_port": 8081,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ],
+    "DRUID_OVERLORD": [
+      {
+        "name": "druid_overlord_webui",
+        "label": "Druid Overlord Web UI",
+        "description": "This host-level alert is triggered if the Druid Overlord Web UI is unreachable.",
+        "interval": 1,
+        "scope": "ANY",
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-overlord/druid.port}}",
+          "default_port": 8081,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ],
+    "DRUID_HISTORICAL": [
+      {
+        "name": "druid_historical_process",
+        "label": "Druid Historical Process",
+        "description": "This host-level alert is triggered if the Druid Historical process cannot be confirmed to be up and listening on the network.",
+        "interval": 1,
+        "scope": "ANY",
+        "enabled": true,
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-historical/druid.port}}",
+          "default_port": 8083,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ],
+    "DRUID_BROKER": [
+      {
+        "name": "druid_broker_process",
+        "label": "Druid Broker Process",
+        "description": "This host-level alert is triggered if the Druid Broker process cannot be confirmed to be up and listening on the network.",
+        "interval": 1,
+        "scope": "ANY",
+        "enabled": true,
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-broker/druid.port}}",
+          "default_port": 8082,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ],
+    "DRUID_MIDDLEMANAGER": [
+      {
+        "name": "druid_middlemanager_process",
+        "label": "Druid Middlemanager Process",
+        "description": "This host-level alert is triggered if the Druid Middlemanager process cannot be confirmed to be up and listening on the network.",
+        "interval": 1,
+        "scope": "ANY",
+        "enabled": true,
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-middlemanager/druid.port}}",
+          "default_port": 8091,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ],
+    "DRUID_ROUTER": [
+      {
+        "name": "druid_router_process",
+        "label": "Druid Router Process",
+        "description": "This host-level alert is triggered if the Druid Router process cannot be confirmed to be up and listening on the network.",
+        "interval": 1,
+        "scope": "ANY",
+        "enabled": true,
+        "source": {
+          "type": "PORT",
+          "uri": "{{druid-router/druid.port}}",
+          "default_port": 8888,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ]
+  }
+}

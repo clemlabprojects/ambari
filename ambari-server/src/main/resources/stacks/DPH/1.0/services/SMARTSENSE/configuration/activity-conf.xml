@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>phoenix.sink.batch.size</name>
+        <display-name>Phoenix batch size</display-name>
+        <value>5000</value>
+        <description>Number of records to be batched together. Once this size or phoenix.sink.flush.interval.seconds is reached, data will
+            be flushed to Phoenix
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>100</minimum>
+            <maximum>50000</maximum>
+            <increment-step>100</increment-step>
+            <unit>Records</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>global.activity.processing.parallelism</name>
+        <display-name>Activity parallelism</display-name>
+        <value>8</value>
+        <description>Number of parallel threads to process each activity type.
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>1</minimum>
+            <maximum>24</maximum>
+            <increment-step>1</increment-step>
+            <unit>Threads</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>phoenix.sink.flush.interval.seconds</name>
+        <display-name>Activity sink flush interval</display-name>
+        <value>3600</value>
+        <description>Time after which ( or when phoenix.sink.batch.size is reached), data will be flushed to Phoenix
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>10</minimum>
+            <maximum>50000</maximum>
+            <increment-step>10</increment-step>
+            <unit>Seconds</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>mr_job.activity.watcher.enabled</name>
+        <display-name>MapReduce activity analysis enabled</display-name>
+        <value>true</value>
+        <description>Enabled automatic activity analysis for MapReduce jobs</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Enabled</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>Disabled</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>mr_job.max.job.size.mb.for.parallel.execution</name>
+        <display-name>Max job size for parallel execution</display-name>
+        <value>500</value>
+        <description>Some jobs may be very large and may contain thousands of tasks. Such large jobs need lot of memory and they put memory
+            pressure on JVM especially in multi-threaded execution. Any job having history size more than what is specified below, will be
+            executed in synchronized fashion. This may slow the performance down, but will avoid OOM errors. Jobs having history file size
+            smaller than this number will be executed in parallel Specify this number as bytes
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>50</minimum>
+            <maximum>2000</maximum>
+            <increment-step>50</increment-step>
+            <unit>MB</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>global.activity.processor.pool.max.wait.seconds</name>
+        <display-name>Max wait time for activity processor</display-name>
+        <value>60</value>
+        <description>Maximum time (seconds) to wait for activity processor to be retrieved from pool. If no processor is available until
+            this time a new activity processor instance will be created.
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>10</minimum>
+            <maximum>300</maximum>
+            <increment-step>10</increment-step>
+            <unit>Seconds</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>tez_job.activity.watcher.enabled</name>
+        <display-name>Tez activity analysis enabled</display-name>
+        <value>true</value>
+        <description>Enabled automatic activity analysis for Tez jobs</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Enabled</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>Disabled</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>tez_job.tmp.dir</name>
+        <display-name>Temp location for tez job information</display-name>
+        <value>/var/lib/smartsense/activity-analyzer/tez/tmp/</value>
+        <description>Temporary location where Tez job information will be downloaded
+        </description>
+    </property>
+    <property>
+        <name>yarn_app.activity.watcher.enabled</name>
+        <display-name>YARN activity analysis enabled</display-name>
+        <value>true</value>
+        <description>Enabled automatic activity analysis for YARN Apps</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Enabled</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>Disabled</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>global.activity.analyzer.user</name>
+        <display-name>User for analyzing activity data</display-name>
+        <value>activity_analyzer</value>
+        <description>User that would be used to read activity data from hdfs/yarn. This user must have read access to all activity data from
+            HDFS/YARN/ATS etc. for analysis purpose.
+        </description>
+    </property>
+    <property>
+        <name>activity.explorer.user</name>
+        <display-name>User for exploring activity data</display-name>
+        <value>activity_explorer</value>
+        <description>User that would be used to read pre-analyzed data. This user does not need access to HDFS/YARN
+        </description>
+    </property>
+    <property>
+        <name>hdfs.activity.watcher.enabled</name>
+        <display-name>HDFS file analysis enabled</display-name>
+        <value>true</value>
+        <description>Enabled automatic analysis of HDFS files</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Enabled</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>Disabled</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+</configuration>

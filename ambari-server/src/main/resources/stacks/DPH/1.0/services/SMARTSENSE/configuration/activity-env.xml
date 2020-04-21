@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>analyzer_jvm_opts</name>
+        <display-name>Activity Analyzer jvm opts</display-name>
+        <value>-Xms128m</value>
+        <description>Multiple jvm options separated by space</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    </property>
+    <property>
+        <name>analyzer_jvm_heap</name>
+        <display-name>Activity Analyzer maximum heap size</display-name>
+        <value>8192</value>
+        <description>Maximum heap space allocated for Activity Analyzer process in MB</description>
+        <value-attributes>
+            <unit>MB</unit>
+            <minimum>128</minimum>
+            <type>int</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>activity-env-content</name>
+        <display-name>activity-env.sh</display-name>
+        <description>activity-env.sh</description>
+        <value><![CDATA[#!/bin/bash
+
+# Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+# Except as expressly permitted in a written agreement between you
+# or your company and Hortonworks, Inc, any use, reproduction,
+# modification, redistribution, sharing, lending or other exploitation
+# of all or any part of the contents of this file is strictly prohibited.
+
+# Enable verbose shell execution
+#set -xv
+
+## Set HOME for various components
+export HADOOP_HOME=/usr/hdp/current/hadoop-client
+export HDFS_HOME=/usr/hdp/current/hadoop-hdfs-client
+export MAPREDUCE_HOME=/usr/hdp/current/hadoop-mapreduce-client
+export YARN_HOME=/usr/hdp/current/hadoop-yarn-client
+export HIVE_HOME=/usr/hdp/current/hive-client
+export HCAT_HOME=/usr/hdp/current/hive-webhcat
+export TEZ_HOME=/usr/hdp/current/tez-client
+export HBASE_HOME=/usr/hdp/current/hbase-client
+export PHOENIX_HOME=/usr/hdp/current/phoenix-client
+export ACTIVITY_ANALYZER_HOME=/usr/hdp/share/hst/activity-analyzer
+export AMS_COLLECTOR_HOME=/usr/lib/ambari-metrics-collector
+export JAVA_HOME={{java_home}}
+
+## Set conf dir for various components
+export HADOOP_CONF_DIR=/etc/hadoop/conf/
+export HIVE_CONF_DIR=/etc/hive/conf/
+export HBASE_CONF_DIR=/etc/hbase/conf/
+export TEZ_CONF_DIR=/etc/tez/conf/
+export ACTIVITY_ANALYZER_CONF_DIR=/etc/smartsense-activity/conf/
+export AMS_HBASE_CONF=/etc/ams-hbase/conf
+
+export DEBUG_ENABLED=false
+
+## Set JVM related configs
+export ANALYZER_JAVA_OPTS="{{analyzer_jvm_opts}} -Xmx{{analyzer_jvm_heap}}m"
+]]></value>
+    </property>
+</configuration>

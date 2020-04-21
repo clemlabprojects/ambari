@@ -1,0 +1,36 @@
+{
+  "SUPERSET": {
+    "service": [],
+    "SUPERSET": [
+      {
+        "name": "superset_webui",
+        "label": "Superset Web UI",
+        "description": "This host-level alert is triggered if the Superset Web UI is unreachable.",
+        "interval": 1,
+        "scope": "ANY",
+        "source": {
+          "type": "WEB",
+          "uri": {
+              "http": "{{superset/SUPERSET_WEBSERVER_PORT}}",
+              "https": "{{superset/SUPERSET_WEBSERVER_PORT}}",
+              "https_property": "http",
+              "https_property_value": "https",
+              "connection_timeout": 5.0,
+              "default_port": 9088
+          },
+          "reporting": {
+              "ok": {
+                  "text": "HTTP {0} response in {2:.3f}s"
+              },
+              "warning":{
+                  "text": "HTTP {0} response from {1} in {2:.3f}s ({3})"
+              },
+              "critical": {
+                  "text": "Connection failed to {1} ({3})"
+              }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>customer.smartsense.id</name>
+        <display-name>SmartSense ID</display-name>
+        <value>unspecified</value>
+        <description>Your SmartSense ID is available from Hortonworks Support and uniquely identifies your account.
+        </description>
+    </property>
+    <property>
+        <name>customer.enable.flex.subscription</name>
+        <display-name>Enable Flex Subscription</display-name>
+        <value>false</value>
+        <description>Enable Flex Subscription for this cluster</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>customer.flex.subscription.id</name>
+        <display-name>Flex Subscription ID</display-name>
+        <value></value>
+        <description>Your Flex Subscription ID is available from Hortonworks Support.
+        </description>
+    </property>
+    <property>
+        <name>customer.account.name</name>
+        <display-name>Customer account name</display-name>
+        <value>unspecified</value>
+        <description>The name of your Organization as it is registered with Hortonworks Support.
+        </description>
+    </property>
+    <property>
+        <name>customer.notification.email</name>
+        <display-name>Notification Email</display-name>
+        <value>unspecified</value>
+        <description>Email address used to send bundle upload, and recommendation availability notifications.
+        </description>
+    </property>
+    <property>
+        <name>server.storage.dir</name>
+        <display-name>Bundle storage directory</display-name>
+        <value>/var/lib/smartsense/hst-server/data</value>
+        <description>Storage directory for saving bundles. Typical value is '/var/lib/smartsense/hst-server/data'. Make sure this directory
+            has enough free space (min 1GB recommended)
+        </description>
+    </property>
+    <property>
+        <name>server.port</name>
+        <display-name>Web UI Port</display-name>
+        <value>9000</value>
+        <description>Web UI Port</description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>1025</minimum>
+            <maximum>9999</maximum>
+        </value-attributes>
+    </property>
+    <property>
+        <name>server.tmp.dir</name>
+        <display-name>Server temporary data directory</display-name>
+        <value>/var/lib/smartsense/hst-server/tmp</value>
+        <description>Temporary directory used by server to keep local bundles during bundle preparation. Should be different than agent tmp
+            dirTypical value is '/var/lib/smartsense/hst-server/tmp'. Make sure this directory will always have at least 5G of free space.
+        </description>
+    </property>
+    <property>
+        <name>server.max.heap</name>
+        <display-name>Server max heap size</display-name>
+        <value>2048</value>
+        <value-attributes>
+            <type>int</type>
+            <minimum>128</minimum>
+            <unit>MB</unit>
+        </value-attributes>
+        <description>Max heap size allocated for the Server process.
+        </description>
+    </property>
+    <property>
+        <name>agent.request.processing.timeout</name>
+        <display-name>Bundle processing timeout interval</display-name>
+        <value>7200</value>
+        <value-attributes>
+            <type>int</type>
+            <minimum>1800</minimum>
+            <maximum>14400</maximum>
+            <increment-step>60</increment-step>
+            <unit>Sec</unit>
+        </value-attributes>
+        <description>Agent request processing timeout (in seconds)
+        </description>
+    </property>
+    <property>
+        <name>agent.request.syncup.interval</name>
+        <display-name>Agent reporting window for a bundle</display-name>
+        <value>180</value>
+        <value-attributes>
+            <type>int</type>
+            <minimum>10</minimum>
+            <maximum>360</maximum>
+            <increment-step>10</increment-step>
+            <unit>Sec</unit>
+        </value-attributes>
+        <description>Window in which all agents reported will be added as part of one bundle (if the case number matches). Any agent
+            reported after this time will end up sending their data into a new bundle.
+        </description>
+    </property>
+    <property>
+        <name>client.threadpool.size.max</name>
+        <display-name>Server thread pool size</display-name>
+        <value>40</value>
+        <value-attributes>
+            <type>int</type>
+            <minimum>25</minimum>
+            <maximum>250</maximum>
+            <increment-step>5</increment-step>
+            <unit>Threads</unit>
+        </value-attributes>
+        <description>Server thread pool size to handle bundle requests.
+        </description>
+    </property>
+    <property>
+        <name>gateway.host</name>
+        <display-name>Gateway host</display-name>
+        <value>embedded</value>
+        <description>Fully qualified domain name of the host where the SmartSense Gateway process has been deployed and is running
+        </description>
+    </property>
+    <property>
+        <name>gateway.port</name>
+        <display-name>Gateway port</display-name>
+        <value>9451</value>
+        <description>Port on which gateway is listening. It is setup with 2 way SSL and data will be transferred through this port.
+        </description>
+    </property>
+    <property>
+        <name>gateway.registration.port</name>
+        <display-name>Gateway registration port</display-name>
+        <value>9450</value>
+        <description>Port that will be used by clients to register to gateway. It is setup with 1 way SSL and data will NOT be transferred
+            through this port.
+        </description>
+    </property>
+    <property>
+        <name>server.url</name>
+        <display-name>HST Server Web URL</display-name>
+        <value>http://localhost:9000</value>
+        <value-attributes>
+            <overridable>false</overridable>
+            <visible>false</visible>
+        </value-attributes>
+        <description>URL used for accessing web UI and REST APIs of HST Server. This is an automatically generated property and not to be
+            edited.
+        </description>
+        <depends-on>
+            <property>
+                <type>hst-server-conf</type>
+                <name>server.ssl_enabled</name>
+            </property>
+            <property>
+                <type>hst-server-conf</type>
+                <name>server.port</name>
+            </property>
+        </depends-on>
+    </property>
+    <property>
+        <name>server.ssl_enabled</name>
+        <display-name>SSL Enabled</display-name>
+        <value>false</value>
+        <description>If SSL is enabled for HTTPS access</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+            <visible>false</visible>
+        </value-attributes>
+    </property>
+</configuration>
