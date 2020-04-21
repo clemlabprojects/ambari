@@ -66,11 +66,14 @@ class AlertCollector():
       for cluster,alert_map in self.__buckets.iteritems():
         for alert_name in alert_map.keys():
           alert = alert_map[alert_name]
+<<<<<<< HEAD
 
           if not 'uuid' in alert:
             logger.warn("Alert {0} does not have uuid key.".format(alert))
             continue
 
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
           if alert['uuid'] == alert_uuid:
             self.remove(cluster, alert_name)
     finally:

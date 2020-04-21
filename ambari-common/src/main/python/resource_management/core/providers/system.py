@@ -51,18 +51,15 @@ def _ensure_metadata(path, user, group, mode=None, cd_access=None, recursive_own
       _user_entity = pwd.getpwnam(user)
     except KeyError:
       raise Fail("User '{0}' doesn't exist".format(user))
-
     if stat.st_uid != _user_entity.pw_uid:
       user_entity = _user_entity
       Logger.info(
         "Changing owner for %s from %d to %s" % (path, stat.st_uid, user))
-
   if group:
     try:
       _group_entity = grp.getgrnam(group)
     except KeyError:
       raise Fail("Group '{0}' doesn't exist".format(group))
-
     if stat.st_gid != _group_entity.gr_gid:
       group_entity = _group_entity
       Logger.info(
@@ -173,7 +170,6 @@ class DirectoryProvider(Provider):
 
     if not sudo.path_exists(path):
       Logger.info("Creating directory %s since it doesn't exist." % self.resource)
-
       # dead links should be followed, else we gonna have failures on trying to create directories on top of them.
       if self.resource.follow:
         # Follow symlink until the tail.
@@ -220,7 +216,6 @@ class DirectoryProvider(Provider):
     if sudo.path_exists(path):
       if not sudo.path_isdir(path):
         raise Fail("Applying %s failed, %s is not a directory" % (self.resource, path))
-
       Logger.info("Removing directory %s and all its content" % self.resource)
       sudo.rmtree(path)
 
@@ -238,19 +233,16 @@ class LinkProvider(Provider):
           "%s trying to create a symlink with the same name as an existing file or directory" % self.resource)
       Logger.info("%s replacing old symlink to %s" % (self.resource, oldpath))
       sudo.unlink(path)
-
     if self.resource.hard:
       if not sudo.path_exists(self.resource.to):
         raise Fail("Failed to apply %s, linking to nonexistent location %s" % (self.resource, self.resource.to))
       if sudo.path_isdir(self.resource.to):
         raise Fail("Failed to apply %s, cannot create hard link to a directory (%s)" % (self.resource, self.resource.to))
-
       Logger.info("Creating hard %s" % self.resource)
       sudo.link(self.resource.to, path)
     else:
       if not sudo.path_exists(self.resource.to):
         Logger.info("Warning: linking to nonexistent location %s" % self.resource.to)
-
       Logger.info("Creating symbolic %s to %s" % (self.resource, self.resource.to))
       sudo.symlink(self.resource.to, path)
 
@@ -266,7 +258,6 @@ class ExecuteProvider(Provider):
       if sudo.path_exists(self.resource.creates):
         Logger.info("Skipping %s due to creates" % self.resource)
         return
-
     shell.checked_call(self.resource.command, logoutput=self.resource.logoutput,
                         cwd=self.resource.cwd, env=self.resource.environment,
                         user=self.resource.user, wait_for_finish=self.resource.wait_for_finish,
@@ -278,12 +269,7 @@ class ExecuteProvider(Provider):
                         stdout=self.resource.stdout,stderr=self.resource.stderr,
                         tries=self.resource.tries, try_sleep=self.resource.try_sleep,
                         returns=self.resource.returns)
-
-
 class ExecuteScriptProvider(Provider):
-  def action_run(self):
-    from tempfile import NamedTemporaryFile
-
     Logger.info("Running script %s" % self.resource)
     with NamedTemporaryFile(prefix="resource_management-script", bufsize=0) as tf:
       tf.write(self.resource.code)

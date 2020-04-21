@@ -31,7 +31,10 @@ from ambari_commons.constants import AGENT_TMP_DIR
 logger = logging.getLogger(__name__)
 
 class ScriptAlert(BaseAlert):
+<<<<<<< HEAD
   PATH_TO_SCRIPT_REGEXP = re.compile(r'((.*)services(.*)package)')
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
   def __init__(self, alert_meta, alert_source_meta, config):
 
@@ -113,7 +116,11 @@ class ScriptAlert(BaseAlert):
 
       # try to get basedir for scripts
       # it's needed for server side scripts to properly use resource management
+<<<<<<< HEAD
       matchObj = ScriptAlert.PATH_TO_SCRIPT_REGEXP.match(self.path_to_script)
+=======
+      matchObj = re.match( r'((.*)services(.*)package)', self.path_to_script)
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       if matchObj:
         basedir = matchObj.group(1)
         with Environment(basedir, tmp_dir=AGENT_TMP_DIR, logger=logging.getLogger('alerts')) as env:

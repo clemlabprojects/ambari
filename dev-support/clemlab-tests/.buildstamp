@@ -1,0 +1,8 @@
+[Main]
+Product=CentOS
+Version=7
+BugURL=your distribution provided bug reporting tool
+IsFinal=True
+UUID=202010280839.aarch64
+[Compose]
+Lorax=19.7.28-1

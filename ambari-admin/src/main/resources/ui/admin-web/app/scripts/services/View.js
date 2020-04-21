@@ -136,15 +136,6 @@ angular.module('ambariAdminConsole')
           deferred.reject(data);
         });
 
-    return deferred.promise;
-  };
-
-
-
-  function View(item){
-    var self = this;
-    self.view_name = item.ViewInfo.view_name;
-    self.versions = '';
     self.instances = [];
     self.canCreateInstance = false;
     var versions = {};

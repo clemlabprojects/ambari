@@ -99,7 +99,6 @@ class TestContentSources(TestCase):
     self.assertEqual(opener_mock.call_count, 1)
     request_mock.assert_called_with('http://download/source')
     self.assertEqual(web_file_mock.read.call_count, 1)
-
   @patch("__builtin__.open")
   @patch.object(urllib2, "Request")
   @patch.object(urllib2, "build_opener")

@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 AlertUri = namedtuple('AlertUri', 'uri is_ssl_enabled')
 
 class BaseAlert(object):
+<<<<<<< HEAD
   CONFIG_KEY_REGEXP = re.compile('{{(\S+?)}}')
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   # will force a kinit even if klist says there are valid tickets (4 hour default)
   _DEFAULT_KINIT_TIMEOUT = 14400000
 
@@ -186,7 +189,10 @@ class BaseAlert(object):
       data['text'] = "There is a problem with the alert definition: {0}".format(str(exception))
     finally:
       # put the alert into the collector so it can be collected on the next run
+<<<<<<< HEAD
       data['text'] = data['text'].replace('\x00', '')
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       self.collector.put(self.cluster_name, data)
 
 
@@ -216,7 +222,11 @@ class BaseAlert(object):
     # parse {{foo-bar/baz}}/whatever/{{foobar-site/blah}}
     # into
     # ['foo-bar/baz', 'foobar-site/blah']
+<<<<<<< HEAD
     placeholder_keys = BaseAlert.CONFIG_KEY_REGEXP.findall(key)
+=======
+    placeholder_keys = re.findall("{{(\S+?)}}", key)
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
     # if none found, then return the original
     if placeholder_keys is None or len(placeholder_keys) == 0:

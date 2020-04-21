@@ -39,7 +39,10 @@ SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
 
 # default timeout
 DEFAULT_CONNECTION_TIMEOUT = 5.0
+<<<<<<< HEAD
 REALCODE_REGEXP = re.compile('(\{(\d+)\})')
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
 class MetricAlert(BaseAlert):
 
@@ -283,13 +286,21 @@ from __future__ import division
 def f(args):
   return {0}
 """
+<<<<<<< HEAD
+=======
+
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   def __init__(self, jmx_info):
     self.custom_module = None
     self.property_list = jmx_info['property_list']
     self.property_map = {}
 
     if 'value' in jmx_info:
+<<<<<<< HEAD
       realcode = REALCODE_REGEXP.sub('args[\g<2>]', jmx_info['value'])
+=======
+      realcode = re.sub('(\{(\d+)\})', 'args[\g<2>]', jmx_info['value'])
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
       self.custom_module =  imp.new_module(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_TEMPLATE.format(realcode)

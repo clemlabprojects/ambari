@@ -7,6 +7,10 @@
     http://www.apache.org/licenses/LICENSE-2.0
 
   Unless required by applicable law or agreed to in writing, software
+<<<<<<< HEAD
+=======
+  Unless required by applicable law or agreed to in writing, software
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   distributed under the License is distributed on an "AS IS" BASIS,
   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
   See the License for the specific language governing permissions and
@@ -18,20 +22,32 @@
   <parent>
     <groupId>org.apache.ambari</groupId>
     <artifactId>ambari</artifactId>
+<<<<<<< HEAD
     <version>${revision}</version>
   </parent>
   <groupId>org.apache.ambari</groupId>
   <artifactId>ambari-project</artifactId>
+=======
+    <version>2.7.5.0.0</version>
+  </parent>
+  <groupId>org.apache.ambari</groupId>
+  <artifactId>ambari-project</artifactId>
+  <version>2.7.5.0.0</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   <description>Apache Ambari Project POM</description>
   <name>Apache Ambari Project POM</name>
   <packaging>pom</packaging>
   <properties>
+<<<<<<< HEAD
     <skipPythonTests>false</skipPythonTests>
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
     <solr.version>5.5.2</solr.version>
     <ambari.dir>${project.parent.basedir}</ambari.dir>
     <powermock.version>1.6.3</powermock.version>
     <jetty.version>9.4.12.v20180830</jetty.version>
     <ldap-api.version>1.0.0</ldap-api.version>
+<<<<<<< HEAD
     <checkstyle.version>8.9</checkstyle.version>
     <swagger.version>1.6.8</swagger.version>
     <swagger.maven.plugin.version>3.1.5</swagger.maven.plugin.version>
@@ -45,6 +61,18 @@
     <fasterxml.jackson.databind.version>2.12.7.1</fasterxml.jackson.databind.version>
     <postgres.version>42.2.2</postgres.version>
     <testContainers.version>1.17.6</testContainers.version>
+=======
+    <checkstyle.version>6.19</checkstyle.version> <!-- last version that does not require Java 8 -->
+    <swagger.version>1.5.19</swagger.version>
+    <swagger.maven.plugin.version>3.1.4</swagger.maven.plugin.version>
+    <slf4j.version>1.7.20</slf4j.version>
+    <guice.version>4.1.0</guice.version>
+    <spring.version>5.1.8.RELEASE</spring.version>
+    <spring.security.version>5.1.5.RELEASE</spring.security.version>
+    <fasterxml.jackson.version>2.10.0</fasterxml.jackson.version>
+    <fasterxml.jackson.databind.version>2.10.0</fasterxml.jackson.databind.version>
+    <postgres.version>42.2.2</postgres.version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
     <forkCount>4</forkCount>
     <reuseForks>false</reuseForks>
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
@@ -86,6 +114,7 @@
         </plugins>
       </build>
     </profile>
+<<<<<<< HEAD
     <profile>
       <id>skipTestRun</id>
       <activation>
@@ -98,6 +127,8 @@
         <skipSurefireTests>true</skipSurefireTests>
       </properties>
     </profile>
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   </profiles>
   <dependencyManagement>
     <dependencies>
@@ -125,7 +156,11 @@
       <dependency>
         <groupId>commons-io</groupId>
         <artifactId>commons-io</artifactId>
+<<<<<<< HEAD
         <version>2.8.0</version>
+=======
+        <version>2.5</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
@@ -135,7 +170,11 @@
       <dependency>
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpclient</artifactId>
+<<<<<<< HEAD
         <version>4.5.13</version>
+=======
+        <version>4.5.5</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       </dependency>
       <dependency>
         <groupId>org.codehaus.jettison</groupId>
@@ -143,6 +182,7 @@
         <version>1.1</version>
       </dependency>
       <dependency>
+<<<<<<< HEAD
         <groupId>org.testcontainers</groupId>
         <artifactId>testcontainers</artifactId>
         <version>${testContainers.version}</version>
@@ -191,6 +231,8 @@
         <scope>test</scope>
       </dependency>
       <dependency>
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
         <groupId>com.google.inject</groupId>
         <artifactId>guice</artifactId>
         <version>${guice.version}</version>
@@ -218,7 +260,11 @@
       <dependency>
         <groupId>com.google.code.gson</groupId>
         <artifactId>gson</artifactId>
+<<<<<<< HEAD
         <version>2.9.0</version>
+=======
+        <version>2.2.2</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       </dependency>
       <dependency>
         <groupId>org.apache.derby</groupId>
@@ -268,6 +314,7 @@
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
+<<<<<<< HEAD
         <artifactId>slf4j-reload4j</artifactId>
         <version>${slf4j.version}</version>
       </dependency>
@@ -282,6 +329,12 @@
         <version>${logback.version}</version>
       </dependency>
       <dependency>
+=======
+        <artifactId>slf4j-log4j12</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
         <groupId>org.slf4j</groupId>
         <artifactId>jul-to-slf4j</artifactId>
         <version>${slf4j.version}</version>
@@ -411,12 +464,20 @@
       <dependency>
         <groupId>org.apache.ant</groupId>
         <artifactId>ant</artifactId>
+<<<<<<< HEAD
         <version>1.10.11</version>
+=======
+        <version>1.7.1</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       </dependency>
       <dependency>
         <groupId>org.apache.ant</groupId>
         <artifactId>ant-launcher</artifactId>
+<<<<<<< HEAD
         <version>1.10.11</version>
+=======
+        <version>1.10.3</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
       </dependency>
       <dependency>
         <groupId>commons-logging</groupId>
@@ -607,6 +668,41 @@
         </exclusions>
       </dependency>
       <dependency>
+<<<<<<< HEAD
+=======
+        <groupId>log4j</groupId>
+        <artifactId>log4j</artifactId>
+        <version>1.2.17</version>
+        <exclusions>
+          <exclusion>
+            <groupId>com.sun.jdmk</groupId>
+            <artifactId>jmxtools</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.sun.jmx</groupId>
+            <artifactId>jmxri</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>javax.mail</groupId>
+            <artifactId>mail</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>javax.jms</groupId>
+            <artifactId>jmx</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>javax.jms</groupId>
+            <artifactId>jms</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>log4j</groupId>
+        <artifactId>apache-log4j-extras</artifactId>
+        <version>1.2.17</version>
+      </dependency>
+      <dependency>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
         <groupId>junit</groupId>
         <artifactId>junit</artifactId>
         <version>4.10</version>
@@ -712,6 +808,14 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+<<<<<<< HEAD
+=======
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>1.4.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
           <artifactId>maven-checkstyle-plugin</artifactId>
           <version>2.17</version>
           <configuration>
@@ -740,7 +844,11 @@
             <dependency>
               <groupId>org.apache.ambari</groupId>
               <artifactId>ambari-utility</artifactId>
+<<<<<<< HEAD
               <version>${revision}</version>
+=======
+              <version>1.0.0.0-SNAPSHOT</version>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
             </dependency>
           </dependencies>
         </plugin>

@@ -20,7 +20,6 @@ limitations under the License.
 
 import hostname
 
-
 class ConfigurationBuilder:
   def __init__(self, initializer_module):
     self.config = initializer_module.config

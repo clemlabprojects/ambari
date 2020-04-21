@@ -1,0 +1,53 @@
+version: '3'
+services:
+  db-ambari-test:
+    image: postgres:12.1
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: root123
+      TZ: 'GMT+1'
+      PGTZ: 'GMT+1'
+    volumes:
+      - "../../db-ambari-test/data:/var/lib/postgresql/data"
+    ports:
+      - 5454:5432
+    networks:
+        - default
+  ambari-server:
+    build: .
+    image: ambari-arm/build
+    volumes:
+        - "/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects:/tmp/ambari"
+    ports:
+      - 8080:8080
+      - 9888:9888
+      - 9876:9876
+      - 9878:9878
+    entrypoint: 'tail -f /bin/bash'
+  ambari-agent-1:
+    image: ambari-arm/build
+    volumes:
+        - "/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects:/tmp/ambari"
+    ports:
+      - 9882:9882
+      - 9864:9864
+    entrypoint: 'tail -f /bin/bash'
+  ambari-agent-2:
+    image: ambari-arm/build
+    volumes:
+        - "/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects:/tmp/ambari"
+    ports:
+      - 9883:9882
+      - 9865:9864
+    entrypoint: 'tail -f /bin/bash'
+  ambari-agent-3:
+    image: ambari-arm/build
+    volumes:
+        - "/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects:/tmp/ambari"
+    ports:
+      - 9884:9882
+      - 9866:9864
+    entrypoint: 'tail -f /bin/bash'
+
+      
+

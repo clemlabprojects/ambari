@@ -112,7 +112,6 @@ angular.module('ambariAdminConsole')
     },
     getPermissions: function() {
       var deferred = $q.defer();
-
       $http({
         method: 'GET',
         url: Settings.baseUrl + '/permissions',

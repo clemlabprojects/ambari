@@ -262,6 +262,10 @@ class HostInfoLinux(HostInfo):
             for filter in self.PROC_FILTER:
               if filter in cmd:
                 metrics['hadoop'] = True
+<<<<<<< HEAD
+=======
+            metrics['command'] = unicode(cmd.strip(), errors='ignore')
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
             for line in open(os.path.join('/proc', pid, 'status')):
               if line.startswith('Uid:'):
                 uid = int(line.split()[1])
@@ -271,6 +275,10 @@ class HostInfoLinux(HostInfo):
       logger.exception("Checking java processes failed")
 
   def getTransparentHugePage(self):
+<<<<<<< HEAD
+=======
+    thp_regex = "\[(.+)\]"
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
     file_name = None
     if OSCheck.is_ubuntu_family():
       file_name = self.THP_FILE_UBUNTU
@@ -280,7 +288,11 @@ class HostInfoLinux(HostInfo):
     if file_name and os.path.isfile(file_name):
       with open(file_name) as f:
         file_content = f.read()
+<<<<<<< HEAD
         return HostInfoLinux.THP_REGEXP.search(file_content).groups()[0]
+=======
+        return re.search(thp_regex, file_content).groups()[0]
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
     else:
       return ""
 
@@ -370,12 +382,17 @@ class HostInfoLinux(HostInfo):
     pass
 
   def getServiceStatus(self, service_name):
+<<<<<<< HEAD
     if OSCheck.is_redhat_family() and int(OSCheck.get_os_major_version()) >= 7:
       service_check_live = list(self.REDHAT7_SERVICE_STATUS_CMD_LIST)
       service_check_live[2] = service_name
     else:
       service_check_live = list(self.SERVICE_STATUS_CMD_LIST)
       service_check_live[1] = service_name
+=======
+    service_check_live = list(self.SERVICE_STATUS_CMD_LIST)
+    service_check_live[1] = service_name
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
     try:
       code, out, err = shell.call(service_check_live, stdout = subprocess32.PIPE, stderr = subprocess32.PIPE, timeout = 5, quiet = True)
       return out, err, code

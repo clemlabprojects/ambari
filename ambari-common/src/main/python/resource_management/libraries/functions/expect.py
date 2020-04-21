@@ -28,7 +28,6 @@ from resource_management.core.exceptions import Fail
 def expect(name, expected_type, default_value=None):
   """
   Expect configuration to be of certain type. If it is not, give a reasonable error message to user.
-
   Optionally if the configuration is not found default_value for it can be returned.
   """
   subdicts = filter(None, name.split('/'))
@@ -42,7 +41,6 @@ def expect(name, expected_type, default_value=None):
         return default_value
       return UnknownConfiguration(curr_dict[-1])
   value = curr_dict
-
   if expected_type == bool:
     if isinstance(value, bool):
       return value

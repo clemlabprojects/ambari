@@ -22,7 +22,11 @@ import httplib
 import imp
 import time
 import urllib
+<<<<<<< HEAD
 from alerts.metric_alert import MetricAlert, REALCODE_REGEXP
+=======
+from alerts.metric_alert import MetricAlert
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 import ambari_simplejson as json
 import logging
 import re
@@ -212,7 +216,11 @@ def f(args):
     self.minimum_value = metric_info['minimum_value']
 
     if 'value' in metric_info:
+<<<<<<< HEAD
       realcode = REALCODE_REGEXP.sub('args[\g<2>][k]', metric_info['value'])
+=======
+      realcode = re.sub('(\{(\d+)\})', 'args[\g<2>][k]', metric_info['value'])
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
       self.custom_value_module =  imp.new_module(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_VALUE_TEMPLATE.format(realcode)

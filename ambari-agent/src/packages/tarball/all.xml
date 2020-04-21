@@ -158,6 +158,15 @@
       <directory>${pluggableStackDefinitionOutput}/custom_actions</directory>
       <outputDirectory>/var/lib/ambari-agent/cache/custom_actions</outputDirectory>
     </fileSet>
+<<<<<<< HEAD
+=======
+    <fileSet>
+      <directoryMode>755</directoryMode>
+      <fileMode>755</fileMode>
+      <directory>conf/unix/custom</directory>
+      <outputDirectory>/var/lib/${project.artifactId}/tmp</outputDirectory>
+    </fileSet>
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   </fileSets>
   <!-- Single files. Syntax:
 	  <files>

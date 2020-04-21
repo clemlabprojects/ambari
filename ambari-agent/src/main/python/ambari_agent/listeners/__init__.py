@@ -79,8 +79,12 @@ class EventListener(ambari_stomp.ConnectionListener):
         self.report_status_to_sender(headers, message, ex)
         return
 
+<<<<<<< HEAD
       if destination != Constants.ENCRYPTION_KEY_TOPIC:
         logger.info("Event from server at {0}{1}".format(destination, self.get_log_message(headers, copy.deepcopy(message_json))))
+=======
+      logger.info("Event from server at {0}{1}".format(destination, self.get_log_message(headers, copy.deepcopy(message_json))))
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
       if not self.enabled:
         with self.event_queue_lock:

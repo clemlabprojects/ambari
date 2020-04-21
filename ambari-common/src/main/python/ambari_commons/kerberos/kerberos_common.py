@@ -169,6 +169,7 @@ def find_missing_keytabs(params, output_hook=lambda missing_keytabs: None):
   missing_keytabs = MissingKeytabs.from_kerberos_records(params.kerberos_command_params, params.hostname)
   Logger.info(str(missing_keytabs))
   output_hook(missing_keytabs.as_dict())
+<<<<<<< HEAD
 
 # Encryption families from: http://web.mit.edu/KERBEROS/krb5-latest/doc/admin/conf_files/kdc_conf.html#encryption-types
 ENCRYPTION_FAMILY_MAP = {
@@ -188,3 +189,5 @@ def resolve_encryption_family_list(enc_types_list):
 def resolve_encryption_families(enc_types_str):
   return None if enc_types_str is None \
     else ' '.join(resolve_encryption_family_list(enc_types_str.split()))
+=======
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)

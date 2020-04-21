@@ -88,7 +88,6 @@ class RepositoryUtil:
 
     return repo_files
 
-
 def create_repo_files(template, command_repository):
   """
   DEPRECATED. Is present for usage by old mpacks.

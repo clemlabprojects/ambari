@@ -70,7 +70,6 @@ if os.geteuid() == 0:
     """
     return os.chmod(path, mode)
 
-
   def chmod_extended(path, mode):
     """
     :type path str
@@ -82,7 +81,6 @@ if os.geteuid() == 0:
   def chmod_recursive(path, recursive_mode_flags, recursion_follow_links=False):
     """
     Change recursively permissions on directories or files
-
     :type path str
     :type recursive_mode_flags
     :type recursion_follow_links bool
@@ -189,7 +187,6 @@ else:
     group = group.gr_name if group else ""
     if owner or group:
       shell.checked_call(["chown", owner+":"+group, path], sudo=True)
-
   def chown_recursive(path, owner, group, follow_links=False):
     owner = owner.pw_name if owner else ""
     group = group.gr_name if group else ""
@@ -210,7 +207,6 @@ else:
   def makedirs(path, mode):
     shell.checked_call(["mkdir", "-p", path], sudo=True)
     chmod(path, mode)
-
   # os.makedir replacement
   def makedir(path, mode):
     shell.checked_call(["mkdir", path], sudo=True)
@@ -305,7 +301,6 @@ else:
   def listdir(path):
     if not path_isdir(path):
       raise Fail("{0} is not a directory. Cannot list files of it.".format(path))
-
     code, out, err = shell.checked_call(["ls", path], sudo=True, stderr=subprocess32.PIPE)
     files = out.splitlines()
     return files

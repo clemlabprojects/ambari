@@ -35,6 +35,10 @@ class MetadataEventListener(EventListener):
   def __init__(self, initializer_module):
     super(MetadataEventListener, self).__init__(initializer_module)
     self.metadata_cache = initializer_module.metadata_cache
+<<<<<<< HEAD
+=======
+    self.config = initializer_module.config
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
 
   def on_event(self, headers, message):
     """
@@ -58,5 +62,13 @@ class MetadataEventListener(EventListener):
     else:
       logger.error("Unknown event type '{0}' for metadata event")
 
+<<<<<<< HEAD
+=======
+    try:
+      self.config.update_configuration_from_metadata(message['clusters']['-1']['agentConfigs'])
+    except KeyError:
+      pass
+
+>>>>>>> bedce4027a (Initial commit based on 2.7.5 release)
   def get_handled_path(self):
     return Constants.METADATA_TOPIC
