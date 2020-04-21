@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>activity-zeppelin-env-content</name>
+        <display-name>zeppelin-env.sh</display-name>
+        <description>zeppelin-env.sh</description>
+        <value><![CDATA[#!/bin/bash
+
+# Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+# Except as expressly permitted in a written agreement between you
+# or your company and Hortonworks, Inc, any use, reproduction,
+# modification, redistribution, sharing, lending or other exploitation
+# of all or any part of the contents of this file is strictly prohibited.
+
+
+export JAVA_HOME={{java_home}}
+# Additional jvm options. for example, export ZEPPELIN_JAVA_OPTS="-Dspark.executor.memory=8g -Dspark.cores.max=16"
+export ZEPPELIN_JAVA_OPTS="-Dhdp.version={{hdp_version}} -Dlog.file.name=activity-explorer.log -DSmartSenseActivityExplorer"      		
+# export ZEPPELIN_INTP_MEM       		# zeppelin interpreter process jvm mem options. Default = ZEPPELIN_MEM
+# export ZEPPELIN_INTP_JAVA_OPTS 		# zeppelin interpreter process jvm options. Default = ZEPPELIN_JAVA_OPTS
+
+export RUN_AS_USER={{run_as_user}}
+export ZEPPELIN_MEM=" -Xms256m -Xmx1024m -XX:MaxPermSize=256m"
+export ZEPPELIN_LOG_DIR={{activity_log_dir}}
+export ZEPPELIN_PID_DIR=/var/run/smartsense-activity-explorer
+export ZEPPELIN_WAR_TEMPDIR=/var/lib/smartsense/activity-explorer/webapp
+export ZEPPELIN_NOTEBOOK_DIR=/var/lib/smartsense/activity-explorer/notebook
+export ZEPPELIN_CLASSPATH="/etc/ams-hbase/conf:${ZEPPELIN_CLASSPATH}"
+export CLASSPATH=${ZEPPELIN_CLASSPATH}
+]]></value>
+    </property>
+</configuration>
+

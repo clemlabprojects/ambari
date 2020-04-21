@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+
+	<property>
+		<name>agent.tmp_dir</name>
+		<display-name>Agent temporary data directory</display-name>
+		<value>/var/lib/smartsense/hst-agent/data/tmp</value>
+		<description>Temporary directory used by agent to keep local bundles
+			during bundle preparation. Should be different than server tmp dir.
+			Typical value is '/var/lib/smartsense/hst-agent/data/tmp'. Make sure this
+			directory will always have at least 5G of free space.
+		</description>
+	</property>
+	<property>
+		<name>security.anonymization.max.heap</name>
+		<display-name>Anonymization max heap</display-name>
+		<value>2048</value>
+		<value-attributes>
+			<type>int</type>
+			<minimum>128</minimum>
+			<unit>MB</unit>
+		</value-attributes>
+		<description>Max heap allocated in MB on every agent for anonymization.</description>
+	</property>
+	<property>
+		<name>agent.loglevel</name>
+		<display-name>Agent log level</display-name>
+		<value>INFO</value>
+		<value-attributes>
+			<type>value-list</type>
+			<entries>
+				<entry>
+					<label>DEBUG</label>
+					<value>DEBUG</value>
+				</entry>
+				<entry>
+					<label>INFO</label>
+					<value>INFO</value>
+				</entry>
+				<entry>
+					<label>WARNING</label>
+					<value>WARNING</value>
+				</entry>
+				<entry>
+					<label>ERROR</label>
+					<value>ERROR</value>
+				</entry>
+				<entry>
+					<label>CRITICAL</label>
+					<value>CRITICAL</value>
+				</entry>
+			</entries>
+			<selection-cardinality>1</selection-cardinality>
+		</value-attributes>
+		<description></description>
+	</property>
+	<property>
+		<name>server.connection_retry_count</name>
+		<display-name>Server connection retry count</display-name>
+		<value>100</value>
+		<value-attributes>
+			<type>int</type>
+			<minimum>5</minimum>
+			<maximum>250</maximum>
+			<increment-step>5</increment-step>
+			<unit>Attempts</unit>
+		</value-attributes>
+		<description>Number of times to retry to connect to server in case of
+			connection failures and timeouts
+		</description>
+	</property>
+	<property>
+		<name>server.connection_retry_interval</name>
+		<display-name>Server connection retry interval</display-name>
+		<value>10</value>
+		<value-attributes>
+			<type>int</type>
+			<minimum>5</minimum>
+			<maximum>60</maximum>
+			<increment-step>5</increment-step>
+			<unit>Sec</unit>
+		</value-attributes>
+		<description>Interval in seconds between each connection retry
+		</description>
+	</property>
+	<property>
+		<name>bundle.logs_to_capture</name>
+		<display-name>Log files to capture</display-name>
+		<value><![CDATA[(.*).log$,(.*).out$,(.*).err$]]></value>
+		<description>Patterns of log files to be captured. Be careful while capturing more log files as they can turn out to be huge and would need extra space on HST server.
+		</description>
+	</property>
+	<property>
+		<name>upload.retry_count</name>
+		<display-name>Bundle submission retry count</display-name>
+		<value>100</value>
+		<value-attributes>
+			<type>int</type>
+			<minimum>5</minimum>
+			<maximum>250</maximum>
+			<increment-step>5</increment-step>
+			<unit>Attempts</unit>
+		</value-attributes>
+		<description>Number of times the agent will retry to submission of its local bundle
+			to server. Note: This is different than uploading final bundle to Hortonworks</description>
+	</property>
+	<property>
+		<name>upload.retry_interval</name>
+		<display-name>Bundle submission retry interval</display-name>
+		<value>15</value>
+		<value-attributes>
+			<type>int</type>
+			<minimum>5</minimum>
+			<maximum>60</maximum>
+			<increment-step>5</increment-step>
+			<unit>Sec</unit>
+		</value-attributes>
+		<description>Interval in seconds between each submission retry
+		</description>
+	</property>
+	<property>
+        <name>agent.version</name>
+        <display-name>SmartSense Version</display-name>
+        <value>1.5.0.2.7.1.0-169</value>
+        <value-attributes>
+            <visible>false</visible>
+        </value-attributes>
+        <description>SmartSense version based on installed agent
+        </description>
+    </property>
+</configuration>
+

@@ -1,0 +1,119 @@
+{
+  "name": "database",
+  "configuration": {
+    "placement": {
+      "configs": [
+        {
+          "config": "druid-common/database_name",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/druid.metadata.storage.type",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/druid.metadata.storage.connector.user",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/druid.metadata.storage.connector.password",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/metastore_hostname",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/druid.metadata.storage.connector.port",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        },
+        {
+          "config": "druid-common/druid.metadata.storage.connector.connectURI",
+          "subsection-name": "subsection-druid-metadata-storage-row1-col1"
+        }
+      ],
+      "configuration-layout": "database"
+    },
+    "widgets": [
+      {
+        "config": "druid-common/database_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "druid-common/druid.metadata.storage.type",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "druid-common/druid.metadata.storage.connector.user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "druid-common/druid.metadata.storage.connector.password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "druid-common/metastore_hostname",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "druid-common/druid.metadata.storage.connector.port",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "druid-common/druid.metadata.storage.connector.connectURI",
+        "widget": {
+          "type": "text-field"
+        }
+      }
+    ],
+    "layouts": [
+      {
+        "name": "database",
+        "tabs": [
+          {
+            "name" : "druid_database",
+            "display-name" : "Druid",
+            "layout": {
+              "tab-columns": "1",
+              "tab-rows": "1",
+              "sections": [
+                {
+                  "name": "section-druid-metadata-storage",
+                  "display-name": "",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-druid-metadata-storage-row1-col1",
+                      "display-name": "DRUID META DATA STORAGE",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

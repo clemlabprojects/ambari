@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>zeppelin.server.addr</name>
+        <display-name>Zeppelin activity explorer bind address</display-name>
+        <value>0.0.0.0</value>
+        <description>Server address</description>
+    </property>
+    <property>
+        <name>zeppelin.server.port</name>
+        <display-name>UI port</display-name>
+        <value>9060</value>
+        <description>Server port.The subsequent port (e.g. 6081) should also be open as it will be
+            used by the web socket
+        </description>
+        <value-attributes>
+            <type>int</type>
+            <minimum>1025</minimum>
+            <maximum>9999</maximum>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.server.context.path</name>
+        <value>/</value>
+        <description>Context Path of the Web Application</description>
+    </property>
+    <property>
+        <name>zeppelin.war.tempdir</name>
+        <value>/var/lib/smartsense/activity-explorer/webapp</value>
+        <description>Location of jetty temporary directory</description>
+    </property>
+    <property>
+        <name>zeppelin.notebook.dir</name>
+        <value>/var/lib/smartsense/activity-explorer/notebook</value>
+        <description>path or URI for notebook persist</description>
+    </property>
+    <property>
+        <name>zeppelin.notebook.homescreen.hide</name>
+        <value>false</value>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <description>hide homescreen notebook from list when this value set to true</description>
+    </property>
+    <property>
+        <name>zeppelin.notebook.storage</name>
+        <value>org.apache.zeppelin.notebook.repo.VFSNotebookRepo</value>
+        <description>notebook persistence layer implementation</description>
+    </property>
+    <property>
+        <name>zeppelin.interpreter.dir</name>
+        <value>/usr/hdp/share/hst/activity-explorer/interpreter</value>
+        <description>Interpreter implementation base directory</description>
+    </property>
+    <property>
+        <name>zeppelin.interpreters</name>
+        <value>org.apache.zeppelin.phoenix.PhoenixInterpreter</value>
+        <description>Comma separated interpreter configurations. First interpreter become a default</description>
+    </property>
+    <property>
+        <name>zeppelin.interpreter.connect.timeout</name>
+        <value>30000</value>
+        <description>Interpreter process connect timeout in msec.</description>
+        <value-attributes>
+            <type>long</type>
+            <minimum>5000</minimum>
+            <maximum>300000</maximum>
+            <increment-step>1000</increment-step>
+            <unit>Millis</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.ssl</name>
+        <value>false</value>
+        <description>Should SSL be used by the servers?</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.ssl.client.auth</name>
+        <value>false</value>
+        <description>Should client authentication be used for SSL connections?</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.ssl.keystore.path</name>
+        <value>/var/lib/smartsense/activity-explorer/keystore</value>
+        <description>Path to keystore relative to activity explorer configuration directory</description>
+    </property>
+    <property>
+        <name>zeppelin.ssl.keystore.type</name>
+        <value>JKS</value>
+        <description>The format of the given keystore (e.g. JKS or PKCS12)</description>
+    </property>
+    <property>
+        <name>zeppelin.ssl.keystore.password</name>
+        <value>admin</value>
+        <description>Keystore password. Can be obfuscated by the Jetty Password tool</description>
+        <value-attributes>
+            <type>password</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.ssl.key.manager.password</name>
+        <value>admin</value>
+        <description>Key Manager password. Defaults to keystore password. Can be obfuscated.</description>
+        <value-attributes>
+            <type>password</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.ssl.truststore.path</name>
+        <value>/var/lib/smartsense/activity-explorer/truststore</value>
+        <description>Path to truststore relative to activity explorer configuration directory. Defaults to the keystore path</description>
+    </property>
+    <property>
+        <name>zeppelin.ssl.truststore.type</name>
+        <value>JKS</value>
+        <description>The format of the given truststore (e.g. JKS or PKCS12). Defaults to the same type as the keystore type</description>
+    </property>
+    <property>
+        <name>zeppelin.ssl.truststore.password</name>
+        <value>admin</value>
+        <description>Truststore password. Can be obfuscated by the Jetty Password tool. Defaults to the keystore password</description>
+        <value-attributes>
+            <type>password</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.server.allowed.origins</name>
+        <value>*</value>
+        <description>Allowed sources for REST and WebSocket requests (i.e. http://onehost:8080,http://otherhost.com). If you leave * you are
+            vulnerable to https://issues.apache.org/jira/browse/ZEPPELIN-173
+        </description>
+    </property>
+    <property>
+        <name>zeppelin.anonymous.allowed</name>
+        <display-name>Anonymous access allowed</display-name>
+        <value>false</value>
+        <description>Anonymous user allowed by default</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.websocket.max.text.message.size</name>
+        <value>1024000</value>
+        <description>Size in characters of the maximum text message to be received by websocket. Defaults to 1024000</description>
+        <value-attributes>
+            <type>long</type>
+            <minimum>1000</minimum>
+            <maximum>10000000</maximum>
+            <increment-step>1000</increment-step>
+            <unit>Bytes</unit>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zeppelin.notebook.cron.enable</name>
+        <display-name>Enable Cron Scheduler</display-name>
+        <value>true</value>
+        <description>Enable cron scheduler for periodic notebook executions</description>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>true</value>
+                    <label>Yes</label>
+                </entry>
+                <entry>
+                    <value>false</value>
+                    <label>No</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+    </property>
+</configuration>

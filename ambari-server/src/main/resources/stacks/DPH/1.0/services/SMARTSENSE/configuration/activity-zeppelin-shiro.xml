@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<configuration supports_final="false">
+    <property>
+        <name>users.admin</name>
+        <display-name>Password for user 'admin'</display-name>
+        <value></value>
+        <description>Password for Activity Explorer's admin user when using local authentication</description>
+        <property-type>PASSWORD</property-type>
+        <value-attributes>
+            <type>password</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>main.sessionManager</name>
+        <display-name>Session manager</display-name>
+        <value>org.apache.shiro.web.session.mgt.DefaultWebSessionManager</value>
+        <description></description>
+    </property>
+    <property>
+        <name>main.securityManager.sessionManager</name>
+        <display-name>Security session manager</display-name>
+        <value>$sessionManager</value>
+        <description></description>
+    </property>
+    <property>
+        <name>main.credentialMatcher</name>
+        <display-name>Credential matcher service</display-name>
+        <value>org.apache.shiro.authc.credential.PasswordMatcher</value>
+        <description></description>
+    </property>
+        <property>
+        <name>main.iniRealm.credentialsMatcher</name>
+        <display-name>Credential matcher</display-name>
+        <value>$credentialMatcher</value>
+        <description></description>
+    </property>
+    <property>
+        <name>main.securityManager.sessionManager.globalSessionTimeout</name>
+        <display-name>Session timeout</display-name>
+        <value>86400000</value>
+        <description></description>
+        <value-attributes>
+            <type>long</type>
+            <minimum>300000</minimum>
+            <maximum>604800000</maximum>
+            <increment-step>300000</increment-step>
+            <unit>Millis</unit>
+        </value-attributes>
+    </property>
+</configuration>

@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+
+<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-pack.xsd">
+  <target>*</target>
+  <target-stack>*</target-stack>
+  <type>NON_ROLLING</type>
+  <order>
+    <group xsi:type="restart" name="SMARTSENSE_RESTART" title="SMARTSENSE">
+      <skippable>true</skippable>
+      <allow-retry>true</allow-retry>
+      <add-after-group>ACCUMULO</add-after-group>
+      <parallel-scheduler/>
+      <service name="SMARTSENSE">
+        <component>ACTIVITY_ANALYZER</component>
+        <component>ACTIVITY_EXPLORER</component>
+        <component>HST_SERVER</component>
+        <component>HST_AGENT</component>
+      </service>
+    </group>
+  </order>
+
+  <processing>
+    <service name="SMARTSENSE">
+      <component name="ACTIVITY_ANALYZER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+      <component name="ACTIVITY_EXPLORER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+      <component name="HST_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+      <component name="HST_AGENT">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+    </service>
+  </processing>
+</upgrade>

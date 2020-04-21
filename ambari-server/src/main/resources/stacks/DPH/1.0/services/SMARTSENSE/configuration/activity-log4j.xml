@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+
+<configuration supports_final="false">
+    <property>
+        <name>activity_log_dir</name>
+        <display-name>Log directory</display-name>
+	<description>Directory where activity log files would be created.</description>
+        <value>/var/log/smartsense-activity</value>
+    </property>
+    <property>
+        <name>activity_max_file_size</name>
+        <display-name>SmartSense Activity log file size</display-name>
+        <description>Max SmartSense Activity log files size.</description>
+        <value>30</value>
+        <value-attributes>
+		<type>int</type>
+		<minimum>1</minimum>
+		<maximum>256</maximum>
+		<unit>MB</unit>
+	</value-attributes>
+    </property>
+        <property>
+        <name>activity_max_backup_index</name>
+        <display-name>SmartSense Activity # of log files</display-name>
+        <description>Max # of SmartSense Activity log files.</description>
+        <value>10</value>
+        <value-attributes>
+		<type>int</type>
+		<minimum>1</minimum>
+		<maximum>256</maximum>
+	</value-attributes>
+    </property>
+	<property>
+		<name>activity-log4j-content</name>
+        <display-name>log4j.properties</display-name>
+		<description>log4j.properties</description>
+		<value><![CDATA[
+# Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+# Except as expressly permitted in a written agreement between you
+# or your company and Hortonworks, Inc, any use, reproduction,
+# modification, redistribution, sharing, lending or other exploitation
+# of all or any part of the contents of this file is strictly prohibited.
+
+# Define some default values that can be overridden by system properties
+# Root logger option
+log4j.rootLogger=INFO,file
+
+log4j.appender.file=org.apache.log4j.RollingFileAppender
+log4j.appender.file.File={{activity_log_dir}}/${log.file.name}
+log4j.appender.file.MaxFileSize={{activity_max_file_size}}MB
+log4j.appender.file.MaxBackupIndex={{activity_max_backup_index}}
+log4j.appender.file.layout=org.apache.log4j.PatternLayout
+log4j.appender.file.layout.ConversionPattern=%d{ISO8601} %5p [%t] %c{1}:%L - %m%n
+]]></value>
+	</property>
+</configuration>

@@ -1,0 +1,282 @@
+<?xml version="1.0"?>
+<!--
+  ~ Copyright (c) 2011-2018, Hortonworks Inc.  All rights reserved.
+  ~ Except as expressly permitted in a written agreement between you
+  ~ or your company and Hortonworks, Inc, any use, reproduction,
+  ~ modification, redistribution, sharing, lending or other exploitation
+  ~ of all or any part of the contents of this file is strictly prohibited.
+  -->
+<metainfo>
+    <schemaVersion>2.0</schemaVersion>
+    <services>
+        <service>
+            <!-- Internal name for service (must be unique) -->
+            <name>SMARTSENSE</name>
+            <!-- display name for service (displayed in Ambari UI) -->
+            <displayName>SmartSense</displayName>
+            <!-- Description of service - will be displayed when user clicks add service -->
+            <comment>SmartSense - Hortonworks SmartSense Tool (HST) helps quickly gather configuration, metrics, logs from common HDP
+                services that aids to quickly troubleshoot support cases and receive cluster-specific recommendations.
+            </comment>
+            <!-- Version of component -->
+            <version>1.5.0.2.7.1.0-169</version>
+            <selection>MANDATORY</selection>
+            <components>
+                <!-- In this case, there is only one master component -->
+                <component>
+                    <name>HST_SERVER</name>
+                    <displayName>HST Server</displayName>
+                    <category>MASTER</category>
+                    <cardinality>1</cardinality>
+                    <versionAdvertised>false</versionAdvertised>
+                    <unlimitedKeyJCERequired>ALWAYS</unlimitedKeyJCERequired>
+                    <commandScript>
+                        <script>scripts/hst_server.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                    </commandScript>
+                    <logs>
+                        <log>
+                            <logId>hst_server</logId>
+                            <primary>true</primary>
+                        </log>
+                    </logs>
+                    <!-- <customCommands> <customCommand> <name>Status</name> <displayName>Status of SmartSense HST Server</displayName> <commandScript>
+                        <script>scripts/hst_server.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand>
+                        <name>Reinstall</name> <displayName>Re-install SmartSense HST Server</displayName> <commandScript> <script>scripts/hst_server.py</script> <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout> </commandScript> </customCommand> </customCommands> -->
+                    <configuration-dependencies>
+                        <config-type>hst-server-conf</config-type>
+                        <config-type>anonymization-rules</config-type>
+                        <config-type>hst-log4j</config-type>
+                        <config-type>product-info</config-type>
+                    </configuration-dependencies>
+                </component>
+                <component>
+                    <name>ACTIVITY_ANALYZER</name>
+                    <displayName>Activity Analyzer</displayName>
+                    <category>MASTER</category>
+                    <cardinality>0-8</cardinality>
+                    <versionAdvertised>false</versionAdvertised>
+                    <commandScript>
+                        <script>scripts/activity_analyzer.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                    </commandScript>
+                    <logs>
+                        <log>
+                            <logId>activity_analyzer</logId>
+                            <primary>true</primary>
+                        </log>
+                    </logs>
+                    <!-- <customCommands> <customCommand> <name>Status</name> <displayName>Status of Activity Analyzer</displayName> <commandScript>
+                        <script>scripts/activity_analyzer.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand>
+                        <name>Reinstall</name> <displayName>Re-install Activity Analyzer</displayName> <commandScript> <script>scripts/activity_analyzer.py</script>
+                        <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand> <name>Uninstall</name> <displayName>Uninstall
+                        Activity Analyzer</displayName> <commandScript> <script>scripts/activity_analyzer.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout>
+                        </commandScript> </customCommand> </customCommands> -->
+                    <dependencies>
+                        <dependency>
+                            <name>HDFS/HDFS_CLIENT</name>
+                            <auto-deploy>
+                                <enabled>true</enabled>
+                            </auto-deploy>
+                            <scope>host</scope>
+                        </dependency>
+                        <dependency>
+                            <name>YARN/YARN_CLIENT</name>
+                            <auto-deploy>
+                                <enabled>true</enabled>
+                            </auto-deploy>
+                            <scope>host</scope>
+                        </dependency>
+                        <dependency>
+                            <name>TEZ/TEZ_CLIENT</name>
+                            <auto-deploy>
+                                <enabled>true</enabled>
+                            </auto-deploy>
+                            <scope>host</scope>
+                        </dependency>
+                        <dependency>
+                            <name>MAPREDUCE2/MAPREDUCE2_CLIENT</name>
+                            <auto-deploy>
+                                <enabled>true</enabled>
+                            </auto-deploy>
+                            <scope>host</scope>
+                        </dependency>
+                    </dependencies>
+                    <configuration-dependencies>
+                        <config-type>activity-conf</config-type>
+                        <config-type>activity-log4j</config-type>
+                        <config-type>activity-env</config-type>
+                    </configuration-dependencies>
+                    <osSpecifics>
+                        <osSpecific>
+                            <osFamily>any</osFamily>
+                            <packages>
+                                <package>
+                                    <name>smartsense-hst</name>
+                                    <skipUpgrade>true</skipUpgrade>
+                                </package>
+                            </packages>
+                        </osSpecific>
+                    </osSpecifics>
+                </component>
+                <component>
+                    <name>ACTIVITY_EXPLORER</name>
+                    <displayName>Activity Explorer</displayName>
+                    <category>MASTER</category>
+                    <cardinality>0-2</cardinality>
+                    <versionAdvertised>false</versionAdvertised>
+                    <commandScript>
+                        <script>scripts/activity_explorer.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                    </commandScript>
+                    <logs>
+                        <log>
+                            <logId>activity_explorer</logId>
+                            <primary>true</primary>
+                        </log>
+                    </logs>
+                    <!-- <customCommands> <customCommand> <name>Status</name> <displayName>Status of Activity Explorer</displayName> <commandScript>
+                        <script>scripts/activity_explorer.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand>
+                        <name>Uninstall</name> <displayName>Uninstall Activity Explorer</displayName> <commandScript> <script>scripts/activity_explorer.py</script> <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout> </commandScript> </customCommand> <customCommand> <name>Reinstall</name> <displayName>Re-install Activity Explorer</displayName>
+                        <commandScript> <script>scripts/activity_explorer.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand>
+                        </customCommands> -->
+                    <configuration-dependencies>
+                        <config-type>activity-zeppelin-site</config-type>
+                        <config-type>activity-zeppelin-env</config-type>
+                        <config-type>activity-zeppelin-shiro</config-type>
+                        <config-type>activity-log4j</config-type>
+                        <config-type>activity-zeppelin-interpreter</config-type>
+                    </configuration-dependencies>
+                    <osSpecifics>
+                        <osSpecific>
+                            <osFamily>any</osFamily>
+                            <packages>
+                                <package>
+                                    <name>smartsense-hst</name>
+                                    <skipUpgrade>true</skipUpgrade>
+                                </package>
+                            </packages>
+                        </osSpecific>
+                    </osSpecifics>
+                </component>
+                <component>
+                    <name>HST_AGENT</name>
+                    <displayName>HST Agent</displayName>
+                    <category>SLAVE</category>
+                    <cardinality>ALL</cardinality>
+                    <auto-deploy>
+                        <enabled>true</enabled>
+                    </auto-deploy>
+                    <versionAdvertised>false</versionAdvertised>
+                    <dependencies>
+                        <dependency>
+                            <name>SMARTSENSE/HST_SERVER</name>
+                            <auto-deploy>
+                                <enabled>true</enabled>
+                            </auto-deploy>
+                            <scope>cluster</scope>
+                        </dependency>
+                    </dependencies>
+                    <commandScript>
+                        <script>scripts/hst_agent.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                    </commandScript>
+                    <logs>
+                        <log>
+                            <logId>hst_agent</logId>
+                            <primary>true</primary>
+                        </log>
+                    </logs>
+                    <customCommands>
+                        <customCommand>
+                            <name>Capture</name>
+                            <displayName>Capture for SmartSense</displayName>
+                            <commandScript>
+                                <script>scripts/hst_agent.py</script>
+                                <scriptType>PYTHON</scriptType>
+                                <timeout>600</timeout>
+                            </commandScript>
+                        </customCommand>
+                        <customCommand>
+                            <name>Refresh_Schedule</name>
+                            <displayName>Refresh capture schedule</displayName>
+                            <commandScript>
+                                <script>scripts/hst_agent.py</script>
+                                <scriptType>PYTHON</scriptType>
+                                <timeout>600</timeout>
+                            </commandScript>
+                        </customCommand>
+                        <!-- <customCommand> <name>Register</name> <displayName>Register agent with server</displayName> <commandScript> <script>scripts/hst_agent.py</script>
+                            <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand> <name>Status</name> <displayName>Status
+                            of agents</displayName> <commandScript> <script>scripts/hst_agent.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript>
+                            </customCommand> <customCommand> <name>Unregister</name> <displayName>Unregister agent from server</displayName> <commandScript> <script>scripts/hst_agent.py</script>
+                            <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> <customCommand> <name>Uninstall</name> <displayName>Uninstall
+                            all SmartSense components</displayName> <commandScript> <script>scripts/hst_agent.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout>
+                            </commandScript> </customCommand> <customCommand> <name>Reinstall</name> <displayName>Re-install SmartSense components</displayName> <commandScript>
+                            <script>scripts/hst_agent.py</script> <scriptType>PYTHON</scriptType> <timeout>600</timeout> </commandScript> </customCommand> -->
+                    </customCommands>
+                    <configuration-dependencies>
+                        <config-type>hst-agent-conf</config-type>
+                        <config-type>hst-log4j</config-type>
+                        <config-type>anonymization-rules</config-type>
+                    </configuration-dependencies>
+                </component>
+            </components>
+            <!-- what yum packages will be needed for the setup. These will be installed by install_packages() in master.py -->
+            <osSpecifics>
+                <osSpecific>
+                    <osFamily>any</osFamily>
+                    <packages>
+                        <package>
+                            <name>wget</name>
+                            <skipUpgrade>true</skipUpgrade>
+                        </package>
+                        <package>
+                            <name>smartsense-hst</name>
+                            <skipUpgrade>true</skipUpgrade>
+                        </package>
+                    </packages>
+                </osSpecific>
+            </osSpecifics>
+            <themes>
+                <theme>
+                    <fileName>theme.json</fileName>
+                    <default>false</default>
+                </theme>
+                <theme>
+                    <fileName>theme_v2.json</fileName>
+                    <default>false</default>
+                </theme>
+                <theme>
+                    <fileName>theme_v3.json</fileName>
+                    <default>true</default>
+                </theme>
+                <theme>
+                    <fileName>credentials.json</fileName>
+                    <default>true</default>
+                </theme>
+            </themes>
+            <commandScript>
+                <script>scripts/service_check.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>300</timeout>
+            </commandScript>
+            <requiredServices>
+                <!-- <service>YARN</service> <service>TEZ</service> <service>MAPREDUCE2</service> -->
+                <service>AMBARI_METRICS</service>
+            </requiredServices>
+            <quickLinksConfigurations>
+                <quickLinksConfiguration>
+                    <fileName>quicklinks.json</fileName>
+                    <default>true</default>
+                </quickLinksConfiguration>
+            </quickLinksConfigurations>
+        </service>
+    </services>
+</metainfo>

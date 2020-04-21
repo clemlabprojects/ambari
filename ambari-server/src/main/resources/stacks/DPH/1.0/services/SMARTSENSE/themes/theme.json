@@ -1,0 +1,571 @@
+{
+   "name": "default",
+   "description": "Default theme for SmartSense",
+   "configuration": {
+      "layouts": [
+         {
+            "name": "default",
+            "tabs": [
+               {
+                  "name": "basic",
+                  "display-name": "Basic",
+                  "layout": {
+                     "tab-columns": "3",
+                     "tab-rows": "1",
+                     "sections": [
+                        {
+                           "name": "section-account-info",
+                           "display-name": "SmartSense Account",
+                           "column-index": "0",
+                           "column-span": "1",
+                           "row-index": "0",
+                           "row-span": "1",
+                           "section-columns": "1",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-account-info-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        },
+                        {
+                           "name": "section-local-storage-info",
+                           "display-name": "Local Storage",
+                           "column-index": "1",
+                           "column-span": "2",
+                           "row-index": "0",
+                           "row-span": "1",
+                           "section-columns": "2",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-local-storage-info-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-local-storage-info-col2",
+                                 "column-index": "1",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        }
+                     ]
+                  }
+               },
+               {
+                  "name": "data-capture",
+                  "display-name": "Data Capture",
+                  "layout": {
+                     "tab-columns": "3",
+                     "tab-rows": "2",
+                     "sections": [
+                        {
+                           "name": "section-data-capture",
+                           "display-name": "Capture Controls",
+                           "column-index": "0",
+                           "column-span": "3",
+                           "row-index": "0",
+                           "row-span": "1",
+                           "section-columns": "3",
+                           "section-rows": "2",
+                           "subsections": [
+                              {
+                                 "name": "section-data-capture-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-data-capture-col2",
+                                 "column-index": "1",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-data-capture-col3",
+                                 "column-index": "2",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-data-capture-row2-col1",
+                                 "column-index": "0",
+                                 "column-span": "3",
+                                 "row-index": "1",
+                                 "row-span": "1"
+                              }
+                           ]
+                        },
+                        {
+                           "name": "section-anonymization",
+                           "display-name": "Anonymization",
+                           "column-index": "0",
+                           "column-span": "3",
+                           "row-index": "1",
+                           "row-span": "1",
+                           "section-columns": "1",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-anonymization-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        }
+                     ]
+                  }
+               },
+               {
+                  "name": "operations",
+                  "display-name": "Operations",
+                  "layout": {
+                     "tab-columns": "3",
+                     "tab-rows": "3",
+                     "sections": [
+                        {
+                           "name": "section-operations",
+                           "display-name": "Operations",
+                           "column-index": "0",
+                           "column-span": "3",
+                           "row-index": "0",
+                           "row-span": "1",
+                           "section-columns": "3",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-operations-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-operations-col2",
+                                 "column-index": "1",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-operations-col3",
+                                 "column-index": "2",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        },
+                        {
+                           "name": "section-interfaces-and-protocols",
+                           "display-name": "Interfaces and Protocols",
+                           "column-index": "0",
+                           "column-span": "1",
+                           "row-index": "1",
+                           "row-span": "1",
+                           "section-columns": "1",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-interfaces-and-protocols-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        },
+                        {
+                           "name": "section-timers-and-intervals",
+                           "display-name": "Timers and Intervals",
+                           "column-index": "1",
+                           "column-span": "2",
+                           "row-index": "1",
+                           "row-span": "1",
+                           "section-columns": "2",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-timers-and-intervals-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              },
+                              {
+                                 "name": "section-timers-and-intervals-col2",
+                                 "column-index": "1",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        },
+                        {
+                           "name": "section-logging",
+                           "display-name": "Logging",
+                           "column-index": "0",
+                           "column-span": "3",
+                           "row-index": "2",
+                           "row-span": "1",
+                           "section-columns": "1",
+                           "section-rows": "1",
+                           "subsections": [
+                              {
+                                 "name": "section-logging-col1",
+                                 "column-index": "0",
+                                 "column-span": "1",
+                                 "row-index": "0",
+                                 "row-span": "1"
+                              }
+                           ]
+                        }
+                     ]
+                  }
+               }
+            ]
+         }
+      ],
+      "placement": {
+         "configuration-layout": "default",
+         "configs": [
+            {
+               "config": "hst-server-conf/customer.account.name",
+               "subsection-name": "section-account-info-col1"
+            },
+            {
+               "config": "hst-server-conf/customer.smartsense.id",
+               "subsection-name": "section-account-info-col1"
+            },
+            {
+               "config": "hst-server-conf/customer.notification.email",
+               "subsection-name": "section-account-info-col1"
+            },
+            {
+               "config": "hst-server-conf/server.storage.dir",
+               "subsection-name": "section-local-storage-info-col1"
+            },
+            {
+               "config": "hst-server-conf/server.min_required_storage",
+               "subsection-name": "section-local-storage-info-col1"
+            },
+            {
+               "config": "hst-server-conf/server.tmp.dir",
+               "subsection-name": "section-local-storage-info-col2"
+            },
+            {
+               "config": "hst-agent-conf/agent.tmp_dir",
+               "subsection-name": "section-local-storage-info-col2"
+            },
+            {
+               "config": "hst-server-conf/server.port",
+               "subsection-name": "section-interfaces-and-protocols-col1"
+            },
+            {
+               "config": "hst-server-conf/client.password_less_ssh.enabled",
+               "subsection-name": "section-interfaces-and-protocols-col1"
+            },
+            {
+               "config": "hst-server-conf/server.http.session.inactive_timeout",
+               "subsection-name": "section-timers-and-intervals-col1"
+            },
+            {
+               "config": "hst-server-conf/agent.request.syncup.interval",
+               "subsection-name": "section-timers-and-intervals-col1"
+            },
+            {
+               "config": "hst-server-conf/bundle.monitor.interval",
+               "subsection-name": "section-timers-and-intervals-col2"
+            },
+            {
+               "config": "hst-server-conf/agent.request.processing.timeout",
+               "subsection-name": "section-timers-and-intervals-col2"
+            },
+            {
+               "config": "hst-common-conf/agent.capture.level",
+               "subsection-name": "section-data-capture-col1"
+            },
+            {
+               "config": "hst-common-conf/security.anonymization.enabled",
+               "subsection-name": "section-anonymization-col1"
+            },
+            {
+               "config": "hst-agent-conf/bundle.logs_to_capture",
+               "subsection-name": "section-data-capture-col2"
+            },
+            {
+               "config": "hst-agent-conf/bundle.compress_captured_log_locally",
+               "subsection-name": "section-data-capture-col3"
+            },
+            {
+               "config": "capture-levels/capture-levels-content",
+               "subsection-name": "section-data-capture-row2-col1"
+            },
+            {
+               "config": "hst-server-conf/client.threadpool.size.max",
+               "subsection-name": "section-operations-col1"
+            },
+            {
+               "config": "hst-agent-conf/management.patch.auto.apply.enabled",
+               "subsection-name": "section-operations-col1"
+            },
+            {
+               "config": "hst-agent-conf/agent.loglevel",
+               "subsection-name": "section-logging-col1"
+            },
+            {
+               "config": "hst-log4j/hst-log4j-content",
+               "subsection-name": "section-logging-col1"
+            },
+            {
+               "config": "hst-agent-conf/server.connection_retry_count",
+               "subsection-name": "section-operations-col2"
+            },
+            {
+               "config": "hst-agent-conf/server.connection_retry_interval",
+               "subsection-name": "section-operations-col2"
+            },
+            {
+               "config": "hst-agent-conf/upload.retry_count",
+               "subsection-name": "section-operations-col3"
+            },
+            {
+               "config": "hst-agent-conf/upload.retry_interval",
+               "subsection-name": "section-operations-col3"
+            },
+            {
+               "config": "anonymization-rules/anonymization-rules-content",
+               "subsection-name": "section-anonymization-col1"
+            }
+         ]
+      },
+      "widgets": [
+         {
+            "config": "hst-server-conf/customer.account.name",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/customer.smartsense.id",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/customer.notification.email",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/server.min_required_storage",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "GB"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-server-conf/server.storage.dir",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/server.tmp.dir",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-agent-conf/agent.tmp_dir",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/server.port",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-server-conf/client.password_less_ssh.enabled",
+            "widget": {
+               "type": "toggle"
+            }
+         },
+         {
+            "config": "hst-server-conf/server.http.session.inactive_timeout",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-server-conf/agent.request.syncup.interval",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-server-conf/bundle.monitor.interval",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-server-conf/agent.request.processing.timeout",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-common-conf/agent.capture.level",
+            "widget": {
+               "type": "combo"
+            }
+         },
+         {
+            "config": "hst-common-conf/security.anonymization.enabled",
+            "widget": {
+               "type": "toggle"
+            }
+         },
+         {
+            "config": "hst-agent-conf/bundle.logs_to_capture",
+            "widget": {
+               "type": "text-field"
+            }
+         },
+         {
+            "config": "hst-agent-conf/bundle.compress_captured_log_locally",
+            "widget": {
+               "type": "toggle"
+            }
+         },
+         {
+            "config": "hst-server-conf/client.threadpool.size.max",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Threads"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-agent-conf/management.patch.auto.apply.enabled",
+            "widget": {
+               "type": "toggle"
+            }
+         },
+         {
+            "config": "hst-agent-conf/agent.loglevel",
+            "widget": {
+               "type": "combo"
+            }
+         },
+         {
+            "config": "hst-agent-conf/upload.retry_count",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Attempts"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-agent-conf/upload.retry_interval",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-agent-conf/server.connection_retry_count",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Attempts"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "hst-agent-conf/server.connection_retry_interval",
+            "widget": {
+               "type": "slider",
+               "units": [
+                  {
+                     "unit-name": "Sec"
+                  }
+               ]
+            }
+         },
+         {
+            "config": "capture-levels/capture-levels-content",
+            "widget": {
+               "type": "text-area"
+            }
+         },
+         {
+            "config": "anonymization-rules/anonymization-rules-content",
+            "widget": {
+               "type": "text-area"
+            }
+         },
+         {
+            "config": "hst-log4j/hst-log4j-content",
+            "widget": {
+               "type": "text-area"
+            }
+         }
+      ]
+   }
+}
