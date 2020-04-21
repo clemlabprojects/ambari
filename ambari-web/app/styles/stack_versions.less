@@ -1,0 +1,888 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+@import 'common.less';
+
+@left-menu-table-z-index: 999;
+@left-menu-table-margin-top: 150px;
+@version-line-height: 20px;
+
+#advancedRepoAccordion{
+  .panel-heading {
+    background-color: #f0f0f0;
+    a:hover {
+      text-decoration: none;
+    }
+  }
+  .panel-body {
+    .repositories-table {
+      overflow: auto;
+      margin-bottom: 10px;
+      div {
+        float: left;
+        min-height: 1px;
+      }
+      .thead {
+        width: 100%;
+        .th {
+          font-weight: bold;
+        }
+        .first-th {
+          width: 4%;
+        }
+        .os-th {
+          width: 13%;
+        }
+        .name-th {
+          width: 17%;
+        }
+        .url-th {
+          width: 66%;
+        }
+      }
+      .tbody {
+        width: 100%;
+        .trow {
+          width: 100%;
+          border-top: 1px solid #dddddd;
+          padding-top: 10px;
+          .os-td {
+            width: 17%;
+          }
+          .sub-trow {
+            width: 100%;
+            .name-td {
+              width: 16%;
+            }
+            .validation-td {
+              width: 4%;
+            }
+            .url-td {
+              width: 63%;
+              .ember-text-field {
+                width: 100%;
+              }
+            }
+            .clear-td {
+              width: 4%;
+              padding-top: 5px;
+              padding-left: 12px;
+              a {
+                cursor: pointer;
+                text-decoration: none;
+                &.disabled-clear-button {
+                  cursor: default;
+                  .glyphicon-remove-sign {
+                    cursor: default;
+                  }
+                }
+              }
+              .glyphicon-remove-sign {
+                color: #808080;
+              }
+            }
+            .actions-td {
+              width: 10%;
+              padding-top: 5px;
+              a {
+                cursor: pointer;
+              }
+              .icon-undo {
+                color: rgb(243, 178, 11);
+                margin-right: 2px;
+              }
+            }
+          }
+        }
+      }
+      .textfield-error input {
+        border-color: #b94a48;
+        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+      }
+      .disabled-label {
+        color: #808080;
+      }
+    }
+    #skip-validation {
+      .checkbox {
+        margin-left: 3px;
+        margin-right: 8px;
+        margin-top: 0;
+      }
+    }
+  }
+}
+.version-box-popup {
+  .modal{
+    overflow: visible;
+    .modal-dialog{
+      width: 340px;
+    }
+    .modal-body {
+      padding: 0px 0px;
+      overflow: visible;
+      padding: 0;
+    }
+  }
+  .version-box-in-popup.version-box {
+    padding: 0;
+    margin: 0;
+    border: none;
+    .out-of-sync-badge {
+      top: 0;
+      left: 0;
+    }
+  }
+}
+
+#stack-upgrade-page,
+.version-box-popup {
+  .versions-slides {
+    overflow-x: auto;
+    padding-bottom: 25px;
+    padding-left: 0;
+    margin-top: 10px;
+    margin-left: -1px;
+    .versions-slides-bar {
+      display: inline-flex;
+    }
+  }
+  .left-menu-table {
+    padding: 10px 0;
+    margin-top: @left-menu-table-margin-top;
+    &.has-special-type-repo-version {
+      margin-top: @left-menu-table-margin-top + @version-line-height;
+    }
+    .border-extended-table {
+      width: 100%;
+      position: relative;
+      z-index: @left-menu-table-z-index;
+      background: transparent;
+      td.service-display-name {
+        border-top: 1px solid #d2d9dd;
+        border-bottom: 1px solid #d2d9dd;
+      }
+    }
+  }
+  div.current-version-box {
+    background: none repeat scroll 0 0 #e6f1f6;
+    box-shadow: 0 8px 6px -6px black;
+  }
+  .version-box {
+    position: relative;
+    background: none repeat scroll 0 0 #fff;
+    border: 1px solid #d2d9dd;
+    margin: 15px 15px 0 0;
+    padding: 0 5px;
+    a.not-active:hover {
+      text-decoration: none;
+    }
+    .out-of-sync-badge {
+      background-color: transparent;
+      font-size: 30px;
+      top: -8px;
+      position: absolute;
+      left: -8px;
+      color: orange;
+      z-index: 3;
+      height: 24px;
+      width: 24px;
+      border-radius: 24px;
+      background-color: #fff;
+      &:before{
+        position: relative;
+        top:-4px;
+      }
+    }
+    .state {
+      margin: 15px 0;
+      line-height: 30px;
+      padding-top: 5px;
+      height: 35px;
+      i {
+        color: #0088cc;
+        font-size: 16px;
+      }
+      i[disabled='disabled'] {
+        color: inherit;
+      }
+      i.glyphicon-warning-sign {
+        color: @health-status-red;
+      }
+      .label {
+        padding: 5px 20px;
+        font-size: 14px;
+      }
+      .btn-group {
+        display: inline-block;
+      }
+      .dropdown-menu {
+        cursor: pointer;
+        text-align: left;
+      }
+    }
+    .installing {
+      margin-top: 10px;
+      padding-top: 0;
+      padding-bottom: 10px;
+      .progress {
+        height: 15px;
+        width: 60%;
+        margin: 0 20%;
+      }
+    }
+    .host-link a {
+      color: #0088cc;
+      font-size: 14px;
+      font-weight: normal;
+    }
+    .version {
+      color: #000;
+      text-align: center;
+      font-weight: 500;
+      font-size: @version-line-height;
+      line-height: @version-line-height;
+      padding: 5px 5px 0 5px;
+      margin-bottom: 0;
+      span {
+        margin-left: 20px;
+      }
+      .pull-right .not-active {
+        font-size: 15px;
+        color: #0088cc;
+        line-height: @version-line-height;
+      }
+    }
+    .repository-name {
+      text-align: center;
+      color: #888;
+      font-size: 12px;
+      margin: 0 0px -18px 1px;
+      padding: 1px;
+    }
+    .patch-icon {
+      text-align: center;
+      color: @health-status-orange;
+      height: @version-line-height;
+      font-size: 14px;
+      margin: 18px 0px -18px 1px;
+      padding: 1px;
+    }
+    .hosts-section {
+      margin-top: 16px;
+      padding-bottom: 8px;
+      width: 100%;
+      text-align: center;
+      background: #f8f8f8;
+      border-top: 1px solid #e4e4e4;
+    }
+    .hosts-section .hosts-bar {
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px;
+    }
+    .hosts-section .host-link {
+      margin: 0;
+      font-size: 12px;
+    }
+  }
+  .version-column {
+    min-height: 500px;
+    width: 115px;
+    margin: 15px 7px 0 7px;
+    .version-column-display-name {
+      color: #000;
+      text-align: center;
+      font-weight: 500;
+      font-size: 16px;
+      line-height: 18px;
+      padding: 5px;
+      margin-bottom: 0;
+    }
+    .version-column-repository-name {
+      text-align: center;
+      font-size: 12px;
+      color: #888;
+    }
+    .version-column-display-type {
+      text-align: center;
+      height: @version-line-height;
+      margin-bottom: 0;
+      color: @health-status-orange;
+    }
+    .version-column-show-details {
+      text-align: center;
+      font-size: 13px;
+      padding: 5px;
+      border-bottom: 1px solid #e4e4e4;
+      margin-bottom: 0;
+      a {
+        cursor: pointer;
+      }
+    }
+    .state {
+      margin: 5px 0 15px 0;
+      line-height: @version-line-height;
+      height: 35px;
+      .label-wrapper {
+        .btn {
+          cursor: auto;
+          text-transform: none;
+          .state-label-text {
+            cursor: text;
+          }
+          &.btn-primary {
+            background-color: @bootstrap-success;
+            border-color: @bootstrap-success;
+          }
+          &.dropdown-toggle {
+            cursor: pointer;
+            padding-right: 8px;
+            padding-left: 8px;
+          }
+          &:active {
+            box-shadow: none;
+          }
+        }
+      }
+      .btn.btn-primary:not(.dropdown-toggle) {
+        padding-left: 5px;
+        padding-right: 5px;
+        min-width: 70px;
+      }
+      .open .dropdown-menu {
+        min-width: 90px;
+        z-index: @left-menu-table-z-index + 2;
+      }
+    }
+    .state.installing {
+      margin: 5px 0 15px 0;
+    }
+    .services-section {
+      width: 100%;
+      text-align: center;
+      padding-bottom: 4px;
+      margin-top: -5px;
+      .service-version-info {
+        line-height: @version-line-height;
+        margin-bottom: 9px;
+        padding-top: 6px;
+        text-align: center;
+        span.label {
+          padding: 5px 15px;
+          background-color: #a3a3a3;
+          z-index: 100;
+          position: relative;
+        }
+      }
+    }
+  }
+  div.version-column {
+    .not-upgradable {
+      position: absolute;
+      z-index: @left-menu-table-z-index + 1;
+      line-height: @version-line-height;
+      padding-left: 10px;
+      margin-right: -20px;
+      cursor: pointer;
+    }
+    .icon-info-sign {
+      color: @blue;
+    }
+    .services-section {
+      .service-version-info {
+        span.label.available {
+          background-color: #468847;
+        }
+      }
+    }
+  }
+  .nav.nav-tabs {
+    margin-bottom: 20px;
+  }
+  .stack-error-row {
+    .image-container {
+      display: inline-block;
+      vertical-align: top;
+      margin-top: 5px;
+      margin-right: 15px;
+      i {
+        vertical-align: middle;
+        font-size: 22px;
+      }
+    }
+    .message-container {
+      display: inline-block;
+      max-width: 70%;
+    }
+    .stack-name {
+      margin-left: 15px;
+    }
+    .btn-container {
+      line-height: 36px;
+      float: right;
+    }
+  }
+}
+
+.install-repo-confirmation,
+.revert-patch-upgrade-confirmation {
+  table {
+    td, th {
+      padding: 5px 15px;
+    }
+  }
+  .available-services-list {
+    margin: 10px 0 30px;
+    .service-version-info {
+      text-align: left;
+      margin-bottom: 20px;
+      .col-md-1 {
+        width: 90px;
+      }
+    }
+  }
+}
+
+#stack-upgrade-dialog,
+#stack-upgrade-record-dialog {
+  .row {
+    margin: 0;
+    padding: 5px 0;
+  }
+  .upgrade-item-text,
+  .upgrade-group-text {
+    padding-left: 0;
+  }
+  .details-box {
+    padding: 5px;
+    .button-row {
+      text-align: right;
+      padding: 5px;
+    }
+    input[type="checkbox"] {
+      margin: 0;
+    }
+  }
+  .task-details {
+    .manage-controls a {
+      cursor: pointer;
+      margin-right: 12px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      box-sizing: border-box;
+    }
+  }
+  .task-list {
+    width: 100%;
+    overflow-x: hidden;
+    .progress {
+      margin-bottom: 0;
+    }
+    padding-left: 15px;
+    i {
+      margin-right: 5px;
+    }
+  }
+  .active-task-label {
+    padding: 8px 15px;
+    display: inline-block;
+  }
+  .col-md-2.task-list-main-wrap {
+    padding-left: 0;
+  }
+  .upgrade-groups {
+    padding-left: 0;
+    .progress {
+      width: 85%;
+      display: inline-block;
+    }
+    .percent {
+      display: inline-block;
+      vertical-align: top;
+    }
+  }
+  .task-list-main-wrap i {
+    font-size: 16px;
+  }
+  ul.failed-info-list {
+    max-height: 500px;
+    margin-top: 5px;
+  }
+  .pause-button {
+    margin-top: -5px;
+    padding-right: 0;
+    i {
+      padding-right: 4px;
+      font-size: 15px;
+    }
+  }
+  .button-row {
+    text-align: right;
+    padding: 5px;
+  }
+}
+
+.upgrade-options-link {
+  padding-left: 50px;
+  display: inline-block;
+  cursor: pointer;
+  width: 150px;
+  vertical-align: bottom;
+  a {
+    font-size: 14px;
+    font-weight: normal;
+  }
+  .icon-cogs {
+    font-size: 16px;
+    color: #0088cc;
+    margin-right: 3px;
+  }
+}
+.upgrade-options-link.disabled {
+  cursor: not-allowed;
+  a, .icon-cogs {
+    color: #808080;
+  }
+  a:hover {
+    text-decoration: none;
+  }
+}
+
+.repository-list {
+  input[type="text"] {
+    width: 80%;
+  }
+}
+
+#upgrade-options-popup-content {
+  .method-options {
+    margin: 10px;
+
+    .method-option {
+      margin-bottom: 5px;
+    }
+    .img-thumbnail {
+      background-color: #e4e4e4;
+      .method-name,.method-icon,.method-description {
+        color: #333;
+      }
+      cursor: pointer;
+      border: none;
+      width: 99%;
+      .method-icon {
+        font-size: 40px;
+      }
+      .method-name {
+        font-size: 16px;
+        font-weight: bold;
+        text-align: center;
+        margin-top: 2px;
+      }
+      .method-description {
+        margin-top: 5px;
+        text-align: center;
+      }
+    }
+
+    .ROLLING {
+      .method-icon {
+        margin-left: 88px;
+      }
+    }
+    .NON_ROLLING, .HOST_ORDERED {
+      .method-icon {
+        margin-left: 94px;
+      }
+    }
+    .selected.ROLLING, .selected.NON_ROLLING {
+      background-color: #d3e7ca;
+      box-shadow: 0 8px 6px -6px #b3b3b3;
+    }
+    .ROLLING:hover, .NON_ROLLING:hover {
+      background-color: #cbe3c2;
+    }
+
+    .img-thumbnail.not-allowed:hover {
+      background-color: #e4e4e4;
+    }
+    .img-thumbnail.not-allowed {
+      cursor: not-allowed;
+    }
+  }
+
+  .method-options.disabled {
+    .img-thumbnail {
+      cursor: not-allowed;
+      &.default-cursor{
+        cursor: default;
+      }
+      .method-name,.method-icon,.method-description {
+        color: #a9a9a9;
+      }
+    }
+    .ROLLING,.NON_ROLLING,
+    .ROLLING:hover,.NON_ROLLING:hover {
+      background-color: #f3f3f3;
+    }
+    .selected.ROLLING,.selected.NON_ROLLING,
+    .selected.ROLLING:hover,.selected.NON_ROLLING:hover {
+      border: solid 2px #a9a9a9;
+      box-shadow: 0 8px 6px -6px #a9a9a9;
+    }
+  }
+
+  .method-precheck-message {
+    a {
+      cursor: pointer;
+    }
+    text-align: center;
+    padding-top: 10px;
+    font-size: 13px;
+    &.checking {
+      padding-top: 5px;
+      line-height: @spinner-small-height;
+      .spinner {
+        display: inline-block;
+        width: auto;
+        height: @spinner-small-height;
+        padding-left: @spinner-small-width + 4px;
+        i {
+          font-size: 1em;
+        }
+        background-repeat: no-repeat;
+        background-size: contain;
+      }
+    }
+  }
+  .method-precheck-message.GREEN {
+    .glyphicon-ok {
+      color: @health-status-green;
+      font-size: 16px;
+    }
+  }
+  .method-precheck-message.RED {
+    .glyphicon-remove {
+      color: #cf2a27;
+      font-size: 16px;
+    }
+  }
+  .method-precheck-message.ORANGE {
+    .glyphicon-warning-sign {
+      color: @health-status-orange;
+      font-size: 16px;
+    }
+  }
+  .tolerance-text .tolerance-option {
+    margin: 5px 15px;
+    .ember-checkbox {
+      margin-top: 0;
+    }
+  }
+  .text {
+    margin-left: 10px;
+  }
+  .glyphicon-question-sign {
+    color: @blue;
+  }
+}
+
+.admin-cluster {
+  .repositories-table {
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    overflow: auto;
+    div {
+      float: left;
+      min-height: 1px;
+    }
+    .thead {
+      width: 100%;
+      .th {
+        font-weight: bold;
+        padding: 8px;
+      }
+      .os-th {
+        width: 10%;
+      }
+      .name-th {
+        width: 16%;
+      }
+      .url-th {
+        width: 66%;
+      }
+    }
+    .tbody {
+      width: 100%;
+      .trow {
+        width: 100%;
+        border-top: 1px solid #ddd;
+        padding-top: 8px;
+        .os-td {
+          padding-top: 4px;
+          padding-left: 8px;
+          width: 9%;
+        }
+        .sub-trow {
+          width: 100%;
+          min-height: 39px;
+          .name-td {
+            width: 16%;
+            padding-top: 4px;
+          }
+          .url-td {
+            width: 60%;
+            .ember-text-field {
+              width: 100%;
+              margin: -1px -1px -1px -2px;
+            }
+          }
+          .url-text-td {
+            width: 70%;
+            padding-top: 4px;
+            padding-left: 3px;
+            overflow: auto;
+          }
+          .edit-td {
+            width: 8%;
+            padding-top: 4px;
+            padding-left: 5px;
+            a {
+              cursor: pointer;
+            }
+          }
+          .edit-buttons-td {
+            // save or cancel
+            width: 9%;
+          }
+          .clear-td {
+            width: 3%;
+            padding-top: 5px;
+            padding-left: 12px;
+            a {
+              cursor: pointer;
+              text-decoration: none;
+            }
+            .glyphicon-remove-sign {
+              color: #808080;
+            }
+          }
+        }
+      }
+    }
+    .textfield-error input {
+      border-color: #b94a48;
+      box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+    }
+    .disabled-textfield input {
+      color: #808080;
+      disabled: disabled;
+      pointer-events: none;
+      cursor: default;
+      background: #E4E4E4;
+    }
+    .disabled-label {
+      color: #808080;
+    }
+  }
+  #skip-validation {
+    margin-top: 10px;
+    .checkbox {
+      margin-left: 3px;
+      margin-right: 8px;
+      margin-top: 0;
+    }
+  }
+}
+
+.upgrade-wizard-modal {
+  .modal-body {
+    position: static;
+  }
+}
+
+#upgrade-failed-hosts {
+  .host-list-container {
+    overflow-y: auto;
+    max-height: 320px;
+    margin-right: -15px;
+    .panel {
+      margin-bottom: 0;
+      .panel-group {
+        border: none;
+        .panel-toggle {
+          line-height: 20px;
+          padding: 5px 0;
+          .label {
+            margin-right: 10px;
+          }
+        }
+      }
+    }
+  }
+}
+
+#upgrade-summary-table {
+  .wide-column {
+    width: 14%;
+  }
+  .widest-column{
+    .ellipsis-overflow-nowrap;
+    width: 20%;
+  }
+  .accordion-group {
+    border-right: none;
+    padding-left: 20px;
+    overflow-x: visible;
+  }
+  .accordion-heading {
+    background-color: transparent;
+  }
+  .accordion-toggle {
+    padding: 5px;
+    display: inline-block;
+    float: left;
+    line-height: 10px;
+    margin-left: -20px;
+    cursor: pointer;
+  }
+  .accordion-body {
+    width: 400%;
+    min-width: 400px;
+    .accordion-inner {
+      padding-top: 20px;
+      .label {
+        padding: 5px 15px;
+        &.label-from {
+          margin-left: 8px;
+        }
+        &.label-to {
+          margin-left: -8px;
+        }
+        &.available {
+          background-color: #468847;
+        }
+      }
+    }
+    .service-name {
+      text-align: left;
+      min-width: 95px;
+    }
+  }
+}
