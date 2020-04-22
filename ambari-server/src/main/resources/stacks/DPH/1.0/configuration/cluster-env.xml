@@ -233,7 +233,7 @@ gpgcheck=0</value>
   <!-- Define stack_name property in the base stack. DO NOT override this property for each stack version -->
   <property>
     <name>stack_name</name>
-    <value>HDP</value>
+    <value>DPH</value>
     <description>The name of the stack.</description>
     <value-attributes>
       <read-only>true</read-only>
@@ -289,7 +289,7 @@ gpgcheck=0</value>
   </property>
   <property>
     <name>stack_root</name>
-    <value>{"HDP":"/usr/hdp"}</value>
+    <value>{"DPH":"/usr/dph"}</value>
     <description>JSON which defines the stack root by stack name</description>
     <value-attributes>
       <read-only>true</read-only>

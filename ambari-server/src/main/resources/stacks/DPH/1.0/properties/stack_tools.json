@@ -1,9 +1,9 @@
 {
-  "HDP": {
+  "DPH": {
     "stack_selector": [
-      "hdp-select",
-      "/usr/bin/hdp-select",
-      "hdp-select"
+      "dph-select",
+      "/usr/bin/dph-select",
+      "dph-select"
     ],
     "conf_selector": [
       "conf-select",
