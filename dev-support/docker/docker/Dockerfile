@@ -87,25 +87,32 @@ RUN git config --global url."https://".insteadOf git://
 
 # Install python, nodejs and npm
 RUN yum -y install epel-release
-RUN yum -y install nodejs npm --enablerepo=epel
-RUN npm install -g npm@2.1.11
-RUN npm install -g brunch@1.7.20
+
+WORKDIR '/tmp'
+ENV NPM_CONFIG_LOGLEVEL info
+ENV NODE_VERSION 12.14.0
+RUN yum install -y xz \
+  && curl -SLO "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" \
+  && tar -xJf "node-v$NODE_VERSION-linux-x64.tar.xz" -C /usr/local --strip-components=1 \
+  && rm -f "/node-v$NODE_VERSION-linux-x64.tar.xz"
+RUN node -v
+RUN npm install -g bower yarn
 
 # Once run some mvn commands to cache .m2/repository
 WORKDIR /tmp
-RUN git clone https://github.com/apache/ambari.git
-WORKDIR /tmp/ambari
+# RUN git clone https://github.com/apache/ambari.git
+# WORKDIR /tmp/ambari
 
-RUN mvn -B -X clean install package rpm:rpm -DskipTests -Dpython.ver="python >= 2.6" -Preplaceurl
+# RUN mvn -B -X clean install package rpm:rpm -DskipTests -Dpython.ver="python >= 2.6" -Preplaceurl
 
-# clean git code because I want to use the one on local filesystem.
-WORKDIR /tmp
-RUN rm -rf /tmp/ambari
+# # clean git code because I want to use the one on local filesystem.
+# WORKDIR /tmp
+# RUN rm -rf /tmp/ambari
 
-RUN mkdir -p /tmp/ambari-build-docker/blueprints
-ADD ./blueprints /tmp/ambari-build-docker/blueprints
-RUN mkdir -p /tmp/ambari-build-docker/bin
-ADD ./bin /tmp/ambari-build-docker/bin
+# RUN mkdir -p /tmp/ambari-build-docker/blueprints
+# ADD ./blueprints /tmp/ambari-build-docker/blueprints
+# RUN mkdir -p /tmp/ambari-build-docker/bin
+# ADD ./bin /tmp/ambari-build-docker/bin
 
 WORKDIR /tmp
 
