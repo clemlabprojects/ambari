@@ -333,7 +333,7 @@
   </property>
   <property>
     <name>yarn.app.mapreduce.am.admin-command-opts</name>
-    <value>-Dhdp.version=${hdp.version}</value>
+    <value>-Dhdp.version=${dph.version}</value>
     <description>
       Java opts for the MR App Master processes.
       The following symbol, if present, will be interpolated: @taskid@ is replaced
@@ -357,19 +357,19 @@
   </property>
   <property>
     <name>mapreduce.admin.map.child.java.opts</name>
-    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${hdp.version}</value>
+    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${dph.version}</value>
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>mapreduce.admin.reduce.child.java.opts</name>
-    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${hdp.version}</value>
+    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${dph.version}</value>
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>mapreduce.application.classpath</name>
-    <value>$PWD/mr-framework/hadoop/share/hadoop/mapreduce/*:$PWD/mr-framework/hadoop/share/hadoop/mapreduce/lib/*:$PWD/mr-framework/hadoop/share/hadoop/common/*:$PWD/mr-framework/hadoop/share/hadoop/common/lib/*:$PWD/mr-framework/hadoop/share/hadoop/yarn/*:$PWD/mr-framework/hadoop/share/hadoop/yarn/lib/*:$PWD/mr-framework/hadoop/share/hadoop/hdfs/*:$PWD/mr-framework/hadoop/share/hadoop/hdfs/lib/*:$PWD/mr-framework/hadoop/share/hadoop/tools/lib/*:/usr/hdp/${hdp.version}/hadoop/lib/hadoop-lzo-0.6.0.${hdp.version}.jar:/etc/hadoop/conf/secure</value>
+    <value>$PWD/mr-framework/hadoop/share/hadoop/mapreduce/*:$PWD/mr-framework/hadoop/share/hadoop/mapreduce/lib/*:$PWD/mr-framework/hadoop/share/hadoop/common/*:$PWD/mr-framework/hadoop/share/hadoop/common/lib/*:$PWD/mr-framework/hadoop/share/hadoop/yarn/*:$PWD/mr-framework/hadoop/share/hadoop/yarn/lib/*:$PWD/mr-framework/hadoop/share/hadoop/hdfs/*:$PWD/mr-framework/hadoop/share/hadoop/hdfs/lib/*:$PWD/mr-framework/hadoop/share/hadoop/tools/lib/*:/usr/dph/${dph.version}/hadoop/lib/hadoop-lzo-0.6.0.${dph.version}.jar:/etc/hadoop/conf/secure</value>
     <description>
       CLASSPATH for MR applications. A comma-separated list of CLASSPATH
       entries.
@@ -378,7 +378,7 @@
   </property>
   <property>
     <name>mapreduce.application.framework.path</name>
-    <value>/hdp/apps/${hdp.version}/mapreduce/mapreduce.tar.gz#mr-framework</value>
+    <value>/dph/apps/${dph.version}/mapreduce/mapreduce.tar.gz#mr-framework</value>
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>
@@ -443,7 +443,7 @@
   </property>
   <property>
     <name>mapreduce.admin.user.env</name>
-    <value>LD_LIBRARY_PATH=/usr/hdp/${hdp.version}/hadoop/lib/native:/usr/hdp/${hdp.version}/hadoop/lib/native/Linux-{{architecture}}-64</value>
+    <value>LD_LIBRARY_PATH=/usr/dph/${dph.version}/hadoop/lib/native:/usr/dph/${dph.version}/hadoop/lib/native/Linux-{{architecture}}-64</value>
     <description>
       Additional execution environment entries for map and reduce task processes.
       This is not an additive property. You must preserve the original value if

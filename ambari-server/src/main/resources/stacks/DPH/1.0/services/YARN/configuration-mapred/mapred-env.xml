@@ -107,7 +107,7 @@
       #export HADOOP_JHS_LOGGER=INFO,RFA # Hadoop JobSummary logger.
       #export HADOOP_IDENT_STRING= #A string representing this instance of hadoop. $USER by default
       #export HADOOP_NICENESS= #The scheduling priority for daemons. Defaults to 0.
-      export HADOOP_OPTS="-Dhdp.version=$HDP_VERSION $HADOOP_OPTS"
+      export HADOOP_OPTS="-Ddph.version=$DPH_VERSION $HADOOP_OPTS"
       export HADOOP_OPTS="-Djava.io.tmpdir={{hadoop_java_io_tmpdir}} $HADOOP_OPTS"
       export JAVA_LIBRARY_PATH="${JAVA_LIBRARY_PATH}:{{hadoop_java_io_tmpdir}}"
 

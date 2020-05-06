@@ -236,7 +236,7 @@ class TezRecommender(service_advisor.ServiceAdvisor):
         putTezProperty("tez.task.resource.memory.mb", configurations["hive-site"]["properties"]["hive.tez.container.size"])
 
     # remove 2gb limit for tez.runtime.io.sort.mb
-    # in HDP 2.3 "tez.runtime.sorter.class" is set by default to PIPELINED, in other case comment calculation code below
+    # in dph 2.3 "tez.runtime.sorter.class" is set by default to PIPELINED, in other case comment calculation code below
     taskResourceMemory = int(configurations["tez-site"]["properties"]["tez.task.resource.memory.mb"])
     # fit io.sort.mb into tenured regions
     putTezProperty("tez.runtime.io.sort.mb", int(taskResourceMemory * 0.8 * 0.33))
