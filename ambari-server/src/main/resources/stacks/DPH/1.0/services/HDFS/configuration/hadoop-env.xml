@@ -296,10 +296,8 @@
 
       # Hadoop Configuration Directory
 
-      {# this is different for HDP1 #}
       # Path to jsvc required by secure HDP 2.0 datanode
       export JSVC_HOME={{jsvc_path}}
-
 
       # The maximum amount of heap to use, in MB. Default is 1000.
       export HADOOP_HEAPSIZE="{{hadoop_heapsize}}"
@@ -394,6 +392,10 @@
       fi
 
       # Add libraries to the hadoop classpath - some may not need a colon as they already include it
+      if [[  -d "/usr/dph/$DPH_VERSION/tez" ]]; then
+        export HADOOP_CLASSPATH=${HADOOP_CLASSPATH}:/usr/dph/$DPH_VERSION/tez/*:/usr/dph/$DPH_VERSION/tez/lib/*:/usr/dph/$DPH_VERSION/tez/conf
+        export CLASSPATH=${CLASSPATH}:/usr/dph/$DPH_VERSION/tez/*:/usr/dph/$DPH_VERSION/tez/lib/*:/usr/dph/$DPH_VERSION/tez/conf
+      fi
       export HADOOP_CLASSPATH=${HADOOP_CLASSPATH}${JAVA_JDBC_LIBS}
 
       # Setting path to hdfs command line
@@ -402,7 +404,7 @@
       # Mostly required for hadoop 2.0
       export JAVA_LIBRARY_PATH=${JAVA_LIBRARY_PATH}:{{hadoop_lib_home}}/native/Linux-{{architecture}}-64
 
-      export HADOOP_OPTS="-Dhdp.version=$HDP_VERSION $HADOOP_OPTS"
+      export HADOOP_OPTS="-Ddph.version=$DPH_VERSION $HADOOP_OPTS"
 
 
       # Fix temporary bug, when ulimit from conf files is not picked up, without full relogin.
