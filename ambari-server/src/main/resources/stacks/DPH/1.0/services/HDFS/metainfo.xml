@@ -23,7 +23,7 @@
       <serviceType>HDFS</serviceType> <!-- This tag is used only for main fileSystem service. It sets filesystem schema for ambari -->
       <displayName>HDFS</displayName>
       <comment>Apache Hadoop Distributed File System</comment>
-      <version>3.1.0</version>
+      <version>3.2.0</version>
 
       <components>
         <component>
