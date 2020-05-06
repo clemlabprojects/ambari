@@ -625,8 +625,8 @@ zookeeper_clientPort = cluster_zookeeper_clientPort
 yarn_hbase_user = status_params.yarn_hbase_user
 yarn_hbase_user_home = format("/user/{yarn_hbase_user}")
 yarn_hbase_user_version_home = format("{yarn_hbase_user_home}/{version}")
-yarn_hbase_app_hdfs_path = format("/hdp/apps/{version}/hbase")
-yarn_service_app_hdfs_path = format("/hdp/apps/{version}/yarn")
+yarn_hbase_app_hdfs_path = format("/dph/apps/{version}/hbase")
+yarn_service_app_hdfs_path = format("/dph/apps/{version}/yarn")
 if rm_ha_id is not None:
   yarn_hbase_app_hdfs_path = format("{yarn_hbase_app_hdfs_path}/{rm_ha_id}")
   yarn_service_app_hdfs_path = format("{yarn_service_app_hdfs_path}/{rm_ha_id}")

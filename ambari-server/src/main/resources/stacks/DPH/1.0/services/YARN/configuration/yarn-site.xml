@@ -1510,7 +1510,7 @@ yarn.node-labels.manager-class
   </property>
   <property>
     <name>yarn.service.framework.path</name>
-    <value>/hdp/apps/${hdp.version}/yarn/service-dep.tar.gz</value>
+    <value>/dph/apps/${dph.version}/yarn/service-dep.tar.gz</value>
     <description>
       YARN Service AM dependency tarball location. Enables faster app submission.
     </description>
@@ -1562,7 +1562,7 @@ yarn.node-labels.manager-class
   </property>
   <property>
     <name>yarn.nodemanager.aux-services.spark_shuffle.classpath</name>
-    <value>{{stack_root}}/${hdp.version}/spark/aux/*</value>
+    <value>{{stack_root}}/${dph.version}/spark/aux/*</value>
     <description>The auxiliary service classpath to use for Spark</description>
     <on-ambari-upgrade add="false"/>
   </property>
