@@ -57,8 +57,8 @@ def spark_service(name, upgrade_type=None, action=None):
     effective_version = params.version if upgrade_type is not None else params.stack_version_formatted
     if effective_version:
       effective_version = format_stack_version(effective_version)
-
-    if name == 'jobhistoryserver' and effective_version and check_stack_feature(StackFeature.SPARK_16PLUS, effective_version):
+    #no need to check stack features as in DPH only spark 2 is installed
+    if name == 'jobhistoryserver' and effective_version:
       # create & copy spark2-hdp-yarn-archive.tar.gz to hdfs
       if not params.sysprep_skip_copy_tarballs_hdfs:
           source_dir=params.spark_home+"/jars"
