@@ -85,7 +85,7 @@
   <property>
     <name>tez.lib.uris</name>
     <display-name>TEZ Lib URIs</display-name>
-    <value>/hdp/apps/${hdp.version}/tez/tez.tar.gz</value>
+    <value>/dph/apps/${dph.version}/tez/tez.tar.gz</value>
     <description>Comma-delimited list of the location of the Tez libraries which will be localized for DAGs.
       Specifying a single .tar.gz or .tgz assumes that a compressed version of the tez libs is being used. This is uncompressed into a tezlibs directory when running containers, and tezlibs/;tezlibs/lib/ are added to the classpath (after . and .*).
       If multiple files are specified - files are localized as regular files, contents of directories are localized as regular files (non-recursive).

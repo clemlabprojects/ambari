@@ -84,11 +84,6 @@
         "min_version": "1.0.0.0"
       },
       {
-        "name": "spark_16plus",
-        "description": "Spark 1.6+",
-        "min_version": "2.4.0.0"
-      },
-      {
         "name": "spark_thriftserver",
         "description": "Spark Thrift Server",
         "min_version": "1.0.0.0"
