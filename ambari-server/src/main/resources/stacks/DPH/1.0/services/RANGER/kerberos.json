@@ -148,7 +148,7 @@
                 "atlas.jaas.KafkaClient.option.storeKey": "true",
                 "atlas.jaas.KafkaClient.option.serviceName": "kafka",
                 "atlas.kafka.sasl.kerberos.service.name": "kafka",
-                "atlas.kafka.security.protocol": "PLAINTEXTSASL",
+                "atlas.kafka.security.protocol": "SASL_PLAINTEXT",
                 "atlas.authentication.method.kerberos": "true"
               }
             }

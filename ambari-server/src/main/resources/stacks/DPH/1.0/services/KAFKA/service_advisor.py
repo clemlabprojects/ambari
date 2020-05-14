@@ -145,7 +145,7 @@ class KafkaServiceAdvisor(service_advisor.ServiceAdvisor):
     """
     Determine if Kerberos is enabled for Kafka.
 
-    If kafka-broker/security.inter.broker.protocol exists and is set to "PLAINTEXTSASL" or "SASL_PLAINTEXT", return True;
+    If kafka-broker/security.inter.broker.protocol exists and is set to "SASL_PLAINTEXT", return True;
     otherwise return false.
 
     The value of this property is first tested in the updated configurations (configurations) then
@@ -161,12 +161,10 @@ class KafkaServiceAdvisor(service_advisor.ServiceAdvisor):
 
     if configurations and "kafka-broker" in configurations and \
             "security.inter.broker.protocol" in configurations["kafka-broker"]["properties"]:
-      return (configurations["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "PLAINTEXTSASL" or
-              configurations["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "SASL_PLAINTEXT")
+      return (configurations["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "SASL_PLAINTEXT")
     elif services and "kafka-broker" in services["configurations"] and \
             "security.inter.broker.protocol" in services["configurations"]["kafka-broker"]["properties"]:
-      return (services["configurations"]["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "PLAINTEXTSASL" or
-              services["configurations"]["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "SASL_PLAINTEXT")
+      return (services["configurations"]["kafka-broker"]["properties"]["security.inter.broker.protocol"] == "SASL_PLAINTEXT")
     else:
       return False
 
@@ -315,9 +313,9 @@ class KafkaRecommender(service_advisor.ServiceAdvisor):
     try:
       listeners = services['configurations']['kafka-broker']['properties']['listeners']
       if listeners and listeners.startswith('PLAINTEXT'):
-        putKafkaBrokerProperty('listeners', listeners.replace('PLAINTEXT', 'PLAINTEXTSASL'))
+        putKafkaBrokerProperty('listeners', listeners.replace('PLAINTEXT', 'SASL_PLAINTEXT'))
     except KeyError as e:
-      self.logger.info('Cannot replace PLAINTEXT to PLAINTEXTSASL in listeners. KeyError: %s' % e)
+      self.logger.info('Cannot replace PLAINTEXT to SASL_PLAINTEXT in listeners. KeyError: %s' % e)
 
   def recommendKAFKAConfigurationsFromHDP26(self, configurations, clusterData, services, hosts):
     if 'kafka-env' in services['configurations'] and 'kafka_user' in services['configurations']['kafka-env']['properties']:
