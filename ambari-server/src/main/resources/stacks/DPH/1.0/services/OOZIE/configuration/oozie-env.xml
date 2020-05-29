@@ -172,6 +172,7 @@ if [ -d "/usr/lib/bigtop-tomcat" ]; then
   export CATALINA_BASE=${CATALINA_BASE:-{{oozie_server_dir}}}
   export CATALINA_TMPDIR=${CATALINA_TMPDIR:-/var/tmp/oozie}
   export OOZIE_CATALINA_HOME=/usr/lib/bigtop-tomcat
+  export JETTY_PID_FILE=/var/run/oozie/oozie.pid
 fi
 
 #Set JAVA HOME
