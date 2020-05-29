@@ -459,4 +459,59 @@
     </description>
     <on-ambari-upgrade add="true"/>
   </property>
+  <property>
+    <name>oozie.https.enabled</name>
+    <value>false</value>
+    <description>
+      Enable HTTPS for Oozie
+    </description>
+    <display-name>SSL</display-name>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>Enabled</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>Disabled</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>oozie.https.keystore.file</name>
+    <value>/etc/security/serverKeys/keystore.jks</value>
+    <display-name>Keystore filename</display-name>
+    <description>
+      Path to oozie keystore
+    </description>
+    <depends-on>
+      <property>
+        <type>oozie-site</type>
+        <name>oozie.https.enabled</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>oozie.https.keystore.password</name>
+    <value>crypted</value>
+    <property-type>PASSWORD</property-type>
+    <description>Keystore password</description>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <display-name>Keystore Password</display-name>
+    <depends-on>
+      <property>
+        <type>oozie-site</type>
+        <name>oozie.https.enabled</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>
