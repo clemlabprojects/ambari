@@ -206,17 +206,21 @@ oracle_driver_jar_name = "ojdbc6.jar"
 
 oozie_metastore_user_name = config['configurations']['oozie-site']['oozie.service.JPAService.jdbc.username']
 
+
 if credential_store_enabled:
   if 'hadoop.security.credential.provider.path' in config['configurations']['oozie-site']:
     cs_lib_path = config['configurations']['oozie-site']['credentialStoreClassPath']
     java_home = config['ambariLevelParams']['java_home']
     alias = 'oozie.service.JPAService.jdbc.password'
+    alias_keystore_passwd = 'oozie.https.keystore.pass'
     provider_path = config['configurations']['oozie-site']['hadoop.security.credential.provider.path']
     oozie_metastore_user_passwd = PasswordString(get_password_from_credential_store(alias, provider_path, cs_lib_path, java_home, jdk_location))
+    # oozie_server_keystore_passwd = PasswordString(get_password_from_credential_store(alias_keystore_passwd, provider_path, cs_lib_path, java_home, jdk_location))
   else:
     raise Exception("hadoop.security.credential.provider.path property should be set")
 else:
   oozie_metastore_user_passwd = default("/configurations/oozie-site/oozie.service.JPAService.jdbc.password","")
+  # oozie_server_keystore_passwd = default("/configurations/oozie-site/oozie.https.keystore.pass","")
 
 oozie_jdbc_connection_url = default("/configurations/oozie-site/oozie.service.JPAService.jdbc.url", "")
 oozie_log_dir = config['configurations']['oozie-env']['oozie_log_dir']

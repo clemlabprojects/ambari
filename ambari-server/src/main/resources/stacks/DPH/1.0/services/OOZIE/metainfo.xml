@@ -26,7 +26,7 @@
         the &lt;a target="_blank" href="http://www.sencha.com/legal/open-source-faq/"&gt;ExtJS&lt;/a&gt;
         Library.
       </comment>
-      <version>4.4.0</version>
+      <version>5.2.0</version>
       <credential-store>
         <supported>true</supported>
         <enabled>true</enabled>

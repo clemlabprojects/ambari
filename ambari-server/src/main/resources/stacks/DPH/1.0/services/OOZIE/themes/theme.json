@@ -129,6 +129,21 @@
           "config": "oozie-site/oozie.authentication.jwt.cookie",
           "subsection-name": "oozie-security-configurations-col"
         }
+        ,
+        {
+          "config": "oozie-site/oozie.https.enabled",
+          "subsection-name": "oozie-security-configurations-col"
+        }
+        ,
+        {
+          "config": "oozie-site/oozie.https.keystore.file",
+          "subsection-name": "oozie-security-configurations-col"
+        }
+        ,
+        {
+          "config": "oozie-site/oozie.https.keystore.pass",
+          "subsection-name": "oozie-security-configurations-col"
+        }
       ]
     },
     "widgets": [
@@ -212,6 +227,24 @@
          "config": "oozie-site/oozie.authentication.jwt.cookie",
         "widget": {
           "type": "text-field"
+        }
+      },
+      {
+        "config": "oozie-site/oozie.https.enabled",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "oozie-site/oozie.https.keystore.file",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "oozie-site/oozie.https.keystore.pass",
+        "widget": {
+          "type": "password"
         }
       }
     ]

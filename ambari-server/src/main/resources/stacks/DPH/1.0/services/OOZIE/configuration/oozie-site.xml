@@ -498,14 +498,35 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
-    <name>oozie.https.keystore.password</name>
+    <name>oozie.https.keystore.pass</name>
     <value>crypted</value>
     <property-type>PASSWORD</property-type>
     <description>Keystore password</description>
     <value-attributes>
       <type>password</type>
+      <overridable>false</overridable>
+      <keystore>true</keystore>
     </value-attributes>
     <display-name>Keystore Password</display-name>
+    <depends-on>
+      <property>
+        <type>oozie-site</type>
+        <name>oozie.https.enabled</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>oozie.https.keystore.pass</name>
+    <value>crypted</value>
+    <property-type>PASSWORD</property-type>
+    <description>Keystore password</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <keystore>true</keystore>
+    </value-attributes>
+    <display-name>Keystore Key Password</display-name>
     <depends-on>
       <property>
         <type>oozie-site</type>
