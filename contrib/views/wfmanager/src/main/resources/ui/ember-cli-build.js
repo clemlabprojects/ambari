@@ -110,7 +110,7 @@ module.exports = function(defaults) {
     app.import('bower_components/code-prettify/src/run_prettify.js')
 
     //x2js
-    app.import('bower_components/abdmob/x2js/xml2json.min.js')
+    app.import('bower_components/x2js/xml2json.min.js')
 
     //vkBeautify
     app.import('bower_components/vkBeautify/vkbeautify.js')
