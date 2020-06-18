@@ -1,0 +1,10 @@
+{
+  "_comment" : "Record format:",
+  "_comment" : "blockedRole-blockedCommand: [blockerRole1-blockerCommand1, blockerRole2-blockerCommand2, ...]",
+  "general_deps" : {
+    "_comment" : "dependencies for all cases",
+    "NIFI_REGISTRY_MASTER-START": ["NIFI_CA-START", "NAMENODE-START", "DATANODE-START", "NIFI_MASTER-START"],
+    "NIFI_REGISTRY_SERVICE_CHECK-SERVICE_CHECK": ["NIFI_REGISTRY_MASTER-START"],
+    "NIFI_REGISTRY_MASTER-RESTART": ["NIFI_CA-RESTART", "NAMENODE-RESTART", "DATANODE-RESTART"]
+  }
+}
