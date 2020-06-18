@@ -1,0 +1,132 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+    <property>
+        <name>content</name>
+        <display-name>Template for providers.xml</display-name>
+        <description>This is the jinja template for providers.xml</description>
+        <value>
+          &lt;!--
+            Licensed to the Apache Software Foundation (ASF) under one or more
+            contributor license agreements.  See the NOTICE file distributed with
+            this work for additional information regarding copyright ownership.
+            The ASF licenses this file to You under the Apache License, Version 2.0
+            (the &quot;License&quot;); you may not use this file except in compliance with
+            the License.  You may obtain a copy of the License at
+                http://www.apache.org/licenses/LICENSE-2.0
+            Unless required by applicable law or agreed to in writing, software
+            distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+            WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+            See the License for the specific language governing permissions and
+            limitations under the License.
+          --&gt;
+          &lt;providers&gt;
+
+              &lt;!-- NOTE: The providers in this file must be listed in the order defined in providers.xsd which is the following:
+                      1) Flow Persistence Provider (Must occur once and only once)
+                      2) Event Hook Providers (May occur 0 or more times)
+                      3) Bundle Persistence Provider (Must occur once and only once)
+               --&gt;
+
+              &lt;flowPersistenceProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.provider.flow.FileSystemFlowPersistenceProvider&lt;/class&gt;
+                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;./flow_storage&lt;/property&gt;
+              &lt;/flowPersistenceProvider&gt;
+
+              &lt;!--
+              &lt;flowPersistenceProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.provider.flow.git.GitFlowPersistenceProvider&lt;/class&gt;
+                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;./flow_storage&lt;/property&gt;
+                  &lt;property name=&quot;Remote To Push&quot;&gt;&lt;/property&gt;
+                  &lt;property name=&quot;Remote Access User&quot;&gt;&lt;/property&gt;
+                  &lt;property name=&quot;Remote Access Password&quot;&gt;&lt;/property&gt;
+              &lt;/flowPersistenceProvider&gt;
+              --&gt;
+
+              &lt;!--
+              &lt;flowPersistenceProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.provider.flow.DatabaseFlowPersistenceProvider&lt;/class&gt;
+              &lt;/flowPersistenceProvider&gt;
+              --&gt;
+
+              &lt;!--
+              &lt;eventHookProvider&gt;
+              	&lt;class&gt;org.apache.nifi.registry.provider.hook.ScriptEventHookProvider&lt;/class&gt;
+              	&lt;property name=&quot;Script Path&quot;&gt;&lt;/property&gt;
+              	&lt;property name=&quot;Working Directory&quot;&gt;&lt;/property&gt;
+              	--&gt;
+              	&lt;!-- Optional Whitelist Event types
+                  &lt;property name=&quot;Whitelisted Event Type 1&quot;&gt;CREATE_FLOW&lt;/property&gt;
+                  &lt;property name=&quot;Whitelisted Event Type 2&quot;&gt;DELETE_FLOW&lt;/property&gt;
+              	--&gt;
+              &lt;!--
+              &lt;/eventHookProvider&gt;
+              --&gt;
+
+              &lt;!-- This will log all events to a separate file specified by the EVENT_APPENDER in logback.xml --&gt;
+              &lt;!--
+              &lt;eventHookProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.provider.hook.LoggingEventHookProvider&lt;/class&gt;
+              &lt;/eventHookProvider&gt;
+              --&gt;
+
+              &lt;extensionBundlePersistenceProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.provider.extension.FileSystemBundlePersistenceProvider&lt;/class&gt;
+                  &lt;property name=&quot;Extension Bundle Storage Directory&quot;&gt;./extension_bundles&lt;/property&gt;
+              &lt;/extensionBundlePersistenceProvider&gt;
+
+              &lt;!-- Example S3 Bundle Persistence Provider
+                      - Requires nifi-registry-aws-assembly to be added to the classpath via a custom extension dir in nifi-registry.properties
+                          Example: nifi.registry.extension.dir.aws=./ext/aws/lib
+                          Where &quot;./ext/aws/lib&quot; contains the extracted contents of nifi-registry-aws-assembly
+                      - &quot;Region&quot; - The name of the S3 region where the bucket exists
+                      - &quot;Bucket Name&quot; - The name of an existing bucket to store extension bundles
+                      - &quot;Key Prefix&quot; - An optional prefix that if specified will be added to the beginning of all S3 keys
+                      - &quot;Credentials Provider&quot; - Indicates how credentials will be provided, must be a value of DEFAULT_CHAIN or STATIC
+                          - DEFAULT_CHAIN will consider in order: Java system properties, environment variables, credential profiles (~/.aws/credentials)
+                          - STATIC requires that &quot;Access Key&quot; and &quot;Secret Access Key&quot; be specified directly in this file
+                      - &quot;Access Key&quot; - The access key to use when using STATIC credentials provider
+                      - &quot;Secret Access Key&quot; - The secret access key to use when using STATIC credentials provider
+                      - &quot;Endpoint URL&quot; - An optional URL that overrides the default AWS S3 endpoint URL.
+                           Set this when using an AWS S3 API compatible service hosted at a different URL.
+               --&gt;
+              &lt;!--
+              &lt;extensionBundlePersistenceProvider&gt;
+                  &lt;class&gt;org.apache.nifi.registry.aws.S3BundlePersistenceProvider&lt;/class&gt;
+                  &lt;property name=&quot;Region&quot;&gt;us-east-1&lt;/property&gt;
+                  &lt;property name=&quot;Bucket Name&quot;&gt;my-bundles&lt;/property&gt;
+                  &lt;property name=&quot;Key Prefix&quot;&gt;&lt;/property&gt;
+                  &lt;property name=&quot;Credentials Provider&quot;&gt;DEFAULT_CHAIN&lt;/property&gt;
+                  &lt;property name=&quot;Access Key&quot;&gt;&lt;/property&gt;
+                  &lt;property name=&quot;Secret Access Key&quot;&gt;&lt;/property&gt;
+                  &lt;property name=&quot;Endpoint URL&quot;&gt;&lt;/property&gt;
+              &lt;/extensionBundlePersistenceProvider&gt;
+              --&gt;
+
+          &lt;/providers&gt;
+
+        </value>
+        <value-attributes>
+            <type>content</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+</configuration>

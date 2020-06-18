@@ -1,0 +1,10 @@
+{
+  "_comment" : "Record format:",
+  "_comment" : "blockedRole-blockedCommand: [blockerRole1-blockerCommand1, blockerRole2-blockerCommand2, ...]",
+  "general_deps" : {
+    "_comment" : "dependencies for all cases",
+    "NIFI_MASTER-START": ["ZOOKEEPER_SERVER-START", "RANGER_USERSYNC-START", "NIFI_CA-START", "NAMENODE-START", "DATANODE-START"],
+    "NIFI_SERVICE_CHECK-SERVICE_CHECK": ["NIFI_MASTER-START"],
+    "NIFI_MASTER-RESTART": ["ZOOKEEPER_SERVER-RESTART", "RANGER_USERSYNC-RESTART", "NIFI_CA-RESTART", "NAMENODE-RESTART", "DATANODE-RESTART"]
+  }
+}

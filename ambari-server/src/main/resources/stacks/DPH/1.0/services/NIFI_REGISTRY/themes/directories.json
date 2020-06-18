@@ -1,0 +1,89 @@
+{
+  "name": "directories",
+  "description": "Directories theme for NIFI REGISTRY service",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "directories",
+        "tabs": [
+          {
+            "name": "directories",
+            "display-name": "Directories",
+            "layout": {
+              "tab-columns": "1",
+              "tab-rows": "4",
+              "sections": [
+                {
+                  "name": "subsection-data-dirs",
+                  "display-name": "DATA DIRS",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-data-dirs",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config": "nifi-registry-ambari-config/nifi.registry.internal.dir",
+          "subsection-name": "subsection-data-dirs"
+        },
+        {
+          "config": "nifi-registry-ambari-config/nifi.registry.config.dir",
+          "subsection-name": "subsection-data-dirs"
+        },
+        {
+          "config": "nifi-registry-ambari-config/nifi.registry.internal.config.dir",
+          "subsection-name": "subsection-data-dirs"
+        },
+        {
+          "config": "nifi-registry-ambari-config/nifi.registry.database.dir",
+          "subsection-name": "subsection-data-dirs"
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "nifi-registry-ambari-config/nifi.registry.internal.dir",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "nifi-registry-ambari-config/nifi.registry.config.dir",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "nifi-registry-ambari-config/nifi.registry.internal.config.dir",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "nifi-registry-ambari-config/nifi.registry.database.dir",
+        "widget": {
+          "type": "text-field"
+        }
+      }
+    ]
+  }
+}
