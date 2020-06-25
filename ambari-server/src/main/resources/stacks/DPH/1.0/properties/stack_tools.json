@@ -6,9 +6,9 @@
       "dph-select"
     ],
     "conf_selector": [
-      "conf-select",
-      "/usr/bin/conf-select",
-      "conf-select"
+      "dph-conf-select",
+      "/usr/bin/dph-conf-select",
+      "dph-conf-select"
     ]
   }
 }
