@@ -392,8 +392,8 @@ def get_nifi_ca_client_dict(config, params, service):
     truststorePasswd = config['configurations'][KEYS[service][SECURITY_CONFIG]][KEYS[service][TRUSTSTORE_PASSWD]]
 
     # default keystore/truststore type if empty
-    keystoreType = 'jks' if len(keystoreType) == 0 else keystoreType
-    truststoreType = 'jks' if len(truststoreType) == 0 else truststoreType
+    keystoreType = '' if len(keystoreType) == 0 else keystoreType
+    truststoreType = '' if len(truststoreType) == 0 else truststoreType
 
     nifi_ca_parent_config = config['configurations']['nifi-ambari-ssl-config']
     nifi_toolkit_tls_token = nifi_ca_parent_config['nifi.toolkit.tls.token']
