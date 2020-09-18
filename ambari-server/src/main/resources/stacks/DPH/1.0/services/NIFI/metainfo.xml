@@ -22,7 +22,7 @@
             <name>NIFI</name>
             <displayName>NiFi</displayName>
             <comment>DPH - Apache NiFi is an easy to use, powerful, and reliable system to process and distribute data.</comment>
-            <version>1.11.4</version>
+            <version>1.12.0</version>
             <components>
                 <component>
                   <name>NIFI_CA</name>

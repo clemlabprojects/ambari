@@ -28,13 +28,13 @@
     <name>nifi.flow.configuration.file</name>
     <value>{{nifi_flow_config_dir}}/flow.xml.gz</value>
     <on-ambari-upgrade add="true"/>
-    <description>The location of the flow configuration file (i.e., the file that contains what is currently displayed on the NiFi graph).</description>    
+    <description>The location of the flow configuration file (i.e., the file that contains what is currently displayed on the NiFi graph).</description>
   </property>
   <property>
     <name>nifi.flow.configuration.archive.dir</name>
     <value>{{nifi_internal_dir}}/archive/</value>
     <on-ambari-upgrade add="true"/>
-    <description>The location of the archive directory where backup copies of the flow.xml are saved.</description>        
+    <description>The location of the archive directory where backup copies of the flow.xml are saved.</description>
   </property>
   <property>
     <name>nifi.flow.configuration.archive.enabled</name>
@@ -73,7 +73,7 @@
     <name>nifi.flowcontroller.autoResumeState</name>
     <value>true</value>
     <on-ambari-upgrade add="true"/>
-    <description>Indicates whether -upon restart- the components on the NiFi graph should return to their last state. The default value is true.</description>    
+    <description>Indicates whether -upon restart- the components on the NiFi graph should return to their last state. The default value is true.</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -169,7 +169,7 @@
     <description>Specifies whether or not this instance of NiFi should start an embedded ZooKeeper Server. This is used in conjunction with the ZooKeeperStateProvider.</description>
     <value-attributes>
       <type>boolean</type>
-    </value-attributes>    
+    </value-attributes>
   </property>
   <property>
     <name>nifi.state.management.embedded.zookeeper.properties</name>
@@ -206,7 +206,7 @@
     <description>If set to true, any change to the repository will be synchronized to the disk, meaning that NiFi will ask the operating system not to cache the information. This is very expensive and can significantly reduce NiFi performance. However, if it is false, there could be the potential for data loss if either there is a sudden power loss or the operating system crashes. The default value is false.</description>
     <value-attributes>
       <type>boolean</type>
-    </value-attributes>    
+    </value-attributes>
   </property>
   <property>
     <name>nifi.flowfile.repository.partitions</name>
@@ -289,7 +289,7 @@
     <description>If set to true, any change to the repository will be synchronized to the disk, meaning that NiFi will ask the operating system not to cache the information. This is very expensive and can significantly reduce NiFi performance. However, if it is false, there could be the potential for data loss if either there is a sudden power loss or the operating system crashes. The default value is false.</description>
     <value-attributes>
       <type>boolean</type>
-    </value-attributes>    
+    </value-attributes>
   </property>
   <property>
     <name>nifi.content.claim.max.appendable.size</name>
@@ -328,7 +328,7 @@
     <name>nifi.content.repository.archive.max.retention.period</name>
     <value>12 hours</value>
     <on-ambari-upgrade add="true"/>
-    <description>	
+    <description>
 If archiving is enabled (see nifi.content.repository.archive.enabled below), then this property specifies the maximum amount of time to keep the archived data. It is 12 hours by default.</description>
   </property>
 
@@ -405,7 +405,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     <description>If set to true, any change to the repository will be synchronized to the disk, meaning that NiFi will ask the operating system not to cache the information. This is very expensive and can significantly reduce NiFi performance. However, if it is false, there could be the potential for data loss if either there is a sudden power loss or the operating system crashes. The default value is false.</description>
     <value-attributes>
       <type>boolean</type>
-    </value-attributes>    
+    </value-attributes>
   </property>
   <property>
     <name>nifi.provenance.repository.journal.count</name>
@@ -456,7 +456,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
   <property>
     <name>nifi.remote.input.secure</name>
-    <value>{{nifi_ssl_enabled}}</value>
+    <value>false</value>
     <on-ambari-upgrade add="true"/>
     <description>This indicates whether communication between this instance of NiFi and remote NiFi instances should be secure. By default, it is set to true. In order for secure site-to-site to work, many Security Properties must also be configured.</description>
   </property>
@@ -555,7 +555,10 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   <!--# security properties #-->
   <property>
     <name>nifi.sensitive.props.key</name>
-    <value>{{nifi_sensitive_props_key}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>This is the password used to encrypt any sensitive property values that are configured in processors. By default, it is blank, but the system administrator should provide a value for it. It can be a string of any length, although the recommended minimum length is 10 characters. Be aware that once this password is set and one or more sensitive processor properties have been configured, this password should not be changed.</description>
   </property>
@@ -571,22 +574,31 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     <on-ambari-upgrade add="true"/>
     <description>The sensitive property provider. The default value is BC.</description>
   </property>
-  <!-- SSL related configs -->  
+  <!-- SSL related configs -->
   <property>
     <name>nifi.security.keystore</name>
-    <value>{{nifi_keystore}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The full path and name of the keystore. It is blank by default.</description>
   </property>
   <property>
     <name>nifi.security.keystoreType</name>
-    <value>{{nifi_keystoreType}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The keystore type. It is blank by default.</description>
   </property>
   <property>
     <name>nifi.security.keystorePasswd</name>
-    <value>{{nifi_keystorePasswd}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The keystore password. It is blank by default.</description>
     <value-attributes>
@@ -596,7 +608,10 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
   <property>
     <name>nifi.security.keyPasswd</name>
-    <value>{{nifi_keyPasswd}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The key password. It is blank by default.</description>
     <value-attributes>
@@ -606,19 +621,25 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
   <property>
     <name>nifi.security.truststore</name>
-    <value>{{nifi_truststore}}</value>
+    <value></value>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The full path and name of the truststore. It is blank by default.</description>
   </property>
   <property>
     <name>nifi.security.truststoreType</name>
-    <value>{{nifi_truststoreType}}</value>
+    <value></value>
     <on-ambari-upgrade add="true"/>
     <description>The truststore type. It is blank by default.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
   </property>
   <property>
     <name>nifi.security.truststorePasswd</name>
-    <value>{{nifi_truststorePasswd}}</value>
+    <value></value>
     <on-ambari-upgrade add="true"/>
     <description>The truststore password. It is blank by default.</description>
     <value-attributes>
@@ -628,7 +649,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
   <property>
     <name>nifi.security.needClientAuth</name>
-    <value>{{nifi_needClientAuth}}</value>
+    <value></value>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
@@ -671,8 +692,8 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
 
   <!-- Identity Mapping Properties -->
-  
-  
+
+
 
   <property>
     <name>nifi.security.identity.mapping.pattern.dn</name>
@@ -683,7 +704,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     <on-ambari-upgrade add="true"/>
     <description>Sample DN pattern property to demonstrate normalizing DNs from certificates into a common identity string. Create your own patterns using nifi.security.identity.mapping.pattern.XXX convention. Sample DN pattern: ^CN=(.*?), OU=(.*?), O=(.*?), L=(.*?), ST=(.*?), C=(.*?)$</description>
   </property>
-  
+
   <property>
     <name>nifi.security.identity.mapping.value.dn</name>
     <value/>
@@ -703,7 +724,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     <on-ambari-upgrade add="true"/>
     <description>Sample kerberos pattern property to demonstrate normalizing DNs from Kerberos principals into a common identity string. Create your own patterns using nifi.security.identity.mapping.pattern.XXX convention. Sample kerberos pattern: ^(.*?)/instance@(.*?)$</description>
   </property>
-  
+
   <property>
     <name>nifi.security.identity.mapping.value.kerb</name>
     <value/>
@@ -727,7 +748,7 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
   </property>
   <property>
     <name>nifi.cluster.protocol.is.secure</name>
-    <value>{{nifi_ssl_enabled}}</value>
+    <value>false</value>
     <on-ambari-upgrade add="true"/>
     <description>This indicates whether cluster communications are secure. The default value is false.</description>
   </property>
@@ -791,14 +812,14 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     If the number of Nodes that have voted is equal to the number specified by the nifi.cluster.flow.election.max.candidates
     property, the cluster will not wait this long. The default is 5 minutes. Note that the time starts as soon as the first vote is cast.</description>
   </property>
-  
+
   <property>
     <name>nifi.cluster.flow.election.max.candidates</name>
     <value>{{nifi_num_nodes}}</value>
-    <on-ambari-upgrade add="true"/>        
-    <description>Specifies the number of Nodes required in the cluster to cause early election of Flows. 
+    <on-ambari-upgrade add="true"/>
+    <description>Specifies the number of Nodes required in the cluster to cause early election of Flows.
     This allows the Nodes in the cluster to avoid having to wait a long time before starting processing if we reach at least this number of nodes in the cluster</description>
-  </property>  
+  </property>
 
   <!--# zookeeper properties, used for cluster management # -->
   <property>
