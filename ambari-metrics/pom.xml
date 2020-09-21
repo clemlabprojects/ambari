@@ -73,11 +73,6 @@
   </distributionManagement>
   <repositories>
     <repository>
-      <id>apache-hadoop</id>
-      <name>hdp</name>
-      <url>https://repo.hortonworks.com/content/groups/public/</url>
-    </repository>
-    <repository>
       <id>apache-snapshots</id>
       <name>snapshots</name>
       <url>https://repository.apache.org/content/repositories/snapshots</url>

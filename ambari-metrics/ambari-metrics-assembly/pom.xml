@@ -1133,10 +1133,10 @@
                       <fileset dir="${project.build.directory}/embedded/${hadoop.folder}/lib/native/"/>
                       <mapper type="regexp" from="libsnappy.so.1.*.*" to="libsnappy.so.1"/>
                     </move>
-                    <move
-                      file="${project.build.directory}/embedded/${hadoop.folder}/lib/native/libhdfs.so.0.0.0"
+                    <!-- <move
+                      file="${project.build.directory}/embedded/${hadoop.folder}/lib/native/libhdfs.so.1.0.0"
                       tofile="${project.build.directory}/embedded/${hadoop.folder}/lib/native/libhdfs.so"
-                      />
+                      /> -->
                     <move
                       file="${project.build.directory}/embedded/${hadoop.folder}/lib/native/libhadoop.so.1.0.0"
                       tofile="${project.build.directory}/embedded/${hadoop.folder}/lib/native/libhadoop.so"
