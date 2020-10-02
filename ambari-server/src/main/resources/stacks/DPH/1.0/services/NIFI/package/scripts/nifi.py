@@ -215,7 +215,7 @@ class Master(Script):
         params.nifi_group,
         nifi_toolkit_util_common.NIFI
       )
-    elif not params.nifi_ssl_enabled:
+    elif not params.nifi_ssl_enabled and (not params.nifi_keystore or not params.nifi_truststore):
       params.nifi_properties = nifi_toolkit_util_common.clean_toolkit_client_files(nifi_current_properties, params.nifi_properties, nifi_toolkit_util_common.NIFI)
     elif params.nifi_ssl_enabled and not run_tls and os.path.isfile(params.nifi_config_dir + '/nifi.properties'):
       params.nifi_properties = nifi_toolkit_util_common.populate_ssl_properties(nifi_toolkit_util_common.convert_properties_to_dict(params.nifi_config_dir + '/nifi.properties'),params.nifi_properties,params, nifi_toolkit_util_common.NIFI)
