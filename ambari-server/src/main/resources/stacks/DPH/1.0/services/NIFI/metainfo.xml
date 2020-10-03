@@ -112,10 +112,10 @@
                  <osFamily>redhat7,amazon2015,suse11,suse12,amazonlinux2</osFamily>
                  <packages>
                    <package>
-                     <name>nifi.noarch</name>
+                     <name>nifi_${stack_version}</name>
                    </package>
                    <package>
-                     <name>nifi-toolkit.noarch</name>
+                     <name>nifi_${stack_version}-toolkit</name>
                    </package>
                  </packages>
 	          </osSpecific>
