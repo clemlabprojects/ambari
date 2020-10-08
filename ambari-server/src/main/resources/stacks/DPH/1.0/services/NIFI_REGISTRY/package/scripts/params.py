@@ -106,16 +106,28 @@ if 'nifi_ca_hosts' in master_configs:
     if len(nifi_ca_hosts) > 0:
         nifi_ca_host = nifi_ca_hosts[0]
 
-# params from nifi-registry-ambari-ssl-config
 nifi_registry_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
-nifi_registry_keystore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystore']
-nifi_registry_keystoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystoreType']
-nifi_registry_keystorePasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystorePasswd']
-nifi_registry_keyPasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keyPasswd']
-nifi_registry_truststore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststore']
-nifi_registry_truststoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststoreType']
-nifi_registry_truststorePasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststorePasswd']
-nifi_registry_needClientAuth = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.needClientAuth']
+
+if nifi_registry_ssl_enabled:
+    # params from nifi-registry-ambari-ssl-config
+    nifi_registry_keystore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystore']
+    nifi_registry_keystoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystoreType']
+    nifi_registry_keystorePasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystorePasswd']
+    nifi_registry_keyPasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keyPasswd']
+    nifi_registry_truststore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststore']
+    nifi_registry_truststoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststoreType']
+    nifi_registry_truststorePasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststorePasswd']
+    nifi_registry_needClientAuth = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.needClientAuth']
+else:
+    nifi_registry_keystore = config['configurations']['nifi-registry-properties']['nifi.registry.security.keystore']
+    nifi_registry_keystoreType = config['configurations']['nifi-registry-properties']['nifi.registry.security.keystoreType']
+    nifi_registry_keystorePasswd = config['configurations']['nifi-registry-properties']['nifi.registry.security.keystorePasswd']
+    nifi_registry_keyPasswd = config['configurations']['nifi-registry-properties']['nifi.registry.security.keyPasswd']
+    nifi_registry_truststore = config['configurations']['nifi-registry-properties']['nifi.registry.security.truststore']
+    nifi_registry_truststoreType = config['configurations']['nifi-registry-properties']['nifi.registry.security.truststoreType']
+    nifi_registry_truststorePasswd = config['configurations']['nifi-registry-properties']['nifi.registry.security.truststorePasswd']
+    nifi_registry_needClientAuth = config['configurations']['nifi-registry-properties']['nifi.registry.security.needClientAuth']
+
 nifi_registry_initial_admin_id = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.initial.admin.identity']
 nifi_registry_ssl_config_content = config['configurations']['nifi-registry-ambari-ssl-config']['content']
 
