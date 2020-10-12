@@ -118,6 +118,12 @@ if nifi_registry_ssl_enabled:
     nifi_registry_truststoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststoreType']
     nifi_registry_truststorePasswd = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.truststorePasswd']
     nifi_registry_needClientAuth = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.needClientAuth']
+    nifi_registry_truststore = nifi_registry_truststore.replace('{nifi_registry_ssl_host}',nifi_registry_host)
+    nifi_registry_keystore = nifi_registry_keystore.replace('{nifi_registry_ssl_host}',nifi_registry_host)
+
+    #populate properties whose values depend on whether SSL enabled
+    nifi_registry_keystore = nifi_registry_keystore.replace('{{nifi_registry_config_dir}}',nifi_registry_config_dir)
+    nifi_registry_truststore = nifi_registry_truststore.replace('{{nifi_registry_config_dir}}',nifi_registry_config_dir)
 else:
     nifi_registry_keystore = config['configurations']['nifi-registry-properties']['nifi.registry.security.keystore']
     nifi_registry_keystoreType = config['configurations']['nifi-registry-properties']['nifi.registry.security.keystoreType']
@@ -137,13 +143,6 @@ nifi_registry_truststoreType = 'jks' if len(nifi_registry_truststoreType) == 0 e
 
 #property that is set to hostname regardless of whether SSL enabled
 nifi_registry_host = socket.getfqdn()
-
-nifi_registry_truststore = nifi_registry_truststore.replace('{nifi_registry_ssl_host}',nifi_registry_host)
-nifi_registry_keystore = nifi_registry_keystore.replace('{nifi_registry_ssl_host}',nifi_registry_host)
-
-#populate properties whose values depend on whether SSL enabled
-nifi_registry_keystore = nifi_registry_keystore.replace('{{nifi_registry_config_dir}}',nifi_registry_config_dir)
-nifi_registry_truststore = nifi_registry_truststore.replace('{{nifi_registry_config_dir}}',nifi_registry_config_dir)
 
 if nifi_registry_ssl_enabled:
     nifi_registry_ssl_host = nifi_registry_host
