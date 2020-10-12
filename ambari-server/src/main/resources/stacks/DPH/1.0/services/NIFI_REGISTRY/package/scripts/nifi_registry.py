@@ -197,7 +197,7 @@ class Master(Script):
               params.nifi_registry_group,
               nifi_toolkit_util_common.NIFI_REGISTRY
             )
-        elif not params.nifi_registry_ssl_enabled:
+        elif not params.nifi_registry_ssl_enabled and (not params.nifi_registry_keystore or not params.nifi_registry_truststore):
             params.nifi_registry_properties = nifi_toolkit_util_common.clean_toolkit_client_files(nifi_registry_current_properties, params.nifi_registry_properties,  nifi_toolkit_util_common.NIFI_REGISTRY)
         elif params.nifi_registry_ssl_enabled and not run_tls and os.path.isfile(params.nifi_registry_config_dir + '/nifi-registry.properties'):
             params.nifi_registry_properties = nifi_toolkit_util_common.populate_ssl_properties(nifi_toolkit_util_common.convert_properties_to_dict(params.nifi_registry_config_dir + '/nifi-registry.properties'),params.nifi_registry_properties,params,  nifi_toolkit_util_common.NIFI_REGISTRY)
