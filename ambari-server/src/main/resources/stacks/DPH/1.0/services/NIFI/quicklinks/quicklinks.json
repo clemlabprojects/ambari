@@ -7,9 +7,9 @@
       "type":"https",
       "checks":[
         {
-          "property":"nifi.node.ssl.isenabled",
+          "property":"nifi.web.https.port",
           "desired":"true",
-          "site":"nifi-ambari-ssl-config"
+          "site":"nifi-properties"
         }
       ]
     },
