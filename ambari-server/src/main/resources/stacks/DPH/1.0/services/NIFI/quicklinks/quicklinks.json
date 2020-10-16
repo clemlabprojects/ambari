@@ -8,7 +8,7 @@
       "checks":[
         {
           "property":"nifi.web.https.port",
-          "desired":"true",
+          "desired":"EXIST",
           "site":"nifi-properties"
         }
       ]

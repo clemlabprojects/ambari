@@ -8,7 +8,7 @@
       "checks":[
         {
           "property":"nifi.registry.web.https.port",
-          "desired":"true",
+          "desired":"EXIST",
           "site":"nifi-registry-properties"
         }
       ]
@@ -23,9 +23,9 @@
         "url":"%@://%@:%@/nifi-registry",
         "port":{
           "http_property": "nifi.registry.port",
-          "http_default_port": "9190",
+          "http_default_port": "61080",
           "https_property": "nifi.registry.port.ssl",
-          "https_default_port": "9191",
+          "https_default_port": "61443",
           "regex": "^(\\d+)$",
           "site": "nifi-registry-ambari-config"
         }
