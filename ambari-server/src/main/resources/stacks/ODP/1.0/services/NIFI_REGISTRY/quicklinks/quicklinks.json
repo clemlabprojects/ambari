@@ -1,0 +1,35 @@
+{
+  "name": "default",
+  "description": "default quick links configuration",
+  "configuration": {
+    "protocol":
+    {
+      "type":"https",
+      "checks":[
+        {
+          "property":"nifi.registry.web.https.port",
+          "desired":"EXIST",
+          "site":"nifi-registry-properties"
+        }
+      ]
+    },
+
+    "links": [
+      {
+        "name": "nifi_registry_ui",
+        "label": "NiFi Registry UI",
+        "requires_user_name": "false",
+        "component_name": "NIFI_REGISTRY_MASTER",
+        "url":"%@://%@:%@/nifi-registry",
+        "port":{
+          "http_property": "nifi.registry.port",
+          "http_default_port": "61080",
+          "https_property": "nifi.registry.port.ssl",
+          "https_default_port": "61443",
+          "regex": "^(\\d+)$",
+          "site": "nifi-registry-ambari-config"
+        }
+      }
+    ]
+  }
+}
