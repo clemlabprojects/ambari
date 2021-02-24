@@ -1,0 +1,6 @@
+{
+  "general_deps" : {
+    "_comment" : "dependencies for SPARK3",
+    "SPARK3_SERVICE_CHECK-SERVICE_CHECK" : ["SPARK3_JOBHISTORYSERVER-START", "APP_TIMELINE_SERVER-START"]
+  }
+}
