@@ -126,7 +126,7 @@
   </property>
   <property>
     <name>is_hbase_system_service_launch</name>
-    <value>false</value>
+    <value>true</value>
     <description>Should Hbase cluster started as system service. This
       configuration depends on use_external_hbase property. If
       use_external_hbase is set, then this property doesn't take effect.
