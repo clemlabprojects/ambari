@@ -517,6 +517,68 @@
           ]
         }
       },
+      "SPARK3": {
+        "LIVY2_CLIENT": {
+          "STACK-SELECT-PACKAGE": "livy2-client",
+          "INSTALL": [
+            "livy2-client"
+          ],
+          "PATCH": [
+            "livy2-client"
+          ],
+          "STANDARD": [
+            "livy2-client"
+          ]
+        },
+        "LIVY2_SERVER": {
+          "STACK-SELECT-PACKAGE": "livy2-server",
+          "INSTALL": [
+            "livy2-server"
+          ],
+          "PATCH": [
+            "livy2-server"
+          ],
+          "STANDARD": [
+            "livy2-server"
+          ]
+        },
+        "SPARK3_CLIENT": {
+          "STACK-SELECT-PACKAGE": "spark3-client",
+          "INSTALL": [
+            "spark3-client"
+          ],
+          "PATCH": [
+            "spark3-client"
+          ],
+          "STANDARD": [
+            "spark3-client"
+          ]
+        },
+        "SPARK3_JOBHISTORYSERVER": {
+          "STACK-SELECT-PACKAGE": "spark3-historyserver",
+          "INSTALL": [
+            "spark3-historyserver"
+          ],
+          "PATCH": [
+            "spark3-historyserver"
+          ],
+          "STANDARD": [
+            "spark3-historyserver"
+          ]
+        },
+        "SPARK3_THRIFTSERVER": {
+          "STACK-SELECT-PACKAGE": "spark3-thriftserver",
+          "INSTALL": [
+            "spark3-thriftserver"
+          ],
+          "PATCH": [
+            "spark3-thriftserver"
+          ],
+          "STANDARD": [
+            "spark3-thriftserver"
+          ]
+        }
+      },
       "SPARK2": {
         "LIVY2_CLIENT": {
           "STACK-SELECT-PACKAGE": "livy2-client",
@@ -919,6 +981,12 @@
           "current_dir": "{0}/current/spark2-client/conf"
         }
       ],
+      "spark3": [
+        {
+          "conf_dir": "/etc/spark3/conf",
+          "current_dir": "{0}/current/spark3-client/conf"
+        }
+      ],
       "sqoop": [
         {
           "conf_dir": "/etc/sqoop/conf",
@@ -1004,6 +1072,9 @@
       },
       "SPARK2": {
         "packages": ["spark2", "livy2"]
+      },
+      "SPARK3": {
+        "packages": ["spark3", "livy2"]
       },
       "SQOOP": {
         "packages": ["sqoop"]
