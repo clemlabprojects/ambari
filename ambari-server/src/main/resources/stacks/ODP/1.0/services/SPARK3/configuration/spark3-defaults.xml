@@ -59,7 +59,7 @@
   </property>
   <property>
     <name>spark.history.ui.port</name>
-    <value>18081</value>
+    <value>18082</value>
     <description>
       The port to which the web interface of the History Server binds.
     </description>
