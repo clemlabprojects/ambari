@@ -283,8 +283,8 @@ policymgr_mgr_url = config['configurations']['admin-properties']['policymgr_exte
 if 'admin-properties' in config['configurations'] and 'policymgr_external_url' in config['configurations']['admin-properties'] and policymgr_mgr_url.endswith('/'):
     policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
 
-xa_audit_db_name = config['configurations']['admin-properties']['audit_db_name']
-xa_audit_db_user = config['configurations']['admin-properties']['audit_db_user']
+xa_audit_db_name = config['configurations']['admin-properties']['db_name']
+xa_audit_db_user = config['configurations']['admin-properties']['db_user']
 xa_db_host = config['configurations']['admin-properties']['db_host']
 repo_name = str(config['clusterName']) + '_nifi_registry'
 
@@ -301,7 +301,7 @@ java_share_dir = '/usr/share/java'
 ranger_nifi_registry_plugin_is_available = 'ranger-nifi-registry-plugin-properties' in config['configurations']
 if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
     enable_ranger_nifi_registry = (config['configurations']['ranger-nifi-registry-plugin-properties']['ranger-nifi-registry-plugin-enabled'].lower() == 'yes')
-    xa_audit_db_password = unicode(config['configurations']['admin-properties']['audit_db_password']) if stack_supports_ranger_audit_db else None
+    xa_audit_db_password = unicode(config['configurations']['admin-properties']['db_password']) if stack_supports_ranger_audit_db else None
     repo_config_password = unicode(config['configurations']['ranger-nifi-registry-plugin-properties']['REPOSITORY_CONFIG_PASSWORD'])
     xa_audit_db_flavor = config['configurations']['admin-properties']['DB_FLAVOR'].lower()
     previous_jdbc_jar_name = None
