@@ -48,15 +48,15 @@ stack_name = default("/clusterLevelParams/stack_name", None)
 stack_version_buildnum = default("/commandParams/version", None)
 zk_stack_version_buildnum = default("/commandParams/version", None)
 
-if stack_name == "HDP":
-  # Override HDP stack root
-  stack_root = "/usr/hdf"
-  # # When installing on HDP, ZK will be in /usr/hdp
-  zk_root = "/usr/hdp"
-  # Override HDP stack version
-  stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/hdf-select", "nifi")
-  # When installing on HDP, ZK will come from HDP so use hdp-select instead of hdf-select
-  zk_stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/hdp-select", "zookeeper-client")
+if stack_name == "ODP":
+  # Override ODP stack root
+  stack_root = "/usr/odp"
+  # # When installing on ODP, ZK will be in /usr/odp
+  zk_root = "/usr/odp"
+  # Override ODP stack version
+  stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/odp-select", "nifi")
+  # When installing on ODP, ZK will come from ODP so use odp-select instead of hdf-select
+  zk_stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/odp-select", "zookeeper-client")
 elif not stack_version_buildnum and stack_name:
   stack_version_buildnum = get_component_version_from_symlink(stack_name, "nifi")
   zk_stack_version_buildnum = get_component_version_from_symlink(stack_name, "zookeeper-client")
@@ -358,8 +358,8 @@ smokeuser_principal = config['configurations']['cluster-env']['smokeuser_princip
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
 stack_support_nifi_toolkit_package = check_stack_feature('nifi_toolkit_package', version_for_stack_feature_checks)
-#some released HDP stacks will not have this stack feature, manually check
-if not stack_support_nifi_toolkit_package and stack_name == "HDP" or "ODP":
+#some released ODP stacks will not have this stack feature, manually check
+if not stack_support_nifi_toolkit_package and stack_name == "ODP":
   marker_script = os.path.join(stack_root, "current/nifi-toolkit/bin/tls-toolkit.sh")
   if sudo.path_isfile(marker_script):
     stack_support_nifi_toolkit_package = True
