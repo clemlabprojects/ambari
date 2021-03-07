@@ -94,12 +94,46 @@ nifi_max_mem = config['configurations']['nifi-ambari-config']['nifi.max_mem']
 nifi_ambari_reporting_frequency = config['configurations']['nifi-ambari-config']['nifi.ambari_reporting_frequency']
 nifi_ambari_reporting_enabled = config['configurations']['nifi-ambari-config']['nifi.ambari_reporting_enabled']
 
-nifi_ssl_enabled = config['configurations']['nifi-ambari-ssl-config']['nifi.node.ssl.isenabled']
+
 nifi_host_name = config['agentLevelParams']['hostname']
+
+### SSL ###
 # note: nifi.node.port and nifi.node.ssl.port must be defined in same xml file for quicklinks to work
+nifi_ambari_ssl_enabled = config['configurations']['nifi-ambari-ssl-config']['nifi.node.ssl.isenabled']
+#nifi_ssl_enabled = config['configurations']['nifi-ambari-ssl-config']['nifi.node.ssl.isenabled']
+
+if nifi_ambari_ssl_enabled:
+  # params from nifi-ambari-ssl-config
+  nifi_keystore = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystore']
+  nifi_keystoreType = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystoreType']
+  nifi_keystorePasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystorePasswd']
+  nifi_keyPasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keyPasswd']
+  nifi_truststore = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststore']
+  nifi_truststoreType = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststoreType']
+  nifi_truststorePasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststorePasswd']
+  nifi_initial_admin_id = config['configurations']['nifi-ambari-ssl-config']['nifi.initial.admin.identity']
+  nifi_ssl_config_content = config['configurations']['nifi-ambari-ssl-config']['content']
+else:
+  nifi_keystore = config['configurations']['nifi-properties']['nifi.security.keystore']
+  nifi_keystoreType = config['configurations']['nifi-properties']['nifi.security.keystoreType']
+  nifi_keystorePasswd = config['configurations']['nifi-properties']['nifi.security.keystorePasswd']
+  nifi_keyPasswd = config['configurations']['nifi-properties']['nifi.security.keyPasswd']
+  nifi_truststore = config['configurations']['nifi-properties']['nifi.security.truststore']
+  nifi_truststoreType = config['configurations']['nifi-properties']['nifi.security.truststoreType']
+  nifi_truststorePasswd = config['configurations']['nifi-properties']['nifi.security.truststorePasswd']
+  nifi_initial_admin_id = config['configurations']['nifi-ambari-ssl-config']['nifi.initial.admin.identity']
+  nifi_ssl_config_content = config['configurations']['nifi-ambari-ssl-config']['content']
+
 nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
 nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
 nifi_node_protocol_port = config['configurations']['nifi-ambari-config']['nifi.node.protocol.port']
+if nifi_ambari_ssl_enabled:
+  nifi_ssl_enabled = 'true'
+elif nifi_keystore:
+  nifi_ssl_enabled = 'true'
+else:
+  nifi_ssl_enabled = 'false'
+
 nifi_url = format("https://{nifi_host_name}:{nifi_node_ssl_port}") if nifi_ssl_enabled else format("http://{nifi_host_name}:{nifi_node_port}")
 
 #zookeeper node path
@@ -160,32 +194,6 @@ if 'nifi_ca_hosts' in master_configs:
   nifi_ca_hosts = master_configs['nifi_ca_hosts']
   if len(nifi_ca_hosts) > 0:
     nifi_ca_host = nifi_ca_hosts[0]
-
-### Custom ###
-
-if nifi_ssl_enabled:
-  # params from nifi-ambari-ssl-config
-  nifi_keystore = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystore']
-  nifi_keystoreType = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystoreType']
-  nifi_keystorePasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keystorePasswd']
-  nifi_keyPasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.keyPasswd']
-  nifi_truststore = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststore']
-  nifi_truststoreType = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststoreType']
-  nifi_truststorePasswd = config['configurations']['nifi-ambari-ssl-config']['nifi.security.truststorePasswd']
-  nifi_initial_admin_id = config['configurations']['nifi-ambari-ssl-config']['nifi.initial.admin.identity']
-  nifi_ssl_config_content = config['configurations']['nifi-ambari-ssl-config']['content']
-else:
-  nifi_keystore = config['configurations']['nifi-properties']['nifi.security.keystore']
-  nifi_keystoreType = config['configurations']['nifi-properties']['nifi.security.keystoreType']
-  nifi_keystorePasswd = config['configurations']['nifi-properties']['nifi.security.keystorePasswd']
-  nifi_keyPasswd = config['configurations']['nifi-properties']['nifi.security.keyPasswd']
-  nifi_truststore = config['configurations']['nifi-properties']['nifi.security.truststore']
-  nifi_truststoreType = config['configurations']['nifi-properties']['nifi.security.truststoreType']
-  nifi_truststorePasswd = config['configurations']['nifi-properties']['nifi.security.truststorePasswd']
-  nifi_initial_admin_id = config['configurations']['nifi-ambari-ssl-config']['nifi.initial.admin.identity']
-  nifi_ssl_config_content = config['configurations']['nifi-ambari-ssl-config']['content']
-
-### /END Custom ###
 
 if 'nifi.security.needClientAuth' in config['configurations']['nifi-ambari-ssl-config']:
   nifi_needClientAuth = config['configurations']['nifi-ambari-ssl-config']['nifi.security.needClientAuth']
