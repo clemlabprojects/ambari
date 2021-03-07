@@ -76,6 +76,38 @@
         <on-ambari-upgrade add="true"/>
     </property>
     <property>
+        <name>nifi.ssl.use.default.context</name>
+        <value>True</value>
+        <display-name>Authentication</display-name>
+        <description>Use Ranger's Default SSL Context</description>
+        <depends-on>
+            <property>
+                <type>ranger-env</type>
+                <name>ranger-nifi-plugin-enabled</name>
+            </property>
+            <property>
+                <type>nifi-ambari-ssl-config</type>
+                <name>nifi.node.ssl.isenabled</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <overridable>false</overridable>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>True</value>
+                    <label>ON</label>
+                </entry>
+                <entry>
+                    <value>False</value>
+                    <label>OFF</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
         <name>nifi.ssl.keystore</name>
         <value></value>
         <display-name>Keystore for Ranger Service Accessing NiFi</display-name>
