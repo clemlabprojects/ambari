@@ -127,9 +127,10 @@ else:
 nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
 nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
 nifi_node_protocol_port = config['configurations']['nifi-ambari-config']['nifi.node.protocol.port']
+
 if nifi_ambari_ssl_enabled:
   nifi_ssl_enabled = 'true'
-elif nifi_keystore:
+elif nifi_keystore is not None:
   nifi_ssl_enabled = 'true'
 else:
   nifi_ssl_enabled = 'false'
