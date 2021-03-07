@@ -489,6 +489,7 @@ if has_ranger_admin:
       'nifi.ssl.truststore': config['configurations']['ranger-nifi-plugin-properties']['nifi.ssl.truststore'],
       'nifi.ssl.truststoreType': config['configurations']['ranger-nifi-plugin-properties']['nifi.ssl.truststoreType'],
       'nifi.ssl.truststorePassword': config['configurations']['ranger-nifi-plugin-properties']['nifi.ssl.truststorePassword'],
+      'nifi.ssl.context': config['configurations']['ranger-nifi-plugin-properties']['nifi.ssl.use.default.context'],
       'commonNameForCertificate': common_name_for_certificate
     }
   else:
