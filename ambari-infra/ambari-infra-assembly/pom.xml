@@ -82,7 +82,7 @@
             <executions>
               <execution>
                 <id>infra-solr</id>
-                <phase>package</phase>
+                <phase>none</phase>
                 <goals>
                   <goal>rpm</goal>
                 </goals>
@@ -95,36 +95,6 @@
                       <sources>
                         <source>
                           <location>${project.build.directory}/solr</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                  </mappings>
-                </configuration>
-              </execution>
-              <execution>
-                <id>infra-solr-client</id>
-                <phase>package</phase>
-                <goals>
-                  <goal>rpm</goal>
-                </goals>
-                <configuration>
-                  <group>Development</group>
-                  <name>${solr.client.package.name}</name>
-                  <needarch>noarch</needarch>
-                  <targetOS>linux</targetOS>
-                  <postinstallScriptlet>
-                    <scriptFile>${project.basedir}/src/main/package/rpm/solr-client/postinstall.sh</scriptFile>
-                    <fileEncoding>utf-8</fileEncoding>
-                  </postinstallScriptlet>
-                  <mappings>
-                    <mapping>
-                      <directory>${solr.client.mapping.path}</directory>
-                      <sources>
-                        <source>
-                          <location>${solr.client.dir}/target/package</location>
-                          <excludes>
-                            <exclude>libs/checkstyle*.jar</exclude>
-                          </excludes>
                         </source>
                       </sources>
                     </mapping>
