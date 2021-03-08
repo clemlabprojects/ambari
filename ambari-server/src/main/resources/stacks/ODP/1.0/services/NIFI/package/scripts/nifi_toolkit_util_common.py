@@ -470,6 +470,7 @@ def existing_cluster(params):
 @retry(times=20, sleep_time=5, max_sleep_time=20, backoff_factor=2, err_class=Fail)
 def run_toolkit_client(ca_client_dict, config_dir, jdk64_home, java_options, user, group,
                        toolkit_tmp_dir, stack_version_buildnum, no_client_file=False):
+  import params
   Logger.info("Generating NiFi Keystore and Truststore")
   ca_client_script = get_toolkit_script('tls-toolkit.sh', toolkit_tmp_dir, stack_version_buildnum)
   File(ca_client_script, mode=0755)
