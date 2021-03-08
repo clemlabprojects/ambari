@@ -202,8 +202,7 @@ class Master(Script):
                                params.nifi_keystore, params.nifi_keystoreType, params.nifi_keystorePasswd, params.nifi_keyPasswd, nifi_toolkit_util_common.NIFI)
 
     #determine whether new keystore/truststore should be regenerated
-    run_tls = (params.nifi_ca_host and params.nifi_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_current_properties,params.nifi_properties, master_key, nifi_toolkit_util_common.NIFI))
-
+    run_tls = (params.nifi_ca_host and params.nifi_ambari_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_current_properties,params.nifi_properties, master_key, nifi_toolkit_util_common.NIFI))
     if run_tls:
       nifi_toolkit_util_common.move_keystore_truststore(nifi_current_properties, nifi_toolkit_util_common.NIFI)
       params.nifi_properties = nifi_toolkit_util_common.create_keystore_truststore(
@@ -215,7 +214,7 @@ class Master(Script):
         params.nifi_group,
         nifi_toolkit_util_common.NIFI
       )
-    elif not params.nifi_ssl_enabled and (not params.nifi_keystore or not params.nifi_truststore):
+    elif not params.nifi_ambari_ssl_enabled and (not params.nifi_keystore or not params.nifi_truststore):
       params.nifi_properties = nifi_toolkit_util_common.clean_toolkit_client_files(nifi_current_properties, params.nifi_properties, nifi_toolkit_util_common.NIFI)
     elif params.nifi_ssl_enabled and not run_tls and os.path.isfile(params.nifi_config_dir + '/nifi.properties'):
       params.nifi_properties = nifi_toolkit_util_common.populate_ssl_properties(nifi_toolkit_util_common.convert_properties_to_dict(params.nifi_config_dir + '/nifi.properties'),params.nifi_properties,params, nifi_toolkit_util_common.NIFI)
