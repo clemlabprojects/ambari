@@ -1,0 +1,144 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Pluggable modules
+
+{% if http_proxy_server %}
+httpProxyUrl: "{{http_proxy_server}}"
+{%endif%}
+{% if http_proxy_username %}
+httpProxyUsername: "{{http_proxy_username}}"
+{%endif%}
+{% if http_proxy_password %}
+httpProxyPassword: "{{http_proxy_password}}"
+{%endif%}
+
+modules:
+  - name: tag-registry
+    className: com.hortonworks.streamline.registries.tag.service.TagRegistryModule
+  - name: dashboard-registry
+    className: com.hortonworks.streamline.registries.dashboard.service.DashboardRegistryModule
+  - name: model-registry
+    className: com.hortonworks.streamline.registries.model.service.MLModelRegistryModule
+  - name: streams
+    className: com.hortonworks.streamline.streams.service.StreamsModule
+    config:
+      stormHomeDir: "{{storm_client_home}}"
+      schemaRegistryUrl: "{{registry_url}}"
+      mavenRepoUrl: "{{maven_repo_url}}"
+      topologyTestRunResultDir: "{{topology_test_results}}"
+
+catalogRootUrl: {{streamline_catalog_root_url}}
+
+# Jar storage configuration
+fileStorageConfiguration:
+  className: {{jar_storage_class}}
+{% if not jar_db_storage_enabled %}
+  properties:
+    directory: {{jar_storage}}
+  {% if jar_remote_storage_enabled %}
+  fsUrl: {{jar_storage_hdfs_url}}
+  {%endif%}
+{% endif %}
+
+dashboardConfiguration:
+  url: "{{streamline_dashboard_url}}"
+
+storageProviderConfiguration: 
+  properties: 
+    db.properties: 
+      dataSource.password: "{{streamline_storage_connector_password}}"
+      dataSource.url: "{{streamline_storage_connector_connectorURI}}"
+      dataSource.user: "{{streamline_storage_connector_user}}"
+      dataSourceClassName: "{{streamline_storage_java_class}}"
+    db.type: {{streamline_storage_type}}
+    queryTimeoutInSecs: {{streamline_storage_query_timeout}}
+  providerClass: "{{storage_provider_class}}"
+
+{% if security_enabled %}
+authorizerConfiguration:
+  className: {{streamline_authorizer_class}}
+  adminPrincipals: {{streamline_admin_principals}}    
+
+loginConfiguration:
+  className: "com.hortonworks.registries.auth.KerberosLogin"
+  params:
+    kinit.cmd: {{kinit_path_local}}
+    ticket.renew.window.factor: {{streamline_ticket_renew_window_factor}}
+    ticket.renew.jitter: {{streamline_ticket_renew_jitter}}
+    min.time.before.relogin: {{streamline_min_time_before_login}}
+{%endif%}
+
+server:
+  rootPath: '/api/*'
+  applicationConnectors:
+{% if not streamline_ssl_enabled %}
+    - type: http
+      port: {{streamline_port}}
+{% else %}
+    - type: https
+      port: {{streamline_ssl_port}}
+      keyStorePath: {{streamline_keyStorePath}}
+      keyStorePassword: {{streamline_keyStorePassword}}
+      keyStoreType: {{streamline_keyStoreType}}
+      trustStorePath: {{streamline_trustStorePath}}
+      trustStorePassword: {{streamline_trustStorePassword}}
+      trustStoreType: {{streamline_trustStoreType}}
+      validateCerts: {{streamline_validateCerts}}
+      validatePeers: {{streamline_validatePeers}}
+{% endif %}
+
+  adminConnectors:
+{% if not streamline_ssl_enabled %}
+    - type: http
+      port: {{streamline_admin_port}}
+{% else %}
+    - type: https
+      port: {{streamline_ssl_adminPort}}
+      keyStorePath: {{streamline_keyStorePath}}
+      keyStorePassword: {{streamline_keyStorePassword}}
+      keyStoreType: {{streamline_keyStoreType}}
+      trustStorePath: {{streamline_trustStorePath}}
+      trustStorePassword: {{streamline_trustStorePassword}}
+      trustStoreType: {{streamline_trustStoreType}}
+      validateCerts: {{streamline_validateCerts}}
+      validatePeers: {{streamline_validatePeers}}
+{% endif %}
+
+{% if streamline_sso_enabled %}
+servletFilters:
+#Note that it is highly recommended to force ssl connections if you are using the jwt handler config below. Unsecured connections will expose jwt
+ - className: "com.hortonworks.registries.auth.server.AuthenticationFilter"
+   params:
+     type: "com.hortonworks.registries.auth.server.JWTAuthenticationHandler"
+     allowed.resources: "401.html,back-default.png,favicon.ico"
+     token.validity: {{streamline_authentication_sso_token_validity}}
+     authentication.provider.url: "{{streamline_authentication_provider_url}}"
+     public.key.pem: "{{streamline_public_key_pem}}"
+{% elif security_enabled %}
+servletFilters:
+  - className: {{streamline_servlet_filter}}
+    params:
+      type: "kerberos"
+      kerberos.principal: "{{streamline_ui_jaas_principal}}"
+      kerberos.keytab: "{{streamline_ui_keytab_path}}"
+      kerberos.name.rules: "{{streamline_servlet_kerberos_name_rules}}"
+      token.validity: "{{streamline_servlet_token_validity}}"
+      cookie.path: "/"
+      allowed.resources: "401.html,back-default.png,favicon.ico"
+{% endif %}
+
+logging:
+    {{streamline_log_template}}

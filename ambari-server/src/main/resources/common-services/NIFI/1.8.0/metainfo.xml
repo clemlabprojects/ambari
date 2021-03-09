@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<metainfo>
+    <schemaVersion>2.0</schemaVersion>
+    <services>
+        <service>
+            <name>NIFI</name>
+            <version>1.8.0</version>
+            <extends>common-services/NIFI/1.7.0</extends>
+            <components>
+                <component>
+                    <name>NIFI_CA</name>
+                    <versionAdvertised>true</versionAdvertised>
+                </component>
+            </components>
+            <osSpecifics>
+                <osSpecific>
+                    <osFamily>redhat7,amazon2015,suse11,suse12,amazonlinux2</osFamily>
+                    <packages>
+                        <package>
+                            <name>nifi_${stack_version}</name>
+                        </package>
+                        <package>
+                            <name>nifi_${stack_version}-toolkit</name>
+                        </package>
+                    </packages>
+                </osSpecific>
+                <osSpecific>
+                    <osFamily>debian9,ubuntu14,ubuntu16</osFamily>
+                    <packages>
+                        <package>
+                            <name>nifi-${stack_version}</name>
+                        </package>
+                        <package>
+                            <name>nifi-${stack_version}-toolkit</name>
+                        </package>
+                    </packages>
+                </osSpecific>
+            </osSpecifics>
+        </service>
+    </services>
+</metainfo>

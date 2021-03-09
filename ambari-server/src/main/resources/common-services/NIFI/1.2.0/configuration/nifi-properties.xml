@@ -1,0 +1,132 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+
+    <property>
+      <name>nifi.version</name>
+      <deleted>true</deleted>
+      <on-ambari-upgrade add="false" update="false" delete="true"/>
+      <description>The version number of the current release.</description>
+    </property>
+
+    <property>
+        <name>nifi.flow.configuration.archive.max.time</name>
+        <value>30 days</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The lifespan of archived flow.xml files. NiFi will delete expired archive files when it updates flow.xml if this property is specified. Expiration is determined based on current system time and the last modified timestamp of an archived flow.xml. If no archive limitation is specified in nifi.properties, NiFi removes archives older than "30 days".</description>
+    </property>
+    <property>
+        <name>nifi.flow.configuration.archive.max.storage</name>
+        <value>500 MB</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The total data size allowed for the archived flow.xml files. NiFi will delete the oldest archive files until the total archived file size becomes less than this configuration value, if this property is specified. If no archive limitation is specified in nifi.properties, NiFi uses "500 MB" for this.</description>
+    </property>
+    <property>
+        <name>nifi.flow.configuration.archive.max.count</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The number of archive files allowed. NiFi will delete the oldest archive files so that only N latest archives can be kept, if this property is specified.</description>
+    </property>
+
+    <property>
+        <name>nifi.web.http.network.interface.default</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The name of the network interface to which NiFi should bind for HTTP requests. </description>
+    </property>
+
+    <property>
+        <name>nifi.web.https.network.interface.default</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The name of the network interface to which NiFi should bind for HTTPS requests. It is blank by default.</description>
+    </property>
+
+    <property>
+        <name>nifi.provenance.repository.debug.frequency</name>
+        <value>1_000_000</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>nifi.provenance.repository.debug.frequency
+            Controls the number of events processed between DEBUG statements documenting the performance metrics of the repository. This value is only used when DEBUG level statements are enabled in the log configuration.</description>
+    </property>
+    <property>
+        <name>nifi.provenance.repository.encryption.key.provider.implementation</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>This is the fully-qualified class name of the key provider. </description>
+    </property>
+    <property>
+        <name>nifi.provenance.repository.encryption.key.provider.location</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The path to the key definition resource (empty for StaticKeyProvider, ./keys.nkp or similar path for FileBasedKeyProvider)</description>
+    </property>
+    <property>
+        <name>nifi.provenance.repository.encryption.key.id</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The active key ID to use for encryption (e.g. Key1).</description>
+    </property>
+    <property>
+        <name>nifi.provenance.repository.encryption.key</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The key to use for StaticKeyProvider</description>
+    </property>
+
+    <property>
+        <name>nifi.cluster.node.protocol.max.threads</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description></description>
+    </property>
+
+</configuration>

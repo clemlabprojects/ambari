@@ -1,0 +1,211 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration>
+  <property>
+    <name>port</name>
+    <value>7788</value>
+    <description>
+      The port on which server accepts connections.
+    </description>
+  </property>
+    <property>
+    <name>adminPort</name>
+    <value>7789</value>
+    <description>
+      The admin port for the server.
+    </description>
+    </property>
+   <property require-input="true">
+    <name>jar.storage.type</name>
+    <display-name>Jar Storage Type</display-name>
+    <value>local</value>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>local</value>
+          <label>Local</label>
+        </entry>
+        <entry>
+          <value>hdfs</value>
+          <label>HDFS</label>
+        </entry>
+      </entries>
+    </value-attributes>
+    <description>Type of the jar storage. 
+      In HA mode, make sure you select HDFS as the jar storage.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>jar.storage.hdfs.url</name>
+    <display-name>Jar Storage HDFS URL</display-name>
+    <value>hdfs://localhost:9090</value>
+    <depends-on>
+      <property>
+        <type>registry-common</type>
+        <name>jar.storage.type</name>
+      </property>
+    </depends-on>
+    <description>Required only if HDFS selected as jar.storage.type. It will
+    be ignored if "Local" storage is selected.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>jar.storage</name>
+    <value>/hdf/registry</value>
+    <description>
+      Directory under which serializers/deserializers will be stored.
+    </description>
+  </property>
+  <property>
+    <name>registry.storage.connector.password</name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <display-name>storage password</display-name>
+    <description>Password for the storage data base.</description>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>registry.storage.connector.user</name>
+    <value>registry</value>
+    <display-name>Registry storage user</display-name>
+    <description>Registry storage user</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>database_name</name>
+    <value>registry</value>
+    <display-name>Registry storage database name</display-name>
+    <description>Registry storage database name</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property require-input="true">
+    <name>registry.storage.type</name>
+    <display-name>Registry storage type</display-name>
+    <value>mysql</value>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>mysql</value>
+          <label>MYSQL</label>
+        </entry>
+        <entry>
+          <value>postgresql</value>
+          <label>POSTGRESQL</label>
+        </entry>
+        <entry>
+          <value>oracle</value>
+          <label>ORACLE</label>
+        </entry>
+      </entries>
+    </value-attributes>
+    <description>Type of the storage. 
+      mysql installed by ambari is only for development and not suitable for production use cases due to it being not HA
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property require-input="true">
+    <name>registry.storage.connector.connectURI</name>
+    <value>jdbc:mysql://localhost:3306/registry</value>
+    <display-name>Registry storage connector url</display-name>
+    <description>Registry storage connector url</description>
+    <on-ambari-upgrade add="false"/>
+    <depends-on>
+      <property>
+        <type>registry-common</type>
+        <name>database_name</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.type</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.connector.port</name>
+      </property>
+    </depends-on>
+  </property>
+  <property required-input="true">
+    <name>registry.storage.query.timeout</name>
+    <value>30</value>
+    <display-name>Registry Storage Query Timeout</display-name>
+    <description> Query timeout in secs </description>
+  </property>
+  <property required-input="true">
+    <name>registry.schema.cache.size</name>
+    <value>10000</value>
+    <description>Number of schema versions to cache</description>
+  </property>
+  <property required-input="true">
+    <name>registry.schema.cache.expiry.interval</name>
+    <value>3600</value>
+    <description>Schema version cache expiry interval</description>
+  </property>
+  <property>
+    <name>httpProxyServer</name>
+    <displayName>HTTP Proxy Server</displayName>
+    <value></value>
+    <description>
+      URL for http proxy server. Please enter it in format protocol_name://host_name:port_number
+    </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>httpProxyUsername</name>
+    <displayName>Username For HTTP Proxy Server</displayName>
+    <value></value>
+    <description>
+      Username for http proxy server.
+    </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>httpProxyPassword</name>
+    <displayName>Password For HTTP Proxy Server Username</displayName>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>
+      Password for http proxy server. Please don't enter password if you haven't entered httpProxyUsername.
+    </description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

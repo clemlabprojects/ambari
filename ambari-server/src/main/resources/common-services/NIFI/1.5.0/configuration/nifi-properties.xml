@@ -1,0 +1,249 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+
+    <property>
+        <name>nifi.version</name>
+        <value>1.5.0.{{stack_version_buildnum}}</value>
+        <on-ambari-upgrade add="true" update="true" delete="false"/>
+        <description>The version number of the current release.</description>
+    </property>
+
+    <!-- OpenId Connect -->
+
+    <property>
+        <name>nifi.security.user.oidc.discovery.url</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The discovery URL for the desired OpenId Connect Provider (http://openid.net/specs/openid-connect-discovery-1_0.html).</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.oidc.connect.timeout</name>
+        <value>5 secs</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Connect timeout when communicating with the OpenId Connect Provider.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.oidc.read.timeout</name>
+        <value>5 secs</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Read timeout when communicating with the OpenId Connect Provider.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.oidc.client.id</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The client id for NiFi after registration with the OpenId Connect Provider.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.oidc.client.secret</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The client secret for NiFi after registration with the OpenId Connect Provider.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.oidc.preferred.jwsalgorithm</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            The preferred algorithm for for validating identity tokens. If this value is blank, it will default to 'RS256' which is required to be supported
+            by the OpenId Connect Provider according to the specification. If this value is 'HS256', 'HS384', or 'HS512', NiFi will attempt to validate HMAC
+            protected tokens using the specified client secret. If this value is 'none', NiFi will attempt to validate unsecured/plain tokens. Other values
+            for this algorithm will attempt to parse as an RSA or EC algorithm to be used in conjunction with the JSON Web Key (JWK) provided through the
+            jwks_uri in the metadata found at the discovery URL.
+        </description>
+    </property>
+
+    <!-- Apache Knox SSO -->
+
+    <property>
+        <name>nifi.security.user.knox.url</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The URL for the Apache Knox log in page.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.knox.publicKey</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The path to the Apache Knox public key that will be used to verify the signatures of the authentication tokens in the HTTP Cookie.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.knox.cookieName</name>
+        <value>hadoop-jwt</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The name of the HTTP Cookie that Apache Knox will generate after successful log in.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.user.knox.audiences</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            Optional. A comma separate listed of allowed audiences. If set, the audience in the token must be present in this listing. The audience that is
+            populated in the token can be configured in Knox.
+        </description>
+    </property>
+
+    <!-- externalize max concurrent replicated requests -->
+
+    <property>
+        <name>nifi.cluster.node.max.concurrent.requests</name>
+        <value>100</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The maximum number of concurrent replicated web requests in the cluster.</description>
+    </property>
+
+    <!-- Remote Process Group contents cache duration -->
+
+    <property>
+        <name>nifi.remote.contents.cache.expiration</name>
+        <value>30 secs</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            Specifies how long NiFi should cache information about a remote NiFi instance when communicating via Site-to-Site. By default, NiFi will cache the
+            responses from the remote system for 30 secs. This allows NiFi to avoid constantly making HTTP requests to the remote system, which is particularly
+            important when this instance of NiFi has many instances of Remote Process Groups.
+        </description>
+    </property>
+
+    <!-- max http header size -->
+
+    <property>
+        <name>nifi.web.max.header.size</name>
+        <value>16 KB</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The maximum size allowed for request and response headers. The default value is 16 KB.</description>
+    </property>
+
+    <!-- web proxy host and context path -->
+
+    <property>
+        <name>nifi.web.proxy.host</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            A comma separated list of allowed HTTP Host header values to consider when NiFi is running securely and will be receiving
+            requests to a different host[:port] than it is bound to. For example, when running in a Docker container or behind a proxy
+            (e.g. localhost:18443, proxyhost:443). By default, this value is blank meaning NiFi should only allow requests sent to the
+            host[:port] that NiFi is bound to.
+        </description>
+    </property>
+
+    <property>
+        <name>nifi.web.proxy.context.path</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            A comma separated list of allowed HTTP X-ProxyContextPath or X-Forwarded-Context header values to consider. By default,
+            this value is blank meaning all requests containing a proxy context path are rejected. Configuring this property would
+            allow requests where the proxy path is contained in this listing.
+        </description>
+    </property>
+
+    <!-- write ahead prov repo -->
+
+    <property>
+        <name>nifi.provenance.repository.concurrent.merge.threads</name>
+        <value>2</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            Apache Lucene creates several "segments" in an Index. These segments are periodically merged together in order to provide faster
+            querying. This property specifies the maximum number of threads that are allowed to be used for *each* of the storage directories. The default value is `2`. For high throughput
+            environments, it is advisable to set the number of index threads larger than the number of merge threads * the number of storage locations. For example, if there are 2 storage
+            locations and the number of index threads is set to 8, then the number of merge threads should likely be less than 4. While it is not critical that this be done, setting the
+            number of merge threads larger than this can result in all index threads being used to merge, which would cause the NiFi flow to periodically pause while indexing is happening,
+            resulting in some data being processed with much higher latency than other data.
+        </description>
+    </property>
+
+    <property>
+        <name>nifi.provenance.repository.warm.cache.frequency</name>
+        <value>1 hour</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            Each time that a Provenance query is run, the query must first search the Apache Lucene indices (at least, in most cases - there are
+            some queries that are run often and the results are cached to avoid searching the Lucene indices). When a Lucene index is opened for the first time, it can be very expensive and take
+            several seconds. This is compounded by having many different indices, and can result in a Provenance query taking much longer. After the index has been opened, the Operating System's
+            disk cache will typically hold onto enough data to make re-opening the index much faster - at least for a period of time, until the disk cache evicts this data. If this value is set,
+            NiFi will periodically open each Lucene index and then close it, in order to "warm" the cache. This will result in far faster queries when the Provenance Repository is large. As with
+            all great things, though, it comes with a cost. Warming the cache does take some CPU resources, but more importantly it will evict other data from the Operating System disk cache and
+            will result in reading (potentially a great deal of) data from the disk. This can result in lower NiFi performance. However, if NiFi is running in an environment where CPU and disk
+            are not fully utilized, this feature can result in far faster Provenance queries. The default value for this property is blank (i.e. disabled).
+        </description>
+    </property>
+
+</configuration>

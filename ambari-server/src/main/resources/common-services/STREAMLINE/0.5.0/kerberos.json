@@ -1,0 +1,68 @@
+{
+  "services": [
+    {
+      "name": "STREAMLINE",
+      "identities": [
+        {
+          "name": "streamline_spnego",
+          "reference": "/spnego"
+        },
+        {
+          "name": "streamline_smokeuser",
+          "reference": "/smokeuser"
+        },
+        {
+          "name": "streamline_components",
+          "principal": {
+            "value": "${streamline-env/streamline_user}-${cluster_name|toLower()}@${realm}",
+            "type": "user",
+            "configuration": "streamline-env/streamline_principal_name"
+          },
+          "keytab": {
+            "file": "${keytab_dir}/streamline.service.keytab",
+            "owner": {
+              "name": "${streamline-env/streamline_user}",
+              "access": "r"
+            },
+            "group": {
+              "name": "${cluster-env/user_group}",
+              "access": ""
+            },
+            "configuration": "streamline-env/streamline_keytab"
+          }
+        }
+      ],
+      "configurations": [
+        {
+          "streamline-common": {
+              "servlet.filter": "com.hortonworks.registries.auth.server.AuthenticationFilter",
+              "kerberos.name.rules": "RULE:[2:$1@$0]([jt]t@.*EXAMPLE.COM)s/.*/$MAPRED_USER/ RULE:[2:$1@$0]([nd]n@.*EXAMPLE.COM)s/.*/$HDFS_USER/ DEFAULT",
+              "token.validity": "36000",
+              "authorizer.class.name": "com.hortonworks.streamline.streams.security.impl.DefaultStreamlineAuthorizer",
+              "admin.principals": "['{{streamline_bare_principal}}']",
+              "ticket.renew.window.factor": "0.8",
+              "ticket.renew.jitter": "0.05",
+              "min.time.before.login": "60000"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "STREAMLINE_SERVER",
+          "identities": [
+            {
+              "name": "streamline_server_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "streamline-env/streamline_ui_principal_name"
+              },
+              "keytab": {
+                "configuration": "streamline-env/streamline_ui_keytab"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

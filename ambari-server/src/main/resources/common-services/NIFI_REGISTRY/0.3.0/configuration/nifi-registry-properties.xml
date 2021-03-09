@@ -1,0 +1,87 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+    <!-- kerb example identity mapping transform -->
+    <property>
+        <name>nifi.registry.security.identity.mapping.transform.kerb</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Transform to apply to mapped identity for this mapping. Valid options are NONE, UPPER, and LOWER and defaults to NONE if not specified.</description>
+    </property>
+
+    <!-- any group example name mapping and transform -->
+    <property>
+        <name>nifi.registry.security.group.mapping.pattern.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Sample pattern property to demonstrate normalizing group names. Create your own patterns using nifi.security.group.mapping.pattern.XXX convention. Sample pattern: ^(.*)$</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.security.group.mapping.value.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Sample value property to demonstrate normalizing and transforming group names. Set values for your own patterns using nifi.security.group.mapping.value.XXX convention. Sample value: $1</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.security.group.mapping.transform.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Transform to apply to mapped group name for this mapping. Valid options are NONE, UPPER, and LOWER and defaults to NONE if not specified.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.extension.dir.ranger</name>
+        <value>{{nifi_registry_install_dir}}/ext/ranger/lib</value>
+        <description>A full path to a directory containing JARs for the NiFi Registry Ranger extension.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.kerberos.service.principal</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <description>The name of the NiFi Registry Kerberos service principal, if used. It is blank by default. Note that this property is used to authenticate NiFi Registry users. Example: HTTP/nifi-registry.example.com or HTTP/nifi-registry.example.com@EXAMPLE.COM</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.kerberos.service.keytab.location</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <description>The file path of the NiFi Registry Kerberos keytab, if used. It is blank by default. Note that this property is used to authenticate NiFi Registry users.</description>
+    </property>
+
+</configuration>

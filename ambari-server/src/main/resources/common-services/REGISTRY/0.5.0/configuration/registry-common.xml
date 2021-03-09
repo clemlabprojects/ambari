@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration>
+  <property>
+    <name>registry.storage.db.hostname</name>
+    <value>localhost:3306</value>
+    <display-name>Database Host with Port</display-name>
+    <description>Database Host or Server Name (FQDN) with port value </description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>db_root_user</name>
+    <value>root</value>
+    <display-name>Database Administrator (DBA) username</display-name>
+    <description>Database Administrator (DBA) username. This user should have dba permission to create schema registry's database and user</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="true">
+    <name>registry.storage.connector.connectURI</name>
+    <value>jdbc:mysql://localhost:3306/registry</value>
+    <value-attributes>
+      <read_only>true</read_only>
+    </value-attributes>
+    <display-name>Registry storage connector url</display-name>
+    <description>Registry storage connector url</description>
+    <on-ambari-upgrade add="true"/>
+    <depends-on>
+      <property>
+        <type>registry-common</type>
+        <name>database_name</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.type</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.db.hostname</name>
+      </property>
+    </depends-on>
+  </property>
+  <property>
+    <name>db_root_jdbc_url</name>
+    <value>jdbc:mysql://localhost:3306</value>
+    <value-attributes>
+      <read_only>true</read_only>
+    </value-attributes>
+    <display-name>JDBC connect string for Database Administrator (DBA) user</display-name>
+    <description>JDBC connect string for Database Administrator (DBA) user</description>
+    <on-ambari-upgrade add="true"/>
+    <depends-on>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.type</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.db.hostname</name>
+      </property>
+      <property>
+        <type>registry-common</type>
+        <name>registry.storage.connector.connectURI</name>
+      </property>
+    </depends-on>
+  </property>
+  <property>
+    <name>db_root_password</name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <display-name>Database Administrator (DBA) password</display-name>
+    <description>Database Administrator (DBA) password for the storage data base.</description>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>registry.ssl.port</name>
+    <value>7790</value>
+    <display-name>Schema Registry port (SSL)</display-name>
+    <description>HTTPS port Schema Registry node runs on when SSL is enabled</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.ssl.adminPort</name>
+    <value>7791</value>
+    <display-name>Schema Registry adminport (SSL)</display-name>
+    <description>HTTPS adminport Schema Registry node runs on when SSL is enabled</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+</configuration>

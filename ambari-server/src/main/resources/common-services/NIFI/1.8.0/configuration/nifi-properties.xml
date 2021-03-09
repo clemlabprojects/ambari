@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+
+    <property>
+        <name>nifi.version</name>
+        <value>1.8.0.{{stack_version_buildnum}}</value>
+        <on-ambari-upgrade add="true" update="true" delete="false"/>
+        <description>The version number of the current release.</description>
+    </property>
+
+    <property>
+        <name>nifi.security.needClientAuth</name>
+        <on-ambari-upgrade delete="true"/>
+    </property>
+
+    <property>
+        <name>nifi.cluster.load.balance.host</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Specifies the hostname to listen on for incoming connections for load balancing data across the cluster. If not specified, will default to the value used by the nifi.cluster.node.address property.</description>
+    </property>
+
+    <property>
+        <name>nifi.cluster.load.balance.port</name>
+        <value>6342</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Specifies the port to listen on for incoming connections for load balancing data across the cluster. The default value is 6342.</description>
+    </property>
+
+    <property>
+        <name>nifi.cluster.load.balance.connections.per.node</name>
+        <value>4</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The maximum number of connections to create between this node and each other node in the cluster. For example, if there are 5 nodes in the cluster and this value is set to 4, there will be up to 20 socket connections established for load-balancing purposes (5 x 4 = 20). The default value is 4.</description>
+    </property>
+
+    <property>
+        <name>nifi.cluster.load.balance.max.thread.count</name>
+        <value>8</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The maximum number of threads to use for transferring data from this node to other nodes in the cluster. If this value is set to 8, for example, there will be up to 8 threads responsible for transferring data to other nodes, regardless of how many nodes are in the cluster. While a given thread can only write to a single socket at a time, a single thread is capable of servicing multiple connections simultaneously because a given connection may not be available for reading/writing at any given time. The default value is 8.</description>
+    </property>
+
+    <property>
+        <name>nifi.cluster.load.balance.comms.timeout</name>
+        <value>30s</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>When communicating with another node, if this amount of time elapses without making any progress when reading from or writing to a socket, then a TimeoutException will be thrown. This will then result in the data either being retried or sent to another node in the cluster, depending on the configured Load Balancing Strategy. The default value is 30 sec.</description>
+    </property>
+
+</configuration>
