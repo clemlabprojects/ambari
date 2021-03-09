@@ -369,6 +369,7 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
             'nifi.registry.ssl.truststore': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststore'],
             'nifi.registry.ssl.truststoreType': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststoreType'],
             'nifi.registry.ssl.truststorePassword': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststorePassword'],
+            'nifi.registry.ssl.use.default.context': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.use.default.context'],
             'commonNameForCertificate': common_name_for_certificate
         }
     else:
