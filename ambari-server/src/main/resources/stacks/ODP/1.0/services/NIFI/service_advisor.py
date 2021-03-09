@@ -21,7 +21,7 @@ import imp
 import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_DIR = os.path.join(SCRIPT_DIR, '../../../../')
+SERVICE_DIR = os.path.join(SCRIPT_DIR, '../../../../../stacks/')
 PARENT_FILE = os.path.join(SERVICE_DIR, 'service_advisor.py')
 
 try:
