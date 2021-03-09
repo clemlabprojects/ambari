@@ -1,0 +1,44 @@
+{
+  "services": [
+    {
+      "name": "REGISTRY",
+      "identities": [
+        {
+          "name": "registry_spnego",
+          "reference": "/spnego"
+        },
+        {
+          "name": "registry_smokeuser",
+          "reference": "/smokeuser"
+        }
+      ],
+      "configurations": [
+        {
+          "registry-common": {
+              "registry.kerberos.non-browser.user-agents" : "",
+              "servlet.filter": "com.hortonworks.registries.auth.server.AuthenticationFilter",
+              "kerberos.name.rules": "RULE:[2:$1@$0]([jt]t@.*EXAMPLE.COM)s/.*/$MAPRED_USER/ RULE:[2:$1@$0]([nd]n@.*EXAMPLE.COM)s/.*/$HDFS_USER/DEFAULT",
+              "token.validity": "36000"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "REGISTRY_SERVER",
+          "identities": [
+            {
+              "name": "registry_master_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "registry-env/registry_ui_principal_name"
+              },
+              "keytab": {
+                "configuration": "registry-env/registry_ui_keytab"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

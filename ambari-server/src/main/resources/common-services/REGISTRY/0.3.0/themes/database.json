@@ -1,0 +1,284 @@
+{
+  "name": "database",
+  "configuration": {
+    "placement": {
+      "configuration-layout": "database",
+      "configs": [
+        {
+          "config": "registry-common/registry.storage.type",
+          "subsection-name": "subsection-registry-row1-col1"
+        },
+        {
+          "config": "registry-common/database_name",
+          "subsection-name": "subsection-registry-row1-col1"
+        },
+        {
+          "config": "registry-common/registry.storage.connector.user",
+          "subsection-name": "subsection-registry-row1-col1"
+        },
+        {
+          "config": "registry-common/registry.storage.connector.connectURI",
+          "subsection-name": "subsection-registry-row1-col1"
+        },
+        {
+          "config": "registry-common/registry.storage.db.hostname",
+          "subsection-name": "subsection-registry-row1-col2"
+        },
+        {
+          "config": "registry-common/registry.storage.connector.password",
+          "subsection-name": "subsection-registry-row1-col2"
+        },
+        {
+          "config": "registry-env/create_db_dbuser",
+          "subsection-name": "subsection-registry-db-row2",
+          "depends-on": [
+            {
+              "configs":[
+                "registry-common/registry.storage.type"
+              ],
+              "if": "${registry-common/registry.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "registry-common/db_root_user",
+          "subsection-name": "subsection-registry-db-root-user-col1",
+          "depends-on": [
+            {
+              "configs":[
+                "registry-common/registry.storage.type"
+              ],
+              "if": "${registry-common/registry.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "registry-common/db_root_jdbc_url",
+          "subsection-name": "subsection-registry-db-root-user-col1",
+          "depends-on": [
+            {
+              "configs":[
+                "registry-common/registry.storage.type"
+              ],
+              "if": "${registry-common/registry.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "registry-common/db_root_password",
+          "subsection-name": "registry-registry-db-root-user-col2",
+          "depends-on": [
+            {
+              "configs":[
+                "registry-common/registry.storage.type"
+              ],
+              "if": "${registry-common/registry.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "registry-common/database_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-common/registry.storage.type",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "registry-common/registry.storage.connector.user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-common/registry.storage.connector.password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "registry-common/registry.storage.db.hostname",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-common/registry.storage.connector.connectURI",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-env/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "registry-common/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-common/db_root_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "registry-common/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      }
+    ],
+    "layouts": [
+      {
+        "name": "database",
+        "tabs": [
+          {
+            "name": "registry_database",
+            "display-name": "Schema Registry Server",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "1",
+              "sections": [
+                {
+                  "name": "section-registry",
+                  "display-name": "",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "2",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-registry-row1-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-registry-row1-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-registry-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "subsection-registry-db-root-user-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "registry-env/create_db_dbuser"
+                          ],
+                          "if": "${registry-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "subsection-registry-db-root-user-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "registry-env/create_db_dbuser"
+                          ],
+                          "if": "${registry-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

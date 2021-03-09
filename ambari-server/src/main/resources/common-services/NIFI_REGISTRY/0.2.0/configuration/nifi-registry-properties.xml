@@ -1,0 +1,116 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+    <!-- Original DB properties re-defined to add "empty-value-valid" -->
+
+    <property>
+        <name>nifi.registry.db.directory</name>
+        <value>{{nifi_registry_database_dir}}</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+        <description>The directory for the H2 database storage. NOTE: This property is only used for migrating from the 0.1.0 database to the new database, please use the JDBC URL to configure the database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.url.append</name>
+        <value>;LOCK_TIMEOUT=25000;WRITE_DELAY=0;AUTO_SERVER=FALSE</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+        <description>Parameters to append to the JDBC URL for the H2 database. NOTE: This property is only used for migrating from the 0.1.0 database to the new database, please use the JDBC URL to configure the database.</description>
+    </property>
+
+    <!-- New DB properties -->
+
+    <property>
+        <name>nifi.registry.db.url</name>
+        <value>jdbc:h2:{{nifi_registry_database_dir}}/nifi-registry-primary;AUTOCOMMIT=OFF;DB_CLOSE_ON_EXIT=FALSE;LOCK_MODE=3;LOCK_TIMEOUT=25000;WRITE_DELAY=0;AUTO_SERVER=FALSE</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The JDBC URL for the NiFi Registry metadata database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.driver.class</name>
+        <value>org.h2.Driver</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The JDBC driver for the NiFi Registry metadata database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.driver.directory</name>
+        <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The full path to a directory containing one or more driver related JARs to be added to the classpath.
+            If this value is left blank then the JAR must already be on the classpath by adding it to NiFi Registry's lib directory.
+            For H2, the driver is already bundled so this value can be left blank.
+        </description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.username</name>
+        <value>nifireg</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The username for the NiFi Registry metadata database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.password</name>
+        <value></value>
+        <value-attributes>
+            <type>password</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>The password for the NiFi Registry metadata database. When using H2 this value will be used to set the password the first time
+            the database is created. Changing this value will not automatically change the password in the database, it must be changed in the
+            database first and then this value must be updated accordingly.
+        </description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.maxConnections</name>
+        <value>5</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The size of the connection pool for the NiFi Registry metadata database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.sql.debug</name>
+        <value>false</value>
+        <on-ambari-upgrade add="true"/>
+        <description>Indicates whether or not SQL debug logging should be enabled for the NiFi Registry metadata database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.sensitive.props.additional.keys</name>
+        <value>nifi.registry.db.password</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>This is a comma delimited list of properties that should be encrypted when written to the nifi-registry.properties files. Used when Encrypt Sensitive Configuration Properties is set to true. </description>
+    </property>
+
+</configuration>

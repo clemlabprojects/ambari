@@ -1,0 +1,188 @@
+{
+    "name": "default",
+    "description": "Default theme for STREAMLINE service",
+    "configuration": {
+        "layouts": [
+            {
+                "name": "default",
+                "tabs": [
+                    {
+                        "name": "default",
+                        "display-name": "STREAMLINE CONFIG",
+                        "layout": {
+                            "tab-columns": "2",
+                            "tab-rows": "1",
+                            "sections": [
+                                {
+                                    "name": "section-streamline",
+                                    "display-name": "",
+                                    "row-index": "0",
+                                    "column-index": "0",
+                                    "row-span": "2",
+                                    "column-span": "2",
+                                    "section-columns": "1",
+                                    "section-rows": "1",
+                                    "subsections": [
+                                        {
+                                            "name": "subsection-streamline-row1-col1",
+                                            "display-name": "STREAMLINE CONFIG",
+                                            "row-index": "0",
+                                            "column-index": "0",
+                                            "row-span": "1",
+                                            "column-span": "1"
+                                        },
+                                        {
+                                            "name": "subsection-streamline-row1-col2",
+                                            "display-name": "STREAMLINE STORAGE",
+                                            "row-index": "0",
+                                            "column-index": "1",
+                                            "row-span": "1",
+                                            "column-span": "1"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ],
+        "placement": {
+            "configuration-layout": "default",
+            "configs": [
+                {
+                    "config": "streamline-common/port",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/adminPort",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/jar.storage.type",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/jar.storage.hdfs.url",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/jar.storage",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/topology.test.results.dir",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/streamline.dashboard.url",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/registry.url",
+                    "subsection-name": "subsection-streamline-row1-col1"
+                },
+                {
+                    "config": "streamline-common/database_name",
+                    "subsection-name": "subsection-streamline-row1-col2"
+                },
+                {
+                    "config": "streamline-common/streamline.storage.type",
+                    "subsection-name": "subsection-streamline-row1-col2"
+                },
+                {
+                    "config": "streamline-common/streamline.storage.connector.user",
+                    "subsection-name": "subsection-streamline-row1-col2"
+                },
+                {
+                    "config": "streamline-common/streamline.storage.connector.password",
+                    "subsection-name": "subsection-streamline-row1-col2"
+                },
+                {
+                    "config": "streamline-common/streamline.storage.connector.connectURI",
+                    "subsection-name": "subsection-streamline-row1-col2"
+                }
+            ]
+        },
+        "widgets": [
+            {
+                "config": "streamline-common/port",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/adminPort",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/jar.storage.type",
+                "widget": {
+                    "type": "combo"
+                }
+            },
+            {
+                "config": "streamline-common/jar.storage.hdfs.url",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/jar.storage",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/topology.test.results.dir",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/streamline.dashboard.url",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/registry.url",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/database_name",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/streamline.storage.type",
+                "widget": {
+                    "type": "combo"
+                }
+            },
+            {
+                "config": "streamline-common/streamline.storage.connector.user",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "streamline-common/streamline.storage.connector.password",
+                "widget": {
+                    "type": "password"
+                }
+            },
+            {
+                "config": "streamline-common/streamline.storage.connector.connectURI",
+                "widget": {
+                    "type": "text-field"
+                }
+            }
+        ]
+    }
+}

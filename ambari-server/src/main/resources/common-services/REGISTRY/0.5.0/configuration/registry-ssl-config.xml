@@ -1,0 +1,117 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration>
+
+  <property>
+    <name>registry.ssl.isenabled</name>
+    <value>false</value>
+    <display-name>Enable SSL</display-name>
+    <description>
+       Check flag to enable SSL.
+    </description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <!-- ssl properties -->
+  <property>
+    <name>registry.keyStorePath</name>
+    <value/>
+    <display-name>KeyStore path</display-name>
+    <description>The full path and name of the keystore. e.g. /usr/hdf/current/registry/security/keystore.jks</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.keyStorePassword</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>KeyStore Password</display-name>
+    <description>The keystore password. It is blank by default but required if registry.ssl.isenabled=true. </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.keyStoreType</name>
+    <value/>
+    <display-name>Keystore Type</display-name>
+    <description>The keystore type. It is blank by default but required if registry.ssl.isenabled=true. e.g. PKCS12 or JKS</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.trustStorePath</name>
+    <value/>
+    <display-name>TrustStore path</display-name>
+    <description>The full path and name of the truststore. e.g. /usr/hdf/current/registry/security/truststore.jks</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.trustStorePassword</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>TrustStore Password</display-name>
+    <description>The truststore password. It is blank by default but required if registry.ssl.isenabled=true. </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.trustStoreType</name>
+    <value/>
+    <display-name>TrustStore Type</display-name>
+    <description>The truststore type. It is blank by default but required if registry.ssl.isenabled=true. e.g. PKCS12 or JKS</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.validateCerts</name>
+    <value>false</value>
+    <display-name>validateCerts</display-name>
+    <description>Whether or not to validate TLS certificates before starting. If enabled, it will refuse to start with expired or otherwise invalid certificates.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>registry.validatePeers</name>
+    <value>false</value>
+    <display-name>validatePeers</display-name>
+    <description>Whether or not to validate TLS peer certificates.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+</configuration>

@@ -1,0 +1,175 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Pluggable modules
+
+{% if http_proxy_server %}
+httpProxyUrl: "{{http_proxy_server}}"
+{%endif%}
+{% if http_proxy_username %}
+httpProxyUsername: "{{http_proxy_username}}"
+{%endif%}
+{% if http_proxy_password %}
+httpProxyPassword: "{{http_proxy_password}}"
+{%endif%}
+
+modules:
+  - name: schema-registry
+    className: com.hortonworks.registries.schemaregistry.webservice.SchemaRegistryModule
+    config:
+      schemaProviders:
+        - providerClass: "com.hortonworks.registries.schemaregistry.avro.AvroSchemaProvider"
+          defaultSerializerClass: "com.hortonworks.registries.schemaregistry.serdes.avro.AvroSnapshotSerializer"
+          defaultDeserializerClass: "com.hortonworks.registries.schemaregistry.serdes.avro.AvroSnapshotDeserializer"
+
+      # schema cache properties
+      # inmemory schema versions cache size
+      schemaCacheSize: {{registry_schema_cache_size}}
+      # inmemory schema version cache entry expiry interval after access
+      schemaCacheExpiryInterval: {{registry_schema_cache_expiry_interval}}
+
+{% if security_enabled or registry_sso_enabled or stack_support_rewrite_uri or stack_support_remove_rootpath %}
+servletFilters:
+{% endif %}
+{% if registry_sso_enabled %}
+  - className: {{registry_servlet_filter}}
+    params:
+      type: "com.hortonworks.registries.auth.server.JWTAuthenticationHandler"
+      token.validity: {{registry_authentication_sso_token_validity}}
+      authentication.provider.url: "{{registry_authentication_provider_url}}"
+      public.key.pem: "{{registry_public_key_pem}}"
+{% if registry_sso_non_brower_user_agents %}
+      non-browser.user-agents : "{{registry_sso_non_brower_user_agents}}"
+{% endif %}
+{% if registry_sso_expected_jwt_audiences %}
+      registry.expected.jwt.audiences: "{{registry_sso_expected_jwt_audiences}}"
+{% endif %}
+{% if registry_sso_jwt_cookie_name %}
+      registry.jwt.cookie.name: "{{registry_sso_jwt_cookie_name}}"
+{% endif %}
+{% if registry_sso_cookie_path %}
+      registry.cookie.path: "{{registry_sso_cookie_path}}"
+{% endif %}
+{% if registry_sso_cookie_domain %}
+      registry.cookie.domain: "{{registry_sso_cookie_domain}}"
+{% endif %}
+{% endif %}
+
+{% if security_enabled %}
+  - className: {{registry_servlet_filter}}
+    params:
+      type: "kerberos"
+      kerberos.principal: "{{registry_ui_jaas_principal}}"
+      kerberos.keytab: "{{registry_ui_keytab_path}}"
+      kerberos.name.rules: "{{registry_servlet_kerberos_name_rules}}"
+      token.validity: "{{registry_servlet_token_validity}}"
+{% if registry_kerberos_non_browser_user_agents %}
+      non-browser.user-agents : "{{registry_kerberos_non_browser_user_agents}}"
+{% endif %}
+{% if stack_support_allowed_resources %}
+      allowed.resources: "401.html,back-default.png,favicon.ico,/invalidate,/node/debut"
+{% endif %}
+{% endif %}
+
+{% if stack_support_rewrite_uri or stack_support_remove_rootpath %}
+  - className: "com.hortonworks.registries.schemaregistry.webservice.RewriteUriFilter"
+    params:
+      # value format is [<targetpath>,<paths-should-be-redirected-to>,*|]*
+      # below /subjects and /schemas/ids are forwarded to /api/v1/confluent
+      forwardPaths: "/api/v1/confluent,/subjects/*,/schemas/ids/*"
+      redirectPaths: "/ui/,/"
+
+## HA configuration
+## When no configuration is set, then all the nodes in schema registry cluster are eligible to write to the backend storage.
+#haConfig:
+#  className: com.hortonworks.registries.ha.zk.ZKLeadershipParticipant
+#  config:
+#    # This url is a list of ZK servers separated by ,
+#    connect.url: "localhost:2181"
+#    # root node prefix in ZK for this instance
+#    root: "/registry"
+#    session.timeout.ms: 30000
+#    connection.timeout.ms: 20000
+#    retry.limit: 5
+#    retry.base.sleep.time.ms: 1000
+#    retry.max.sleep.time.ms: 5000
+{% endif %}
+
+# Filesystem based jar storage
+fileStorageConfiguration:
+  className: {{jar_storage_class}}
+  properties:
+    directory: {{jar_storage}}
+  {% if jar_remote_storage_enabled %}
+  fsUrl: {{jar_storage_hdfs_url}}
+  {%endif%}
+
+storageProviderConfiguration: 
+  properties: 
+    db.properties: 
+      dataSource.password: "{{registry_storage_connector_password}}"
+      dataSource.url: "{{registry_storage_connector_connectorURI}}"
+      dataSource.user: "{{registry_storage_connector_user}}"
+      dataSourceClassName: "{{registry_storage_java_class}}"
+    db.type: "{{registry_storage_type}}"
+    queryTimeoutInSecs: {{registry_storage_query_timeout}}
+  providerClass: com.hortonworks.registries.storage.impl.jdbc.JdbcStorageManager
+
+swagger:
+  resourcePackage: com.hortonworks.registries.schemaregistry.webservice
+
+enableCors: true
+
+server:
+{% if not stack_support_remove_rootpath %}
+  rootPath: '/api/*'
+{% endif %}
+  applicationConnectors:
+{% if not registry_ssl_enabled %}
+    - type: http
+      port: {{registry_port}}
+{% else %}
+    - type: https
+      port: {{registry_ssl_port}}
+      keyStorePath: {{registry_keyStorePath}}
+      keyStorePassword: {{registry_keyStorePassword}}
+      keyStoreType: {{registry_keyStoreType}}
+      trustStorePath: {{registry_trustStorePath}}
+      trustStorePassword: {{registry_trustStorePassword}}
+      trustStoreType: {{registry_trustStoreType}}
+      validateCerts: {{registry_validateCerts}}
+      validatePeers: {{registry_validatePeers}}
+{% endif %}
+
+  adminConnectors:
+{% if not registry_ssl_enabled %}
+    - type: http
+      port: {{registry_admin_port}}
+{% else %}
+    - type: https
+      port: {{registry_ssl_adminPort}}
+      keyStorePath: {{registry_keyStorePath}}
+      keyStorePassword: {{registry_keyStorePassword}}
+      keyStoreType: {{registry_keyStoreType}}
+      trustStorePath: {{registry_trustStorePath}}
+      trustStorePassword: {{registry_trustStorePassword}}
+      trustStoreType: {{registry_trustStoreType}}
+      validateCerts: {{registry_validateCerts}}
+      validatePeers: {{registry_validatePeers}}
+{% endif %}
+
+
+logging:
+  {{registry_log_template}}

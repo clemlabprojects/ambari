@@ -1,0 +1,158 @@
+{
+    "name": "default",
+    "description": "Default theme for REGISTRY service",
+    "configuration": {
+        "layouts": [
+            {
+                "name": "default",
+                "tabs": [
+                    {
+                        "name": "default",
+                        "display-name": "REGISTRY CONFIG",
+                        "layout": {
+                            "tab-columns": "2",
+                            "tab-rows": "1",
+                            "sections": [
+                                {
+                                    "name": "section-registry",
+                                    "display-name": "",
+                                    "row-index": "0",
+                                    "column-index": "0",
+                                    "row-span": "2",
+                                    "column-span": "2",
+                                    "section-columns": "1",
+                                    "section-rows": "1",
+                                    "subsections": [
+                                        {
+                                            "name": "subsection-registry-row1-col1",
+                                            "display-name": "REGISTRY CONFIG",
+                                            "row-index": "0",
+                                            "column-index": "0",
+                                            "row-span": "1",
+                                            "column-span": "1"
+                                        },
+                                        {
+                                            "name": "subsection-registry-row1-col2",
+                                            "display-name": "REGISTRY STORAGE",
+                                            "row-index": "0",
+                                            "column-index": "1",
+                                            "row-span": "1",
+                                            "column-span": "1"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ],
+        "placement": {
+            "configuration-layout": "default",
+            "configs": [
+                {
+                    "config": "registry-common/port",
+                    "subsection-name": "subsection-registry-row1-col1"
+                },
+                {
+                    "config": "registry-common/adminPort",
+                    "subsection-name": "subsection-registry-row1-col1"
+                },
+                {
+                    "config": "registry-common/jar.storage.type",
+                    "subsection-name": "subsection-registry-row1-col1"
+                },
+                {
+                    "config": "registry-common/jar.storage.hdfs.url",
+                    "subsection-name": "subsection-registry-row1-col1"
+                },
+                {
+                    "config": "registry-common/jar.storage",
+                    "subsection-name": "subsection-registry-row1-col1"
+                },
+                {
+                    "config": "registry-common/database_name",
+                    "subsection-name": "subsection-registry-row1-col2"
+                },
+                {
+                    "config": "registry-common/registry.storage.type",
+                    "subsection-name": "subsection-registry-row1-col2"
+                },
+                {
+                    "config": "registry-common/registry.storage.connector.user",
+                    "subsection-name": "subsection-registry-row1-col2"
+                },
+                {
+                    "config": "registry-common/registry.storage.connector.password",
+                    "subsection-name": "subsection-registry-row1-col2"
+                },
+                {
+                    "config": "registry-common/registry.storage.connector.connectURI",
+                    "subsection-name": "subsection-registry-row1-col2"
+                }
+            ]
+        },
+        "widgets": [
+            {
+                "config": "registry-common/port",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/adminPort",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/jar.storage.type",
+                "widget": {
+                    "type": "combo"
+                }
+            },
+            {
+                "config": "registry-common/jar.storage.hdfs.url",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/jar.storage",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/database_name",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/registry.storage.type",
+                "widget": {
+                    "type": "combo"
+                }
+            },
+            {
+                "config": "registry-common/registry.storage.connector.user",
+                "widget": {
+                    "type": "text-field"
+                }
+            },
+            {
+                "config": "registry-common/registry.storage.connector.password",
+                "widget": {
+                    "type": "password"
+                }
+            },
+            {
+                "config": "registry-common/registry.storage.connector.connectURI",
+                "widget": {
+                    "type": "text-field"
+                }
+            }
+        ]
+    }
+}

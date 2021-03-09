@@ -1,0 +1,108 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+
+    <property>
+        <name>nifi_registry_log_dir</name>
+        <value>/var/log/nifi-registry</value>
+        <display-name>NiFi Registry Log Dir</display-name>
+        <description>NiFi Registry Log Dir</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi_registry_pid_dir</name>
+        <value>/var/run/nifi-registry</value>
+        <display-name>NiFi Registry PID dir</display-name>
+        <description>Dir containing process ID file</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi_registry_user</name>
+        <value>nifiregistry</value>
+        <property-type>USER</property-type>
+        <display-name>Nifi Registry User</display-name>
+        <description>User NiFi Registry daemon runs as</description>
+        <value-attributes>
+            <type>user</type>
+            <overridable>false</overridable>
+            <user-groups>
+                <property>
+                    <type>nifi-registry-env</type>
+                    <name>nifi_registry_group</name>
+                </property>
+            </user-groups>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi_registry_group</name>
+        <value>nifiregistry</value>
+        <property-type>GROUP</property-type>
+        <display-name>Nifi Registry Group</display-name>
+        <description>NiFi Registry Group</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>content</name>
+        <display-name>Template for nifi-registry-env.sh</display-name>
+        <value>
+            #!/bin/sh
+            #
+            #    Licensed to the Apache Software Foundation (ASF) under one or more
+            #    contributor license agreements.  See the NOTICE file distributed with
+            #    this work for additional information regarding copyright ownership.
+            #    The ASF licenses this file to You under the Apache License, Version 2.0
+            #    (the "License"); you may not use this file except in compliance with
+            #    the License.  You may obtain a copy of the License at
+            #
+            #       http://www.apache.org/licenses/LICENSE-2.0
+            #
+            #    Unless required by applicable law or agreed to in writing, software
+            #    distributed under the License is distributed on an "AS IS" BASIS,
+            #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+            #    See the License for the specific language governing permissions and
+            #    limitations under the License.
+            #
+
+            # The java implementation to use.
+            export JAVA_HOME={{jdk64_home}}
+
+            export NIFI_REGISTRY_HOME={{nifi_registry_install_dir}}
+
+            #The directory for the NiFi pid file
+            export NIFI_REGISTRY_PID_DIR="{{nifi_registry_pid_dir}}"
+
+            #The directory for NiFi log files
+            export NIFI_LOG_DIR="{{nifi_registry_log_dir}}"
+
+        </value>
+        <description>Template for nifi-registry-env.sh</description>
+        <value-attributes>
+            <type>content</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+</configuration>
+

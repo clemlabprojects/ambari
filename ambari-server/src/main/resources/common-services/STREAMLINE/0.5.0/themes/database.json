@@ -1,0 +1,284 @@
+{
+  "name": "database",
+  "configuration": {
+    "placement": {
+      "configuration-layout": "database",
+      "configs": [
+        {
+          "config": "streamline-common/streamline.storage.type",
+          "subsection-name": "subsection-streamline-row1-col1"
+        },
+        {
+          "config": "streamline-common/database_name",
+          "subsection-name": "subsection-streamline-row1-col1"
+        },
+        {
+          "config": "streamline-common/streamline.storage.connector.user",
+          "subsection-name": "subsection-streamline-row1-col1"
+        },
+        {
+          "config": "streamline-common/streamline.storage.connector.connectURI",
+          "subsection-name": "subsection-streamline-row1-col1"
+        },
+        {
+          "config": "streamline-common/streamline.storage.db.hostname",
+          "subsection-name": "subsection-streamline-row1-col2"
+        },
+        {
+          "config": "streamline-common/streamline.storage.connector.password",
+          "subsection-name": "subsection-streamline-row1-col2"
+        },
+        {
+          "config": "streamline-env/create_db_dbuser",
+          "subsection-name": "subsection-streamline-db-row2",
+          "depends-on": [
+            {
+              "configs":[
+                "streamline-common/streamline.storage.type"
+              ],
+              "if": "${streamline-common/streamline.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "streamline-common/db_root_user",
+          "subsection-name": "subsection-streamline-db-root-user-col1",
+          "depends-on": [
+            {
+              "configs":[
+                "streamline-common/streamline.storage.type"
+              ],
+              "if": "${streamline-common/streamline.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "streamline-common/db_root_jdbc_url",
+          "subsection-name": "subsection-streamline-db-root-user-col1",
+          "depends-on": [
+            {
+              "configs":[
+                "streamline-common/streamline.storage.type"
+              ],
+              "if": "${streamline-common/streamline.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "streamline-common/db_root_password",
+          "subsection-name": "subsection-streamline-db-root-user-col2",
+          "depends-on": [
+            {
+              "configs":[
+                "streamline-common/streamline.storage.type"
+              ],
+              "if": "${streamline-common/streamline.storage.type} === oracle",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "streamline-common/database_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-common/streamline.storage.type",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "streamline-common/streamline.storage.connector.user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-common/streamline.storage.connector.password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "streamline-common/streamline.storage.db.hostname",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-common/streamline.storage.connector.connectURI",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-env/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "streamline-common/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-common/db_root_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "streamline-common/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      }
+    ],
+    "layouts": [
+      {
+        "name": "database",
+        "tabs": [
+          {
+            "name": "streamline_database",
+            "display-name": "Streaming Analytics Manager",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "1",
+              "sections": [
+                {
+                  "name": "section-streamline",
+                  "display-name": "",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "2",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-streamline-row1-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-streamline-row1-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-streamline-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "subsection-streamline-db-root-user-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "streamline-env/create_db_dbuser"
+                          ],
+                          "if": "${streamline-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "subsection-streamline-db-root-user-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "streamline-env/create_db_dbuser"
+                          ],
+                          "if": "${streamline-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

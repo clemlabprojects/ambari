@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration>
+
+  <!-- security -->
+
+  <property>
+    <name>streamline.sso.enabled</name>
+    <display-name>Enable Streams Messaging Manager Knox SSO</display-name>
+    <value>false</value>
+    <description/>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>streamline.authentication.provider.url</name>
+    <value></value>
+    <display-name>authentication.provider.url</display-name>
+    <description>Knox's authentication provider url e.g. https://SSO_host:8443/gateway/knoxsso/api/v1/websso</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>knoxsso-topology</type>
+        <name>gateway.port</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>streamline.public.key.pem</name>
+    <value></value>
+    <display-name>public.key.pem</display-name>
+    <description>Knox's public key inside knox-sso-cert.pem. Paste key without the —— BEGIN CERTIFICATE and — END CERTIFICATE lines</description>
+    <value-attributes>
+      <type>multiLine</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>streamline.token.validity</name>
+    <value>30</value>
+    <display-name>token.validity</display-name>
+    <description>Token Validity for Streamline's Authentication in seconds</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+</configuration>
