@@ -45,11 +45,11 @@ stack_root = Script.get_stack_root()
 tmp_dir = Script.get_tmp_dir()
 stack_name = default("/clusterLevelParams/stack_name", None)
 stack_version_buildnum = default("/commandParams/version", None)
-if stack_name == "HDP":
+if stack_name == "ODP":
     # Override HDP stack root
-    stack_root = "/usr/hdf"
+    stack_root = "/usr/odp"
     # Override HDP stack version
-    stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/hdf-select", "nifi-registry")
+    stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/odp-select", "nifi-registry")
 elif not stack_version_buildnum and stack_name:
     stack_version_buildnum = get_component_version_from_symlink(stack_name, "nifi-registry")
 
