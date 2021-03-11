@@ -272,7 +272,49 @@
         &lt;property name="Access Policy Provider"&gt;file-access-policy-provider&lt;/property&gt;
     &lt;/authorizer&gt;
 
+    &lt;authorizer&gt;
+        &lt;identifier&gt;ranger-authorizer&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.ranger.RangerAuthorizer&lt;/class&gt;
+        &lt;property name="Ranger Service Type"&gt;nifi-registry&lt;/property&gt;
+
+        &lt;property name="User Group Provider"&gt;file-user-group-provider&lt;/property&gt;
+
+        &lt;!-- Specify Ranger service name to use --&gt;
+        &lt;property name="Ranger Application Id"&gt;nifi-registry-service-name&lt;/property&gt;
+
+        &lt;!--
+            Specify configuration file paths for Ranger plugin.
+            See the XML files bundled with this extension for further details.
+         --&gt;
+        &lt;property name="Ranger Security Config Path"&gt;./ext/ranger/conf/ranger-nifi-registry-security.xml&lt;/property&gt;
+        &lt;property name="Ranger Audit Config Path"&gt;./ext/ranger/conf/ranger-nifi-registry-audit.xml&lt;/property&gt;
+
+        &lt;!--
+            Specify user identity that is used by Ranger to access NiFi Registry.
+            This property is used by NiFi Registry for Ranger to get available NiFi Registry policy resource identifiers.
+            The configured user can access NiFi Registry /policies/resources REST endpoint regardless of configured access policies.
+            Ranger uses available policies for user input suggestion at Ranger policy editor UI.
+        --&gt;
+        &lt;property name="Ranger Admin Identity"&gt;ranger@NIFI&lt;/property&gt;
+
+        &lt;!--
+            Specify if target Ranger is Kerberized.
+            If set to true, NiFi Registry will use the principal and keytab defined at nifi-registry.properties:
+            - nifi.registry.kerberos.service.principal
+            - nifi.registry.kerberos.service.keytab.location
+
+            The specified credential is used to access Ranger API, and to write audit logs into HDFS (if enabled).
+
+            At Ranger side, the configured user needs to be added to 'policy.download.auth.users' property, see Ranger configuration section below.
+
+            Also, ranger-nifi-registry-security.xml needs additional "xasecure.add-hadoop-authorization = true" configuration.
+        --&gt;
+        &lt;property name="Ranger Kerberos Enabled"&gt;false&lt;/property&gt;
+
+    &lt;/authorizer&gt;
+
 &lt;/authorizers&gt;
+
 
         </value>
         <value-attributes>
