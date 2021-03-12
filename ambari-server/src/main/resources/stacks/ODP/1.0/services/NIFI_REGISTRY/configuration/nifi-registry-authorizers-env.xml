@@ -286,8 +286,8 @@
             Specify configuration file paths for Ranger plugin.
             See the XML files bundled with this extension for further details.
          --&gt;
-        &lt;property name="Ranger Security Config Path"&gt;./ext/ranger/conf/ranger-nifi-registry-security.xml&lt;/property&gt;
-        &lt;property name="Ranger Audit Config Path"&gt;./ext/ranger/conf/ranger-nifi-registry-audit.xml&lt;/property&gt;
+        &lt;property name="Ranger Security Config Path"&gt;{{nifi_registry_config_dir}}/ranger-nifi-registry-security.xml&lt;/property&gt;
+        &lt;property name="Ranger Audit Config Path"&gt;{{nifi_registry_config_dir}}/ranger-nifi-registry-audit.xml&lt;/property&gt;
 
         &lt;!--
             Specify user identity that is used by Ranger to access NiFi Registry.
@@ -295,7 +295,7 @@
             The configured user can access NiFi Registry /policies/resources REST endpoint regardless of configured access policies.
             Ranger uses available policies for user input suggestion at Ranger policy editor UI.
         --&gt;
-        &lt;property name="Ranger Admin Identity"&gt;ranger@NIFI&lt;/property&gt;
+        &lt;property name="Ranger Admin Identity"&gt;{{ranger_admin_identity}}&lt;/property&gt;
 
         &lt;!--
             Specify if target Ranger is Kerberized.
@@ -309,7 +309,11 @@
 
             Also, ranger-nifi-registry-security.xml needs additional "xasecure.add-hadoop-authorization = true" configuration.
         --&gt;
-        &lt;property name="Ranger Kerberos Enabled"&gt;false&lt;/property&gt;
+        {% if security_enabled %}
+        &lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;true&lt;/property&gt;
+        {% else %}
+        &lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;false&lt;/property&gt;
+        {% endif %}
 
     &lt;/authorizer&gt;
 

@@ -106,9 +106,18 @@ if 'nifi_ca_hosts' in master_configs:
     if len(nifi_ca_hosts) > 0:
         nifi_ca_host = nifi_ca_hosts[0]
 
-nifi_registry_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
+### SSL ####
+# nifi_registry_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
+nifi_registry_ambari_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
 
-if nifi_registry_ssl_enabled:
+if nifi_registry_ambari_ssl_enabled:
+  nifi_registry_ssl_enabled = 'true'
+elif nifi_registry_keystore is not None:
+  nifi_registry_ssl_enabled = 'true'
+else:
+  nifi_registry_ssl_enabled = 'false'
+
+if nifi_registry_ambari_ssl_enabled:
     # params from nifi-registry-ambari-ssl-config
     nifi_registry_keystore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystore']
     nifi_registry_keystoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystoreType']
