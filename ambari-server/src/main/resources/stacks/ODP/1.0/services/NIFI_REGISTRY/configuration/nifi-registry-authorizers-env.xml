@@ -280,7 +280,7 @@
         &lt;property name="User Group Provider"&gt;file-user-group-provider&lt;/property&gt;
 
         &lt;!-- Specify Ranger service name to use --&gt;
-        &lt;property name="Ranger Application Id"&gt;nifi-registry-service-name&lt;/property&gt;
+        &lt;property name="Ranger Application Id"&gt;nifi-registry&lt;/property&gt;
 
         &lt;!--
             Specify configuration file paths for Ranger plugin.
