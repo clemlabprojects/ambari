@@ -111,13 +111,6 @@ if 'nifi_ca_hosts' in master_configs:
 nifi_registry_ambari_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
 
 if nifi_registry_ambari_ssl_enabled:
-  nifi_registry_ssl_enabled = 'true'
-elif nifi_registry_keystore is not None:
-  nifi_registry_ssl_enabled = 'true'
-else:
-  nifi_registry_ssl_enabled = 'false'
-
-if nifi_registry_ambari_ssl_enabled:
     # params from nifi-registry-ambari-ssl-config
     nifi_registry_keystore = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystore']
     nifi_registry_keystoreType = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.security.keystoreType']
@@ -142,6 +135,13 @@ else:
     nifi_registry_truststoreType = config['configurations']['nifi-registry-properties']['nifi.registry.security.truststoreType']
     nifi_registry_truststorePasswd = config['configurations']['nifi-registry-properties']['nifi.registry.security.truststorePasswd']
     nifi_registry_needClientAuth = config['configurations']['nifi-registry-properties']['nifi.registry.security.needClientAuth']
+
+if nifi_registry_ambari_ssl_enabled:
+  nifi_registry_ssl_enabled = 'true'
+elif nifi_registry_keystore is not None:
+  nifi_registry_ssl_enabled = 'true'
+else:
+  nifi_registry_ssl_enabled = 'false'
 
 nifi_registry_initial_admin_id = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.initial.admin.identity']
 nifi_registry_ssl_config_content = config['configurations']['nifi-registry-ambari-ssl-config']['content']
