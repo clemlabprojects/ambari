@@ -184,7 +184,7 @@ class Master(Script):
                                                                                                 params.nifi_registry_keystoreType, params.nifi_registry_keystorePasswd, params.nifi_registry_keyPasswd, nifi_toolkit_util_common.NIFI_REGISTRY)
 
         #determine whether new keystore/truststore should be regenerated
-        run_tls = (params.nifi_ca_host and params.nifi_registry_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_registry_current_properties, params.nifi_registry_properties, master_key,  nifi_toolkit_util_common.NIFI_REGISTRY))
+        run_tls = (params.nifi_ca_host and params.nifi_registry_ambari_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_registry_current_properties, params.nifi_registry_properties, master_key,  nifi_toolkit_util_common.NIFI_REGISTRY))
 
         if run_tls:
             nifi_toolkit_util_common.move_keystore_truststore(nifi_registry_current_properties,  nifi_toolkit_util_common.NIFI_REGISTRY)
