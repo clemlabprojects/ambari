@@ -23,7 +23,7 @@ from os.path import dirname
 from ambari_server.serverConfiguration import get_ambari_properties, get_ambari_version
 
 SCRIPT_DIR = dirname(dirname(dirname(dirname(os.path.abspath(__file__)))))
-STACKS_DIR = os.path.join(SCRIPT_DIR,'../../../stacks/')
+STACKS_DIR = os.path.join(SCRIPT_DIR, 'stacks')
 PARENT_FILE = os.path.join(STACKS_DIR, 'service_advisor.py')
 
 try:
