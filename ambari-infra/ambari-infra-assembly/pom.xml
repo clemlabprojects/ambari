@@ -54,10 +54,8 @@
         <download.solr>true</download.solr>
       </properties>
       <activation>
-        <property>
-          <name>build-rpm</name>
-        </property>
-      </activation>
+      <activeByDefault>true</activeByDefault>
+    </activation>
       <build>
         <plugins>
           <plugin>
@@ -82,7 +80,7 @@
             <executions>
               <execution>
                 <id>infra-solr</id>
-                <phase>none</phase>
+                <phase>package</phase>
                 <goals>
                   <goal>rpm</goal>
                 </goals>
