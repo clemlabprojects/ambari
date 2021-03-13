@@ -185,4 +185,64 @@
     <on-ambari-upgrade add="true"/>
   </property>
 
+    <!-- Inherited from common-services/NIFI/1.1.0 -->
+
+
+  <property>
+      <name>nifi.security.encrypt.configuration.password</name>
+      <value/>
+      <property-type>PASSWORD</property-type>
+      <display-name>Encrypt Configuration Master Key Password</display-name>
+      <description>
+          This password is used to generate the master key for encryption of sensitive properties in nifi properties file when written to disk. Password needs to at least be 12 characters.
+      </description>
+      <value-attributes>
+          <overridable>false</overridable>
+          <type>password</type>
+      </value-attributes>
+      <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+      <name>nifi.sensitive.props.additional.keys</name>
+      <value/>
+      <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+      </value-attributes>
+      <on-ambari-upgrade add="true"/>
+      <description>This is a comma delimited list of properties that should be encrypted when written to the nifi.properties files. Used when Encrypt Sensitive Configuration Properties is set to true. </description>
+  </property>
+
+    <!-- Inherited from common-services/NIFI/1.3.0 -->
+
+  <property>
+      <name>nifi.variable.registry.properties</name>
+      <value/>
+      <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+      </value-attributes>
+      <on-ambari-upgrade add="true"/>
+      <description>External properties files for variable registry. This field supports a comma delimited list of file locations </description>
+  </property>
+  
+  <!-- Inherited from common-services/NIFI/1.5.0 -->
+
+
+  <property>
+  <name>nifi.allow.explicit.keytab</name>
+  <value>true</value>
+  <display-name>Allow Configuration of Keytabs on Processors</display-name>
+  <description>
+      Set to false to force the use of Keytab controller service in processors that use Kerberos.
+      If true, these processors will allow configuration of keytab and principal directly within the processor.
+      If false, these processors will be invalid if attempting to configure these properties.
+      This may be advantageous in a multi-tenant environment where management of keytabs should be performed only by
+      a user with elevated permissions (i.e., users that have been granted the 'ACCESS_KEYTAB'
+      restriction). Default value is true.
+  </description>
+  <value-attributes>
+      <type>boolean</type>
+  </value-attributes>
+  <on-ambari-upgrade add="true"/>
+</property>
+
 </configuration>
