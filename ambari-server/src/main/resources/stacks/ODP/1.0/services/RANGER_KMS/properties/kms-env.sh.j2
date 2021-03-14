@@ -22,6 +22,7 @@ export JAVA_HOME={{java_home}}
 export RANGER_KMS_LOG_DIR={{kms_log_dir}}
 export RANGER_KMS_PID_DIR_PATH={{ranger_kms_pid_dir}}
 export KMS_USER={{kms_user}}
+ranger_kms_max_heap_size={{ranger_kms_max_heap_size}}
 {% if security_enabled %}
 export JAVA_OPTS=" ${JAVA_OPTS} -Dzookeeper.sasl.client.username={{zookeeper_principal_primary}} "
 {% endif %}
