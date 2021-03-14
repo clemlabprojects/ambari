@@ -366,7 +366,10 @@ def yarn(name=None, config_dir=None):
          group=params.user_group
     )
 
-  setup_atsv2_backend(name,config_dir)
+  atsv2_host = default("/clusterHostInfo/timeline_reader_hosts", [])
+  has_atsv2 = not len(atsv2_host) == 0
+  if has_atsv2:
+    setup_atsv2_backend(name,config_dir)
 
 def setup_historyserver():
   import params
