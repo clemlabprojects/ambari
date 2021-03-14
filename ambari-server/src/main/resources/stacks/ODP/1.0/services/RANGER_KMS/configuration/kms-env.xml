@@ -128,15 +128,14 @@
   <name>ranger_kms_max_heap_size</name>
   <display-name>Ranger KMS Max Heap Size</display-name>
   <value>1024</value>
-  <description>Hadoop maximum Java heap size</description>
-  <display-name>Hadoop maximum Java heap size</display-name>
+  <description>Ranger KMS Max Heap Size</description>
   <value-attributes>
     <type>int</type>
     <unit>MB</unit>
     <overridable>false</overridable>
   </value-attributes>
   <on-ambari-upgrade add="true"/>
-</property>
+  </property>
   <property>
     <name>content</name>
     <display-name>kms-env template</display-name>
