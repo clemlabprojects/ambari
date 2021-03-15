@@ -37,7 +37,7 @@
         "scope": "ANY",
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/OOZIE/package/alerts/alert_check_oozie_server.py"
+          "path": "ODP/1.0/services/OOZIE/package/alerts/alert_check_oozie_server.py"
         }
       }
     ]

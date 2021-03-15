@@ -69,7 +69,7 @@ USER_DEFAULT = 'oozie'
 
 STACK_NAME_KEY = '{{cluster-env/stack_name}}'
 STACK_ROOT_KEY = '{{cluster-env/stack_root}}'
-STACK_ROOT_DEFAULT = '/usr/hdp'
+STACK_ROOT_DEFAULT = '/usr/odp'
 
 class KerberosPropertiesNotFound(Exception): pass
 
