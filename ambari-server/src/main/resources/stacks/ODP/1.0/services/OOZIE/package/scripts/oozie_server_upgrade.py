@@ -107,7 +107,7 @@ class OozieUpgrade(Script):
     found_at_least_one_oozie_ext_file = False
 
     # Copy the first oozie ext-2.2.zip file that is found.
-    # This uses a list to handle the cases when migrating from some versions of BigInsights to HDP.
+    # This uses a list to handle the cases when migrating from some versions of BigInsights to HDP and ODP.
     if source_ext_zip_paths is not None:
       for source_ext_zip_path in source_ext_zip_paths:
         if os.path.isfile(source_ext_zip_path):

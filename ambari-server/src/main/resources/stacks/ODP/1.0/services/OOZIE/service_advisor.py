@@ -127,7 +127,7 @@ class OozieServiceAdvisor(service_advisor.ServiceAdvisor):
                 (self.__class__.__name__, inspect.stack()[0][3]))
 
     recommender = OozieRecommender()
-    recommender.recommendOozieConfigurationsFromHDP30(configurations, clusterData, services, hosts)
+    recommender.recommendOozieConfigurationsFromODP10(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsForSSO(configurations, clusterData, services, hosts)
 
   def getServiceConfigurationRecommendationsForSSO(self, configurations, clusterData, services, hosts):
@@ -156,7 +156,7 @@ class OozieRecommender(service_advisor.ServiceAdvisor):
     self.as_super.__init__(*args, **kwargs)
 
 
-  def recommendOozieConfigurationsFromHDP30(self, configurations, clusterData, services, hosts):
+  def recommendOozieConfigurationsFromODP10(self, configurations, clusterData, services, hosts):
     ## added in 2.0.6
     oozie_mount_properties = [
       ("oozie_data_dir", "OOZIE_SERVER", "/hadoop/oozie/data", "single"),
