@@ -16,14 +16,14 @@
    limitations under the License.
 -->
 <reposinfo>
-  <latest>http://public-repo-1.hortonworks.com/HDP/hdp_urlinfo.json</latest>
+  <latest>http://repo.clemlab.com/ODP/odp_urlinfo.json</latest>
   <os family="redhat7">
     <repo>
-      <baseurl>http://repo.luc-data.com/centos7/odp_1.0.0.0-1</baseurl>
+      <baseurl>http://repo.clemlab.com/centos7/odp_1.0.2.0-1</baseurl>
       <repoid>ODP-1.0</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
-    </repo>    
+    </repo>
   </os>
 
 </reposinfo>

@@ -23,7 +23,7 @@
       <name>SPARK2</name>
       <displayName>Spark2</displayName>
       <comment>Apache Spark 2.3 is a fast and general engine for large-scale data processing.</comment>
-      <version>2.4.5</version>      
+      <version>2.4.7</version>      
       <components>
         <component>
           <name>SPARK2_JOBHISTORYSERVER</name>

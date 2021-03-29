@@ -22,8 +22,8 @@
       <name>ATLAS</name>
       <displayName>Atlas</displayName>
       <comment>Atlas Metadata and Governance platform</comment>
-      <version>0.7.0.3.0</version>
-      
+      <version>1.0</version>
+
       <components>
         <component>
           <name>ATLAS_SERVER</name>
