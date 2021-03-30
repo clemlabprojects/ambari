@@ -358,7 +358,7 @@
       <name>MAPREDUCE2</name>
       <displayName>MapReduce2</displayName>
       <comment>Apache Hadoop NextGen MapReduce (YARN)</comment>
-      <version>3.0.0.3.0</version>
+      <version>3.2.2</version>
 
       <components>
         <component>
