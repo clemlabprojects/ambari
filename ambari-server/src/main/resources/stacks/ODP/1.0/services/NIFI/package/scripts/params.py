@@ -541,7 +541,7 @@ if has_ranger_admin:
   ranger_audit_solr_urls = config['configurations']['ranger-admin-site']['ranger.audit.solr.urls']
 
   if xml_configurations_supported and stack_supports_ranger_audit_db:
-    xa_audit_db_is_enabled = config['configurations']['ranger-nifi-audit']['xasecure.audit.destination.db']
+    xa_audit_db_is_enabled = config['configurations']['ranger-nifi-audit']['xasecure.audit.destination.solr']
 
   xa_audit_hdfs_is_enabled =  default('/configurations/ranger-nifi-audit/xasecure.audit.destination.hdfs', False)
 
