@@ -236,7 +236,7 @@ if type(webhcat_server_hosts) is list:
   webhcat_server_host = webhcat_server_hosts[0]
 else:
   webhcat_server_host = webhcat_server_hosts
-  
+
 hive_scheme = 'http'
 webhcat_scheme = 'http'
 
@@ -301,12 +301,12 @@ solr_port=default("/configuration/solr/solr-env/solr_port","8983")
 
 #
 # Spark
-# 
+#
 spark_scheme = 'http'
 spark_historyserver_hosts = default("/clusterHostInfo/spark_jobhistoryserver_hosts", None)
 if type(spark_historyserver_hosts) is list:
   spark_historyserver_host = spark_historyserver_hosts[0]
-else: 
+else:
   spark_historyserver_host = spark_historyserver_hosts
 spark_historyserver_ui_port = default("/configurations/spark-defaults/spark.history.ui.port", "18080")
 
@@ -343,8 +343,8 @@ if type(spark_thriftserver_hosts) is list:
   spark_thriftserver_host = spark_thriftserver_hosts[0]
 else:
   spark_thriftserver_host = spark_thriftserver_hosts
-  
- 
+
+
 # Knox managed properties
 knox_managed_pid_symlink= format('{stack_root}/current/knox-server/pids')
 
@@ -479,7 +479,7 @@ if enable_ranger_knox:
 
   xa_audit_db_is_enabled = False
   if xml_configurations_supported and stack_supports_ranger_audit_db:
-    xa_audit_db_is_enabled = config['configurations']['ranger-knox-audit']['xasecure.audit.destination.db']
+    xa_audit_db_is_enabled = config['configurations']['ranger-knox-audit']['xasecure.audit.destination.solr']
 
   xa_audit_hdfs_is_enabled = config['configurations']['ranger-knox-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
   ssl_keystore_password = config['configurations']['ranger-knox-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None

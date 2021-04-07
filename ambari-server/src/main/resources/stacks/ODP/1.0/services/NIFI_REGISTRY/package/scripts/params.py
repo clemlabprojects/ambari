@@ -423,7 +423,7 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
     ranger_audit_solr_urls = config['configurations']['ranger-admin-site']['ranger.audit.solr.urls']
 
     if xml_configurations_supported and stack_supports_ranger_audit_db:
-        xa_audit_db_is_enabled = config['configurations']['ranger-nifi-registry-audit']['xasecure.audit.destination.db']
+        xa_audit_db_is_enabled = config['configurations']['ranger-nifi-registry-audit']['xasecure.audit.destination.solr']
 
     xa_audit_hdfs_is_enabled = default('/configurations/ranger-nifi-registry-audit/xasecure.audit.destination.hdfs', False)
 

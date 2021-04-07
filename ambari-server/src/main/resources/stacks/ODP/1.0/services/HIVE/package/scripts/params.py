@@ -764,7 +764,7 @@ if enable_ranger_hive:
 
   xa_audit_db_is_enabled = False
   if xml_configurations_supported and stack_supports_ranger_audit_db:
-    xa_audit_db_is_enabled = config['configurations']['ranger-hive-audit']['xasecure.audit.destination.db']
+    xa_audit_db_is_enabled = config['configurations']['ranger-hive-audit']['xasecure.audit.destination.solr']
 
   xa_audit_hdfs_is_enabled = config['configurations']['ranger-hive-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
   ssl_keystore_password = config['configurations']['ranger-hive-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None
