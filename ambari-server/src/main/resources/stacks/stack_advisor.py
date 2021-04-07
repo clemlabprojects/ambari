@@ -1213,7 +1213,7 @@ class DefaultStackAdvisor(StackAdvisor):
     putYarnPropertyAttribute = self.putPropertyAttribute(configurations, "yarn-site")
 
     # calculate memory properties and get cluster data dictionary with whole information
-    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services)
+    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services, configurations)
 
     # executing code from stack advisor HDP 206
     nodemanagerMinRam = 1048576 # 1TB in mb
@@ -1245,11 +1245,33 @@ class DefaultStackAdvisor(StackAdvisor):
 
 
 
-  def getConfigurationClusterSummary(self, servicesList, hosts, components, services, cpu_only_mode = False):
+  def getConfigurationClusterSummary(self, servicesList, hosts, components, services, configurations):
     """
     Copied from HDP 2.0.6 so that it could be used by Service Advisors.
     :return: Dictionary of memory and CPU attributes in the cluster
     """
+    putYarnProperty = self.putProperty(configurations, "yarn-site", services)
+    putYarnPropertyAttribute = self.putPropertyAttribute(configurations, "yarn-site")
+    # check if spark is present to enable/disable spark_shuffle
+    sparkInstalled = False
+    if 'SPARK2' in servicesList:
+      sparkInstalled = True
+
+    currentValueService = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.aux-services"]
+    if sparkInstalled:
+      if(currentValueService.find("spark2_shuffle") != -1):
+        self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is already set")
+      else:
+        self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is added")
+        putYarnProperty('yarn.nodemanager.aux-services', currentValueService + ',spark2_shuffle')
+    else:
+      replaced = False
+      if(currentValueService.find(",spark2_shuffle") != -1):
+        currentValueService = currentValueService.replace(",spark2_shuffle","")
+      if( (currentValueService.find("spark2_shuffle") != -1) and  not replaced):
+        currentValueService = currentValueService.replace("spark2_shuffle","")
+      putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
+
     hBaseInstalled = False
     if 'HBASE' in servicesList:
       hBaseInstalled = True
@@ -1663,7 +1685,7 @@ class DefaultStackAdvisor(StackAdvisor):
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
     servicesList, componentsList = self.get_service_and_component_lists(services["services"])
 
-    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services)
+    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services, {})
 
     recommendations = {
       "Versions": {"stack_name": stackName, "stack_version": stackVersion},
