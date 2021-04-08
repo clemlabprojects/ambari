@@ -128,12 +128,22 @@ nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port'
 nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
 nifi_node_protocol_port = config['configurations']['nifi-ambari-config']['nifi.node.protocol.port']
 
+#property that is set to hostname regardless of whether SSL enabled
+nifi_node_host = socket.getfqdn()
+
 if nifi_ambari_ssl_enabled:
   nifi_ssl_enabled = 'true'
 elif nifi_keystore is not None:
   nifi_ssl_enabled = 'true'
 else:
   nifi_ssl_enabled = 'false'
+
+if nifi_ssl_enabled:
+  nifi_node_ssl_host = nifi_node_host
+  nifi_node_port = ""
+else:
+  nifi_node_nonssl_host = nifi_node_host
+  nifi_node_ssl_port = ""
 
 nifi_url = format("https://{nifi_host_name}:{nifi_node_ssl_port}") if nifi_ssl_enabled else format("http://{nifi_host_name}:{nifi_node_port}")
 
@@ -205,22 +215,12 @@ else:
 nifi_keystoreType = '' if len(nifi_keystoreType) == 0 else nifi_keystoreType
 nifi_truststoreType = '' if len(nifi_truststoreType) == 0 else nifi_truststoreType
 
-#property that is set to hostname regardless of whether SSL enabled
-nifi_node_host = socket.getfqdn()
-
 nifi_truststore = nifi_truststore.replace('{nifi_node_ssl_host}',nifi_node_host)
 nifi_keystore = nifi_keystore.replace('{nifi_node_ssl_host}',nifi_node_host)
 
 #populate properties whose values depend on whether SSL enabled
 nifi_keystore = nifi_keystore.replace('{{nifi_config_dir}}',nifi_config_dir)
 nifi_truststore = nifi_truststore.replace('{{nifi_config_dir}}',nifi_config_dir)
-
-if nifi_ssl_enabled:
-  nifi_node_ssl_host = nifi_node_host
-  nifi_node_port = ""
-else:
-  nifi_node_nonssl_host = nifi_node_host
-  nifi_node_ssl_port = ""
 
 nifi_ca_parent_config = config['configurations']['nifi-ambari-ssl-config']
 nifi_use_ca = nifi_ca_parent_config['nifi.toolkit.tls.token']
@@ -488,7 +488,6 @@ if has_ranger_admin:
   common_name_for_certificate = match.group(2) if match else 'NONE'
 
   if nifi_authentication == 'SSL':
-
     nifi_ranger_plugin_config = {
       'nifi.authentication': nifi_authentication,
       'nifi.url': format("https://{nifi_host_name}:{nifi_node_ssl_port}/nifi-api/resources"),
@@ -504,6 +503,7 @@ if has_ranger_admin:
   else:
     nifi_ranger_plugin_config = {
       'nifi.authentication': nifi_authentication,
+      'nifi.ssl.use.default.context': "false",
       'nifi.url': format("https://{nifi_host_name}:{nifi_host_port}/nifi-api/resources"),
       'commonNameForCertificate': common_name_for_certificate
     }
