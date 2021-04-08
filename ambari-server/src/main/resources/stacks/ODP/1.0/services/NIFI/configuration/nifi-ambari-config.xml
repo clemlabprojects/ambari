@@ -31,14 +31,17 @@
 
   <property>
     <name>nifi.node.ssl.port</name>
-    <value>9091</value>
+    <value></value>
     <display-name>Nifi HTTP port (SSL)</display-name>
     <description>HTTP port NiFi node runs on when SSL is enabled</description>
+    <value-attributes>
+        <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
-  
+
   <!-- End Note -->
-  
+
   <property>
     <name>nifi.node.protocol.port</name>
     <value>9088</value>
@@ -46,7 +49,7 @@
     <description>HTTP port NiFi node protocol runs on</description>
     <on-ambari-upgrade add="true"/>
   </property>
-    
+
   <property>
     <name>nifi.initial_mem</name>
     <value>512m</value>
@@ -96,25 +99,25 @@
     <description>Internal directory for Nifi (used to store archive, templates, work dirs). This directory will be created (if not already existing)</description>
     <value-attributes>
       <type>directory</type>
-    </value-attributes>        
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
     <name>nifi.config.dir</name>
     <value>{nifi_install_dir}/conf</value>
-    <display-name>Nifi config dir</display-name>    
+    <display-name>Nifi config dir</display-name>
     <description>The directory to store config files (nifi.properties, bootstrap.conf etc). This directory will be created (if not already existing)</description>
     <on-ambari-upgrade add="true"/>
-  </property> 
-    
+  </property>
+
   <property>
     <name>nifi.flow.config.dir</name>
     <value>{nifi_internal_dir}/conf</value>
     <display-name>Nifi internal config dir</display-name>
     <description>The directory to store the state, flow.xml.gz and authorizations.xml files. This directory will be created (if not already existing)</description>
     <on-ambari-upgrade add="true"/>
-  </property> 
+  </property>
 
   <property>
     <name>nifi.state.dir</name>
@@ -122,8 +125,8 @@
     <display-name>Nifi internal state dir</display-name>
     <description>The directory to store the state. This directory will be created (if not already existing)</description>
     <on-ambari-upgrade add="true"/>
-  </property> 
-  
+  </property>
+
   <property>
     <name>nifi.database.dir</name>
     <value>/var/lib/nifi/database_repository</value>
@@ -131,7 +134,7 @@
     <description>The directory for the H2 database repository. The H2 database keeps track of user access and flow controller history. This directory will be created (if not already existing)</description>
     <value-attributes>
       <type>directory</type>
-    </value-attributes>    
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -142,7 +145,7 @@
     <description>The directory for the flowfile repository. This directory will be created (if not already existing)</description>
     <value-attributes>
       <type>directory</type>
-    </value-attributes>    
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -153,7 +156,7 @@
     <description>The default directory for the content repository. This directory will be created (if not already existing).  NOTE: Multiple content repositories can be specified by using the nifi.content.repository.directory. prefix with unique suffixes and separate paths as values. For example, to provide two additional locations to act as part of the content repository, a user could also specify additional properties with keys of: nifi.content.repository.directory.content1=/repos/content1</description>
     <value-attributes>
       <type>directory</type>
-    </value-attributes>    
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -164,7 +167,7 @@
     <description>The default directory for the provenance repository. This directory will be created (if not already existing).  NOTE: Multiple provenance repositories can be specified by using the nifi.provenance.repository.directory. prefix with unique suffixes and separate paths as values. For example, to provide two additional locations to act as part of the provenance repository, a user could also specify additional properties with keys of: nifi.provenance.repository.directory.content1=/repos/provenance1</description>
     <value-attributes>
       <type>directory</type>
-    </value-attributes>    
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -174,8 +177,8 @@
     <property-type>PASSWORD</property-type>
     <display-name>Sensitive property values encryption password</display-name>
     <description>
-      This is the password used to encrypt any sensitive property values that are configured in processors. 
-      It can be a string of any length, although the recommended minimum length is 10 characters. 
+      This is the password used to encrypt any sensitive property values that are configured in processors.
+      It can be a string of any length, although the recommended minimum length is 10 characters.
       Be aware that once this password is set and one or more sensitive processor properties have been configured, this password should not be changed.
     </description>
     <value-attributes>
@@ -223,7 +226,7 @@
       <on-ambari-upgrade add="true"/>
       <description>External properties files for variable registry. This field supports a comma delimited list of file locations </description>
   </property>
-  
+
   <!-- Inherited from common-services/NIFI/1.5.0 -->
 
 
