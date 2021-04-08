@@ -77,14 +77,10 @@
     </property>
     <property>
         <name>nifi.ssl.use.default.context</name>
-        <value>True</value>
+        <value>False</value>
         <display-name>Authentication</display-name>
         <description>Use Ranger's Default SSL Context</description>
         <depends-on>
-            <property>
-                <type>ranger-env</type>
-                <name>ranger-nifi-plugin-enabled</name>
-            </property>
             <property>
                 <type>nifi-ambari-ssl-config</type>
                 <name>nifi.node.ssl.isenabled</name>

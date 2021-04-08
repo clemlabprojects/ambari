@@ -124,8 +124,6 @@ else:
   nifi_initial_admin_id = config['configurations']['nifi-ambari-ssl-config']['nifi.initial.admin.identity']
   nifi_ssl_config_content = config['configurations']['nifi-ambari-ssl-config']['content']
 
-nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
-nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
 nifi_node_protocol_port = config['configurations']['nifi-ambari-config']['nifi.node.protocol.port']
 
 #property that is set to hostname regardless of whether SSL enabled
@@ -140,10 +138,14 @@ else:
 
 if nifi_ssl_enabled:
   nifi_node_ssl_host = nifi_node_host
+  nifi_node_nonssl_host = ""
   nifi_node_port = ""
+  nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
 else:
   nifi_node_nonssl_host = nifi_node_host
   nifi_node_ssl_port = ""
+  nifi_node_ssl_host = ""
+  nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
 
 nifi_url = format("https://{nifi_host_name}:{nifi_node_ssl_port}") if nifi_ssl_enabled else format("http://{nifi_host_name}:{nifi_node_port}")
 
