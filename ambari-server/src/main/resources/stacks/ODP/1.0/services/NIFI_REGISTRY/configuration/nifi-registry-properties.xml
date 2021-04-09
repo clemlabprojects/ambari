@@ -190,7 +190,7 @@
 
     <!-- Database Properties -->
 
-    <!-- <property>
+    <property>
         <name>nifi.registry.db.directory</name>
         <value></value>
         <on-ambari-upgrade add="true"/>
@@ -209,7 +209,35 @@
         <value></value>
         <on-ambari-upgrade add="true"/>
         <description>An optional directory containing one or more JARs to add to the classpath.</description>
-    </property> -->
+    </property>
+
+    <property>
+        <name>nifi.registry.db.url</name>
+        <value>jdbc:h2:./database/nifi-registry-primary;AUTOCOMMIT=OFF;DB_CLOSE_ON_EXIT=FALSE;LOCK_MODE=3;LOCK_TIMEOUT=25000;WRITE_DELAY=0;AUTO_SERVER=FALSE</value>
+        <on-ambari-upgrade add="true"/>
+        <description>Parameters to append to the JDBC URL for the H2 database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.driver.class</name>
+        <value>org.h2.Driver</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The class name of the JDBC driver.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.username</name>
+        <value>nifireg</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The username for the database.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.password</name>
+        <value>nifireg</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The password for the database.</description>
+    </property>
 
     <!-- Extension Directory Properties -->
 
