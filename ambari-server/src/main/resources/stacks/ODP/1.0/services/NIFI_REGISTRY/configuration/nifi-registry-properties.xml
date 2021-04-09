@@ -248,6 +248,20 @@
         <description>The password for the database.</description>
     </property>
 
+    <property>
+        <name>nifi.registry.db.maxConnections</name>
+        <value>5</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The max number of connections for the connection pool. The default value is 5.</description>
+    </property>
+
+    <property>
+        <name>nifi.registry.db.sql.debug</name>
+        <value>false</value>
+        <on-ambari-upgrade add="true"/>
+        <description>Whether or not enable debug logging for SQL statements. The default value is false.</description>
+    </property>
+
     <!-- Extension Directory Properties -->
 
     <property>
@@ -350,6 +364,21 @@
         <value>12 hours</value>
         <on-ambari-upgrade add="true"/>
         <description>The expiration duration of a successful Kerberos user authentication, if used. It is 12 hours by default. Example: 12 hours</description>
+    </property>
+
+    <!-- Ranger -->
+    <property>
+        <name>nifi.registry.extension.dir.ranger</name>
+        <value>./ext/ranger/lib</value>
+        <display-name>Ranger extension dir</display-name>
+        <description>Ranger extension dir</description>
+        <depends-on>
+            <property>
+                <type>ranger-env</type>
+                <name>ranger-nifi-registry-plugin-enabled</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
 </configuration>
