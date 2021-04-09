@@ -78,21 +78,30 @@
 
     <property>
         <name>nifi.registry.security.keystore</name>
-        <value>{{nifi_registry_keystore}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The full path and name of the keystore. It is blank by default.</description>
     </property>
 
     <property>
         <name>nifi.registry.security.keystoreType</name>
-        <value>{{nifi_registry_keystoreType}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The keystore type. It is blank by default.</description>
     </property>
 
     <property>
         <name>nifi.registry.security.keystorePasswd</name>
-        <value>{{nifi_registry_keystorePasswd}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The keystore password. It is blank by default.</description>
         <value-attributes>
@@ -103,7 +112,10 @@
 
     <property>
         <name>nifi.registry.security.keyPasswd</name>
-        <value>{{nifi_registry_keyPasswd}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The key password. It is blank by default.</description>
         <value-attributes>
@@ -114,21 +126,30 @@
 
     <property>
         <name>nifi.registry.security.truststore</name>
-        <value>{{nifi_registry_truststore}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The full path and name of the truststore. It is blank by default.</description>
     </property>
 
     <property>
         <name>nifi.registry.security.truststoreType</name>
-        <value>{{nifi_registry_truststoreType}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The truststore type. It is blank by default.</description>
     </property>
 
     <property>
         <name>nifi.registry.security.truststorePasswd</name>
-        <value>{{nifi_registry_truststorePasswd}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The truststore password. It is blank by default.</description>
         <value-attributes>
@@ -139,7 +160,10 @@
 
     <property>
         <name>nifi.registry.security.needClientAuth</name>
-        <value>{{nifi_registry_needClientAuth}}</value>
+        <value></value>
+        <value-attributes>
+          <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
