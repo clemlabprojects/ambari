@@ -193,6 +193,9 @@
     <property>
         <name>nifi.registry.db.directory</name>
         <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The directory for the H2 database storage.</description>
     </property>
@@ -200,6 +203,9 @@
     <property>
         <name>nifi.registry.db.url.append</name>
         <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>Parameters to append to the JDBC URL for the H2 database.</description>
     </property>
@@ -207,6 +213,9 @@
     <property>
         <name>nifi.registry.db.driver.directory</name>
         <value></value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>An optional directory containing one or more JARs to add to the classpath.</description>
     </property>
