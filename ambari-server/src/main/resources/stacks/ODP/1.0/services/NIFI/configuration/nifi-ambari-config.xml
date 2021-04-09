@@ -31,7 +31,7 @@
 
   <property>
     <name>nifi.node.ssl.port</name>
-    <value></value>
+    <value>9091</value>
     <display-name>Nifi HTTP port (SSL)</display-name>
     <description>HTTP port NiFi node runs on when SSL is enabled</description>
     <value-attributes>

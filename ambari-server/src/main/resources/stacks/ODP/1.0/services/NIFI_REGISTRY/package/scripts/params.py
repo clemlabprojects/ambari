@@ -137,11 +137,11 @@ else:
     nifi_registry_needClientAuth = config['configurations']['nifi-registry-properties']['nifi.registry.security.needClientAuth']
 
 if nifi_registry_ambari_ssl_enabled:
-  nifi_registry_ssl_enabled = 'true'
+  nifi_registry_ssl_enabled = True
 elif nifi_registry_keystore is not None:
-  nifi_registry_ssl_enabled = 'true'
+  nifi_registry_ssl_enabled = True
 else:
-  nifi_registry_ssl_enabled = 'false'
+  nifi_registry_ssl_enabled = False
 
 nifi_registry_initial_admin_id = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.initial.admin.identity']
 nifi_registry_ssl_config_content = config['configurations']['nifi-registry-ambari-ssl-config']['content']

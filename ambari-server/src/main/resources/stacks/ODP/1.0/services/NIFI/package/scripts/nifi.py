@@ -245,7 +245,7 @@ class Master(Script):
       nifi_sensitive_props_key=params.nifi_sensitive_props_key,
       support_encrypt_authorizers=params.stack_support_encrypt_authorizers
     )
-
+    Logger.info(params.nifi_node_nonssl_host)
     #Apply Hashed Ambari parameters by retrieving new master key and hashing required parameters for Ambari
     bootstrap_current_conf = nifi_toolkit_util_common.convert_properties_to_dict(format("{params.nifi_bootstrap_file}"))
     new_master_key = bootstrap_current_conf['nifi.bootstrap.sensitive.key'] if 'nifi.bootstrap.sensitive.key' in bootstrap_current_conf else None

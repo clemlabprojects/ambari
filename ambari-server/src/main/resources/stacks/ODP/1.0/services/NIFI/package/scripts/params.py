@@ -130,22 +130,22 @@ nifi_node_protocol_port = config['configurations']['nifi-ambari-config']['nifi.n
 nifi_node_host = socket.getfqdn()
 
 if nifi_ambari_ssl_enabled:
-  nifi_ssl_enabled = 'true'
+  nifi_ssl_enabled = True
 elif nifi_keystore is not None:
-  nifi_ssl_enabled = 'true'
+  nifi_ssl_enabled = True
 else:
-  nifi_ssl_enabled = 'false'
+  nifi_ssl_enabled = False
 
-if nifi_ssl_enabled:
+if nifi_ssl_enabled is False:
+  nifi_node_ssl_host = ""
+  nifi_node_ssl_port = ""
+  nifi_node_nonssl_host = nifi_node_host
+  nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
+else:
   nifi_node_ssl_host = nifi_node_host
+  nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
   nifi_node_nonssl_host = ""
   nifi_node_port = ""
-  nifi_node_ssl_port = config['configurations']['nifi-ambari-config']['nifi.node.ssl.port']
-else:
-  nifi_node_nonssl_host = nifi_node_host
-  nifi_node_ssl_port = ""
-  nifi_node_ssl_host = ""
-  nifi_node_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
 
 nifi_url = format("https://{nifi_host_name}:{nifi_node_ssl_port}") if nifi_ssl_enabled else format("http://{nifi_host_name}:{nifi_node_port}")
 
