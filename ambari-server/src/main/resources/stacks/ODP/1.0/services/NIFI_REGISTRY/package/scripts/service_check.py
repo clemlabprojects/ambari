@@ -53,7 +53,7 @@ class NifiRegistryServiceCheck(Script):
 
 
     @staticmethod
-    @retry(times=30, sleep_time=5, max_sleep_time=20, backoff_factor=2, err_class=Fail)
+    @retry(times=3, sleep_time=5, max_sleep_time=20, backoff_factor=2, err_class=Fail)
     def check_nifi_registry_portal_with_python(url):
         try:
             request = urllib2.Request(url)
