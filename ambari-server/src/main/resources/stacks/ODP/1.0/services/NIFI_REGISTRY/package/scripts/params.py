@@ -153,7 +153,7 @@ nifi_registry_truststoreType = 'jks' if len(nifi_registry_truststoreType) == 0 e
 #property that is set to hostname regardless of whether SSL enabled
 nifi_registry_host = socket.getfqdn()
 
-if nifi_registry_ssl_enabled:
+if nifi_registry_ssl_enabled is False:
     nifi_registry_ssl_host = nifi_registry_host
     nifi_registry_port = ""
 else:
