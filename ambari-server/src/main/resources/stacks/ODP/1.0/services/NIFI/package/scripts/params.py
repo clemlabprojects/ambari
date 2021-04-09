@@ -131,7 +131,7 @@ nifi_node_host = socket.getfqdn()
 
 if nifi_ambari_ssl_enabled:
   nifi_ssl_enabled = True
-elif nifi_keystore is not None:
+elif nifi_keystore !="":
   nifi_ssl_enabled = True
 else:
   nifi_ssl_enabled = False

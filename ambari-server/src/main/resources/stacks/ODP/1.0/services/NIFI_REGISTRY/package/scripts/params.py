@@ -138,7 +138,7 @@ else:
 
 if nifi_registry_ambari_ssl_enabled:
   nifi_registry_ssl_enabled = True
-elif nifi_registry_keystore is not None:
+elif nifi_registry_keystore !="":
   nifi_registry_ssl_enabled = True
 else:
   nifi_registry_ssl_enabled = False
