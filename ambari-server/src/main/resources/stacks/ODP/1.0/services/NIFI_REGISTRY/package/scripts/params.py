@@ -155,10 +155,12 @@ nifi_registry_host = socket.getfqdn()
 
 if nifi_registry_ssl_enabled is False:
     nifi_registry_ssl_host = nifi_registry_host
-    nifi_registry_port = ""
+    nifi_registry_port = config['configurations']['nifi-registry-ambari-config']['nifi.registry.port']
+    nifi_registry_ssl_port = ""
 else:
     nifi_registry_nonssl_host = nifi_registry_host
-    nifi_registry_ssl_port = ""
+    nifi_registry_port = ""
+    nifi_registry_ssl_port = config['configurations']['nifi-registry-ambari-config']['nifi.registry.port.ssl']
 
 # wrap this in a check to see if we have a ca host b/c otherwise nifi-ambari-ssl-config won't exist
 # we use nifi-ambari-ssl-config to get the values for the CA so that they aren't duplicated in nifi-registry
