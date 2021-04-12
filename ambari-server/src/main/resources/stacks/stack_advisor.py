@@ -1734,7 +1734,7 @@ class DefaultStackAdvisor(StackAdvisor):
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
     servicesList, componentsList = self.get_service_and_component_lists(services["services"])
 
-    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services)
+    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services, {})
 
     recommendations = {
       "Versions": {"stack_name": stackName, "stack_version": stackVersion},
@@ -1833,7 +1833,7 @@ class DefaultStackAdvisor(StackAdvisor):
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
     servicesList, componentsList = self.get_service_and_component_lists(services["services"])
 
-    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services)
+    clusterSummary = self.getConfigurationClusterSummary(servicesList, hosts, componentsList, services, {})
 
 
     recommendations = {
