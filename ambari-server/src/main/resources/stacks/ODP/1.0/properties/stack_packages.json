@@ -933,6 +933,12 @@
           "current_dir": "{0}/current/nifi/conf"
         }
       ],
+      "nif-registry": [
+        {
+          "conf_dir": "/etc/nifi-registry/conf",
+          "current_dir": "{0}/current/nifi-registry/conf"
+        }
+      ],
       "oozie": [
         {
           "conf_dir": "/etc/oozie/conf",
