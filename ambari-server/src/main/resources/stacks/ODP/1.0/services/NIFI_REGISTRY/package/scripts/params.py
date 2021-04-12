@@ -44,14 +44,14 @@ config = Script.get_config()
 stack_root = Script.get_stack_root()
 tmp_dir = Script.get_tmp_dir()
 stack_name = default("/clusterLevelParams/stack_name", None)
-stack_version_buildnum = default("/commandParams/version", None)
-if stack_name == "ODP":
-    # Override HDP stack root
-    stack_root = "/usr/odp"
-    # Override HDP stack version
-    stack_version_buildnum = get_component_version_with_stack_selector("/usr/bin/odp-select", "nifi-registry")
-elif not stack_version_buildnum and stack_name:
-    stack_version_buildnum = get_component_version_from_symlink(stack_name, "nifi-registry")
+retryAble = default("/commandParams/command_retry_enabled", False)
+
+# Version being upgraded/downgraded to
+version = default("/commandParams/version", None)
+
+stack_version_unformatted = config['clusterLevelParams']['stack_version']
+stack_version_formatted = format_stack_version(stack_version_unformatted)
+stack_version_buildnum = stack_version_formatted
 
 service_name = 'nifi-registry'
 version_for_stack_feature_checks = get_stack_feature_version(config)
