@@ -422,6 +422,34 @@
           ]
         }
       },
+      "NIFI": {
+        "NIFI_MASTER": {
+          "STACK-SELECT-PACKAGE": "nifi",
+          "INSTALL": [
+            "nifi"
+          ],
+          "PATCH": [
+            "nifi"
+          ],
+          "STANDARD": [
+            "nifi"
+          ]
+        }
+      },
+      "NIFI_REGISTRY": {
+        "NIFI_REGISTRY_MASTER": {
+          "STACK-SELECT-PACKAGE": "nifi-registry",
+          "INSTALL": [
+            "nifi-registry"
+          ],
+          "PATCH": [
+            "nifi-registry"
+          ],
+          "STANDARD": [
+            "nifi-registry"
+          ]
+        }
+      },
       "OOZIE": {
         "OOZIE_CLIENT": {
           "STACK-SELECT-PACKAGE": "oozie-client",
