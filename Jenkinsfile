@@ -17,7 +17,7 @@ pipeline {
 }
 node {
     withCredentials([string(credentialsId: 'builder', variable: 'GITLAB_API_TOKEN')]){
-        withEnv([]){
+        withEnv(["REPO_TARGET_FILE=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/ambari.repo","RELEASE_DIR=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/"]){
             try {
                 stage("build Apache Ambari Release"){
                     sh """
@@ -41,8 +41,11 @@ node {
                         createrepo /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                     """
                 }
+                stage('Generate REPO-FILE') {
+                    sh './bin/generate_repo.sh'
+                }
                 stage('Upload Realease dir') {
-                    sh ' aws s3 cp /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms s3://clemlabs/centos7/ambari-release/ --recursive'
+                    sh ' aws s3 cp $RELEASE_DIR s3://clemlabs/centos7/ambari-release/ --recursive'
                 }
                 stage('Send Notifications') {
                     slackSend channel: 'build', message: "Ambari Build Successfull - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
