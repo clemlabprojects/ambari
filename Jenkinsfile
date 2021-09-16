@@ -43,7 +43,7 @@ node {
                         cp /var/lib/jenkins/workspace/ambari-release/ambari-infra/ambari-infra-assembly/target/rpm/ambari-infra-solr/RPMS/noarch/ambari-infra-solr-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp /var/lib/jenkins/workspace/ambari-release/ambari-server/target/rpm/ambari-server/RPMS/x86_64/ambari-server-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp /var/lib/jenkins/workspace/ambari-release/ambari-views/target/rpm/ambari-views/RPMS/noarch/ambari-views-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                        cp /var/lib/jenkins/workspace/ambari-release/contrib/views/capacity-scheduler/target/rpm/files/RPMS/noarch/files-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                        cp /var/lib/jenkins/workspace/ambari-release/contrib/views/files/target/rpm/files/RPMS/noarch/files-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp /var/lib/jenkins/workspace/ambari-release/contrib/views/capacity-scheduler/target/rpm/capacity-scheduler/RPMS/noarch/capacity-scheduler-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp ambari-metrics-assembly/target/.
                         /var/lib/jenkins/signall_rpms.sh /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
