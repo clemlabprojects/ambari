@@ -167,6 +167,7 @@
                   <includes>
                     <include>phoenix*.jar</include>
                     <include>antlr*.jar</include>
+                    <include>commons-lang-2.6.jar</include>
                   </includes>
                 </source>
               </sources>
