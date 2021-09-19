@@ -1256,21 +1256,21 @@ class DefaultStackAdvisor(StackAdvisor):
     sparkInstalled = False
     if 'SPARK2' in servicesList:
       sparkInstalled = True
-
-    currentValueService = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.aux-services"]
-    if sparkInstalled:
-      if(currentValueService.find("spark2_shuffle") != -1):
-        self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is already set")
+    if 'YARN' in servicesList:
+      currentValueService = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.aux-services"]
+      if sparkInstalled:
+        if(currentValueService.find("spark2_shuffle") != -1):
+          self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is already set")
+        else:
+          self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is added")
+          putYarnProperty('yarn.nodemanager.aux-services', currentValueService + ',spark2_shuffle')
       else:
-        self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is added")
-        putYarnProperty('yarn.nodemanager.aux-services', currentValueService + ',spark2_shuffle')
-    else:
-      replaced = False
-      if(currentValueService.find(",spark2_shuffle") != -1):
-        currentValueService = currentValueService.replace(",spark2_shuffle","")
-      if( (currentValueService.find("spark2_shuffle") != -1) and  not replaced):
-        currentValueService = currentValueService.replace("spark2_shuffle","")
-      putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
+        replaced = False
+        if(currentValueService.find(",spark2_shuffle") != -1):
+          currentValueService = currentValueService.replace(",spark2_shuffle","")
+        if( (currentValueService.find("spark2_shuffle") != -1) and  not replaced):
+          currentValueService = currentValueService.replace("spark2_shuffle","")
+        putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
 
     hBaseInstalled = False
     if 'HBASE' in servicesList:
