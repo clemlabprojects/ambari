@@ -110,7 +110,7 @@ limitations under the License.
               <include>org.apache.hadoop:hadoop-annotations</include>
               <include>commons-logging:commons-logging</include>
               <include>org.apache.commons:commons-lang3</include>
-              <include>commons-lang:commons-lang:2.6</include>
+              <include>commons-lang:commons-lang</include>
               <include>commons-codec:commons-codec</include>
             </includes>
           </artifactSet>
