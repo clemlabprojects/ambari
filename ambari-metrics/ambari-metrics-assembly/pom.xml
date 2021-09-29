@@ -288,7 +288,7 @@
                             <include>phoenix*.jar</include>
                             <include>antlr*.jar</include>
                             <include>commons-lang*</include>
-                          <includes>
+                          </includes>
                         </source>
                       </sources>
                     </mapping>
