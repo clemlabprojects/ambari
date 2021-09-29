@@ -21,8 +21,8 @@
         <service>
             <name>NIFI</name>
             <displayName>NiFi</displayName>
-            <comment>ODP - Apache NiFi is an easy to use, powerful, and reliable system to process and distribute data.</comment>
-            <version>1.13.0</version>
+            <comment>Apache NiFi is an easy to use, powerful, and reliable system to process and distribute data.</comment>
+            <version>1.13.2</version>
             <components>
                 <component>
                   <name>NIFI_CA</name>
