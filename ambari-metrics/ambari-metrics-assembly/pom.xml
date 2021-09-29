@@ -287,7 +287,8 @@
                           <includes>
                             <include>phoenix*.jar</include>
                             <include>antlr*.jar</include>
-                          </includes>
+                            <include>commons-lang*</include>
+                          <includes>
                         </source>
                       </sources>
                     </mapping>
@@ -865,7 +866,7 @@
                 <data>
                   <src>${collector.dir}/target/lib</src>
                   <type>directory</type>
-                  <includes>phoenix*.jar,antlr*.jar</includes>
+                  <includes>phoenix*.jar,antlr*.jar,commons-lang*.jar</includes>
                   <mapper>
                     <type>perm</type>
                     <filemode>644</filemode>
