@@ -927,7 +927,7 @@
                         compression="gzip"
                     />
                     <move
-                        file="${project.build.directory}/embedded/${phoenix.folder}/phoenix-server-${phoenix.version}.jar"
+                        file="${project.build.directory}/embedded/${phoenix.folder}/phoenix-server-hbase-2.2-${phoenix.version}-${odp.release.version}.jar"
                         tofile="${project.build.directory}/embedded/${hbase.folder}/lib/phoenix-${phoenix.version}-server.jar"
                     />
                   </target>
