@@ -36,7 +36,6 @@
     <module>ambari-metrics-assembly</module>
   </modules>
   <properties>
-    <odp.release.number>${odpReleaseNumber}</odp.release.number>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <python.ver>python &gt;= 2.6</python.ver>
     <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
