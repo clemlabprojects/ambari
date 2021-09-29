@@ -15,26 +15,31 @@ pipeline {
         }
     }
 }
+def odpReleaseNumber = Jenkins.instance.getItem('dph-release').lastSuccessfulBuild.number
 node {
     withCredentials([string(credentialsId: 'builder', variable: 'GITLAB_API_TOKEN')]){
         withEnv(["REPO_TARGET_FILE=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/ambari.repo","RELEASE_DIR=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/"]){
             try {
+                stage("ODP Release number"){
+                    echo "Last Success Build Number: ${odpReleaseNumber}"
+                }
                 stage("build Apache Ambari Release"){
                     sh """
-                        mvn clean
-                        mvn -B install package rpm:rpm "-Dmaven.clover.skip=true" "-DskipTests" "-Dstack.distribution=ODP" "-Drat.ignoreErrors=true" -Dpython.ver="python >= 2.6" -Dfindbugs.skip=true -DnewVersion=2.7.6.0.0 -DbuildNumber=7ee807e194f55e732298abdb8c672413f267c2f344cc573c50f76803fe38f5e1708db3605086048560dfefa6a2cda1ac6e704ee1686156fd1e9acce1dc60def7 -Dviews -Prpm -DodpReleaseNumber=$BUILD_NUMBER -DaltDeploymentRepository=nexus::default::https://nexus.luc-data.com/repository/maven-releases/
+                        mvn clean "-Dodp.release.number=${odpReleaseNumber}"
+                        mvn -B install package rpm:rpm "-Dmaven.clover.skip=true" "-DskipTests" "-Dstack.distribution=ODP" "-Drat.ignoreErrors=true" -Dpython.ver="python >= 2.6" -Dfindbugs.skip=true -DnewVersion=2.7.6.0.0 -DbuildNumber=7ee807e194f55e732298abdb8c672413f267c2f344cc573c50f76803fe38f5e1708db3605086048560dfefa6a2cda1ac6e704ee1686156fd1e9acce1dc60def7 -Dviews -Prpm "-Dodp.release.number=${odpReleaseNumber}" -DaltReleaseDeploymentRepository=nexus::default::https://nexus.luc-data.com/repository/maven-releases/ -DaltDeploymentRepository=nexus::default::https://nexus.luc-data.com/repository/maven-releases/
                     """
                 }
                 stage("build Apache Ambari Metrics"){
                     sh """
                         cd ambari-metrics
-                        mvn clean package -Dbuild-rpm -DskipTests
+                        mvn clean package -Dbuild-rpm -DskipTests "-Dodp.release.number=${odpReleaseNumber}"
                     """
                 }
                 stage('Copy Ambari RPM') {
 
 
                     sh """
+                        export RPMS_RELEASE_DIR=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         mkdir -p /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp /var/lib/jenkins/workspace/ambari-release/ambari-agent/target/rpm/ambari-agent/RPMS/x86_64/ambari-agent-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         cp /var/lib/jenkins/workspace/ambari-release/ambari-infra/target/rpm/ambari-infra/RPMS/noarch/ambari-infra-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
@@ -68,8 +73,8 @@ node {
                 // Since we're catching the exception in order to report on it,
                 // we need to re-throw it, to ensure that the build is marked as failed
                 throw e
-            }
-
-        }
+            } 
+                    
+        }   
     }
 }
