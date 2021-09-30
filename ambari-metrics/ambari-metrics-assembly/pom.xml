@@ -252,6 +252,11 @@
                             ${collector.dir}/target/ambari-metrics-timelineservice-${project.version}.jar
                           </location>
                         </source>
+                        <source>
+                          <location>
+                            ${collector.dir}/target/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar
+                          </location>
+                        </source>
                       </sources>
                     </mapping>
                     <mapping>
@@ -1379,6 +1384,11 @@
       <groupId>org.apache.ambari</groupId>
       <artifactId>ambari-metrics-host-aggregator</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.phoenix</groupId>
+      <artifactId>phoenix-hbase-compat-2.2.5</artifactId>
+      <version>${phoenix.version}</version>
     </dependency>
   </dependencies>
 

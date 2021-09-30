@@ -15,7 +15,8 @@ pipeline {
         }
     }
 }
-def odpReleaseNumber = Jenkins.instance.getItem('dph-release').lastSuccessfulBuild.number
+// def odpReleaseNumber = Jenkins.instance.getItem('dph-release').lastSuccessfulBuild.number
+def odpReleaseNumber = 268
 node {
     withCredentials([string(credentialsId: 'builder', variable: 'GITLAB_API_TOKEN')]){
         withEnv(["REPO_TARGET_FILE=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/ambari.repo","RELEASE_DIR=/var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/"]){

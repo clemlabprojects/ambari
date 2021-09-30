@@ -322,6 +322,11 @@
       <version>0.9</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.phoenix</groupId>
+      <artifactId>phoenix-hbase-compat-2.2.5</artifactId>
+      <version>${phoenix.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.zookeeper</groupId>
       <artifactId>zookeeper</artifactId>
       <version>3.5.5.1.0.2.0-118</version>
