@@ -938,6 +938,22 @@
                   </target>
                 </configuration>
               </execution>
+              <execution>
+                <id>phoenix_download_compat</id>
+                <phase>generate-resources</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target name="Download Phoenix HBase compat">
+                    <get
+                        src="https://nexus.luc-data.com/repository/maven-releases/org/apache/phoenix/phoenix-hbase-compat-2.2.5/${phoenix.version}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
+                        dest="${project.build.directory}/embedded/${phoenix.folder}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
+                        usetimestamp="true"
+                    />
+                  </target>
+                </configuration>
+              </execution>
             </executions>
           </plugin>
         </plugins>
