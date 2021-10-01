@@ -254,7 +254,7 @@
                         </source>
                         <source>
                           <location>
-                            ${collector.dir}/target/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar
+                            ${collector.dir}/target/embedded/${phoenix.folder}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar
                           </location>
                         </source>
                       </sources>
