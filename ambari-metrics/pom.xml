@@ -48,6 +48,7 @@
     <grafana.tar>https://dl.grafana.com/oss/release/grafana-6.4.2.linux-amd64.tar.gz</grafana.tar>
     <phoenix.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.3.0-${odp.release.number}/tars/phoenix/phoenix-hbase-2.2-5.1.2.1.0.3.0-${odp.release.number}-bin.tar.gz</phoenix.tar>
     <phoenix.folder>phoenix-hbase-2.2-5.1.2.1.0.3.0-${odp.release.number}-bin</phoenix.folder>
+    <phoenix.version>5.1.2.1.0.3.0-${odp.release.number}</phoenix.version>
     <resmonitor.install.dir>/usr/lib/python2.6/site-packages/resource_monitoring</resmonitor.install.dir>
     <powermock.version>1.6.2</powermock.version>
     <distMgmtSnapshotsId>apache.snapshots.https</distMgmtSnapshotsId>

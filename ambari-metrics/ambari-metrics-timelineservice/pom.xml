@@ -322,6 +322,11 @@
       <version>0.9</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.phoenix</groupId>
+      <artifactId>phoenix-hbase-compat-2.2.5</artifactId>
+      <version>${phoenix.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.zookeeper</groupId>
       <artifactId>zookeeper</artifactId>
       <version>3.5.5.1.0.2.0-118</version>
@@ -929,6 +934,22 @@
                     <move
                         file="${project.build.directory}/embedded/${phoenix.folder}/phoenix-server-hbase-2.2-${phoenix.version}.jar"
                         tofile="${project.build.directory}/embedded/${hbase.folder}/lib/phoenix-${phoenix.version}-server.jar"
+                    />
+                  </target>
+                </configuration>
+              </execution>
+              <execution>
+                <id>phoenix_download_compat</id>
+                <phase>generate-resources</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target name="Download Phoenix HBase compat">
+                    <get
+                        src="https://nexus.luc-data.com/repository/maven-releases/org/apache/phoenix/phoenix-hbase-compat-2.2.5/${phoenix.version}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
+                        dest="${project.build.directory}/embedded/${phoenix.folder}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
+                        usetimestamp="true"
                     />
                   </target>
                 </configuration>
