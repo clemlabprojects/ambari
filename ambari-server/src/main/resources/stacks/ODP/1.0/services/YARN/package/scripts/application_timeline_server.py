@@ -53,7 +53,7 @@ class ApplicationTimelineServer(Script):
       Execute(yarn_enablefastlaunch_cmd)
     else:
       Logger.info("Enable FastLaunch for YARN application")
-      Execute("yarn app -enableFastLaunch")
+      Execute("yarn app -enableFastLaunch", user=params.hdfs_user)
 
   def stop(self, env, upgrade_type=None):
     import params
