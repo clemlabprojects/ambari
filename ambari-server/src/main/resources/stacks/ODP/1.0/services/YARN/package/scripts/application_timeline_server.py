@@ -47,6 +47,14 @@ class ApplicationTimelineServer(Script):
     self.configure(env) # FOR SECURITY
     service('timelineserver', action='start')
 
+    if params.security_enabled:
+      Logger.info("Enable FastLaunch for YARN application with Kerberos")
+      yarn_enablefastlaunch_cmd = format("{rm_kinit_cmd} yarn app -enableFastLaunch")
+      Execute(yarn_enablefastlaunch_cmd)
+    else:
+      Logger.info("Enable FastLaunch for YARN application")
+      Execute("yarn app -enableFastLaunch")
+
   def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
