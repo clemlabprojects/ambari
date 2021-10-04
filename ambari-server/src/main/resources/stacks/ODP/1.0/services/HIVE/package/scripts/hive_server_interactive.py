@@ -57,6 +57,31 @@ class HiveServerInteractive(Script):
       env.set_params(params)
       hive_interactive(name='hiveserver2')
 
+      if params.version:
+        stack_select.select_packages(params.version)
+
+        # Copy hive.tar.gz and tez.tar.gz used by Hive Interactive to HDFS
+        resource_created = copy_to_hdfs(
+          "hive",
+          params.user_group,
+          params.hdfs_user,
+          skip=params.sysprep_skip_copy_tarballs_hdfs)
+
+        resource_created = copy_to_hdfs(
+          "tez_hive2",
+          params.user_group,
+          params.hdfs_user,
+          skip=params.sysprep_skip_copy_tarballs_hdfs) or resource_created
+
+        resource_created = copy_to_hdfs(
+          "yarn",
+          params.user_group,
+          params.hdfs_user,
+          skip=params.sysprep_skip_copy_tarballs_hdfs) or resource_created
+
+        if resource_created:
+          params.HdfsResource(None, action="execute")
+
     def pre_upgrade_restart(self, env, upgrade_type=None):
       Logger.info("Executing Hive Server Interactive Stack Upgrade pre-restart")
       import params
@@ -233,9 +258,9 @@ class HiveServerInteractive(Script):
 
       unique_name = "llap-yarn-service_%s" % datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
 
-      cmd = format("{stack_root}/current/hive-server2/bin/hive --service llap --size {params.llap_daemon_container_size}m --startImmediately --name {params.llap_app_name} "
-                   "--cache {params.hive_llap_io_mem_size}m --xmx {params.llap_heap_size}m --loglevel {params.llap_log_level} "
-                   "--output {LLAP_PACKAGE_CREATION_PATH}/{unique_name} --user {params.hive_user}")
+      cmd = format("{stack_root}/current/hive-server2/bin/hive --service llap --startImmediately --size {params.llap_daemon_container_size}m --name {params.llap_app_name} "
+                   "--cache {params.hive_llap_io_mem_size}m --xmx {params.llap_heap_size}m --loglevel {params.llap_log_level} --auxhbase=false "
+                   "--output {LLAP_PACKAGE_CREATION_PATH}/{unique_name}")
 
       # Append params that are supported from Hive llap GA version.
       # TODO: All the code related to Slider Anti-affinity will be removed and
