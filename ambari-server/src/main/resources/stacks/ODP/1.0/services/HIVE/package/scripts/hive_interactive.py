@@ -49,6 +49,17 @@ def hive_interactive(name = None):
   
   MB_TO_BYTES = 1048576
 
+  # create tez folder for llap
+  Logger.info("Create tez folder for LLAP")
+  Directory(params.tez_interactive_conf_dir,
+        create_parents = True,
+        cd_access="a",
+        mode=0775,
+        owner=params.tez_user,
+        group=params.user_group,
+        ignore_failures=True,
+  )
+
   # if warehouse directory is in DFS
   if not params.whs_dir_protocol or params.whs_dir_protocol == urlparse(params.default_fs).scheme:
     # Create Hive Metastore Warehouse Dir
