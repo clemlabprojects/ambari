@@ -1,7 +1,7 @@
 {
   "type": "datasource",
   "name": "Ambari Metrics",
-  "id": "ambari-metrics",
+  "id": "ambarimetrics",
   "metrics": true,
   "staticRoot": ".",
   "defaultMatchFormat": "glob",
