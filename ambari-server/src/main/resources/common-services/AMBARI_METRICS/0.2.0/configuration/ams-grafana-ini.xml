@@ -85,7 +85,8 @@ logs = {{ams_grafana_log_dir}}
 #
 # Directory where grafana will automatically scan and look for plugins
 #
-plugins = /var/lib/ambari-metrics-grafana/plugins
+; plugins = /var/lib/grafana/plugins
+plugins = {{ams_grafana_data_dir}}/plugins
 
 #################################### Server ####################################
 [server]
