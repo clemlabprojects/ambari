@@ -466,6 +466,9 @@ if rm_ha_enabled:
 # for curl command in ranger plugin to get db connector
 jdk_location = config['ambariLevelParams']['jdk_location']
 
+# need this to capture cluster name from where ranger yarn plugin is enabled
+cluster_name = config['clusterName']
+
 # ranger yarn plugin section start
 
 # ranger host
@@ -540,6 +543,36 @@ if enable_ranger_yarn and is_supported_yarn_ranger:
   ranger_plugin_config['default-policy.1.policyItem.1.users'] = policy_user
   ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "submit-app"
 
+  ranger_policy_config = {
+    "isEnabled": "true",
+    "service": cluster_name + "_hadoop",
+    "name": "YARN FastLaunch",
+    "resources": {
+      "path": {
+        "values": ["/odp/apps"],
+        "isExcludes": "false",
+        "isRecursive": "true"
+      }
+    },
+    "policyItems": [{
+      "accesses": [{
+        "type": "read",
+        "isAllowed": "true"
+      }, {
+        "type": "write",
+        "isAllowed": "true"
+      }, {
+        "type": "execute",
+        "isAllowed": "true"
+      }],
+      "users": [yarn_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  }
+
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:
     ranger_plugin_config.update(custom_ranger_service_config)
@@ -581,9 +614,6 @@ if enable_ranger_yarn and is_supported_yarn_ranger:
   # for SQLA explicitly disable audit to DB for Ranger
   if has_ranger_admin and stack_supports_ranger_audit_db and xa_audit_db_flavor == 'sqla':
     xa_audit_db_is_enabled = False
-
-# need this to capture cluster name from where ranger yarn plugin is enabled
-cluster_name = config['clusterName']
 
 # ranger yarn plugin end section
 

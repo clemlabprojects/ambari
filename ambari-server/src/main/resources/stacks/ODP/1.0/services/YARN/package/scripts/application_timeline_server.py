@@ -35,6 +35,7 @@ from yarn import yarn
 from service import service
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
+from setup_ranger_yarn import setup_ranger_yarn
 
 
 class ApplicationTimelineServer(Script):
@@ -46,6 +47,8 @@ class ApplicationTimelineServer(Script):
     env.set_params(params)
     self.configure(env) # FOR SECURITY
     service('timelineserver', action='start')
+    if params.enable_ranger_yarn and params.is_supported_yarn_ranger:
+      setup_ranger_yarn() #Ranger Yarn Plugin related calls
 
     if params.security_enabled:
       Logger.info("Enable FastLaunch for YARN application with Kerberos")
