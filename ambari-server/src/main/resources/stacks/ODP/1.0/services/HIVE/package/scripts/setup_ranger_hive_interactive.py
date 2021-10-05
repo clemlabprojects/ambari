@@ -74,8 +74,8 @@ def setup_ranger_hive_interactive(upgrade_type = None):
                           component_list=['hive-client', 'hive-metastore', 'hive-server2'], audit_db_is_enabled=False,
                           credential_file=params.credential_file, xa_audit_db_password=None,
                           ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password,
-                          stack_version_override = stack_version, skip_if_rangeradmin_down= not params.retryAble, api_version='v2',
-                          is_security_enabled = params.security_enabled,
+                          stack_version_override = stack_version, skip_if_rangeradmin_down= not params.retryAble, policy_config_dict = params.ranger_policy_config if params.ranger_policy_config else None,
+                          api_version="v2", is_security_enabled = params.security_enabled,
                           is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
                           component_user_principal=params.hive_principal if params.security_enabled else None,
                           component_user_keytab=params.hive_server2_keytab if params.security_enabled else None)

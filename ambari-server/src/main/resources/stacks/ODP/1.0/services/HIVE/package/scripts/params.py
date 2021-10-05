@@ -745,6 +745,31 @@ if enable_ranger_hive:
     hive_ranger_plugin_config['policy.download.auth.users'] = hive_user
     hive_ranger_plugin_config['tag.download.auth.users'] = hive_user
     hive_ranger_plugin_config['policy.grantrevoke.auth.users'] = hive_user
+    
+  if hive_interactive_enabled:
+    ranger_policy_config = {
+      "isEnabled": "true",
+      "service": cluster_name + "_yarn",
+      "name": "LLAP policy",
+      "resources": {
+        "queue": {
+          "values": ["root.llap"],
+          "isExcludes": "false",
+          "isRecursive": "true"
+        }
+      },
+      "policyItems": [{
+        "accesses": [{
+          "type": "submit-app",
+          "isAllowed": "true"
+        }],
+        "users": [hive_user],
+        "groups": [],
+        "roles": [],
+        "conditions": [],
+        "delegateAdmin": "false"
+      }]
+    }
 
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:

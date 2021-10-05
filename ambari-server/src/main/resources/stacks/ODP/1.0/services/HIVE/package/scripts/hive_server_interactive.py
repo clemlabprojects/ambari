@@ -82,6 +82,8 @@ class HiveServerInteractive(Script):
         if resource_created:
           params.HdfsResource(None, action="execute")
 
+      setup_ranger_hive_interactive(upgrade_type=None)
+
     def pre_upgrade_restart(self, env, upgrade_type=None):
       Logger.info("Executing Hive Server Interactive Stack Upgrade pre-restart")
       import params
