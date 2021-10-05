@@ -616,7 +616,30 @@ if has_hive_interactive:
   # Ambari upgrade may not add this config as it will force restart of HSI (stack upgrade should)
   if 'hive_heapsize' in config['configurations']['hive-interactive-env']:
     hive_interactive_heapsize = config['configurations']['hive-interactive-env']['hive_heapsize']
-
+  # Ranger rules for LLAP
+  ranger_policy_config = {
+    "isEnabled": "true",
+    "service": cluster_name + "_yarn",
+    "name": "LLAP policy",
+    "resources": {
+      "queue": {
+        "values": ["root.llap"],
+        "isExcludes": "false",
+        "isRecursive": "true"
+      }
+    },
+    "policyItems": [{
+      "accesses": [{
+        "type": "submit-app",
+        "isAllowed": "true"
+      }],
+      "users": [hive_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  }
   # Service check related
   if hive_transport_mode.lower() == "http":
     hive_server_interactive_port = config['configurations']['hive-interactive-site']['hive.server2.thrift.http.port']
@@ -643,7 +666,9 @@ if has_hive_interactive:
     hive_llap_keytab_file = config['configurations']['hive-interactive-site']['hive.llap.daemon.keytab.file']
     hive_llap_principal = (config['configurations']['hive-interactive-site']['hive.llap.daemon.service.principal']).replace('_HOST',hostname.lower())
   pass
-
+else:
+  ranger_policy_config = {}
+  
 if security_enabled:
   hive_principal = hive_server_principal.replace('_HOST', hostname.lower())
   hive_keytab = config['configurations']['hive-site']['hive.server2.authentication.kerberos.keytab']
@@ -746,31 +771,6 @@ if enable_ranger_hive:
     hive_ranger_plugin_config['tag.download.auth.users'] = hive_user
     hive_ranger_plugin_config['policy.grantrevoke.auth.users'] = hive_user
     
-  if hive_interactive_enabled:
-    ranger_policy_config = {
-      "isEnabled": "true",
-      "service": cluster_name + "_yarn",
-      "name": "LLAP policy",
-      "resources": {
-        "queue": {
-          "values": ["root.llap"],
-          "isExcludes": "false",
-          "isRecursive": "true"
-        }
-      },
-      "policyItems": [{
-        "accesses": [{
-          "type": "submit-app",
-          "isAllowed": "true"
-        }],
-        "users": [hive_user],
-        "groups": [],
-        "roles": [],
-        "conditions": [],
-        "delegateAdmin": "false"
-      }]
-    }
-
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:
     hive_ranger_plugin_config.update(custom_ranger_service_config)
