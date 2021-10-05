@@ -301,7 +301,7 @@ has_namenode = not len(namenode_host) == 0
 
 upgrade_direction = default("/commandParams/upgrade_direction", None)
 # ranger altas plugin section start
-
+ranger_policy_config = {}
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0

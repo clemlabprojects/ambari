@@ -347,7 +347,7 @@ for host in config['clusterHostInfo'][zk_hosts_property]:
 
 
 #setup ranger configuration
-
+ranger_policy_config = {}
 retryAble = default("/commandParams/command_retry_enabled", False)
 version = default("/commandParams/version", None)
 namenode_hosts = default("/clusterHostInfo/namenode_host", None)

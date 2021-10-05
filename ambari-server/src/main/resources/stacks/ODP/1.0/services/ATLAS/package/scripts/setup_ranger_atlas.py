@@ -71,7 +71,7 @@ def setup_ranger_atlas(upgrade_type=None):
                         plugin_policymgr_ssl_properties=params.config['configurations']['ranger-atlas-policymgr-ssl'], plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-atlas-policymgr-ssl'],
                         component_list=['atlas-server'], audit_db_is_enabled=False,
                         credential_file=params.credential_file, xa_audit_db_password=None,
-                        ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password,
+                        ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password, policy_config_dict = params.ranger_policy_config if params.ranger_policy_config else None,
                         api_version = 'v2', skip_if_rangeradmin_down = not params.retry_enabled, is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
                         component_user_principal=params.atlas_jaas_principal if params.security_enabled else None,

@@ -267,7 +267,7 @@ storm_jaas_file = format("{conf_dir}/storm_jaas.conf")
 jdk_location = config['ambariLevelParams']['jdk_location']
 
 # ranger storm plugin start section
-
+ranger_policy_config = {}
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
