@@ -191,6 +191,44 @@ class RangeradminV2:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
+  
+  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  def create_policy_urllib2(self, data, ambari_ranger_admin, ambari_ranger_password):
+    """
+    :param data: json object to create policy
+    :param ambari_ranger_admin ranger admin account
+    :password: ambari_ranger_password ranger admin password
+    :return: Returns created Ranger reposipolicytory object
+    """
+    policy_data = json.dumps(data)
+    ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
+    try:
+      search_policy_url = self.url_policies
+      base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
+      headers = {
+        'Accept': 'application/json',
+        "Content-Type": "application/json"
+      }
+      request = urllib2.Request(search_policy_url, policy_data, headers)
+      request.add_header("Authorization", "Basic {0}".format(base_64_string))
+      result = openurl(request, timeout=20)
+      response_code = result.getcode()
+      response = json.loads(json.JSONEncoder().encode(result.read()))
+
+      if response_code == 200:
+        Logger.info('Policy created Successfully')
+        return response
+      else:
+        raise Fail('Policy creation failed')
+    except urllib2.URLError, e:
+      if isinstance(e, urllib2.HTTPError):
+        raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+      else:
+        raise Fail("Error creating policy. Reason - {0}.".format(e.reason))
+    except httplib.BadStatusLine:
+      raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
+    except TimeoutError:
+      raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
   @safe_retry(times=75, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
   def check_ranger_login_urllib2(self, url):

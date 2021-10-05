@@ -35,10 +35,10 @@ from resource_management.libraries.script.script import Script
 def setup_ranger_plugin(component_select_name, service_name, previous_jdbc_jar,
                         downloaded_custom_connector, driver_curl_source,
                         driver_curl_target, java_home,
-                        repo_name, plugin_repo_dict, 
+                        repo_name, plugin_repo_dict,
                         ranger_env_properties, plugin_properties,
                         policy_user, policymgr_mgr_url,
-                        plugin_enabled, component_user, component_group, api_version=None, skip_if_rangeradmin_down = True, **kwargs):
+                        plugin_enabled, component_user, component_group, policy_config_dict=None, api_version=None, skip_if_rangeradmin_down = True, **kwargs):
 
   if driver_curl_source and not driver_curl_source.endswith("/None"):
     if previous_jdbc_jar and os.path.isfile(previous_jdbc_jar):
@@ -85,6 +85,11 @@ def setup_ranger_plugin(component_select_name, service_name, previous_jdbc_jar,
                                             ranger_env_properties['ranger_admin_username'], ranger_env_properties['ranger_admin_password'], 
                                             ranger_env_properties['admin_username'], ranger_env_properties['admin_password'], 
                                             policy_user)
+    Logger.info("Check if custom policies exists")
+    if policy_config_dict is not None and policy_config_dict:
+      ranger_adm_obj.create_policy_urllib2(policy_config_dict, ranger_env_properties['ranger_admin_username'], ranger_env_properties['ranger_admin_password'])
+    else:
+      Logger.info("No custom policies to create")
   else:
     cmd = (format('disable-{service_name}-plugin.sh'),)
     
