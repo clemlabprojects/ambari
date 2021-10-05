@@ -63,12 +63,12 @@ def setup_ranger_yarn():
                         plugin_policymgr_ssl_properties=params.config['configurations']['ranger-yarn-policymgr-ssl'], plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-yarn-policymgr-ssl'],
                         component_list=['hadoop-yarn-resourcemanager'], audit_db_is_enabled=params.xa_audit_db_is_enabled,
                         credential_file=params.credential_file, xa_audit_db_password=params.xa_audit_db_password, 
-                        ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password,
+                        ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password, policy_config_dict = params.ranger_policy_config if params.ranger_policy_config else None,
                         api_version = 'v2', skip_if_rangeradmin_down= not params.retryAble,
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
                         component_user_principal=params.rm_principal_name if params.security_enabled else None,
                         component_user_keytab=params.rm_keytab if params.security_enabled else None
-      )
+    )
   else:
     Logger.info('Ranger Yarn plugin is not enabled')
