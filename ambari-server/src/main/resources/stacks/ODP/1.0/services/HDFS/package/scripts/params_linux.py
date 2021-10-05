@@ -469,7 +469,7 @@ is_https_enabled = is_https_enabled_in_hdfs(config['configurations']['hdfs-site'
                                             config['configurations']['hdfs-site']['dfs.https.enable'])
 
 # ranger hdfs plugin section start
-
+ranger_policy_config = {}
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
@@ -519,7 +519,6 @@ if enable_ranger_hdfs:
     ranger_env['ranger_admin_password'] = external_ranger_admin_password
 
   ranger_plugin_properties = config['configurations']['ranger-hdfs-plugin-properties']
-  ranger_policy_config = {}
   policy_user = config['configurations']['ranger-hdfs-plugin-properties']['policy_user']
   repo_config_password = config['configurations']['ranger-hdfs-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
 
