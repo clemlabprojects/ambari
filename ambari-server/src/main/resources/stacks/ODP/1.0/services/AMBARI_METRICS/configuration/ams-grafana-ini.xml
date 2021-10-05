@@ -80,6 +80,8 @@ data = {{ams_grafana_data_dir}}
 ;logs = /var/log/grafana
 logs = {{ams_grafana_log_dir}}
 
+; plugins = /var/lib/grafana/plugins
+plugins = {{ams_grafana_data_dir}}/plugins
 
 #################################### Server ####################################
 [server]
