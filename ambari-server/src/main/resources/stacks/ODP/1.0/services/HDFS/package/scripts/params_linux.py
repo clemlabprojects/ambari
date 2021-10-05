@@ -519,6 +519,7 @@ if enable_ranger_hdfs:
     ranger_env['ranger_admin_password'] = external_ranger_admin_password
 
   ranger_plugin_properties = config['configurations']['ranger-hdfs-plugin-properties']
+  ranger_policy_config = {}
   policy_user = config['configurations']['ranger-hdfs-plugin-properties']['policy_user']
   repo_config_password = config['configurations']['ranger-hdfs-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
 

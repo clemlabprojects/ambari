@@ -296,7 +296,7 @@ xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFI
 # ranger hbase plugin enabled property
 enable_ranger_hbase = default("/configurations/ranger-hbase-plugin-properties/ranger-hbase-plugin-enabled", "No")
 enable_ranger_hbase = True if enable_ranger_hbase.lower() == 'yes' else False
-
+ranger_policy_config = {}
 # ranger hbase properties
 if enable_ranger_hbase:
   # get ranger policy url

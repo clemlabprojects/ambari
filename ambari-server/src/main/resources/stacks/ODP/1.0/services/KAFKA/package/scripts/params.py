@@ -199,7 +199,7 @@ else:
 jdk_location = config['ambariLevelParams']['jdk_location']
 
 # ranger kafka plugin section start
-
+ranger_policy_config = {}
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0

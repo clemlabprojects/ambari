@@ -265,7 +265,7 @@ if security_enabled:
         nifi_registry_properties['nifi.registry.kerberos.service.principal'] = nifi_registry_properties['nifi.registry.kerberos.service.principal'].replace('_HOST',_hostname_lowercase)
 
 #setup ranger configuration
-
+ranger_policy_config = {}
 retryAble = default("/commandParams/command_retry_enabled", False)
 version = default("/commandParams/version", None)
 namenode_hosts = default("/clusterHostInfo/namenode_host", None)
