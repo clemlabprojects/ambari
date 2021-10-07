@@ -93,44 +93,57 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
+
   def create_ranger_repository(self, component, repo_name, repo_properties,
                                ambari_ranger_admin, ambari_ranger_password,
                                admin_uname, admin_password, policy_user, is_security_enabled = False, is_stack_supports_ranger_kerberos = False,
                                component_user = None, component_user_principal = None, component_user_keytab = None):
-    if not is_stack_supports_ranger_kerberos or not is_security_enabled:
+
+    ## TODO: move user creation to ranger start as it need to be created only once
+    ## [BUG-1]: external user creation was inside the condition
+
+    ambari_ranger_password = unicode(ambari_ranger_password)
+    admin_password = unicode(admin_password)
+    ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
+    retryCount = 0
+
+    while retryCount <= 30:
       response_code = self.check_ranger_login_urllib2(self.base_url)
-      repo_data = json.dumps(repo_properties)
-      ambari_ranger_password = unicode(ambari_ranger_password)
-      admin_password = unicode(admin_password)
-      ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
-
-
-      if response_code is not None and response_code == 200:
+      if response_code is None and response_code != 200:
+        Logger.info("Creating Ambari Ranger External User")
         user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
+        retryCount += 1
         if user_resp_code is not None and user_resp_code == 200:
-          retryCount = 0
-          while retryCount <= 5:
-            repo = self.get_repository_by_name_urllib2(repo_name, component, 'true', ambari_username_password_for_ranger)
-            if repo is not None:
-              Logger.info('{0} Repository {1} exist'.format(component.title(), repo['name']))
-              break
-            else:
-              response = self.create_repository_urllib2(repo_data, ambari_username_password_for_ranger)
-              if response is not None:
-                Logger.info('{0} Repository created in Ranger admin'.format(component.title()))
-                break
-              else:
-                if retryCount < 5:
-                  Logger.info("Retry Repository Creation is being called")
-                  time.sleep(30) # delay for 30 seconds
-                  retryCount += 1
-                else:
-                  Logger.error('{0} Repository creation failed in Ranger admin'.format(component.title()))
-                  break
+          Logger.info("Ambari Ranger External User Created Successfully")
+          break
         else:
-          Logger.error('Ambari admin user creation failed')
+          Logger.error("Ambari Ranger External User Ranger Failed")
+      elif response_code is not None and response_code == 200:
+        Logger.info("Ambari Ranger External User Already Exists Skipping...")
       elif not self.skip_if_rangeradmin_down:
         Logger.error("Connection failed to Ranger Admin !")
+
+    if not is_stack_supports_ranger_kerberos or not is_security_enabled:
+      repo_data = json.dumps(repo_properties)
+      retryCount = 0
+      while retryCount <= 5:
+        repo = self.get_repository_by_name_urllib2(repo_name, component, 'true', ambari_username_password_for_ranger)
+        if repo is not None:
+          Logger.info('{0} Repository {1} exist'.format(component.title(), repo['name']))
+          break
+        else:
+          response = self.create_repository_urllib2(repo_data, ambari_username_password_for_ranger)
+          if response is not None:
+            Logger.info('{0} Repository created in Ranger admin'.format(component.title()))
+            break
+          else:
+            if retryCount < 5:
+              Logger.info("Retry Repository Creation is being called")
+              time.sleep(30) # delay for 30 seconds
+              retryCount += 1
+            else:
+              Logger.error('{0} Repository creation failed in Ranger admin'.format(component.title()))
+              break
     elif is_stack_supports_ranger_kerberos and is_security_enabled:
       response = self.check_ranger_login_curl(component_user,component_user_keytab,component_user_principal,self.url_login,True)
 
@@ -230,7 +243,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
-  @safe_retry(times=75, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
   def check_ranger_login_urllib2(self, url):
     """
     :param url: ranger admin host url
