@@ -77,10 +77,11 @@
     </property>
     <property>
         <name>zeppelin.notebook.storage</name>
-        <value>org.apache.zeppelin.notebook.repo.FileSystemNotebookRepo</value>
-        <description>notebook persistence layer implementation. If S3 is used, set this to
-            org.apache.zeppelin.notebook.repo.S3NotebookRepo instead. If S3 is used to store the
-            notebooks, it is necessary to use the following folder structure
+        <value>org.apache.zeppelin.notebook.repo.GitNotebookRepo</value>
+        <description>notebook persistence layer implementation. If HDFS is used set this to
+            org.apache.zeppelin.notebook.repo.FileSystemNotebookRepo instead. If S3 is used, set
+            this to org.apache.zeppelin.notebook.repo.S3NotebookRepo instead. If S3 is used to
+            store the notebooks, it is necessary to use the following folder structure
             bucketname/username/notebook/
         </description>
         <on-ambari-upgrade add="false"/>
@@ -104,12 +105,17 @@
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
-        <name>zeppelin.interpreters</name>
-        <value>org.apache.zeppelin.spark.SparkInterpreter,org.apache.zeppelin.spark.PySparkInterpreter,org.apache.zeppelin.spark.SparkSqlInterpreter,org.apache.zeppelin.spark.DepInterpreter,org.apache.zeppelin.markdown.Markdown,org.apache.zeppelin.angular.AngularInterpreter,org.apache.zeppelin.shell.ShellInterpreter,org.apache.zeppelin.jdbc.JDBCInterpreter,org.apache.zeppelin.phoenix.PhoenixInterpreter,org.apache.zeppelin.livy.LivySparkInterpreter,org.apache.zeppelin.livy.LivyPySparkInterpreter,org.apache.zeppelin.livy.LivySparkRInterpreter,org.apache.zeppelin.livy.LivySparkSQLInterpreter</value>
-        <description>Comma separated interpreter configurations. First interpreter become a
-            default
-        </description>
-        <on-ambari-upgrade add="false"/>
+      <name>zeppelin.interpreter.include</name>
+      <value></value>
+      <description>All the inteprreters that you would like to include. You can only specify either 'zeppelin.interpreter.include' or 'zeppelin.interpreter.exclude'. Specifying them together is not allowed.</description>
+      <on-ambari-upgrade add="false"/>
+    </property>
+
+    <property>
+      <name>zeppelin.interpreter.exclude</name>
+      <value></value>
+      <description>All the inteprreters that you would like to exclude. You can only specify either 'zeppelin.interpreter.include' or 'zeppelin.interpreter.exclude'. Specifying them together is not allowed.</description>
+      <on-ambari-upgrade add="false"/>
     </property>
     <property>
         <name>zeppelin.interpreter.group.order</name>

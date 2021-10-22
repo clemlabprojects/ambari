@@ -194,7 +194,7 @@ class Master(Script):
 
     notebook_dir = params.config['configurations']['zeppelin-site']['zeppelin.notebook.dir']
     if notebook_dir.startswith("/") or '://' in notebook_dir:
-      notebook_directory = notebook_dir
+      notebook_directory = notebook_dir.replace(" ", "%20")
     else:
       notebook_directory = "/user/" + format("{zeppelin_user}") + "/" + notebook_dir
 
