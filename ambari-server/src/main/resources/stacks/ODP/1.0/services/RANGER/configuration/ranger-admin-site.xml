@@ -696,17 +696,6 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>ranger.plugins.storm.serviceuser</name>
-    <value>storm</value>
-    <depends-on>
-      <property>
-        <type>storm-env</type>
-        <name>storm_user</name>
-      </property>
-    </depends-on>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>ranger.plugins.kafka.serviceuser</name>
     <value>kafka</value>
     <depends-on>

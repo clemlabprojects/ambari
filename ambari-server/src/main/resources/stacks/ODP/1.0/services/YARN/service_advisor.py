@@ -1542,7 +1542,7 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
     putHiveInteractiveSiteProperty('hive.llap.io.memory.size', 2048)
     putHiveInteractiveSitePropertyAttribute('hive.llap.io.memory.size', 'minimum', 0)
     putHiveInteractiveSitePropertyAttribute('hive.llap.io.memory.size', 'maximum', max(self.__get_min_hsi_mem(services, hosts) * 0.5, 2048))
-    
+
     ssd_cache_on = services["configurations"]["hive-interactive-site"]["properties"]["hive.llap.io.allocator.mmap"] == "true"
     if ssd_cache_on:
       services["forced-configurations"].append({"type" : "hive-interactive-site", "name" : "hive.llap.io.enabled"})
@@ -1556,7 +1556,7 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
     for hsiHost in hsiHosts:
       host_mem = hsiHost["Hosts"]["total_mem"] / 1024
       min_mem = min(min_mem, host_mem)
-    
+
     return min_mem
 
   def get_num_llap_nodes(self, services, configurations):
@@ -2198,10 +2198,6 @@ class MAPREDUCE2Recommender(YARNRecommender):
     min_mapreduce_map_memory_mb = 0
     min_mapreduce_reduce_memory_mb = 0
     min_mapreduce_map_java_opts = 0
-    if ("PIG" in servicesList) and clusterData["totalAvailableRam"] >= 4096:
-      min_mapreduce_map_memory_mb = 1536
-      min_mapreduce_reduce_memory_mb = 1536
-      min_mapreduce_map_java_opts = 1024
 
     putMapredProperty('mapreduce.map.memory.mb',
                       min(int(configurations["yarn-site"]["properties"]["yarn.scheduler.maximum-allocation-mb"]),

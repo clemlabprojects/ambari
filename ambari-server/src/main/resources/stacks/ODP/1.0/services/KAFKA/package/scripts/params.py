@@ -274,8 +274,6 @@ if enable_ranger_kafka and is_supported_kafka_ranger:
   has_hbase_master = not len(hbase_master_hosts) == 0
   ranger_tagsync_hosts = default('/clusterHostInfo/ranger_tagsync_hosts', [])
   has_ranger_tagsync = not len(ranger_tagsync_hosts) == 0
-  storm_nimbus_hosts = default('/clusterHostInfo/nimbus_hosts', [])
-  has_storm_nimbus = not len(storm_nimbus_hosts) == 0
 
   if has_atlas_server:
     atlas_notification_topics = default('/configurations/application-properties/atlas.notification.topics', 'ATLAS_HOOK,ATLAS_ENTITIES')
@@ -295,10 +293,6 @@ if enable_ranger_kafka and is_supported_kafka_ranger:
         hook_policy_user.append(hive_user)
       if has_hbase_master:
         hook_policy_user.append(hbase_user)
-      if has_storm_nimbus and kerberos_security_enabled:
-        storm_principal_name = config['configurations']['storm-env']['storm_principal_name']
-        storm_bare_principal_name = get_bare_principal(storm_principal_name)
-        hook_policy_user.append(storm_bare_principal_name)
       if len(hook_policy_user) > 0:
         ranger_plugin_config['default-policy.1.policyItem.1.users'] = ",".join(hook_policy_user)
         ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "publish"

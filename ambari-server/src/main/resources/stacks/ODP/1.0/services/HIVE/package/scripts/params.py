@@ -184,9 +184,7 @@ tez_conf_dir = status_params.tez_conf_dir
 # DON'T CHANGE THESE VARIABLE NAMES
 # Values don't change from those in copy_tarball.py
 hive_tar_source = "{0}/{1}/hive/hive.tar.gz".format(STACK_ROOT_PATTERN, STACK_VERSION_PATTERN)
-pig_tar_source = "{0}/{1}/pig/pig.tar.gz".format(STACK_ROOT_PATTERN, STACK_VERSION_PATTERN)
 hive_tar_dest_file = "/{0}/apps/{1}/hive/hive.tar.gz".format(STACK_NAME_PATTERN,STACK_VERSION_PATTERN)
-pig_tar_dest_file = "/{0}/apps/{1}/pig/pig.tar.gz".format(STACK_NAME_PATTERN, STACK_VERSION_PATTERN)
 
 hadoop_streaming_tar_source = "{0}/{1}/hadoop-mapreduce/hadoop-streaming.jar".format(STACK_ROOT_PATTERN, STACK_VERSION_PATTERN)
 sqoop_tar_source = "{0}/{1}/sqoop/sqoop.tar.gz".format(STACK_ROOT_PATTERN, STACK_VERSION_PATTERN)
@@ -569,7 +567,6 @@ HdfsResource = functools.partial(
   dfs_type = dfs_type
  )
 
-has_pig = 'pig-env' in config['configurations']
 
 # Hive Interactive related
 hive_interactive_hosts = default('/clusterHostInfo/hive_server_interactive_hosts', [])
@@ -668,7 +665,7 @@ if has_hive_interactive:
   pass
 else:
   ranger_policy_config = {}
-  
+
 if security_enabled:
   hive_principal = hive_server_principal.replace('_HOST', hostname.lower())
   hive_keytab = config['configurations']['hive-site']['hive.server2.authentication.kerberos.keytab']
@@ -770,7 +767,7 @@ if enable_ranger_hive:
     hive_ranger_plugin_config['policy.download.auth.users'] = hive_user
     hive_ranger_plugin_config['tag.download.auth.users'] = hive_user
     hive_ranger_plugin_config['policy.grantrevoke.auth.users'] = hive_user
-    
+
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:
     hive_ranger_plugin_config.update(custom_ranger_service_config)
@@ -821,19 +818,6 @@ if 'zookeeper_server_hosts' in config['clusterHostInfo']:
     if zk_quorum:
       zk_quorum += ','
     zk_quorum += host + ":" + str(zookeeper_port)
-
-
-# For druid metadata password
-druid_metadata_password = ""
-if 'druid-common' in config['configurations'] \
-        and 'druid.metadata.storage.connector.password' in config['configurations']['druid-common']:
-  druid_metadata_password = config['configurations']['druid-common']['druid.metadata.storage.connector.password']
-
-# For druid storage directory, hive will write segments here
-druid_storage_dir = ""
-if 'druid-common' in config['configurations'] \
-        and 'druid.storage.storageDirectory' in config['configurations']['druid-common']:
-  druid_storage_dir = config['configurations']['druid-common']['druid.storage.storageDirectory']
 
 #beeline-site config
 

@@ -211,7 +211,6 @@
             <config-type>llap-cli-log4j2</config-type>
             <config-type>llap-daemon-log4j</config-type>
             <config-type>hiveserver2-site</config-type>
-            <config-type>druid-common</config-type>
           </configuration-dependencies>
         </component>
 
@@ -384,10 +383,6 @@
         <service>HDFS</service>
         <service>YARN</service>
         <service>TEZ</service>
-        <!-- TODO AMBARI-20753
-        Re-add after Pig service is being packaged.
-        <service>PIG</service>
-        -->
       </requiredServices>
 
       <configuration-dependencies>
@@ -406,7 +401,6 @@
         <config-type>application.properties</config-type>
         <config-type>hive-atlas-application.properties</config-type>
         <config-type>tez-site</config-type>
-        <config-type>druid-common</config-type>
       </configuration-dependencies>
     </service>
   </services>
