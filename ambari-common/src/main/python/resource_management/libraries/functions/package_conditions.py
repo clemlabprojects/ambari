@@ -19,7 +19,7 @@ limitations under the License.
 Ambari Agent
 
 """
-__all__ = ["should_install_phoenix", "should_install_ams_collector", "should_install_ams_grafana",
+__all__ = ["should_install_phoenix", "should_install_atlas", "should_install_ams_collector", "should_install_ams_grafana",
            "should_install_mysql", "should_install_ranger_tagsync"]
 
 import os
@@ -49,6 +49,12 @@ def should_install_phoenix():
   phoenix_enabled = default('/configurations/hbase-env/phoenix_sql_enabled', False)
   has_phoenix = len(phoenix_hosts) > 0
   return phoenix_enabled or has_phoenix
+
+def should_install_atlas():
+  atlas_hosts = default('/clusterHostInfo/atlas_server_hosts', [])
+  atlas_enabled = default('/configurations/hbase-env/hbase.atlas.hook', False)
+  has_atlas = len(atlas_hosts) > 0
+  return atlas_enabled or has_atlas
 
 def should_install_ams_collector():
   config = Script.get_config()

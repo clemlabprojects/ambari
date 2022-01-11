@@ -665,6 +665,16 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
         return []
       return [host['Hosts']['host_name'] for host in phoenix_query_server_hosts]
 
+  def getAtlasMetadataServerHosts(self, services, hosts):
+    """
+    Returns the list of Atlas Metadata host names, or None.
+    """
+    if len(hosts['items']) > 0:
+      atlas_server_hosts = self.getHostsWithComponent("ATLAS", "ATLAS_SERVER", services, hosts)
+      if atlas_server_hosts is None:
+        return []
+      return [host['Hosts']['host_name'] for host in atlas_server_hosts]
+
 
   def isRangerPluginEnabled(self, configurations, services):
     if 'ranger-hbase-plugin-properties' in configurations and 'ranger-hbase-plugin-enabled' in configurations['ranger-hbase-plugin-properties']['properties']:
