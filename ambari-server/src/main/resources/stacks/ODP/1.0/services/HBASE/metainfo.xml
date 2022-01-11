@@ -195,6 +195,10 @@
               <name>phoenix_${stack_version}</name>
               <condition>should_install_phoenix</condition>
             </package>
+            <package>
+              <name>atlas_${stack_version}-hbase-hook</name>
+              <condition>should_install_atlas</condition>
+            </package>
           </packages>
         </osSpecific>
         <osSpecific>
