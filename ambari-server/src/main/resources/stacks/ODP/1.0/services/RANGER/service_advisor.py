@@ -290,8 +290,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
         {'service_name': 'HDFS', 'audit_file': 'ranger-hdfs-plugin-properties'},
         {'service_name': 'HBASE', 'audit_file': 'ranger-hbase-plugin-properties'},
         {'service_name': 'HIVE', 'audit_file': 'ranger-hive-plugin-properties'},
-        {'service_name': 'KNOX', 'audit_file': 'ranger-knox-plugin-properties'},
-        {'service_name': 'STORM', 'audit_file': 'ranger-storm-plugin-properties'}
+        {'service_name': 'KNOX', 'audit_file': 'ranger-knox-plugin-properties'}
       ]
 
       for item in range(len(ranger_services)):
@@ -318,8 +317,6 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
     cluster_env = self.getServicesSiteProperties(services, "cluster-env")
     security_enabled = cluster_env is not None and "security_enabled" in cluster_env and \
                        cluster_env["security_enabled"].lower() == "true"
-    if "ranger-env" in configurations and not security_enabled:
-      putRangerEnvProperty("ranger-storm-plugin-enabled", "No")
 
   def getDBConnectionHostPort(self, db_type, db_host):
     connection_string = ""
@@ -481,8 +478,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'HBASE', 'audit_file': 'ranger-hbase-audit'},
       {'service_name': 'HIVE', 'audit_file': 'ranger-hive-audit'},
       {'service_name': 'KNOX', 'audit_file': 'ranger-knox-audit'},
-      {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'},
-      {'service_name': 'STORM', 'audit_file': 'ranger-storm-audit'}
+      {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'}
     ]
 
     for item in range(len(ranger_services)):
@@ -537,8 +533,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'HIVE', 'config_type': 'ranger-hive-security'},
       {'service_name': 'KNOX', 'config_type': 'ranger-knox-security'},
       {'service_name': 'KAFKA', 'config_type': 'ranger-kafka-security'},
-      {'service_name': 'RANGER_KMS','config_type': 'ranger-kms-security'},
-      {'service_name': 'STORM', 'config_type': 'ranger-storm-security'}
+      {'service_name': 'RANGER_KMS','config_type': 'ranger-kms-security'}
     ]
 
     # recommendation for ranger url for ranger-supported plugins
@@ -629,7 +624,6 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'HIVE', 'audit_file': 'ranger-hive-audit'},
       {'service_name': 'KNOX', 'audit_file': 'ranger-knox-audit'},
       {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'},
-      {'service_name': 'STORM', 'audit_file': 'ranger-storm-audit'},
       {'service_name': 'RANGER_KMS', 'audit_file': 'ranger-kms-audit'},
       {'service_name': 'ATLAS', 'audit_file': 'ranger-atlas-audit'}
     ]
@@ -670,7 +664,6 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'YARN', 'file_name': 'yarn-env', 'config_name': 'yarn_user', 'target_configname': 'ranger.plugins.yarn.serviceuser'},
       {'service_name': 'HBASE', 'file_name': 'hbase-env', 'config_name': 'hbase_user', 'target_configname': 'ranger.plugins.hbase.serviceuser'},
       {'service_name': 'KNOX', 'file_name': 'knox-env', 'config_name': 'knox_user', 'target_configname': 'ranger.plugins.knox.serviceuser'},
-      {'service_name': 'STORM', 'file_name': 'storm-env', 'config_name': 'storm_user', 'target_configname': 'ranger.plugins.storm.serviceuser'},
       {'service_name': 'KAFKA', 'file_name': 'kafka-env', 'config_name': 'kafka_user', 'target_configname': 'ranger.plugins.kafka.serviceuser'},
       {'service_name': 'RANGER_KMS', 'file_name': 'kms-env', 'config_name': 'kms_user', 'target_configname': 'ranger.plugins.kms.serviceuser'},
       {'service_name': 'ATLAS', 'file_name': 'atlas-env', 'config_name': 'metadata_user', 'target_configname': 'ranger.plugins.atlas.serviceuser'}
@@ -781,9 +774,6 @@ class RangerValidator(service_advisor.ServiceAdvisor):
     ranger_env_properties = properties
     validationItems = []
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
-    if "ranger-storm-plugin-enabled" in ranger_env_properties and ranger_env_properties['ranger-storm-plugin-enabled'].lower() == 'yes' and not 'KERBEROS' in servicesList:
-      validationItems.append({"config-name": "ranger-storm-plugin-enabled",
-                              "item": self.getWarnItem("Ranger Storm plugin should not be enabled in non-kerberos environment.")})
     return self.toConfigurationValidationProblems(validationItems, "ranger-env")
 
   def validateRangerAdminConfigurationsFromHDP23(self, properties, recommendedDefaults, configurations, services, hosts):

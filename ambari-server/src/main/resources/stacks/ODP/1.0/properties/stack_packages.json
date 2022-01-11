@@ -1,85 +1,6 @@
 {
   "ODP": {
     "stack-select": {
-      "ACCUMULO": {
-        "ACCUMULO_CLIENT": {
-          "STACK-SELECT-PACKAGE": "accumulo-client",
-          "INSTALL": [
-            "accumulo-client"
-          ],
-          "PATCH": [
-            "accumulo-client"
-          ],
-          "STANDARD": [
-            "accumulo-client"
-          ]
-        },
-        "ACCUMULO_GC": {
-          "STACK-SELECT-PACKAGE": "accumulo-gc",
-          "INSTALL": [
-            "accumulo-gc"
-          ],
-          "PATCH": [
-            "accumulo-gc"
-          ],
-          "STANDARD": [
-            "accumulo-gc",
-            "accumulo-client"
-          ]
-        },
-        "ACCUMULO_MASTER": {
-          "STACK-SELECT-PACKAGE": "accumulo-master",
-          "INSTALL": [
-            "accumulo-master"
-          ],
-          "PATCH": [
-            "accumulo-master"
-          ],
-          "STANDARD": [
-            "accumulo-master",
-            "accumulo-client"
-          ]
-        },
-        "ACCUMULO_MONITOR": {
-          "STACK-SELECT-PACKAGE": "accumulo-monitor",
-          "INSTALL": [
-            "accumulo-monitor"
-          ],
-          "PATCH": [
-            "accumulo-monitor"
-          ],
-          "STANDARD": [
-            "accumulo-monitor",
-            "accumulo-client"
-          ]
-        },
-        "ACCUMULO_TRACER": {
-          "STACK-SELECT-PACKAGE": "accumulo-tracer",
-          "INSTALL": [
-            "accumulo-tracer"
-          ],
-          "PATCH": [
-            "accumulo-tracer"
-          ],
-          "STANDARD": [
-            "accumulo-tracer",
-            "accumulo-client"
-          ]
-        },
-        "ACCUMULO_TSERVER": {
-          "STACK-SELECT-PACKAGE": "accumulo-tablet",
-          "INSTALL": [
-            "accumulo-tablet"
-          ],
-          "PATCH": [
-            "accumulo-tablet"
-          ],
-          "STANDARD": [
-            "accumulo-tablet",
-            "accumulo-client"
-          ]
-        }
-      },
       "ATLAS": {
         "ATLAS_CLIENT": {
           "STACK-SELECT-PACKAGE": "atlas-client",
@@ -103,80 +24,6 @@
           ],
           "STANDARD": [
             "atlas-server"
-          ]
-        }
-      },
-      "DRUID": {
-        "DRUID_COORDINATOR": {
-          "STACK-SELECT-PACKAGE": "druid-coordinator",
-          "INSTALL": [
-            "druid-coordinator"
-          ],
-          "PATCH": [
-            "druid-coordinator"
-          ],
-          "STANDARD": [
-            "druid-coordinator"
-          ]
-        },
-        "DRUID_OVERLORD": {
-          "STACK-SELECT-PACKAGE": "druid-overlord",
-          "INSTALL": [
-            "druid-overlord"
-          ],
-          "PATCH": [
-            "druid-overlord"
-          ],
-          "STANDARD": [
-            "druid-overlord"
-          ]
-        },
-        "DRUID_HISTORICAL": {
-          "STACK-SELECT-PACKAGE": "druid-historical",
-          "INSTALL": [
-            "druid-historical"
-          ],
-          "PATCH": [
-            "druid-historical"
-          ],
-          "STANDARD": [
-            "druid-historical"
-          ]
-        },
-        "DRUID_BROKER": {
-          "STACK-SELECT-PACKAGE": "druid-broker",
-          "INSTALL": [
-            "druid-broker"
-          ],
-          "PATCH": [
-            "druid-broker"
-          ],
-          "STANDARD": [
-            "druid-broker"
-          ]
-        },
-        "DRUID_MIDDLEMANAGER": {
-          "STACK-SELECT-PACKAGE": "druid-middlemanager",
-          "INSTALL": [
-            "druid-middlemanager"
-          ],
-          "PATCH": [
-            "druid-middlemanager"
-          ],
-          "STANDARD": [
-            "druid-middlemanager"
-          ]
-        },
-        "DRUID_ROUTER": {
-          "STACK-SELECT-PACKAGE": "druid-router",
-          "INSTALL": [
-            "druid-router"
-          ],
-          "PATCH": [
-            "druid-router"
-          ],
-          "STANDARD": [
-            "druid-router"
           ]
         }
       },
@@ -479,20 +326,6 @@
           ]
         }
       },
-      "PIG": {
-        "PIG": {
-          "STACK-SELECT-PACKAGE": "pig-client",
-          "INSTALL": [
-            "pig-client"
-          ],
-          "PATCH": [
-            "pig-client"
-          ],
-          "STANDARD": [
-            "hadoop-client"
-          ]
-        }
-      },
       "RANGER": {
         "RANGER_ADMIN": {
           "STACK-SELECT-PACKAGE": "ranger-admin",
@@ -683,76 +516,6 @@
           ]
         }
       },
-      "STORM": {
-        "NIMBUS": {
-          "STACK-SELECT-PACKAGE": "storm-nimbus",
-          "INSTALL": [
-            "storm-client",
-            "storm-nimbus"
-          ],
-          "PATCH": [
-            "storm-client",
-            "storm-nimbus"
-          ],
-          "STANDARD": [
-            "storm-client",
-            "storm-nimbus"
-          ]
-        },
-        "SUPERVISOR": {
-          "STACK-SELECT-PACKAGE": "storm-supervisor",
-          "INSTALL": [
-            "storm-client",
-            "storm-supervisor"
-          ],
-          "PATCH": [
-            "storm-client",
-            "storm-supervisor"
-          ],
-          "STANDARD": [
-            "storm-client",
-            "storm-supervisor"
-          ]
-        },
-        "DRPC_SERVER": {
-          "STACK-SELECT-PACKAGE": "storm-client",
-          "INSTALL": [
-            "storm-client"
-          ],
-          "PATCH": [
-            "storm-client"
-          ],
-          "STANDARD": [
-            "storm-client"
-          ]
-        },
-        "STORM_UI_SERVER": {
-          "STACK-SELECT-PACKAGE": "storm-client",
-          "INSTALL": [
-            "storm-client"
-          ],
-          "PATCH": [
-            "storm-client"
-          ],
-          "STANDARD": [
-            "storm-client"
-          ]
-        }
-      },
-      "SUPERSET": {
-        "SUPERSET": {
-          "STACK-SELECT-PACKAGE": "superset",
-          "INSTALL": [
-            "superset"
-          ],
-          "PATCH": [
-            "superset"
-          ],
-          "STANDARD": [
-            "superset"
-          ]
-        }
-      },
       "TEZ": {
         "TEZ_CLIENT": {
           "STACK-SELECT-PACKAGE": "tez-client",
@@ -883,22 +646,10 @@
       }
     },
     "conf-select": {
-      "accumulo": [
-        {
-          "conf_dir": "/etc/accumulo/conf",
-          "current_dir": "{0}/current/accumulo-client/conf"
-        }
-      ],
       "atlas": [
         {
           "conf_dir": "/etc/atlas/conf",
           "current_dir": "{0}/current/atlas-client/conf"
-        }
-      ],
-      "druid": [
-        {
-          "conf_dir": "/etc/druid/conf",
-          "current_dir": "{0}/current/druid-overlord/conf"
         }
       ],
       "hadoop": [
@@ -961,7 +712,7 @@
           "current_dir": "{0}/current/nifi/conf"
         }
       ],
-      "nif-registry": [
+      "nifi-registry": [
         {
           "conf_dir": "/etc/nifi-registry/conf",
           "current_dir": "{0}/current/nifi-registry/conf"
@@ -977,12 +728,6 @@
         {
           "conf_dir": "/etc/phoenix/conf",
           "current_dir": "{0}/current/phoenix-client/conf"
-        }
-      ],
-      "pig": [
-        {
-          "conf_dir": "/etc/pig/conf",
-          "current_dir": "{0}/current/pig-client/conf"
         }
       ],
       "ranger-admin": [
@@ -1027,18 +772,6 @@
           "current_dir": "{0}/current/sqoop-client/conf"
         }
       ],
-      "storm": [
-        {
-          "conf_dir": "/etc/storm/conf",
-          "current_dir": "{0}/current/storm-client/conf"
-        }
-      ],
-      "superset": [
-        {
-          "conf_dir": "/etc/superset/conf",
-          "current_dir": "{0}/current/superset/conf"
-        }
-      ],
       "tez": [
         {
           "conf_dir": "/etc/tez/conf",
@@ -1059,17 +792,8 @@
       ]
     },
     "conf-select-patching": {
-      "ACCUMULO": {
-        "packages": ["accumulo"]
-      },
       "ATLAS": {
         "packages": ["atlas"]
-      },
-      "DRUID": {
-        "packages": ["druid"]
-      },
-      "FLUME": {
-        "packages": ["flume"]
       },
       "HBASE": {
         "packages": ["hbase"]
@@ -1092,9 +816,6 @@
       "OOZIE": {
         "packages": ["oozie"]
       },
-      "PIG": {
-        "packages": ["pig"]
-      },
       "R4ML": {
         "packages": []
       },
@@ -1112,12 +833,6 @@
       },
       "SQOOP": {
         "packages": ["sqoop"]
-      },
-      "STORM": {
-        "packages": ["storm", "storm-slider-client"]
-      },
-      "SUPERSET": {
-        "packages": ["superset"]
       },
       "SYSTEMML": {
         "packages": []
@@ -1139,7 +854,6 @@
       }
     },
     "upgrade-dependencies" : {
-      "ATLAS": ["STORM"],
       "HIVE": ["TEZ", "MAPREDUCE2", "SQOOP"],
       "TEZ": ["HIVE"],
       "MAPREDUCE2": ["HIVE"],

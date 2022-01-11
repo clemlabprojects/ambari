@@ -120,36 +120,6 @@
             &lt;/service&gt;
 
             &lt;service&gt;
-                &lt;role&gt;DRUID-COORDINATOR-UI&lt;/role&gt;
-                {{druid_coordinator_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
-                &lt;role&gt;DRUID-COORDINATOR&lt;/role&gt;
-                {{druid_coordinator_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
-                &lt;role&gt;DRUID-OVERLORD-UI&lt;/role&gt;
-                {{druid_overlord_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
-                &lt;role&gt;DRUID-OVERLORD&lt;/role&gt;
-                {{druid_overlord_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
-                &lt;role&gt;DRUID-ROUTER&lt;/role&gt;
-                {{druid_router_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
-                &lt;role&gt;DRUID-BROKER&lt;/role&gt;
-                {{druid_broker_urls}}
-            &lt;/service&gt;
-
-            &lt;service&gt;
                 &lt;role&gt;ZEPPELINUI&lt;/role&gt;
                 {{zeppelin_ui_urls}}
             &lt;/service&gt;

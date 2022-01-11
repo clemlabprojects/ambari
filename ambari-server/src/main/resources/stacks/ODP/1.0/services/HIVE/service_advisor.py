@@ -182,7 +182,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
   def recommendHiveConfigurationsFromHDP30(self, configurations, clusterData, services, hosts):
     hiveSiteProperties = self.getSiteProperties(services["configurations"], "hive-site")
     hiveEnvProperties = self.getSiteProperties(services["configurations"], "hive-env")
-    
+
     putHiveEnvProperty = self.putProperty(configurations, "hive-env", services)
     putHiveSiteProperty = self.putProperty(configurations, "hive-site", services)
     putHiveProperty = self.putProperty(configurations, "hive-site", services)
@@ -204,39 +204,11 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     containerSize = clusterData["mapMemory"] if clusterData["mapMemory"] > 2048 else int(clusterData["reduceMemory"])
     containerSize = min(clusterData["containers"] * clusterData["ramPerContainer"], containerSize)
     container_size_bytes = int(containerSize)*1024*1024
-    
+
     putHiveProperty("hive.auto.convert.join.noconditionaltask.size", int(round(container_size_bytes / 3)))
     putHiveProperty("hive.tez.java.opts", "-server -Xmx" + str(int(round((0.8 * containerSize) + 0.5))) + "m " +
                     "-Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+UseParallelGC -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps")
     putHiveProperty("hive.tez.container.size", containerSize)
-    
-    # druid is not in list of services to be installed
-    if 'DRUID' in servicesList:
-      putHiveInteractiveSiteProperty = self.putProperty(configurations, "hive-interactive-site", services)
-
-      druid_coordinator_host_port = self.druid_host('DRUID_COORDINATOR', 'druid-coordinator', services, hosts, default_host='localhost:8081')
-      druid_overlord_host_port = self.druid_host('DRUID_OVERLORD', 'druid-overlord', services, hosts, default_host='localhost:8090')
-      druid_broker_host_port = self.druid_host('DRUID_ROUTER', 'druid-router', services, hosts)
-      if druid_broker_host_port is None:
-        druid_broker_host_port = self.druid_host('DRUID_BROKER', 'druid-broker', services, hosts, default_host='localhost:8083')
-
-      druid_metadata_uri = ""
-      druid_metadata_user = ""
-      druid_metadata_type = ""
-      if 'druid-common' in services['configurations']:
-        druid_metadata_uri = services['configurations']['druid-common']['properties']['druid.metadata.storage.connector.connectURI']
-        druid_metadata_type = services['configurations']['druid-common']['properties']['druid.metadata.storage.type']
-        if 'druid.metadata.storage.connector.user' in services['configurations']['druid-common']['properties']:
-          druid_metadata_user = services['configurations']['druid-common']['properties']['druid.metadata.storage.connector.user']
-        else:
-          druid_metadata_user = ""
-
-      putHiveInteractiveSiteProperty('hive.druid.broker.address.default', druid_broker_host_port)
-      putHiveInteractiveSiteProperty('hive.druid.coordinator.address.default', druid_coordinator_host_port)
-      putHiveInteractiveSiteProperty('hive.druid.overlord.address.default', druid_overlord_host_port)
-      putHiveInteractiveSiteProperty('hive.druid.metadata.uri', druid_metadata_uri)
-      putHiveInteractiveSiteProperty('hive.druid.metadata.username', druid_metadata_user)
-      putHiveInteractiveSiteProperty('hive.druid.metadata.db.type', druid_metadata_type)
 
     # javax.jdo.option.ConnectionURL recommendations
     if hiveEnvProperties and self.checkSiteProperties(hiveEnvProperties, "hive_database", "hive_database_type"):
@@ -328,7 +300,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
         yarn_queues = str(capacitySchedulerProperties["yarn.scheduler.capacity.root.queues"])
       elif "yarn.scheduler.capacity.root.queues" in services["configurations"]["capacity-scheduler"]["properties"]:
         yarn_queues =  services["configurations"]["capacity-scheduler"]["properties"]["yarn.scheduler.capacity.root.queues"]
-    
+
     toProcessQueues = yarn_queues.split(",")
     leafQueueNames = set() # Remove duplicates
     while len(toProcessQueues) > 0:
@@ -503,7 +475,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
 
     hive_hooks = [x.strip() for x in hooks_value.split(",")]
     hive_hooks = [x for x in hive_hooks if x != ""]
-    
+
     is_atlas_present_in_cluster = "ATLAS" in servicesList
 
     enable_external_atlas_for_hive = False
@@ -609,13 +581,13 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     # Atlas Kerberos settings
     if "hive-atlas-application.properties" in services["configurations"]:
       security_enabled = HiveServiceAdvisor.isKerberosEnabled(services, configurations)
-      
+
       enable_atlas_hook = False
       if "hive-env" in configurations and "hive.atlas.hook" in configurations["hive-env"]["properties"]:
         enable_atlas_hook = configurations["hive-env"]["properties"]["hive.atlas.hook"].lower() == "true"
       elif "hive-env" in services["configurations"] and "hive.atlas.hook" in services["configurations"]["hive-env"]["properties"]:
         enable_atlas_hook = services["configurations"]["hive-env"]["properties"]["hive.atlas.hook"].lower() == "true"
-      
+
       if security_enabled and enable_atlas_hook:
         putHiveAtlasHookProperty("atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag", "required")
         putHiveAtlasHookProperty("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "com.sun.security.auth.module.Krb5LoginModule")
@@ -624,15 +596,6 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
         putHiveAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag", "delete", "true")
         putHiveAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "delete", "true")
         putHiveAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.option.useTicketCache", "delete", "true")
-
-  def druid_host(self, component_name, config_type, services, hosts, default_host=None):
-    hosts = self.getHostsWithComponent('DRUID', component_name, services, hosts)
-    if hosts and config_type in services['configurations']:
-      host = hosts[0]['Hosts']['host_name']
-      port = services['configurations'][config_type]['properties']['druid.port']
-      return "%s:%s" % (host, port)
-    else:
-      return default_host
 
   def setLlapDaemonQueuePropAttributes(self, services, configurations):
     """
@@ -719,17 +682,17 @@ class HiveValidator(service_advisor.ServiceAdvisor):
     validationItems = [ {"config-name": "hive.tez.container.size", "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, "hive.tez.container.size")},
                         {"config-name": "hive.tez.java.opts", "item": self.validateXmxValue(properties, recommendedDefaults, "hive.tez.java.opts")},
                         {"config-name": "hive.auto.convert.join.noconditionaltask.size", "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, "hive.auto.convert.join.noconditionaltask.size")} ]
-    
+
     hive_site = properties
     hive_env = self.getSiteProperties(configurations, "hive-env")
     yarn_site = self.getSiteProperties(configurations, "yarn-site")
-    
+
     if yarn_site:
       yarnSchedulerMaximumAllocationMb = self.to_number(yarn_site["yarn.scheduler.maximum-allocation-mb"])
       hiveTezContainerSize = self.to_number(properties["hive.tez.container.size"])
       if hiveTezContainerSize is not None and yarnSchedulerMaximumAllocationMb is not None and hiveTezContainerSize > yarnSchedulerMaximumAllocationMb:
         validationItems.append({"config-name": "hive.tez.container.size", "item": self.getWarnItem("hive.tez.container.size is greater than the maximum container size specified in yarn.scheduler.maximum-allocation-mb")})
-    
+
     authentication_property = "hive.server2.authentication"
     ldap_baseDN_property = "hive.server2.authentication.ldap.baseDN"
     ldap_domain_property = "hive.server2.authentication.ldap.Domain"
@@ -738,12 +701,12 @@ class HiveValidator(service_advisor.ServiceAdvisor):
       validationItems.append({"config-name" : authentication_property, "item" :
         self.getWarnItem("According to LDAP value for " + authentication_property + ", you should add " +
             ldap_domain_property + " property, if you are using AD, if not, then " + ldap_baseDN_property + "!")})
-    
+
     hive_enforce_bucketing = "hive.enforce.bucketing"
     if hive_enforce_bucketing in properties and properties[hive_enforce_bucketing].lower() == "false":
       validationItems.append({"config-name" : hive_enforce_bucketing, "item" :
         self.getWarnItem("Set " + hive_enforce_bucketing + " to true otherwise there is a potential of data corruption!")})
-    
+
     sqla_db_used = "hive_database" in hive_env and \
                    hive_env["hive_database"] == "Existing SQL Anywhere Database"
     prop_name = "datanucleus.rdbms.datastoreAdapterClassName"
@@ -759,16 +722,16 @@ class HiveValidator(service_advisor.ServiceAdvisor):
                                 "item": self.getWarnItem(
                                   "If Hive using SQL Anywhere db." \
                                   " {0} needs to be set to {1}".format(prop_name,prop_value))})
-    
+
     return self.toConfigurationValidationProblems(validationItems, "hive-site")
 
 
   def validateHiveConfigurationsEnvFromHDP30(self, properties, recommendedDefaults, configurations, services, hosts):
     validationItems = []
-    
+
     hive_env = properties
     hive_site = self.getSiteProperties(configurations, "hive-site")
-    
+
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     if "hive_security_authorization" in hive_env and \
         str(hive_env["hive_security_authorization"]).lower() == "none" \
@@ -786,7 +749,7 @@ class HiveValidator(service_advisor.ServiceAdvisor):
           validationItems.append({"config-name": "hive_security_authorization",
                                   "item": self.getWarnItem(
                                     "ranger-env/ranger-hive-plugin-enabled must be enabled when hive_security_authorization is set to Ranger")})
-    
+
     if "hive.server2.authentication" in hive_site and "LDAP" == hive_site["hive.server2.authentication"]:
       if "alert_ldap_username" not in hive_env or hive_env["alert_ldap_username"] == "":
         validationItems.append({"config-name": "alert_ldap_username",

@@ -678,7 +678,7 @@ def setup_ranger_audit_solr():
                                      roles = [params.infra_solr_role_ranger_admin, params.infra_solr_role_ranger_audit, params.infra_solr_role_dev],
                                      new_service_principals = [params.ranger_admin_jaas_principal])
       service_default_principals_map = [('hdfs', 'nn'), ('hbase', 'hbase'), ('hive', 'hive'), ('kafka', 'kafka'), ('kms', 'rangerkms'),
-                                                    ('knox', 'knox'), ('nifi', 'nifi'), ('storm', 'storm'), ('yanr', 'yarn')]
+                                                    ('knox', 'knox'), ('nifi', 'nifi'), ('yanr', 'yarn')]
       service_principals = get_ranger_plugin_principals(service_default_principals_map)
       solr_cloud_util.add_solr_roles(params.config,
                                      roles = [params.infra_solr_role_ranger_audit, params.infra_solr_role_dev],

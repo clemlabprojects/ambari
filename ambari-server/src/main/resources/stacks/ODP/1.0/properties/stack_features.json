@@ -89,11 +89,6 @@
         "min_version": "1.0.0.0"
       },
       {
-        "name": "storm_ams",
-        "description": "Storm AMS integration (AMBARI-10710)",
-        "min_version": "1.0.0.0"
-      },
-      {
         "name": "kafka_listeners",
         "description": "Kafka listeners (AMBARI-10984)",
         "min_version": "1.0.0.0"
@@ -101,11 +96,6 @@
       {
         "name": "kafka_kerberos",
         "description": "Kafka Kerberos support (AMBARI-10984)",
-        "min_version": "1.0.0.0"
-      },
-      {
-        "name": "pig_on_tez",
-        "description": "Pig on Tez support (AMBARI-7863)",
         "min_version": "1.0.0.0"
       },
       {
@@ -118,11 +108,6 @@
         "description": "Ranger Audit to DB support",
         "min_version": "1.0.0.0",
         "max_version": "2.4.99.99"
-      },
-      {
-        "name": "accumulo_kerberos_user_auth",
-        "description": "Accumulo Kerberos User Auth (AMBARI-10163)",
-        "min_version": "1.0.0.0"
       },
       {
         "name": "knox_versioned_data_dir",
@@ -285,11 +270,6 @@
       {
         "name": "ranger_setup_db_on_start",
         "description": "Allows setup of ranger db and java patches to be called multiple times on each START",
-        "min_version": "1.0.0.0"
-      },
-      {
-        "name": "storm_metrics_apache_classes",
-        "description": "Metrics sink for Storm that uses Apache class names",
         "min_version": "1.0.0.0"
       },
       {
