@@ -148,10 +148,19 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat7</osFamily>
           <packages>
             <package>
-              <name>atlas-metadata_${stack_version}</name>
+              <name>atlas_${stack_version}-metadata</name>
+            </package>
+            <package>
+              <name>atlas_${stack_version}-hbase-hook</name>
+            </package>            
+            <package>
+              <name>atlas_${stack_version}-hive-hook</name>
+            </package> 
+            <package>
+              <name>atlas_${stack_version}-kafka-hook</name>
             </package>
             <package>
               <name>ambari-infra-solr-client</name>
