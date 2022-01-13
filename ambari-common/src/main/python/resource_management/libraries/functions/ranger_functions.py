@@ -93,10 +93,10 @@ class Rangeradmin:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
-    
-    
-    
-  def create_ranger_repository(self, component, repo_name, repo_properties, 
+
+
+
+  def create_ranger_repository(self, component, repo_name, repo_properties,
                                ambari_ranger_admin, ambari_ranger_password,
                                admin_uname, admin_password, policy_user):
     """
@@ -114,7 +114,7 @@ class Rangeradmin:
     ambari_ranger_password = unicode(ambari_ranger_password)
     admin_password = unicode(admin_password)
     ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
-    
+
     if response_code is not None and response_code == 200:
       user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
       if user_resp_code is not None and user_resp_code == 200:
@@ -292,7 +292,7 @@ class Rangeradmin:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
-  
+
   @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_policy_urllib2(self, data, ambari_ranger_admin, ambari_ranger_password):
     """
@@ -323,21 +323,25 @@ class Rangeradmin:
         raise Fail('Policy creation failed')
     except urllib2.URLError, e:
       if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+        return_message = e.read()
+        if "Another policy already exists for this name" in return_message:
+          Logger.info('Policy already exists')
+        else:
+          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
       else:
         raise Fail("Error creating policy. Reason - {0}.".format(e.reason))
     except httplib.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
-      
+
   def get_policy_params(self, typeOfPolicy, policyObj, policy_user):
     """
     :param typeOfPolicy: component name for which policy has to be get
     :param policyObj: policy dict
     :param policy_user: policy user that needs to be updated
     :returns Returns updated policy dict
-    """    
+    """
     typeOfPolicy = typeOfPolicy.lower()
     if typeOfPolicy == "hdfs":
       policyObj['permMapList'] = [{'userList': [policy_user], 'permList': ['read', 'write', 'execute', 'admin']}]
