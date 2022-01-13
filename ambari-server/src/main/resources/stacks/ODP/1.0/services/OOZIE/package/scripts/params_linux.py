@@ -262,8 +262,8 @@ fs_root = config['configurations']['core-site']['fs.defaultFS']
 
 if stack_version_formatted and check_stack_feature(StackFeature.OOZIE_SETUP_SHARED_LIB, stack_version_formatted):
   put_shared_lib_to_hdfs_cmd = format("{oozie_setup_sh} sharelib create -fs {fs_root} -locallib {oozie_shared_lib}")
-  # for older  
-else: 
+  # for older
+else:
   put_shared_lib_to_hdfs_cmd = format("hadoop --config {hadoop_conf_dir} dfs -put {oozie_shared_lib} {oozie_hdfs_user_dir}")
 
 default_connectors_map = { "com.microsoft.sqlserver.jdbc.SQLServerDriver":"sqljdbc4.jar",
@@ -284,7 +284,7 @@ elif jdbc_driver_name == "com.mysql.jdbc.Driver":
   jdbc_driver_jar = default("/ambariLevelParams/custom_mysql_jdbc_name", None)
   previous_jdbc_jar_name = default("/ambariLevelParams/previous_custom_mysql_jdbc_name", None)
 elif jdbc_driver_name == "org.postgresql.Driver":
-  jdbc_driver_jar = format("{oozie_home}/libserver/postgresql-9.0-801.jdbc4.jar")  #oozie using it's own postgres jdbc
+  jdbc_driver_jar = format("{oozie_home}/lib/postgresql-9.0-801.jdbc4.jar")  #oozie using it's own postgres jdbc
   previous_jdbc_jar_name = None
 elif jdbc_driver_name == "oracle.jdbc.driver.OracleDriver":
   jdbc_driver_jar = default("/ambariLevelParams/custom_oracle_jdbc_name", None)
