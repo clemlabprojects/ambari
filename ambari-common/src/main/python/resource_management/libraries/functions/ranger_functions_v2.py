@@ -204,7 +204,7 @@ class RangeradminV2:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
-  
+
   @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_policy_urllib2(self, data, ambari_ranger_admin, ambari_ranger_password):
     """
@@ -230,6 +230,9 @@ class RangeradminV2:
 
       if response_code == 200:
         Logger.info('Policy created Successfully')
+        return response
+      if response_code == 400:
+        Logger.info('Policy already exists')
         return response
       else:
         raise Fail('Policy creation failed')
