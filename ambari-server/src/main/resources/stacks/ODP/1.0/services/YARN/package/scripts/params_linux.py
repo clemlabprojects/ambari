@@ -661,6 +661,7 @@ if rm_ha_id is not None:
   yarn_hbase_app_hdfs_path = format("{yarn_hbase_app_hdfs_path}/{rm_ha_id}")
   yarn_service_app_hdfs_path = format("{yarn_service_app_hdfs_path}/{rm_ha_id}")
 yarn_service_dep_source_path = format("{stack_root}/{version}/hadoop-yarn/lib/service-dep.tar.gz")
+yarn_service_framework_path = config['configurations']['yarn-site']['yarn.service.framework.path']
 yarn_hbase_user_version_path = format("{yarn_hbase_user}/{version}")
 yarn_hbase_user_tmp = format("{tmp_dir}/{yarn_hbase_user_version_path}")
 yarn_hbase_log_dir = os.path.join(yarn_log_dir_prefix, "embedded-yarn-ats-hbase")

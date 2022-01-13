@@ -48,7 +48,7 @@ def yarn(name=None, config_dir=None):
   :param config_dir: Which config directory to write configs to, which could be different during rolling upgrade.
   """
   import params
-  
+
   install_lzo_if_needed()
 
   if config_dir is None:
@@ -562,6 +562,16 @@ def setup_ats():
                         owner=params.yarn_user,
                         group=params.user_group,
                         mode=params.entity_groupfs_active_dir_mode
+                        )
+  if not is_empty(params.yarn_service_framework_path):
+    parent_path = os.path.dirname(params.yarn_service_framework_path)
+    params.HdfsResource(parent_path,
+                        type="directory",
+                        action="create_on_execute",
+                        change_permissions_for_parents=True,
+                        owner=params.yarn_user,
+                        group=params.user_group,
+                        mode=0755
                         )
   params.HdfsResource(None, action="execute")
 
