@@ -238,7 +238,11 @@ class RangeradminV2:
         raise Fail('Policy creation failed')
     except urllib2.URLError, e:
       if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+        return_message = e.read()
+        if "Another policy already exists for this name" in return_message:
+          Logger.info('Policy already exists')
+        else:
+          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
       else:
         raise Fail("Error creating policy. Reason - {0}.".format(e.reason))
     except httplib.BadStatusLine:
