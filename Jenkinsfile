@@ -59,8 +59,12 @@ node {
                 stage('Generate REPO-FILE') {
                     sh './bin/generate_repo.sh'
                 }
+                stage('Generate repos-ambari.tar.gz') {
+                    sh 'tar -czf /var/www/html/repos-ambari.tar.gz /var/www/html/ambari-release/dist/centos7/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/'
+                }
                 stage('Upload Realease dir') {
                     sh 'aws s3 cp $RELEASE_DIR s3://clemlabs/centos7/ambari-release/2.7.6.0-$BUILD_NUMBER --recursive'
+                    sh 'aws s3 cp /var/www/html/repos-ambari.tar.gz s3://clemlabs/centos7/ambari-release/2.7.6.0-$BUILD_NUMBER/repos-ambari.tar.gz'
                     sh 'aws s3 website --index-document index.htm s3://clemlabs'
 
                 }
