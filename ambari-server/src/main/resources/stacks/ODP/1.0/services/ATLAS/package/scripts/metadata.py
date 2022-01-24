@@ -127,6 +127,12 @@ def metadata(type='server'):
              group=params.user_group,
              content=InlineTemplate(params.metadata_solrconfig_content)
         )
+        File(format("{conf_dir}/solr/schema.xml"),
+             mode=0644,
+             owner=params.metadata_user,
+             group=params.user_group,
+             content=InlineTemplate(params.metadata_solrschema_content)
+        )
 
       generate_logfeeder_input_config('atlas', Template("input.config-atlas.json.j2", extra_imports=[default]))
 
