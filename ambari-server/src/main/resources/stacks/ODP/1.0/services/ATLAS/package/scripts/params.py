@@ -194,7 +194,7 @@ expanded_war_dir = os.environ['METADATA_EXPANDED_WEBAPP_DIR'] if 'METADATA_EXPAN
 metadata_log4j_content = config['configurations']['atlas-log4j']['content']
 
 metadata_solrconfig_content = default("/configurations/atlas-solrconfig/content", None)
-metadata_solrschema_content = default("/configurations/atlas-solrconfig/schema", None)
+metadata_solrschema_content = default("/configurations/atlas-solrschema/content", None)
 
 atlas_log_level = config['configurations']['atlas-log4j']['atlas_log_level']
 audit_log_level = config['configurations']['atlas-log4j']['audit_log_level']
