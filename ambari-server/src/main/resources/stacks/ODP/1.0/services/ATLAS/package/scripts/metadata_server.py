@@ -40,6 +40,8 @@ from resource_management.core.logger import Logger
 from setup_ranger_atlas import setup_ranger_atlas
 from resource_management.core.resources.zkmigrator import ZkMigrator
 from resource_management.libraries.functions import upgrade_summary
+from resource_management.libraries.functions.setup_credential_file import setup_credential_file
+
 
 class MetadataServer(Script):
 
@@ -78,6 +80,26 @@ class MetadataServer(Script):
     secure_atlas_hbase_setup_command = format("kinit -kt {hbase_user_keytab} {hbase_principal_name}; ") + atlas_hbase_setup_command
     # in case if principal was distributed across several hosts, pattern need to be replaced to right one
     secure_atlas_kafka_setup_command = format("kinit -kt {kafka_keytab} {kafka_principal_name}; ").replace("_HOST", params.hostname) + atlas_kafka_setup_command
+
+    ## creating ssl keystore credential file if needed
+    if params.ssl_enabled is not None:
+      passwords =  [ {'alias': 'keystore.password', 'value': format('{atlas_tls_ssl_keystore_password}')},
+        {'alias': 'truststore.password', 'value': format('{atlas_tls_ssl_truststore_password}')},
+        {'alias': 'password', 'value': format('{atlas_tls_ssl_keystore_password}')}
+      ]
+      setup_credential_file(params.java64_home, None,
+                        params.atlas_credential_file_path, 'atlas', params.user_group,
+                        passwords, 'atlas-server' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.atlas_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.metadata_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
 
     if params.stack_supports_atlas_ranger_plugin:
       Logger.info('Atlas plugin is enabled, configuring Atlas plugin.')

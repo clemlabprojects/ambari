@@ -58,6 +58,7 @@ def setup_ranger_atlas(upgrade_type=None):
       except Exception, err:
         Logger.exception("Audit directory creation in HDFS for ATLAS Ranger plugin failed with error:\n{0}".format(err))
 
+    # cred_lib_path_override  = format('{params.stack_root}/{params.stack_version}/ranger-atlas-plugin/libext/li/*')
     setup_ranger_plugin('atlas-server', 'atlas',None,
                         params.downloaded_custom_connector, params.driver_curl_source,
                         params.driver_curl_target, params.java64_home,

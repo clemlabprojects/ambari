@@ -455,7 +455,7 @@
   <property>
     <name>atlas.ssl.exclude.protocols</name>
     <display-name>Excluded Wire Encryption Protocols</display-name>
-    <value>TLSv1.2</value>
+    <value/>TLSv1,TLSv1.1</value>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
@@ -541,6 +541,51 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>atlas.graph.index.search.solr.wait-searcher</name>
+    <display-name>Enable Wait for index backend</display-name>
+    <value>true</value>
+    <description/>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>keystore.password</name>
+    <display-name>Atlas TLS Keystore password</display-name>
+    <description>Atlas TLS Keystore password</description>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>keystore.file</name>
+    <display-name>Atlas TLS Keystore location</display-name>
+    <description>Atlas TLS Keystore location</description>
+    <value/>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>truststore.password</name>
+    <display-name>Atlas TLS Truststore password</display-name>
+    <description>Atlas TLS Truststore password</description>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>truststore.file</name>
+    <display-name>Atlas TLS Truststore location</display-name>
+    <description>Atlas TLS Truststore location</description>
+    <value/>
+    <on-ambari-upgrade add="false"/>
+  </property>  <property>
     <name>atlas.proxyusers</name>
     <value/>
     <description>Proxy users for Atlas</description>

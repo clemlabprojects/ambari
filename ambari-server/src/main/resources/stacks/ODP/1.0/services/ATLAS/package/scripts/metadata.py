@@ -136,7 +136,6 @@ def metadata(type='server'):
 
       generate_logfeeder_input_config('atlas', Template("input.config-atlas.json.j2", extra_imports=[default]))
 
-    # Needed by both Server and Client
     PropertiesFile(format('{conf_dir}/{conf_file}'),
          properties = params.application_properties,
          mode=0600,
