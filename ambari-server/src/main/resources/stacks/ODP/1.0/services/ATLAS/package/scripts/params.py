@@ -302,8 +302,7 @@ namenode_host = set(default("/clusterHostInfo/namenode_hosts", []))
 has_namenode = not len(namenode_host) == 0
 
 upgrade_direction = default("/commandParams/upgrade_direction", None)
-# ranger altas plugin section start
-ranger_policy_config = {}
+
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
@@ -458,3 +457,47 @@ if 'viewfs-mount-table' in config['configurations']:
   if 'content' in mount_table and mount_table['content'].strip():
     mount_table_xml_inclusion_file_full_path = os.path.join(conf_dir, xml_inclusion_file_name)
     mount_table_content = mount_table['content']
+
+titan_table_name = config['configurations']['application-properties']['atlas.graph.storage.hbase.table']
+if titan_table_name is None:
+  titan_table_name = "atlas_titan"
+# create a ranger policy for atlas permission
+ranger_policy_config = {
+    "isEnabled": "true",
+    "service": cluster_name + "_hbase",
+    "name": "Atlas Janus Graph",
+    "resources": {
+      "column": {
+        "values": ["*"]
+       },
+      "column-family": {
+        "values": [ "*" ]
+       },
+      "table": {
+        "values": [titan_table_name, "ATLAS_ENTITY_AUDIT_EVENTS" ]
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'read',
+        'isAllowed': True
+        },{
+        'type': 'write',
+        'isAllowed': True
+        },{
+        'type': 'create',
+        'isAllowed': True
+        },
+        {
+        'type': 'admin',
+        'isAllowed': True
+        }
+      ],
+      "users": [metadata_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  }
