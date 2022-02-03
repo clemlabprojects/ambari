@@ -22,6 +22,7 @@ import sys
 
 from ambari_commons import OSCheck
 from resource_management import get_bare_principal
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.format import format
@@ -364,6 +365,22 @@ if stack_supports_atlas_ranger_plugin and enable_ranger_atlas:
   ssl_truststore_password = config['configurations']['ranger-atlas-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password']
   credential_file = format('/etc/ranger/{repo_name}/cred.jceks')
   xa_audit_hdfs_is_enabled = default('/configurations/ranger-atlas-audit/xasecure.audit.destination.hdfs', False)
+
+  # SSL related configuration
+  atlas_credential_file_path = config['configurations']['application-properties']['cert.stores.credential.provider.path']
+  tls_ssl_keystore_password = config['configurations']['application-properties']['keystore.password']
+  tls_ssl_truststore_password = config['configurations']['application-properties']['truststore.password']
+
+  atlas_tls_ssl_keystore_password = format('{tls_ssl_keystore_password}')
+  atlas_tls_ssl_truststore_password = format('{tls_ssl_truststore_password}')
+  # Needed by both Server and Client
+  if ssl_enabled and config['configurations']['application-properties']['keystore.password'] is not None:
+    Logger.info('deleting keystore.password from atlas-application.properties')
+    del(application_properties['keystore.password'])
+  if ssl_enabled and config['configurations']['application-properties']['truststore.password'] is not None:
+    Logger.info('deleting truststore.password from atlas-application.properties')
+    del(application_properties['truststore.password'])
+
 
   # get ranger policy url
   policymgr_mgr_url = config['configurations']['ranger-atlas-security']['ranger.plugin.atlas.policy.rest.url']
