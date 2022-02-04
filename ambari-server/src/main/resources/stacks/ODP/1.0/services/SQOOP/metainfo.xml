@@ -69,7 +69,7 @@
       </components>
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>sqoop_${stack_version}</name>
