@@ -455,7 +455,7 @@
   <property>
     <name>atlas.ssl.exclude.protocols</name>
     <display-name>Excluded Wire Encryption Protocols</display-name>
-    <value/>TLSv1,TLSv1.1</value>
+    <value>TLSv1,TLSv1.1</value>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
