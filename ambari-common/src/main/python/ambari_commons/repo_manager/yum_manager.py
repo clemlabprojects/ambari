@@ -344,17 +344,13 @@ class YumManager(GenericManager):
     return set(repo_ids)
 
   def rpm_check_package_available(self, name):
-    import rpm # this is faster then calling 'rpm'-binary externally.
-    ts = rpm.TransactionSet()
-    packages = ts.dbMatch()
+    import os
+    packages = os.popen("rpm -qa --queryformat '%{name} '").read().split()
 
     name_regex = re.escape(name).replace("\\?", ".").replace("\\*", ".*") + '$'
     regex = re.compile(name_regex)
-
-    for package in packages:
-      if regex.match(package['name']):
-        return True
-    return False
+    
+    return any(regex.match(package) for package in packages)
 
   def get_installed_package_version(self, package_name):
     version = None
