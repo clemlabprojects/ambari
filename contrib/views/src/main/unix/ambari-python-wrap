@@ -31,7 +31,7 @@ fi
 
 # if no preferable python versions found, try to use system one
 if [[ -z "$PYTHON" ]]; then
-  PYTHON=/usr/bin/python
+  PYTHON=/usr/bin/python2
 fi
 
 # execute script

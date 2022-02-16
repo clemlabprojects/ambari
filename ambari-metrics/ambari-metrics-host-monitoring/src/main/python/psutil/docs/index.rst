@@ -1131,7 +1131,7 @@ Popen class
   >>> import psutil
   >>> from subprocess import PIPE
   >>>
-  >>> p = psutil.Popen(["/usr/bin/python", "-c", "print('hello')"], stdout=PIPE)
+  >>> p = psutil.Popen(["/usr/bin/python2", "-c", "print('hello')"], stdout=PIPE)
   >>> p.name()
   'python'
   >>> p.username()

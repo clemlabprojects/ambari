@@ -22,7 +22,7 @@ function print_help() {
    -i, --ini-file <INI_FILE>              ini-file location (used by migrationHelper.py)
    -s, --migration-script-location <file> migrateHelper.py location (default: /usr/lib/ambari-infra-solr-client/migrationHelper.py)
    -w, --wait-between-steps <seconds>     wait between different migration steps in seconds (default: 15)
-   -p, --python-path                      python location, default: /usr/bin/python
+   -p, --python-path                      python location, default: /usr/bin/python2
    -b, --batch-interval                   seconds between batch tasks for rolling restart solr at last step (default: 60)
    -k, --keep-backup                      keep backup data (more secure, useful if you have enough space for that)
    --skip-solr-client-upgrade             skip ambari-infra-solr-client package upgrades
@@ -263,7 +263,7 @@ function main() {
   fi
 
   if [[ -z "$PYTHON_PATH_FOR_MIGRATION" ]] ; then
-    PYTHON_PATH_FOR_MIGRATION="/usr/bin/python"
+    PYTHON_PATH_FOR_MIGRATION="/usr/bin/python2"
   fi
 
   if [[ -z "$WAIT" ]] ; then

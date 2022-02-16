@@ -104,7 +104,7 @@ CONFIG_INI_LOCATION=ambari_solr_migration.ini # output of the script with requir
 # note 1: use -s if ambari-server uses https
 # note 2: use --shared-driver if the backup location is shared for different hosts
 # note 3: use --hdfs-base-path if the index data is located on hdfs (or --ranger-hdfs-base-path if only ranger collection is located there), e.g.: /user/infra-solr
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationConfigGenerator.py --ini-file $CONFIG_INI_LOCATION --host c7401.ambari.apache.org --port 8080 --cluster cl1 --username admin --password admin --backup-base-path=/my/path --java-home /usr/jdk64/jdk1.8.0_112
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationConfigGenerator.py --ini-file $CONFIG_INI_LOCATION --host c7401.ambari.apache.org --port 8080 --cluster cl1 --username admin --password admin --backup-base-path=/my/path --java-home /usr/jdk64/jdk1.8.0_112
 ```
 
 Some important flags that can be added at this point;
@@ -187,7 +187,7 @@ If you did not upgrade ambari-infra-solr-client packages on all host, you can do
 
 ```bash
 CONFIG_INI_LOCATION=ambari_solr_migration.ini
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
 ```
 
 ### <a id="ii.-backup-collections-(ambari-2.6.x-to-ambari-2.7.x)">III. Backup collections (Ambari 2.6.x to Ambari 2.7.x)</a>
@@ -202,9 +202,9 @@ These tasks can be done with 1 [migrationHelper.py](#solr-migration-helper-scrip
 ```bash
 # use a sudoer user for running the script !!
 # first (optionally) you can check that there are any ACTIVE relplicas for all the shards
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action check-shards
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action check-shards
 # then run backup-and-cleanup ... you can run these actions separately with these action: 'backup','delete-collections', 'cleanup-znodes'
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action backup-and-cleanup
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action backup-and-cleanup
 ```
 
 If the script finished successfully and everything looks green on Ambari UI as well, you can go ahead with [Infra Solr package upgrade](#iii.-upgrade-infra-solr-packages). Otherwise (or if you want to go step by step instead of the command above) you have to option to run tasks step by step (or manually as well). Those tasks are found in the next sections.
@@ -461,7 +461,7 @@ The whole migration can be done with execuing 1 command;
 ```bash
 # use a sudoer user for running the script !!
 # you can use this command with nohup in the background, like: `nohup <command> > nohup2.out&`, as migration can take so much time (~1GB/min)
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action migrate
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action migrate
 ```
 If the script finished successfully and everything looks green on Ambari UI as well, you can go ahead with [Restore collections](#vi.-restore-collections). Otherwise (or if you want to go step by step instead of the command above) you have to option to run tasks step by step (or manually as well). Those tasks are found in the next sections.
 
@@ -519,7 +519,7 @@ The collection creation and restore part can be done with 1 command:
 
 ```bash
 # use a sudoer user for running the script !!
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restore --keep-backup
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restore --keep-backup
 ```
 
 If the script finished successfully and everything looks green on Ambari UI as well, you can go ahead with [Restart Solr Instances](#vii.-restart-infra-solr-instances). Otherwise (or if you want to go step by step instead of the command above) you have to option to run tasks step by step (or manually as well). Those tasks are found in the next sections.
@@ -704,7 +704,7 @@ Generate ini config first for the migration, after running the following script,
 ```bash
 CONFIG_INI_LOCATION=ambari_migration.ini
 BACKUP_BASE_PATH=/tmp
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationConfigGenerator.py --ini-file $CONFIG_INI_LOCATION --host c7401.ambari.apache.org -port 8080 --cluster cl1 --username admin --password admin --backup-base-path=$BACKUP_BASE_PATH --java-home /usr/jdk64/jdk1.8.0_112
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationConfigGenerator.py --ini-file $CONFIG_INI_LOCATION --host c7401.ambari.apache.org -port 8080 --cluster cl1 --username admin --password admin --backup-base-path=$BACKUP_BASE_PATH --java-home /usr/jdk64/jdk1.8.0_112
 ```
 ##### 2.a) Do backup-migrate-restore
 
@@ -725,18 +725,18 @@ Or you can execute these commands together (if you won't go with HDP upgrade aft
 Which is equivalent will execute the following migrationHelper.py commands:
 
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action backup-and-cleanup
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-instances
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logsearch-portal
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logfeeders
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-solr
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-logsearch
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-ranger
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-atlas
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action migrate
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restore
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action rolling-restart-solr
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action backup-and-cleanup
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-instances
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logsearch-portal
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logfeeders
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-solr
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-logsearch
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-ranger
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-atlas
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action migrate
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restore
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action rolling-restart-solr
 ```
 
 ##### 2.b) Do delete only if backup is not required
@@ -748,15 +748,15 @@ For only cleanup collections, execute this script:
 
 Which is equivalent will execute the following migrationHelper.py commands:
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action delete-collections
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-instances
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logsearch-portal
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logfeeders
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-solr
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-logsearch
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-ranger
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-atlas
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-clients
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action delete-collections
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-solr-instances
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logsearch-portal
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action upgrade-logfeeders
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-solr
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-logsearch
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-ranger
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action restart-atlas
 ```
 
 ##### 3. Transport Solr data from old collections to active collections (optional)
@@ -783,14 +783,14 @@ Or see [transport old data to new collections](#viii.-transport-old-data-to-new-
 
 If you restarted Solr before backup or upgrade Solr server packages, you can fix the Solr config with the following command:
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action fix-solr5-kerberos-config
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action fix-solr5-kerberos-config
 ```
 
 That is basically add `SOLR_KERB_NAME_RULES` back to `infra-solr-env/content` and disable authorization for Solr. (upload a /security.json to /infra-solr znode without the authorization config, then turn manually managed /security.json on in order to not override /security.json again on Solr restart) After the command finished successfully, you will need to restart Solr instances.
 
 But if you added `SOLR_KERB_NAME_RULES` config to the `infra-solr-env/content`, you will require to delete that after you upgraded Solr package (and before restarting them). You can do that with the `fix-solr7-kerberos-config` action:
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action fix-solr7-kerberos-config
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action fix-solr7-kerberos-config
 ```
 
 #### <a id="get-core-/-shard-names-with-hosts">Get core / shard names with hosts</a>
@@ -801,13 +801,13 @@ To get which hosts are related for your collections, you can check the Solr UI (
 
 You can turn off Solr authorization plugin with the `disable-solr-authorization` action (can be executed after config generation [step](#0-gather-params)):
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action disable-solr-authorization
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action disable-solr-authorization
 ```
 
 You can re-enable it with the following command: (or set `infra-solr-security-json/infra_solr_security_manually_managed` configuration to `false`, then restart Solr)
 
 ```bash
-/usr/bin/python /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action enable-solr-authorization
+/usr/bin/python2 /usr/lib/ambari-infra-solr-client/migrationHelper.py --ini-file $CONFIG_INI_LOCATION --action enable-solr-authorization
 ```
 
 #### <a id="">Solr Migration Helper Script</a>
@@ -1049,7 +1049,7 @@ Usage: /usr/lib/ambari-infra-solr-client/ambariSolrMigration.sh --mode <MODE> --
    -i, --ini-file <INI_FILE>              ini-file location (used by migrationHelper.py)
    -s, --migration-script-location <file> migrateHelper.py location (default: /usr/lib/ambari-infra-solr-client/migrationHelper.py)
    -w, --wait-between-steps <seconds>     wait between different migration steps in seconds (default: 15)
-   -p, --python-path                      python location, default: /usr/bin/python
+   -p, --python-path                      python location, default: /usr/bin/python2
    -b, --batch-interval                   seconds between batch tasks for rolling restart solr at last step (default: 60)
    -k, --keep-backup                      keep backup data (more secure, useful if you have enough space for that)
    --skip-solr-client-upgrade             skip ambari-infra-solr-client package upgrades

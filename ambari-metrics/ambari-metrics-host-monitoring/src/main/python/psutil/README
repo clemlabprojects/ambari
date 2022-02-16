@@ -151,11 +151,11 @@ Process management
     >>> p.name()
     'python'
     >>> p.exe()
-    '/usr/bin/python'
+    '/usr/bin/python2'
     >>> p.cwd()
     '/home/giampaolo'
     >>> p.cmdline()
-    ['/usr/bin/python', 'main.py']
+    ['/usr/bin/python2', 'main.py']
     >>>
     >>> p.status()
     'running'

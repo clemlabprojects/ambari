@@ -38,7 +38,7 @@ if [ -a /usr/bin/python2.6 ] && [ -z "${PYTHON}" ]; then
 fi
 
 if [ "x$PYTHON" == "x" ]; then
-  PYTHON=/usr/bin/python
+  PYTHON=/usr/bin/python2
 fi
 
 export PYTHON=${PYTHON}
