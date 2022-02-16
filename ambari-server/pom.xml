@@ -537,6 +537,9 @@
           <requires>
             <require>${rpm.dependency.list}</require>
           </requires>
+          <defineStatements>
+            <defineStatement>__python python2</defineStatement>
+          </defineStatements>
           <postinstallScriptlet>
             <scriptFile>src/main/package/rpm/postinstall.sh</scriptFile>
             <fileEncoding>utf-8</fileEncoding>
