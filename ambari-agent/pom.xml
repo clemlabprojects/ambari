@@ -322,6 +322,7 @@
           </requires>
           <defineStatements>
             <defineStatement>__python python2</defineStatement>
+            <defineStatement>_build_id_links compat</defineStatement>
           </defineStatements>
           <postinstallScriptlet>
             <scriptFile>src/main/package/rpm/postinstall.sh</scriptFile>
