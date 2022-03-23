@@ -172,6 +172,7 @@
                     <include name="*/target/*jar" />
                     <exclude name="**/ambari-views-utils*jar" />
                     <exclude name="**/ambari-views-commons*jar" />
+                    <exclude name="**/ambari-views-package*jar" />
                   </fileset>
                 </copy>
               </target>
