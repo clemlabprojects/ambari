@@ -24,6 +24,11 @@ if [ -a /usr/bin/python2 ] && [ -z "$PYTHON" ]; then
   PYTHON=/usr/bin/python2
 fi
 
+ # checking for mac Python 2
+ if [ -a /Library/Frameworks/Python.framework/Versions/2.7/bin/python2 ] && [ -z "$PYTHON" ]; then
+   PYTHON=/Library/Frameworks/Python.framework/Versions/2.7/bin/python2
+ fi
+
 if [ -a /usr/bin/python2.7 ] && [ -z "$PYTHON" ]; then
   PYTHON=/usr/bin/python2.7
 fi
