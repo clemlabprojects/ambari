@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python2
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -32,9 +32,3 @@ user_group = config['configurations']['cluster-env']['user_group']
 flink_pid_dir = config['configurations']['flink-env']['flink_pid_dir']
 flink_history_server_pid_file = format("{flink_pid_dir}/flink-{flink_user}-historyserver.pid")
 stack_name = default("/clusterLevelParams/stack_name", None)
-
-if "livy2-env" in config['configurations']:
-  livy2_user = config['configurations']['livy2-env']['livy2_user']
-  livy2_group = config['configurations']['livy2-env']['livy2_group']
-  livy2_pid_dir = config['configurations']['livy2-env']['livy2_pid_dir']
-  livy2_server_pid_file = format("{livy2_pid_dir}/livy-{livy2_user}-server.pid")
