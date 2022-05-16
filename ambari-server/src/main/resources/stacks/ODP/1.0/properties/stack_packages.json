@@ -27,6 +27,32 @@
           ]
         }
       },
+      "FLINK": {
+        "FLINK_CLIENT": {
+          "STACK-SELECT-PACKAGE": "flink-client",
+          "INSTALL": [
+            "flink-client"
+          ],
+          "PATCH": [
+            "flink-client"
+          ],
+          "STANDARD": [
+            "flink-client"
+          ]
+        },
+        "FLINK_JOBHISTORYSERVER": {
+          "STACK-SELECT-PACKAGE": "flink-historyserver",
+          "INSTALL": [
+            "flink-historyserver"
+          ],
+          "PATCH": [
+            "flink-historyserver"
+          ],
+          "STANDARD": [
+            "flink-historyserver"
+          ]
+        }
+      },
       "HBASE": {
         "HBASE_CLIENT": {
           "STACK-SELECT-PACKAGE": "hbase-client",
