@@ -1,0 +1,489 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_final="true">
+  <property>
+    <name>taskmanager.memory.process.size</name>
+    <value>1024</value>
+    <description>The total process memory size for the TaskManager</description>
+    <display-name>TaskManager process memory size</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+      <maximum>268435456</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>true</overridable>
+    </value-attributes>
+    <!-- <depends-on>
+      <property>
+        <type>hdfs-site</type>
+        <name>dfs.datanode.data.dir</name>
+      </property>
+    </depends-on> -->
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>jobmanager.memory.process.size.memory.process.size</name>
+    <value>1024</value>
+    <description>The total process memory size for the JobManager</description>
+    <display-name>JobManager process memory size</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+      <maximum>268435456</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable>
+    </value-attributes>
+    <!-- <depends-on>
+      <property>
+        <type>hdfs-site</type>
+        <name>dfs.datanode.data.dir</name>
+      </property>
+    </depends-on> -->
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>taskmanager.numberOfTaskSlots</name>
+    <value>1</value>
+    <description>The number of task slots that each TaskManager offers. Each slot runs one parallel pipeline.</description>
+    <display-name>Number Of Task Slots</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>256</maximum>
+      <!-- <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable> -->
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>parallelism.default</name>
+    <value>1</value>
+    <description>The parallelism used for programs that did not specify and other parallelism.</description>
+    <display-name>Default parralelism</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>256</maximum>
+      <!-- <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable> -->
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>fs.default-scheme</name>
+    <value>hdfs://localhost:8020</value>
+    <description>The parallelism used for programs that did not specify and other parallelism.</description>
+    <display-name>Default parralelism</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>256</maximum>
+      <!-- <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable> -->
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>high-availability</name>
+    <value>zookeeper</value>
+    <description>The parallelism used for programs that did not specify and other parallelism.</description>
+    <display-name>Default parralelism</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>256</maximum>
+      <!-- <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable> -->
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>high-availability</name>
+    <display-name>Hive availability mode</display-name>
+    <value>zookeeper</value>
+    <description>The high-availability mode. Possible options are 'NONE' or 'zookeeper'.</description>
+    <on-ambari-upgrade add="false"/>
+    <overridable>false</overridable>
+  </property>
+  <property>
+    <name>high-availability.zookeeper.quorum</name>
+    <value>localhost:2181</value>
+    <description>The list of ZooKeeper quorum peers that coordinate the high-availability
+    setup. This must be a list of the form:
+    "host1:clientPort,host2:clientPort,..." (default clientPort: 2181)
+    </description>
+    <value-attributes>
+      <type>multiLine</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>high-availability.zookeeper.client.acl</name>
+    <value>creator</value>
+    <description>ACL options are based on https://zookeeper.apache.org/doc/r3.1.2/zookeeperProgrammers.html#sc_BuiltinACLSchemes
+    It can be either "creator" (ZOO_CREATE_ALL_ACL) or "open" (ZOO_OPEN_ACL_UNSAFE)
+    The default value is "open" and it can be changed to "creator" if ZK security is enabled
+    </description>
+    <on-ambari-upgrade add="false"/>
+    <overridable>false</overridable>
+  </property>
+  <property>
+    <name>high-availability.storageDir</name>
+    <value>hdfs://localhost:8020/apps/odp/flink/ha</value>
+    <description>Must be a durable file system that is accessible from all nodes (like HDFS, S3, Ceph, nfs, ...)</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>execution.checkpointing.interval</name>
+    <value>3min</value>
+    <description>checkpointing time Interval. Checkpointing is enabled when execution.checkpointing.interval > 0</description>
+    <on-ambari-upgrade add="false"/>
+    <overridable>false</overridable>
+  </property>
+  <property>
+    <name>execution.checkpointing.externalized-checkpoint-retention</name>
+    <value>DELETE_ON_CANCELLATION</value>
+    <description>The behavior with canceled application checkpoint</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>execution.checkpointing.max-concurrent-checkpoints</name>
+    <value>1</value>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>256</maximum>
+    </value-attributes>
+    <description>The Max number of checkpoints</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>execution.checkpointing.min-pause</name>
+    <value>0</value>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+      <maximum>256</maximum>
+    </value-attributes>
+    <description>The minimum pause between two checkpoints</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>execution.checkpointing.mode</name>
+    <value>EXACTLY_ONCE</value>
+    <description>the mode for storing checkpoints. Must be one of the following value EXACTLY_ONCE, AT_LEAST_ONCE</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>execution.checkpointing.timeout</name>
+    <value>10min</value>
+    <description>Timeout before checkpoint is canceled in case of failure</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>state.backend</name>
+    <value>filesystem</value>
+    <description>Supported backends are 'jobmanager', 'filesystem', 'rocksdb', or the factory classname.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>state.checkpoints.dir</name>
+    <value>hdfs://localhost:8020/apps/odp/flink/flink-checkpoints</value>
+    <description>Directory for checkpoints filesystem, when using any of the default bundled state backends.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>state.savepoints.dir</name>
+    <value>hdfs://localhost:8020/apps/odp/flink/flink-checkpoints</value>
+    <description>Default target directory for savepoints, optional.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>state.backend.incremental</name>
+    <value>false</value>
+    <description>Flag to enable/disable incremental checkpoints for backends that
+    support incremental checkpoints (like the RocksDB state backend).</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>rest.port</name>
+    <value>8081</value>
+    <description>The port to which the REST client connects to. If rest.bind-port has
+    not been specified, then the server will bind to this port as well.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>rest.address</name>
+    <value>0.0.0.0</value>
+    <description>The address to which the REST client will connect to</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>rest.bind-port</name>
+    <value>8080-8090</value>
+    <description>Port range for the REST and web server to bind to.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>rest.bind-address</name>
+    <value>0.0.0.0</value>
+    <description>The address that the REST & web server binds to.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>web.submit.enable</name>
+    <value>false</value>
+    <description>Flag to specify whether job submission is enabled from the web-based
+    untime monitor.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>web.cancel.enable</name>
+    <value>false</value>
+    <description>Flag to specify whether job cancellation is enabled from the web-based
+    runtime monitor.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>io.tmp.dirs</name>
+    <value>/tmp</value>
+    <description>Add a delimited list for multiple directories, using the system directory
+    delimiter (colon ':' on unix) or a comma, e.g.:
+        /data1/tmp:/data2/tmp:/data3/tmp
+    Note: Each directory entry is read from and written to by a different I/O
+    thread. You can include the same directory multiple times in order to create
+    multiple I/O threads against that directory. This is for example relevant for
+    high-throughput RAIDs.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>io.tmp.dirs</name>
+    <value>/tmp</value>
+    <description>Add a delimited list for multiple directories, using the system directory
+    delimiter (colon ':' on unix) or a comma, e.g.:
+        /data1/tmp:/data2/tmp:/data3/tmp
+    Note: Each directory entry is read from and written to by a different I/O
+    thread. You can include the same directory multiple times in order to create
+    multiple I/O threads against that directory. This is for example relevant for
+    high-throughput RAIDs.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>jobmanager.archive.fs.dir</name>
+    <value>hdfs:///localhost:8020/apps/odp/flink/completed-jobs/</value>
+    <description>Directory to upload completed jobs to. Add this directory to the list of
+    monitored directories of the HistoryServer as well.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>historyserver.web.address</name>
+    <value>0.0.0.0</value>
+    <description>The address under which the web-based HistoryServer listens.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>historyserver.web.port</name>
+    <value>8082</value>
+    <description>The port under which the web-based HistoryServer listens.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>historyserver.archive.fs.dir</name>
+    <value>hdfs:///localhost:8020/apps/odp/flink/completed-jobs/</value>
+    <description>Comma separated list of directories to monitor for completed jobs.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>historyserver.archive.fs.refresh-interval</name>
+    <value>10000</value>
+    <description>Interval in milliseconds for refreshing the monitored directories.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>zookeeper.sasl.service-name</name>
+    <value>zookeeper</value>
+    <description>Override configuration to provide custom ZK service name if configured</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+    <property>
+    <name>zookeeper.sasl.login-context-name</name>
+    <value>Client</value>
+    <description>The configuration below must match one of the values set in "security.kerberos.login.contexts"</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>security.ssl.rest.enabled</name>
+    <value>false</value>
+    <description>true/false, set to true if using SSL</description>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>security.ssl.rest.keystore</name>
+    <value>/etc/security/serverKeys/flink-rest-keystore.jks</value>
+    <description>Flink rest endpoint keystore (specify full path)</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>security.ssl.rest.key-password</name>
+    <value/>
+    <description>The secret to decrypt the key in the keystore for Flink's external REST endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>security.ssl.rest.keystore-password</name>
+    <value/>
+    <description>The secret to decrypt the keystore file for Flink's for Flink's external REST endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>security.ssl.rest.truststore</name>
+    <value/>
+    <description>The truststore file containing the public CA certificates to verify the peer for Flink's external REST endpoints.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+    <property>
+    <name>security.ssl.rest.keystore</name>
+    <value/>
+    <description>The Java keystore file with SSL Key and Certificate, to be used Flink's external REST endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+    <property>
+    <name>security.ssl.rest.truststore-password</name>
+    <value/>
+    <description>The password to decrypt the truststore for Flink's external REST endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>security.ssl.historyserver.enabled</name>
+    <value>false</value>
+    <description>true/false, set to true if using SSL</description>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>security.ssl.historyserver.keystore</name>
+    <value>/etc/security/serverKeys/flink-historyserver-keystore.jks</value>
+    <description>Flink Historyserver endpoint keystore (specify full path)</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>security.ssl.historyserver.key-password</name>
+    <value/>
+    <description>The secret to decrypt the key in the keystore for Flink's external REST endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>security.ssl.historyserver.keystore-password</name>
+    <value/>
+    <description>The secret to decrypt the keystore file for Flink's for Flink's external HistoryServer endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>security.ssl.historyserver.truststore</name>
+    <value>/etc/security/serverKeys/flink-historyserver-truststore.jks</value>
+    <description>The truststore file containing the public CA certificates to verify the peer for Flink's external HistoryServer endpoints.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+    <property>
+    <name>security.ssl.historyserver.keystore</name>
+    <value/>
+    <description>The Java keystore file with SSL Key and Certificate, to be used Flink's external HistoryServer endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+    <property>
+    <name>security.ssl.historyserver.truststore-password</name>
+    <value/>
+    <description>The password to decrypt the truststore for Flink's external HistoryServer endpoints.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  </configuration>
