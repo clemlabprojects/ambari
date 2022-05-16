@@ -1,0 +1,88 @@
+{
+  "services": [
+    {
+      "name": "FLINK",
+      "identities": [
+        {
+          "name": "flink_smokeuser",
+          "reference": "/smokeuser"
+        },
+        {
+          "name": "flinkuser",
+          "principal": {
+            "value": "${flink-env/flink_user}${principal_suffix}@${realm}",
+            "type" : "user",
+            "local_username" : "${flink-env/flink_user}"
+          },
+          "keytab": {
+            "file": "${keytab_dir}/flink.headless.keytab",
+            "owner": {
+              "name": "${flink-env/flink_user}",
+              "access": "r"
+            },
+            "group": {
+              "name": "${cluster-env/user_group}",
+              "access": ""
+            }
+          }
+        },
+        {
+          "name": "flink_service_keytab",
+          "principal": {
+            "value": "flink/_HOST@${realm}",
+            "type" : "service",
+            "configuration": "flink-conf/security.kerberos.login.principal",
+            "local_username" : "${flink-env/flink_user}"
+          },
+          "keytab": {
+            "file": "${keytab_dir}/flink.service.keytab",
+            "owner": {
+              "name": "${flink-env/flink_user}",
+              "access": "r"
+            },
+            "group": {
+              "name": "${cluster-env/user_group}",
+              "access": ""
+            },
+            "configuration": "flink-conf/security.kerberos.login.keytab"
+          }
+        }
+      ],
+      "configurations": [
+        {
+          "flink-conf": {
+            "security.kerberos.login.contexts": "Client,KafkaClient"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "FLINK_HISTORYSERVER",
+          "identities": [
+            {
+              "name": "hdfs",
+              "reference": "/HDFS/NAMENODE/hdfs"
+            },
+            {
+              "name": "flink_history_server",
+              "reference": "/FLINK/flink_service_keytab",
+              "principal": {
+                "configuration": "flink-conf/security.kerberos.login.principal"
+              },
+              "keytab": {
+                "configuration": "flink-conf/security.kerberos.login.keytab"
+              }
+	        }
+          ]
+        },
+        {
+          "name": "FLINK_CLIENT"
+        }
+
+            
+          ]
+        }
+      ]
+    }
+  ]
+}

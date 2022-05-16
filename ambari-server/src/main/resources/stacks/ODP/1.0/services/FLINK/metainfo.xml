@@ -20,14 +20,14 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>SPARK2</name>
-      <displayName>Spark2</displayName>
-      <comment>Apache Spark 2.4 is a fast and general engine for large-scale data processing.</comment>
+      <name>FLINK</name>
+      <displayName>Flink</displayName>
+      <comment>Apache Flink is an open source platform for distributed stream and batch data processing.</comment>
       <version>2.4.7</version>      
       <components>
         <component>
-          <name>SPARK2_JOBHISTORYSERVER</name>
-          <displayName>Spark2 History Server</displayName>
+          <name>FLINK_JOBHISTORYSERVER</name>
+          <displayName>Flink History Server</displayName>
           <category>MASTER</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
@@ -53,31 +53,36 @@
                 <enabled>true</enabled>
              </auto-deploy>
            </dependency>
-           <dependency>
-              <name>HIVE/HIVE_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-           </dependency>
           </dependencies>
           <commandScript>
             <script>scripts/job_history_server.py</script>
             <scriptType>PYTHON</scriptType>
             <timeout>600</timeout>
           </commandScript>
+          <configFiles>
+            <configFile>
+              <type>env</type>
+              <fileName>logback.xml</fileName>
+              <dictionaryName>flink-logback-historyserver</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>properties</type>
+              <fileName>flink-conf.yml</fileName>
+              <dictionaryName>flink-conf</dictionaryName>
+            </configFile>
+          </configFiles>
           <logs>
             <log>
-              <logId>spark2_jobhistory_server</logId>
+              <logId>flink_jobhistory_server</logId>
               <primary>true</primary>
             </log>
           </logs>
         </component>
         <component>
-          <name>SPARK2_THRIFTSERVER</name>
-          <displayName>Spark2 Thrift Server</displayName>
-          <category>SLAVE</category>
-          <cardinality>0+</cardinality>
+          <name>FLINK_RESTSERVER</name>
+          <displayName>Flink Rest Server</displayName>
+          <category>MASTER</category>
+          <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <dependencies>
             <dependency>
@@ -99,31 +104,36 @@
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>HIVE/HIVE_METASTORE</name>
-              <scope>cluster</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
+             </auto-deploy>
+           </dependency>
           </dependencies>
           <commandScript>
-            <script>scripts/spark_thrift_server.py</script>
+            <script>scripts/job_history_server.py</script>
             <scriptType>PYTHON</scriptType>
             <timeout>600</timeout>
           </commandScript>
+          <configFiles>
+            <configFile>
+              <type>env</type>
+              <fileName>logback.xml</fileName>
+              <dictionaryName>flink-logback-restserver</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>properties</type>
+              <fileName>flink-conf.yml</fileName>
+              <dictionaryName>flink-conf</dictionaryName>
+            </configFile>
+          </configFiles>
           <logs>
             <log>
-              <logId>spark2_thriftserver</logId>
+              <logId>flink_jobhistory_server</logId>
               <primary>true</primary>
             </log>
           </logs>
         </component>
         <component>
-          <name>SPARK2_CLIENT</name>
-          <displayName>Spark2 Client</displayName>
+          <name>FLINK_CLIENT</name>
+          <displayName>Flink Client</displayName>
           <category>CLIENT</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
@@ -158,82 +168,23 @@
           <configFiles>
             <configFile>
               <type>env</type>
-              <fileName>spark-log4j.properties</fileName>
-              <dictionaryName>spark2-log4j-properties</dictionaryName>
-            </configFile>
-            <configFile>
-              <type>env</type>
-              <fileName>spark-env.sh</fileName>
-              <dictionaryName>spark2-env</dictionaryName>
-            </configFile>
-            <configFile>
-              <type>env</type>
-              <fileName>spark-metrics.properties</fileName>
-              <dictionaryName>spark2-metrics-properties</dictionaryName>
+              <fileName>log4j-cli.properties</fileName>
+              <dictionaryName>flink-log4j-cli-properties</dictionaryName>
             </configFile>
             <configFile>
               <type>properties</type>
-              <fileName>spark-defaults.conf</fileName>
-              <dictionaryName>spark2-defaults</dictionaryName>
+              <fileName>flink-conf.yml</fileName>
+              <dictionaryName>flink-conf</dictionaryName>
             </configFile>
           </configFiles>
-        </component>
-        <component>
-          <name>LIVY2_SERVER</name>
-          <displayName>Livy for Spark2 Server</displayName>
-          <category>SLAVE</category>
-          <cardinality>0+</cardinality>
-          <versionAdvertised>true</versionAdvertised>
-          <dependencies>
-            <dependency>
-              <name>SPARK2/SPARK2_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>YARN/YARN_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-          </dependencies>
-          <commandScript>
-            <script>scripts/livy2_server.py</script>
-            <scriptType>PYTHON</scriptType>
-            <timeout>600</timeout>
-          </commandScript>
-          <logs>
-            <log>
-              <logId>livy2_server</logId>
-              <primary>true</primary>
-            </log>
-          </logs>
         </component>
       </components>
 
       <configuration-dependencies>
-        <config-type>spark2-defaults</config-type>
-        <config-type>spark2-env</config-type>
-        <config-type>spark2-log4j-properties</config-type>
-        <config-type>spark2-metrics-properties</config-type>
-        <config-type>spark2-thrift-sparkconf</config-type>
-        <config-type>spark2-hive-site-override</config-type>
-        <config-type>spark2-thrift-fairscheduler</config-type>
-        <config-type>livy2-client-conf</config-type>
-        <config-type>livy2-conf</config-type>
-        <config-type>livy2-env</config-type>
-        <config-type>livy2-log4j-properties</config-type>
-        <config-type>livy2-spark-blacklist</config-type>
+        <config-type>flink-conf-properties</config-type>
+        <config-type>flink-log4j-cli-properties</config-type>
+        <config-type>flink-logback-historyserver-env</config-type>
+        <config-type>flink-logback-restserver-env</config-type>
       </configuration-dependencies>
 
       <commandScript>
@@ -245,7 +196,6 @@
       <requiredServices>
         <service>HDFS</service>
         <service>YARN</service>
-        <service>HIVE</service>
       </requiredServices>
 
       <osSpecifics>
@@ -253,13 +203,7 @@
           <osFamily>redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
-              <name>spark2_${stack_version}</name>
-            </package>
-            <package>
-              <name>spark2_${stack_version}-python</name>
-            </package>
-            <package>
-              <name>livy2_${stack_version}</name>
+              <name>flink_${stack_version}</name>
             </package>
           </packages>
         </osSpecific>
@@ -268,12 +212,6 @@
           <packages>
             <package>
               <name>spark2-${stack_version}</name>
-            </package>
-            <package>
-              <name>spark2-${stack_version}-python</name>
-            </package>
-            <package>
-              <name>livy2-${stack_version}</name>
             </package>
           </packages>
         </osSpecific>
