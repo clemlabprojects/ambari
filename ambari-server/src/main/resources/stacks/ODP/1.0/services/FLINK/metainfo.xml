@@ -23,7 +23,7 @@
       <name>FLINK</name>
       <displayName>Flink</displayName>
       <comment>Apache Flink is an open source platform for distributed stream and batch data processing.</comment>
-      <version>2.4.7</version>      
+      <version>1.14.8</version>      
       <components>
         <component>
           <name>FLINK_JOBHISTORYSERVER</name>
@@ -78,7 +78,7 @@
             </log>
           </logs>
         </component>
-        <component>
+        <!-- <component>
           <name>FLINK_RESTSERVER</name>
           <displayName>Flink Rest Server</displayName>
           <category>MASTER</category>
@@ -130,7 +130,7 @@
               <primary>true</primary>
             </log>
           </logs>
-        </component>
+        </component> -->
         <component>
           <name>FLINK_CLIENT</name>
           <displayName>Flink Client</displayName>
@@ -161,7 +161,7 @@
             </dependency>
           </dependencies>
           <commandScript>
-            <script>scripts/spark_client.py</script>
+            <script>scripts/flink_client.py</script>
             <scriptType>PYTHON</scriptType>
             <timeout>600</timeout>
           </commandScript>
