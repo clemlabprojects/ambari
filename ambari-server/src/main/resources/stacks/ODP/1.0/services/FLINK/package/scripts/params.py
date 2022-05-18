@@ -93,7 +93,8 @@ toPop = [
 
 # remove uneeded client configuration
 for prop in toPop:
-  flink_client_properties.pop(prop) 
+  if flink_client_properties['security.kerberos.login.keytab']:
+    flink_client_properties.pop(prop)
 
 flink_conf_file = flink_conf + "/flink-conf.yml"
 java_home = config['ambariLevelParams']['java_home']
