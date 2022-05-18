@@ -106,43 +106,8 @@
   <property>
     <name>fs.default-scheme</name>
     <value>hdfs://localhost:8020</value>
-    <description>The parallelism used for programs that did not specify and other parallelism.</description>
-    <display-name>Default parralelism</display-name>
-    <value-attributes>
-      <type>int</type>
-      <minimum>1</minimum>
-      <maximum>256</maximum>
-      <!-- <unit>MB</unit>
-      <increment-step>256</increment-step>
-      <overridable>false</overridable> -->
-    </value-attributes>
-    <depends-on>
-      <property>
-        <type>yarn-site</type>
-        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
-      </property>
-    </depends-on>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>high-availability</name>
-    <value>zookeeper</value>
-    <description>The parallelism used for programs that did not specify and other parallelism.</description>
-    <display-name>Default parralelism</display-name>
-    <value-attributes>
-      <type>int</type>
-      <minimum>1</minimum>
-      <maximum>256</maximum>
-      <!-- <unit>MB</unit>
-      <increment-step>256</increment-step>
-      <overridable>false</overridable> -->
-    </value-attributes>
-    <depends-on>
-      <property>
-        <type>yarn-site</type>
-        <name>yarn.nodemanager.resource.percentage-physical-cpu-limit</name>
-      </property>
-    </depends-on>
+    <description>The default filesystem scheme, used for paths that do not declare a scheme explicitly. May contain an authority, e.g. host:port in case of an HDFS NameNode.</description>
+    <display-name>Default FS Scheme</display-name>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
@@ -177,7 +142,7 @@
   </property>
   <property>
     <name>high-availability.storageDir</name>
-    <value>hdfs://localhost:8020/apps/odp/flink/ha</value>
+    <value>/apps/odp/flink/ha</value>
     <description>Must be a durable file system that is accessible from all nodes (like HDFS, S3, Ceph, nfs, ...)</description>
     <on-ambari-upgrade add="false"/>
   </property>
@@ -236,13 +201,13 @@
   </property>
   <property>
     <name>state.checkpoints.dir</name>
-    <value>hdfs://localhost:8020/apps/odp/flink/flink-checkpoints</value>
+    <value>/apps/odp/flink/flink-checkpoints</value>
     <description>Directory for checkpoints filesystem, when using any of the default bundled state backends.</description>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>state.savepoints.dir</name>
-    <value>hdfs://localhost:8020/apps/odp/flink/flink-checkpoints</value>
+    <value>/apps/odp/flink/flink-checkpoints</value>
     <description>Default target directory for savepoints, optional.</description>
     <on-ambari-upgrade add="false"/>
   </property>
@@ -275,7 +240,7 @@
   <property>
     <name>rest.bind-address</name>
     <value>0.0.0.0</value>
-    <description>The address that the REST & web server binds to.</description>
+    <description>The address that the REST and web server binds to.</description>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
@@ -306,21 +271,8 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
-    <name>io.tmp.dirs</name>
-    <value>/tmp</value>
-    <description>Add a delimited list for multiple directories, using the system directory
-    delimiter (colon ':' on unix) or a comma, e.g.:
-        /data1/tmp:/data2/tmp:/data3/tmp
-    Note: Each directory entry is read from and written to by a different I/O
-    thread. You can include the same directory multiple times in order to create
-    multiple I/O threads against that directory. This is for example relevant for
-    high-throughput RAIDs.
-    </description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
     <name>jobmanager.archive.fs.dir</name>
-    <value>hdfs:///localhost:8020/apps/odp/flink/completed-jobs/</value>
+    <value>/apps/odp/flink/completed-jobs/</value>
     <description>Directory to upload completed jobs to. Add this directory to the list of
     monitored directories of the HistoryServer as well.
     </description>
@@ -340,7 +292,7 @@
   </property>
   <property>
     <name>historyserver.archive.fs.dir</name>
-    <value>hdfs:///localhost:8020/apps/odp/flink/completed-jobs/</value>
+    <value>/apps/odp/flink/completed-jobs/</value>
     <description>Comma separated list of directories to monitor for completed jobs.</description>
     <on-ambari-upgrade add="false"/>
   </property>
@@ -400,7 +352,7 @@
   </property>
   <property>
     <name>security.ssl.rest.truststore</name>
-    <value/>
+    <value>/etc/security/serverKeys/flink-rest-truststore.jks</value>
     <description>The truststore file containing the public CA certificates to verify the peer for Flink's external REST endpoints.</description>
     <on-ambari-upgrade add="true"/>
   </property>

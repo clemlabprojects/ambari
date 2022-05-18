@@ -150,7 +150,7 @@ class FlinkServiceAdvisor(service_advisor.ServiceAdvisor):
   @staticmethod
   def isKerberosEnabled(services, configurations):
     """
-    Determines if security is enabled by testing the value of spark2-defaults/spark.history.kerberos.enabled enabled.
+    Determines if security is enabled by testing the value of flink-conf/security.kerberos.login.principal enabled.
     If the property exists and is equal to "true", then is it enabled; otherwise is it assumed to be
     disabled.
 
@@ -161,12 +161,12 @@ class FlinkServiceAdvisor(service_advisor.ServiceAdvisor):
     :rtype: bool
     :return: True or False
     """
-    if configurations and "spark2-defaults" in configurations and \
-            "spark.history.kerberos.enabled" in configurations["spark2-defaults"]["properties"]:
-      return configurations["spark2-defaults"]["properties"]["spark.history.kerberos.enabled"].lower() == "true"
-    elif services and "spark2-defaults" in services["configurations"] and \
-            "spark.history.kerberos.enabled" in services["configurations"]["spark2-defaults"]["properties"]:
-      return services["configurations"]["spark2-defaults"]["properties"]["spark.history.kerberos.enabled"].lower() == "true"
+    if configurations["flink-conf"]:
+      if configurations and "flink-conf" in configurations and \
+              "security.kerberos.login.principal" in configurations["flink-conf"]["properties"]:
+        return True
+      else:
+        return False
     else:
       return False
 
@@ -187,8 +187,24 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     :type services dict
     :type hosts dict
     """
-    Logger.info("No Recommendation vailable for Flink Recommendation Stack advisor")
+    putClusterProperties = self.putProperty(configurations, "flink-conf", services)
+    #Logger.info("No Recommendation vailable for Flink Recommendation Stack advisor")
     #            (self.__class__.__name__, inspect.stack()[0][3]))
+    
+    ## Get HDFS Default Scheme
+    defaultScheme = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
+    defaultFs = "file:///"
+    if "core-site" in services["configurations"] and \
+      "fs.defaultFS" in services["configurations"]["core-site"]["properties"]:
+      defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
+    putClusterProperties("fs.default-scheme", defaultFs)
+
+    ## configure HighAvailability with Zookeeper
+    zk_host_port = self.getZKHostPortString(services)
+    putClusterProperties("high-availability.zookeeper.quorum", zk_host_port)
+
+
+    self.putProperty(configurations, "flink-conf", services)
 
 
 class FlinkValidator(service_advisor.ServiceAdvisor):
@@ -201,30 +217,21 @@ class FlinkValidator(service_advisor.ServiceAdvisor):
     self.as_super = super(FlinkValidator, self)
     self.as_super.__init__(*args, **kwargs)
     self.validators = []
-
-    # self.validators = [("spark2-defaults", self.validateSpark2DefaultsFromHDP25),
-                      #  ("spark2-thrift-sparkconf", self.validateSpark2ThriftSparkConfFromHDP25)]
+    self.validators = [("flink-conf", self.validateFlinkConfFromODP10)]
 
 
-  # def validateSpark2DefaultsFromHDP25(self, properties, recommendedDefaults, configurations, services, hosts):
-  #   validationItems = [
-  #     {
-  #       "config-name": 'spark.yarn.queue',
-  #       "item": self.validatorYarnQueue(properties, recommendedDefaults, 'spark.yarn.queue', services)
-  #     }
-  #   ]
-  #   return self.toConfigurationValidationProblems(validationItems, "spark2-defaults")
-
-
-  # def validateSpark2ThriftSparkConfFromHDP25(self, properties, recommendedDefaults, configurations, services, hosts):
-  #   validationItems = [
-  #     {
-  #       "config-name": 'spark.yarn.queue',
-  #       "item": self.validatorYarnQueue(properties, recommendedDefaults, 'spark.yarn.queue', services)
-  #     }
-  #   ]
-  #   return self.toConfigurationValidationProblems(validationItems, "spark2-thrift-sparkconf")
-
-
-
+  def validateFlinkConfFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    include_hdfs = "HDFS" in servicesList
+    defaultFS = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
+    validationItems = []
+    if include_hdfs and defaultFS.startswith('file:///'):
+      # TODO: Memory Settings Recommendation
+      validationItems.extends([
+        {
+          "config-name": 'fs.default-scheme',
+          "item": self.getWarnItem("You should use hdfs:// FS for Production Flink Cluster ")
+        }
+      ])
+    return self.toConfigurationValidationProblems(validationItems, "flink-conf")
 
