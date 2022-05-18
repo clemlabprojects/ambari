@@ -29,7 +29,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.core.logger import Logger
 from resource_management.core import shell
-from setup_flink import *
+from flink_setup import *
 from flink_service import flink_service
 
 
@@ -45,7 +45,7 @@ class HistoryServer(Script):
     import params
     env.set_params(params)
     
-    setup_flink(env, 'historyserver', upgrade_type=upgrade_type, action = 'config')
+    flink_setup(env, 'historyserver', upgrade_type=upgrade_type, action = 'config')
     
   def start(self, env, upgrade_type=None):
     import params
@@ -72,31 +72,20 @@ class HistoryServer(Script):
 
     env.set_params(params)
     if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
-      Logger.info("Executing Spark2 Job History Server Stack Upgrade pre-restart")
+      Logger.info("Executing Flink Job History Server Stack Upgrade pre-restart")
       stack_select.select_packages(params.version)
 
-      # Spark 1.3.1.2.3, and higher, which was included in HDP 2.3, does not have a dependency on Tez, so it does not
-      # need to copy the tarball, otherwise, copy it.
-      if params.version and check_stack_feature(StackFeature.TEZ_FOR_SPARK, params.version):
-        resource_created = copy_to_hdfs(
-          "tez",
-          params.user_group,
-          params.hdfs_user,
-          skip=params.sysprep_skip_copy_tarballs_hdfs)
-        if resource_created:
-          params.HdfsResource(None, action="execute")
-          
   def get_log_folder(self):
     import params
-    return params.spark_log_dir
+    return params.flink_log_dir
   
   def get_user(self):
     import params
-    return params.spark_user
+    return params.flink_user
 
   def get_pid_files(self):
     import status_params
-    return [status_params.spark_history_server_pid_file]
+    return [status_params.flink_history_server_pid_file]
 
 if __name__ == "__main__":
   HistoryServer().execute()
