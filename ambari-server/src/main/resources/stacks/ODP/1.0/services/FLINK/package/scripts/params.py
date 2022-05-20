@@ -99,6 +99,7 @@ for prop in toPop:
 flink_conf_file = flink_conf + "/flink-conf.yml"
 java_home = config['ambariLevelParams']['java_home']
 
+hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
 flink_user = config['configurations']['flink-env']['flink_user']
 hdfs_principal_name = config['configurations']['hadoop-env']['hdfs_principal_name']
 hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab']
