@@ -58,7 +58,7 @@ def flink_service(name, upgrade_type=None, action=None):
     if effective_version:
       effective_version = format_stack_version(effective_version)
     
-    if name == 'jobhistoryserver' and effective_version:
+    if name == 'historyserver' and effective_version:
       
       # create flink history dir
       params.HdfsResource(params.flink_history_dir,
@@ -72,13 +72,19 @@ def flink_service(name, upgrade_type=None, action=None):
       params.HdfsResource(None, action="execute")
 
     if params.security_enabled:
-      flink_kinit_cmd = format("{kinit_path_local} -kt {flink_kerberos_keytab} {flink_principal}; ")
+      flink_principal = params.flink_history_kerberos_principal.replace('_HOST', socket.getfqdn().lower())
+      flink_kinit_cmd = format("{kinit_path_local} -kt {flink_history_kerberos_keytab} {flink_principal}; ")
       Execute(flink_kinit_cmd, user=params.flink_user)
 
-    if name == 'jobhistoryserver':
-      env = {'JAVA_HOME': params.java_home, 'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}") }
+    if name == 'historyserver':
+      env = {'JAVA_HOME': params.java_home, 
+        'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}"), 
+        'HADOOP_CONF_DIR': format("{params.hadoop_conf_dir}"),
+        'HADOOP_HOME': format("{params.hadoop_home}"),
+        'HBASE_CONF_DIR': format("{params.hbase_conf_dir}") }
+
       historyserver_no_op_test = as_sudo(["test", "-f", params.flink_history_server_pid_file]) + " && " + as_sudo(["pgrep", "-F", params.flink_history_server_pid_file])
-      daemon_cmd_start = format('{params.flink_history_server_start} start historyserver ')
+      daemon_cmd_start = format('{params.flink_history_server_start} start historyserver')
       try:
         Execute(daemon_cmd_start,
                 user=params.flink_user,
@@ -89,9 +95,13 @@ def flink_service(name, upgrade_type=None, action=None):
         raise
 
   elif action == 'stop':
-    if name == 'jobhistoryserver':
+    if name == 'historyserver':
       try:
-        env = {'JAVA_HOME': params.java_home, 'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}") }
+        env = {'JAVA_HOME': params.java_home, 
+        'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}"), 
+        'HADOOP_CONF_DIR': format("{params.hadoop_conf_dir}"),
+        'HADOOP_HOME': format("{params.hadoop_home}"),
+        'HBASE_CONF_DIR': format("{params.hbase_conf_dir}") }
         daemon_cmd_stop = format('{params.flink_history_server_stop} stop historyserver ')
         Execute(format('{daemon_cmd_stop}'),
                 user=params.flink_user,

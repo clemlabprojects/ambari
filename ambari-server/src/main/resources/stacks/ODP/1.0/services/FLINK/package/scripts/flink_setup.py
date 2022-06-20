@@ -73,7 +73,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
       
       logback_content=InlineTemplate(params.flink_logback_rest_content)        
 
-      PropertiesFile(format("{params.flink_restserver_conf}/flink-conf.yml"),
+      PropertiesFile(format("{params.flink_restserver_conf}/flink-conf.yaml"),
         properties = props,
         key_value_delimiter = ": ",
         owner=params.flink_user,
@@ -83,33 +83,62 @@ def flink_setup(env, type, upgrade_type = None, action = None):
       File(format("{params.flink_restserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0400)
 
     # Configuring HistoryServer
-    else:
-      props = params.flink_history_server_properties
-      
-      if params.security_enabled:
-        props['security.kerberos.login.principal'] = props['security.kerberos.login.principal'].replace('_HOST', socket.getfqdn().lower())
-      
-      logback_content=InlineTemplate(params.flink_logback_hs_content)
-              
-      Directory(params.flink_historyserver_conf,
-              owner=params.flink_user,
-              group=params.user_group,
-              mode=0750,
-              create_parents = True
-      )
-      PropertiesFile(format("{params.flink_historyserver_conf}/flink-conf.yml"),
-        properties = props,
-        key_value_delimiter = ": ",
-        owner=params.flink_user,
-        group=params.flink_group,
-        mode=0644
-      )
-      File(format("{params.flink_historyserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0400)
+  elif type == 'historyserver':
 
-      generate_logfeeder_input_config('flink', Template("input.config-flink.json.j2", extra_imports=[default]))
+## logging options
+    props = params.flink_history_server_properties
+    if params.security_enabled:
+      props['security.kerberos.login.principal'] = props['security.kerberos.login.principal'].replace('_HOST', socket.getfqdn().lower())
+    
+    logback_content=InlineTemplate(params.flink_logback_hs_content)
+            
+    Directory(params.flink_historyserver_conf,
+            owner=params.flink_user,
+            group=params.user_group,
+            mode=0750,
+            create_parents = True
+    )
+    PropertiesFile(format("{params.flink_historyserver_conf}/flink-conf.yaml"),
+      properties = props,
+      key_value_delimiter = ": ",
+      owner=params.flink_user,
+      group=params.flink_group,
+      mode=0644
+    )
+    File(os.path.join(params.flink_historyserver_conf, 'log4j-console.properties'),
+       owner=params.flink_user,
+       group=params.flink_group,
+       content=InlineTemplate(params.flink_log4j_console_content_properties),
+       mode=0644
+    )
+    File(os.path.join(params.flink_historyserver_conf, 'log4j.properties'),
+       owner=params.flink_user,
+       group=params.flink_group,
+       content=InlineTemplate(params.flink_log4j_historyserver_content_properties),
+       mode=0644
+    )
+    XmlConfig("core-site.xml",
+              conf_dir=params.flink_historyserver_conf,
+              configurations=params.config['configurations']['core-site'],
+              configuration_attributes=params.config['configurationAttributes']['core-site'],
+              owner=params.flink_user,
+              group=params.flink_group,
+              mode=0644
+    )
+    XmlConfig("hdfs-site.xml",
+              conf_dir=params.flink_historyserver_conf,
+              configurations=params.config['configurations']['hdfs-site'],
+              configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
+              owner=params.flink_user,
+              group=params.flink_group,
+              mode=0644
+    )
+  
+
+    generate_logfeeder_input_config('flink', Template("input.config-flink.json.j2", extra_imports=[default]))
 
   else :
-    PropertiesFile(format("{params.flink_conf}/flink-conf.yml"),
+    PropertiesFile(format("{params.flink_conf}/flink-conf.yaml"),
         properties = params.flink_client_properties,
         key_value_delimiter = ": ",
         owner=params.flink_user,

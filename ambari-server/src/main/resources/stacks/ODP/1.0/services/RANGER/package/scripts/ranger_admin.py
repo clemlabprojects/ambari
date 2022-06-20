@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python2
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -102,7 +102,20 @@ class RangerAdmin(Script):
 
     setup_ranger_xml.update_password_configs()
     ranger_service('ranger_admin')
+    # ## wait start
 
+    #   response_code = self.check_ranger_login_urllib2(self.base_url)
+    #   repo_data = json.dumps(repo_properties)
+    #   ambari_ranger_password = unicode(ambari_ranger_password)
+    #   admin_password = unicode(admin_password)
+    #   ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
+
+
+    #   if response_code is not None and response_code == 200:
+    #     user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
+    #     if user_resp_code is not None and user_resp_code == 200:
+    #       retryCount = 0
+    #       while retryCount <= 5:
   def status(self, env):
     import status_params
 
