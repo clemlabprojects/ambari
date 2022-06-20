@@ -19,21 +19,13 @@
  * limitations under the License.
  */
 -->
-<configuration supports_final="false" supports_adding_forbidden="false">
-    <property>
-    <name>flink_log4j_size</name>
-    <value>100</value>
-    <description>The maximum size of backup file before the log is rotated</description>
-    <display-name>Flink Log: file size</display-name>
-    <value-attributes>
-      <unit>MB</unit>
-    </value-attributes>
-    <on-ambari-upgrade add="false"/>
-  </property>
+
+<configuration>
+  <!-- log4j-console.properties -->
   <property>
     <name>content</name>
-    <display-name>flink-log4j template</display-name>
-    <description>Custom log4j.properties</description>
+    <display-name>log4j-console.properties template</display-name>
+    <description>This is the jinja template for log4j-console.properties file</description>
     <value>
 ################################################################################
 #  Licensed to the Apache Software Foundation (ASF) under one
@@ -58,8 +50,8 @@ monitorInterval=30
 
 # This affects logging for both user code and Flink
 rootLogger.level = {{flink_root_logger}}
-rootLogger.appenderRef.file.ref = MainAppender
-log.file = {{ log4j_file_name }}
+rootLogger.appenderRef.console.ref = ConsoleAppender
+rootLogger.appenderRef.rolling.ref = RollingFileAppender
 
 # Uncomment this if you want to _only_ change Flink's logging
 #logger.flink.name = org.apache.flink
@@ -79,20 +71,26 @@ logger.zookeeper.level = INFO
 logger.shaded_zookeeper.name = org.apache.flink.shaded.zookeeper3
 logger.shaded_zookeeper.level = INFO
 
-# Log all infos in the given file
-appender.main.name = MainAppender
-appender.main.type = RollingFile
-appender.main.append = true
-appender.main.fileName = ${sys:log.file}
-appender.main.filePattern = ${sys:log.file}.%i
-appender.main.layout.type = PatternLayout
-appender.main.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
-appender.main.policies.type = Policies
-appender.main.policies.size.type = SizeBasedTriggeringPolicy
-appender.main.policies.size.size = {{flink_log4j_size}}MB
-appender.main.policies.startup.type = OnStartupTriggeringPolicy
-appender.main.strategy.type = DefaultRolloverStrategy
-appender.main.strategy.max = ${env:MAX_LOG_FILE_NUMBER:-10}
+# Log all infos to the console
+appender.console.name = ConsoleAppender
+appender.console.type = CONSOLE
+appender.console.layout.type = PatternLayout
+appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+
+# Log all infos in the given rolling file
+appender.rolling.name = RollingFileAppender
+appender.rolling.type = RollingFile
+appender.rolling.append = true
+appender.rolling.fileName = ${sys:log.file}
+appender.rolling.filePattern = ${sys:log.file}.%i
+appender.rolling.layout.type = PatternLayout
+appender.rolling.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+appender.rolling.policies.type = Policies
+appender.rolling.policies.size.type = SizeBasedTriggeringPolicy
+appender.rolling.policies.size.size=100MB
+appender.rolling.policies.startup.type = OnStartupTriggeringPolicy
+appender.rolling.strategy.type = DefaultRolloverStrategy
+appender.rolling.strategy.max = ${env:MAX_LOG_FILE_NUMBER:-10}
 
 # Suppress the irrelevant (wrong) warnings from the Netty channel handler
 logger.netty.name = org.jboss.netty.channel.DefaultChannelPipeline
@@ -100,7 +98,7 @@ logger.netty.level = OFF
     </value>
     <value-attributes>
       <type>content</type>
-      <show-property-name>false</show-property-name>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>

@@ -4,14 +4,20 @@
   "configuration": {
     "protocol":
     {
-      "type":"HTTP_ONLY"
+      "type":"https",
+      "checks":[
+        {
+          "property": "security.ssl.historyserver.enabled",
+          "desired": "true",
+          "site": "flink-conf"
+        }
+      ]
     },
-
     "links": [
       {
         "name": "flink_history_server_ui",
-        "label": "FLINK History Server UI",
-        "component_name": "FLINK_HISTORYSERVER",
+        "label": "History Server UI",
+        "component_name": "FLINK_JOBHISTORYSERVER",
         "requires_user_name": "false",
         "url": "%@://%@:%@",
         "port":{
@@ -19,7 +25,7 @@
           "http_default_port": "8082",
           "https_property": "historyserver.web.port",
           "https_default_port": "8083",
-          "regex": "^(\\d+)$",
+          "regex": "\\w*:(\\d+)",
           "site": "flink-conf"
         }
       }

@@ -52,6 +52,7 @@ config = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 sudo = AMBARI_SUDO_BINARY
 
+hostname = socket.getfqdn().lower()
 stack_name = status_params.stack_name
 stack_root = Script.get_stack_root()
 stack_version_unformatted = config['clusterLevelParams']['stack_version']
@@ -78,8 +79,12 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
   flink_home = format("{stack_root}/current/{component_directory}")
 
 flink_historyserver_daemon_memory = config['configurations']['flink-env']['flink_historyserver_memory']
-flink_history_server_properties = config['configurations']['flink-conf']
-flink_client_properties = config['configurations']['flink-conf']
+flink_history_server_properties = config['configurations']['flink-conf'].copy()
+flink_history_server_properties['env.log.dir'] = config['configurations']['flink-env']['flink_log_dir']
+flink_client_properties = config['configurations']['flink-conf'].copy()
+
+# custom historyserver properties
+flink_history_server_properties['env.pid.dir'] = status_params.flink_pid_dir
 
 toPop = [
   'security.ssl.historyserver.truststore-password',
@@ -91,12 +96,8 @@ toPop = [
   'security.kerberos.login.keytab'
   ]
 
-# remove uneeded client configuration
-for prop in toPop:
-  if flink_client_properties['security.kerberos.login.keytab']:
-    flink_client_properties.pop(prop)
 
-flink_conf_file = flink_conf + "/flink-conf.yml"
+flink_conf_file = flink_conf + "/flink-conf.yaml"
 java_home = config['ambariLevelParams']['java_home']
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
@@ -111,14 +112,22 @@ user_group = status_params.user_group
 flink_hdfs_user_dir = format("/user/{flink_user}")
 flink_history_dir = default('/configurations/flink-conf/historyserver.archive.fs.dir', "hdfs:///apps/odp/flink/completed-jobs/")
 
+
 flink_history_server_pid_file = status_params.flink_history_server_pid_file
 
 flink_history_server_start = format("{flink_home}/bin/historyserver.sh")
 flink_history_server_stop = format("{flink_home}/bin/historyserver.sh")
+flink_history_kerberos_keytab =  config['configurations']['flink-conf']['security.kerberos.login.keytab']
+flink_history_kerberos_principal =  config['configurations']['flink-conf']['security.kerberos.login.principal']
+
+# remove uneeded client configuration
+for prop in toPop:
+  if flink_client_properties['security.kerberos.login.keytab']:
+    flink_client_properties.pop(prop)
 
 flink_hadoop_lib_native = format("{stack_root}/current/hadoop-client/lib/native:{stack_root}/current/hadoop-client/lib/native/Linux-amd64-64")
 
-flink_logback_hs_content = config['configurations']['flink-logback-historyserver']['content']
+flink_logback_hs_content = config['configurations']['flink-log4j-historyserver']['content']
 flink_logback_rest_content = config['configurations']['flink-logback-rest']['content']
 
 run_example_cmd = format("{flink_home}/bin/flink")
@@ -147,6 +156,19 @@ if flink_historyserver_ssl_enabled:
 # TODO: remove unusedconf  #spark_history_ui_port = str(int(spark_history_ui_port) + 400)
   flink_historyServer_scheme = "https"
 
+flink_log4j_console_content_properties = config['configurations']['flink-log4j-console.properties']['content']
+flink_log4j_content_properties = config['configurations']['flink-log4j']['content']
+flink_log4j_historyserver_content_properties = config['configurations']['flink-log4j-historyserver']['content']
+flink_root_logger = config['configurations']['flink-env']['flink_root_logger']
+flink_log4j_size = config['configurations']['flink-env']['flink_log4j_size']
+
+flink_historyserver_log4j_file_name = format("{flink_group}-{flink_user}-historyserver-{hostname}.log")
+
+log4j_file_name = 'flink.log'
+
+hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
+hbase_conf_dir =  default('configurations/flink-env/flink.hbase.conf.dir','/etc/hbase/conf')
+hadoop_home = format('{stack_root}/current/hadoop-client')
 
 # TODO: remove unusedconf flink_env_sh = config['configurations']['flink-env']['content']
 
@@ -187,3 +209,4 @@ HdfsResource = functools.partial(
   dfs_type = dfs_type
 )
 
+log4j_file_name = ''

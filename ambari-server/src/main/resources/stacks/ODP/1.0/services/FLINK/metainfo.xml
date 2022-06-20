@@ -63,12 +63,17 @@
             <configFile>
               <type>env</type>
               <fileName>logback.xml</fileName>
-              <dictionaryName>flink-logback-historyserver</dictionaryName>
+              <dictionaryName>flink-log4j-historyserver</dictionaryName>
             </configFile>
             <configFile>
               <type>properties</type>
-              <fileName>flink-conf.yml</fileName>
+              <fileName>flink-conf.yaml</fileName>
               <dictionaryName>flink-conf</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>properties</type>
+              <fileName>log4j-console.properties</fileName>
+              <dictionaryName>flink-logj4-console.properties</dictionaryName>
             </configFile>
           </configFiles>
           <logs>
@@ -120,7 +125,7 @@
             </configFile>
             <configFile>
               <type>properties</type>
-              <fileName>flink-conf.yml</fileName>
+              <fileName>flink-conf.yaml</fileName>
               <dictionaryName>flink-conf</dictionaryName>
             </configFile>
           </configFiles>
@@ -173,7 +178,7 @@
             </configFile>
             <configFile>
               <type>properties</type>
-              <fileName>flink-conf.yml</fileName>
+              <fileName>flink-conf.yaml</fileName>
               <dictionaryName>flink-conf</dictionaryName>
             </configFile>
           </configFiles>
@@ -183,7 +188,7 @@
       <configuration-dependencies>
         <config-type>flink-conf-properties</config-type>
         <config-type>flink-log4j-cli-properties</config-type>
-        <config-type>flink-logback-historyserver-env</config-type>
+        <config-type>flink-log4j-historyserver-env</config-type>
         <config-type>flink-logback-restserver-env</config-type>
       </configuration-dependencies>
 
@@ -207,15 +212,8 @@
             </package>
           </packages>
         </osSpecific>
-        <osSpecific>
-          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16</osFamily>
-          <packages>
-            <package>
-              <name>spark2-${stack_version}</name>
-            </package>
-          </packages>
-        </osSpecific>
       </osSpecifics>
+
       <quickLinksConfigurations>
         <quickLinksConfiguration>
           <fileName>quicklinks.json</fileName>

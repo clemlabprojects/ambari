@@ -63,6 +63,16 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>flink_log4j_size</name>
+    <value>250</value>
+    <description>File Size of output log for process daemons</description>
+    <value-attributes>
+      <type>int</type>
+      <unit>MB</unit>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>flink_pid_dir</name>
     <display-name>Flink PID directory</display-name>
     <value>/var/run/flink</value>
@@ -81,7 +91,21 @@
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
-    <property>
+  <property>
+    <name>flink_root_logger</name>
+    <display-name>Flink History Server Root Level</display-name>
+    <value>INFO</value>
+    <description>Flink History Server Logging Root Level</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>flink_historyserver_log4j_file_name</name>
+    <value>flink-historyserver.log</value>
+    <description>This affects logging for both user code and Flink</description>
+    <display-name>HistoryServer Log file name</display-name>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>flink_memory_daemon</name>
     <display-name>Flink Daemon Heap Size</display-name>
     <value>2048</value>

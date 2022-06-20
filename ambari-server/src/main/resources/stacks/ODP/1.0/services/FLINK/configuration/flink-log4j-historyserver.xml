@@ -20,7 +20,7 @@
  */
 -->
 <configuration supports_final="false" supports_adding_forbidden="false">
-    <property>
+<property>
     <name>flink_log4j_size</name>
     <value>100</value>
     <description>The maximum size of backup file before the log is rotated</description>
@@ -59,7 +59,7 @@ monitorInterval=30
 # This affects logging for both user code and Flink
 rootLogger.level = {{flink_root_logger}}
 rootLogger.appenderRef.file.ref = MainAppender
-log.file = {{ log4j_file_name }}
+log.file = {{ flink_historyserver_log4j_file_name }}
 
 # Uncomment this if you want to _only_ change Flink's logging
 #logger.flink.name = org.apache.flink
