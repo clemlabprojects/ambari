@@ -512,6 +512,11 @@ App.StackService.configCategories = function () {
         App.ServiceConfigCategory.create({ name: 'LogsearchAdminJson', displayName: 'Advanced logsearch-admin-json'})
       ]);
       break;
+    case 'FLINK':
+      serviceConfigCategories.pushObjects([
+        App.ServiceConfigCategory.create({ name: 'FLINK_HISTORY', displayName: 'Job History Server', showHost: true})
+      ]);
+      break;
     default:
       serviceConfigCategories.pushObjects([
         App.ServiceConfigCategory.create({ name: 'General', displayName: 'General'})
