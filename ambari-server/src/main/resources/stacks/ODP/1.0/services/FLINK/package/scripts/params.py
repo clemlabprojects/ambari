@@ -99,7 +99,10 @@ toPop = [
   'security.ssl.rest.truststore',
   'security.kerberos.login.principal',
   'security.kerberos.login.keytab',
-  'env.pid.dir'
+  'high-availability',
+  'high-availability.storageDir',
+  'high-availability.zookeeper.client.acl',
+  'high-availability.zookeeper.quorum',
   'fs.default-scheme'
   ]
 
@@ -169,7 +172,9 @@ flink_log4j_historyserver_content_properties = config['configurations']['flink-l
 flink_root_logger = config['configurations']['flink-env']['flink_root_logger']
 flink_log4j_size = config['configurations']['flink-env']['flink_log4j_size']
 
+prefix = format("{flink_group}-{flink_user}-historyserver-{hostname}")
 flink_historyserver_log4j_file_name = format("{flink_group}-{flink_user}-historyserver-{hostname}.log")
+flink_historyserver_log_prefix = prefix
 
 log4j_file_name = 'flink.log'
 
