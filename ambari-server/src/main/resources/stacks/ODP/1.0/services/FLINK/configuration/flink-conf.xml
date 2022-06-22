@@ -272,7 +272,7 @@
   </property>
   <property>
     <name>jobmanager.archive.fs.dir</name>
-    <value>/apps/odp/flink/completed-jobs/</value>
+    <value>hdfs://localhost:8020/apps/odp/flink/completed-jobs/</value>
     <description>Directory to upload completed jobs to. Add this directory to the list of
     monitored directories of the HistoryServer as well.
     </description>

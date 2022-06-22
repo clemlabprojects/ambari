@@ -585,7 +585,8 @@
     <description>Atlas TLS Truststore location</description>
     <value/>
     <on-ambari-upgrade add="false"/>
-  </property>  <property>
+  </property>  
+  <property>
     <name>atlas.proxyusers</name>
     <value/>
     <description>Proxy users for Atlas</description>

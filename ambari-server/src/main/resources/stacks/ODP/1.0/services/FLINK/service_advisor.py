@@ -193,11 +193,16 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     
     ## Get HDFS Default Scheme
     defaultScheme = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
+    completedJobs = services["configurations"]['flink-conf']["properties"]["jobmanager.archive.fs.dir"]
     defaultFs = "file:///"
     if "core-site" in services["configurations"] and \
       "fs.defaultFS" in services["configurations"]["core-site"]["properties"]:
       defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
+    isHDFS = completedJobs.startswith("hdfs:")
+    if not isHDFS:
+      completeJobsWithHDFS = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
     putClusterProperties("fs.default-scheme", defaultFs)
+    putClusterProperties("jobmanager.archive.fs.dir", completedJobs)
 
     ## configure HighAvailability with Zookeeper
     zk_host_port = self.getZKHostPortString(services)

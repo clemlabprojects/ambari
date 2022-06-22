@@ -85,7 +85,8 @@ def flink_service(name, upgrade_type=None, action=None):
 
     if name == 'historyserver':
       env = {'JAVA_HOME': params.java_home, 
-        'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}"), 
+        'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}"),
+        'FLINK_LOG_PREFIX': format("{params.flink_historyserver_log_prefix}"),
         'HADOOP_CONF_DIR': format("{params.hadoop_conf_dir}"),
         'HADOOP_HOME': format("{params.hadoop_home}"),
         'HBASE_CONF_DIR': format("{params.hbase_conf_dir}") }
@@ -106,6 +107,7 @@ def flink_service(name, upgrade_type=None, action=None):
       try:
         env = {'JAVA_HOME': params.java_home, 
         'FLINK_CONF_DIR': format("{params.flink_historyserver_conf}"), 
+        'FLINK_LOG_PREFIX': format("{params.flink_historyserver_log_prefix}"),
         'HADOOP_CONF_DIR': format("{params.hadoop_conf_dir}"),
         'HADOOP_HOME': format("{params.hadoop_home}"),
         'HBASE_CONF_DIR': format("{params.hbase_conf_dir}") }
