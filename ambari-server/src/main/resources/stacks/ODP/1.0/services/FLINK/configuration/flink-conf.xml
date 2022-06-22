@@ -21,7 +21,7 @@
 <configuration supports_final="true">
   <property>
     <name>taskmanager.memory.process.size</name>
-    <value>1024</value>
+    <value>1024m</value>
     <description>The total process memory size for the TaskManager</description>
     <display-name>TaskManager process memory size</display-name>
     <value-attributes>
@@ -41,8 +41,8 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
-    <name>jobmanager.memory.process.size.memory.process.size</name>
-    <value>1024</value>
+    <name>jobmanager.memory.process.size</name>
+    <value>1024m</value>
     <description>The total process memory size for the JobManager</description>
     <display-name>JobManager process memory size</display-name>
     <value-attributes>

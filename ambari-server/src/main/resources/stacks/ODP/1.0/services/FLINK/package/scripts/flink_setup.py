@@ -49,14 +49,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
             mode=0775,
             create_parents = True
   )
-  if (type == 'server') or ( type == 'rest' ) and action == 'config':
-    params.HdfsResource(params.flink_hdfs_user_dir,
-                       type="directory",
-                       action="create_on_execute",
-                       owner=params.flink_user,
-                       mode=0775
-    )
-    params.HdfsResource(None, action="execute")
+  if action == 'config':
 
     ## configuring REST Server
     if type == 'rest':
@@ -133,7 +126,6 @@ def flink_setup(env, type, upgrade_type = None, action = None):
               group=params.flink_group,
               mode=0644
     )
-  
 
     generate_logfeeder_input_config('flink', Template("input.config-flink.json.j2", extra_imports=[default]))
 
