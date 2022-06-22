@@ -57,7 +57,14 @@ def flink_service(name, upgrade_type=None, action=None):
     effective_version = params.version if upgrade_type is not None else params.stack_version_formatted
     if effective_version:
       effective_version = format_stack_version(effective_version)
-    
+    params.HdfsResource(params.flink_hdfs_user_dir,
+                       type="directory",
+                       action="create_on_execute",
+                       owner=params.flink_user,
+                       mode=0775
+    )
+    params.HdfsResource(None, action="execute")
+
     if name == 'historyserver' and effective_version:
       
       # create flink history dir

@@ -92,8 +92,15 @@ toPop = [
   'security.ssl.historyserver.key-password',
   'security.ssl.historyserver.keystore',
   'security.ssl.historyserver.truststore',
+  'security.ssl.rest.truststore-password',
+  'security.ssl.rest.keystore-password',
+  'security.ssl.rest.key-password',
+  'security.ssl.rest.keystore',
+  'security.ssl.rest.truststore',
   'security.kerberos.login.principal',
-  'security.kerberos.login.keytab'
+  'security.kerberos.login.keytab',
+  'env.pid.dir'
+  'fs.default-scheme'
   ]
 
 
@@ -122,7 +129,7 @@ flink_history_kerberos_principal =  config['configurations']['flink-conf']['secu
 
 # remove uneeded client configuration
 for prop in toPop:
-  if flink_client_properties['security.kerberos.login.keytab']:
+  if flink_client_properties[prop]:
     flink_client_properties.pop(prop)
 
 flink_hadoop_lib_native = format("{stack_root}/current/hadoop-client/lib/native:{stack_root}/current/hadoop-client/lib/native/Linux-amd64-64")
