@@ -200,9 +200,10 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
       defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
     isHDFS = completedJobs.startswith("hdfs:")
     if not isHDFS:
-      completeJobsWithHDFS = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
+      completedJobs = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
+    completedJobsReplaced = re.sub("^hdfs:\/\/localhost([:\d]*)", defaultFs, completedJobs, count=1)
     putClusterProperties("fs.default-scheme", defaultFs)
-    putClusterProperties("jobmanager.archive.fs.dir", completedJobs)
+    putClusterProperties("jobmanager.archive.fs.dir", completedJobsReplaced)
 
     ## configure HighAvailability with Zookeeper
     zk_host_port = self.getZKHostPortString(services)

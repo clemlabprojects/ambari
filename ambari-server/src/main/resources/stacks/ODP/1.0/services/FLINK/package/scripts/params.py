@@ -155,6 +155,10 @@ if len(flink_jobhistoryserver_hosts) > 0:
 else:
   flink_history_server_host = "localhost"
 
+flink_client_properties['historyserver.web.address'] = flink_history_server_host
+# convert value to mega - bytes
+flink_client_properties['taskmanager.memory.process.size'] =  config['configurations']['flink-conf']['taskmanager.memory.process.size']+'m'
+flink_client_properties['jobmanager.memory.process.size'] =  config['configurations']['flink-conf']['jobmanager.memory.process.size']+'m'
 # flink-conf params
 flink_historyserver_ssl_enabled = default("configurations/flink-conf/historyserver.web.ssl.enabled", False)
 
