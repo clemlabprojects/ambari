@@ -45,7 +45,7 @@ class FlinkServiceCheck(Script):
 
       for flink_historyserver in params.flink_jobhistoryserver_hosts:
         try:
-          Execute(format("curl -s -o /dev/null -w'%{{http_code}}' --negotiate -u: -k {flink_historyServer_scheme}://{flink_historyserver}:{flink_history_ui_port}/sessions | grep 200"),
+          Execute(format("curl -s -o /dev/null -w'%{{http_code}}' --negotiate -u: -k {flink_historyServer_scheme}://{flink_historyserver}:{flink_history_ui_port}/config | grep 200"),
                   tries=3,
                   try_sleep=1,
                   logoutput=True,
