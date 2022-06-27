@@ -129,14 +129,14 @@ def flink_setup(env, type, upgrade_type = None, action = None):
 
       generate_logfeeder_input_config('flink', Template("input.config-flink.json.j2", extra_imports=[default]))
 
-  else :
-    PropertiesFile(format("{params.flink_conf}/flink-conf.yaml"),
-        properties = params.flink_client_properties,
-        key_value_delimiter = ": ",
-        owner=params.flink_user,
-        group=params.flink_group,
-        mode=0644
-    )
+    else :
+      PropertiesFile(format("{params.flink_conf}/flink-conf.yaml"),
+          properties = params.flink_client_properties,
+          key_value_delimiter = ": ",
+          owner=params.flink_user,
+          group=params.flink_group,
+          mode=0644
+      )
 
   effective_version = params.version if upgrade_type is not None else params.stack_version_formatted
   if effective_version:
