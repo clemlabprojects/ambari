@@ -58,6 +58,7 @@ stack_root = Script.get_stack_root()
 stack_version_unformatted = config['clusterLevelParams']['stack_version']
 stack_version_formatted = format_stack_version(stack_version_unformatted)
 major_stack_version = get_major_version(stack_version_formatted)
+security_enabled = config['configurations']['cluster-env']['security_enabled']
 
 sysprep_skip_copy_tarballs_hdfs = get_sysprep_skip_copy_tarballs_hdfs()
 
@@ -97,8 +98,6 @@ toPop = [
   'security.ssl.rest.key-password',
   'security.ssl.rest.keystore',
   'security.ssl.rest.truststore',
-  'security.kerberos.login.principal',
-  'security.kerberos.login.keytab',
   'high-availability',
   'high-availability.storageDir',
   'high-availability.zookeeper.client.acl',
@@ -106,6 +105,13 @@ toPop = [
   'fs.default-scheme'
   ]
 
+if security_enabled:
+  toPop.append[
+  'security.kerberos.login.principal',
+  'security.kerberos.login.keytab'
+  ]
+  flink_history_kerberos_keytab =  config['configurations']['flink-conf']['security.kerberos.login.keytab']
+  flink_history_kerberos_principal =  config['configurations']['flink-conf']['security.kerberos.login.principal']
 
 flink_conf_file = flink_conf + "/flink-conf.yaml"
 java_home = config['ambariLevelParams']['java_home']
@@ -127,8 +133,7 @@ flink_history_server_pid_file = status_params.flink_history_server_pid_file
 
 flink_history_server_start = format("{flink_home}/bin/historyserver.sh")
 flink_history_server_stop = format("{flink_home}/bin/historyserver.sh")
-flink_history_kerberos_keytab =  config['configurations']['flink-conf']['security.kerberos.login.keytab']
-flink_history_kerberos_principal =  config['configurations']['flink-conf']['security.kerberos.login.principal']
+
 
 # remove uneeded client configuration
 for prop in toPop:
@@ -188,7 +193,7 @@ hadoop_home = format('{stack_root}/current/hadoop-client')
 
 # TODO: remove unusedconf flink_env_sh = config['configurations']['flink-env']['content']
 
-security_enabled = config['configurations']['cluster-env']['security_enabled']
+
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
 flink_service_kerberos_keytab =  config['configurations']['flink-conf']['security.kerberos.login.keytab']
 flink_server_kerberos_principal =  config['configurations']['flink-conf']['security.kerberos.login.principal']
