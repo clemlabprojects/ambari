@@ -34,9 +34,9 @@
     <!-- Needed for generating FindBugs warnings using parent pom -->
     <!--<yarn.basedir>${project.parent.parent.basedir}</yarn.basedir>-->
     <protobuf.version>2.5.0</protobuf.version>
-    <hadoop.version>3.2.2.1.0.3.0-${odp.release.number}</hadoop.version>
-    <phoenix.version>5.1.2.1.0.3.0-${odp.release.number}</phoenix.version>
-    <hbase.version>2.2.4.1.0.3.0-${odp.release.number}</hbase.version>
+    <hadoop.version>3.2.2.1.0.4.0-${odp.release.number}</hadoop.version>
+    <phoenix.version>5.1.2.1.0.4.0-${odp.release.number}</phoenix.version>
+    <hbase.version>2.2.4.1.0.4.0-${odp.release.number}</hbase.version>
   </properties>
 
   <build>
@@ -329,7 +329,7 @@
     <dependency>
       <groupId>org.apache.zookeeper</groupId>
       <artifactId>zookeeper</artifactId>
-      <version>3.5.5.1.0.3.0-${odp.release.number}</version>
+      <version>3.5.5.1.0.4.0-${odp.release.number}</version>
       <exclusions>
         <exclusion>
           <artifactId>jline</artifactId>
