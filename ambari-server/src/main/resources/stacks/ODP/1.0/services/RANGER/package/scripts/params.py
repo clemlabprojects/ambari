@@ -402,6 +402,10 @@ if audit_solr_enabled and is_solrCloud_enabled:
   if is_external_solrCloud_enabled and is_external_solrCloud_kerberos:
     ranger_is_solr_kerberised = "true"
 
+## admin heap
+heap = config['configurations']['ranger-env']['ranger_admin_heap']
+ranger_admin_max_heap_size = format('{heap}m')
+
 hbase_master_hosts = default("/clusterHostInfo/hbase_master_hosts", [])
 is_hbase_ha_enabled = True if len(hbase_master_hosts) > 1 else False
 is_namenode_ha_enabled = True if len(namenode_hosts) > 1 else False

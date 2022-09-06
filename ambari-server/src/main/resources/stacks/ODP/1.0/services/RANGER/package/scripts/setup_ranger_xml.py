@@ -237,6 +237,11 @@ def setup_ranger_admin(upgrade_type=None):
     group = params.unix_group,
     mode = 0755
   )
+  ## Modify Ranger Heap Size
+  ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+    properties = {'ranger_admin_max_heap_size': params.ranger_admin_max_heap_size},
+    owner = params.unix_user,
+  )
 
 def setup_ranger_db(stack_version=None):
   import params

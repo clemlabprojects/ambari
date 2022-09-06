@@ -108,7 +108,7 @@ class RangeradminV2:
     retryCount = 0
 
     while retryCount <= 30:
-      response_code = self.check_ranger_login_urllib2(self.base_url)
+      response_code = self.check_ranger_login_urllib2(self.base_url, ambari_username_password_for_ranger)
       if response_code is None and response_code != 200:
         Logger.info("Creating Ambari Ranger External User")
         user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
@@ -120,8 +120,10 @@ class RangeradminV2:
           Logger.error("Ambari Ranger External User Ranger Failed")
       elif response_code is not None and response_code == 200:
         Logger.info("Ambari Ranger External User Already Exists Skipping...")
+        break
       elif not self.skip_if_rangeradmin_down:
         Logger.error("Connection failed to Ranger Admin !")
+        break
 
     if not is_stack_supports_ranger_kerberos or not is_security_enabled:
       repo_data = json.dumps(repo_properties)
@@ -251,15 +253,23 @@ class RangeradminV2:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
   @safe_retry(times=5, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
-  def check_ranger_login_urllib2(self, url):
+  def check_ranger_login_urllib2(self, url, ambari_username_password_for_ranger):
     """
     :param url: ranger admin host url
     :param usernamepassword: user credentials using which repository needs to be searched.
     :return: Returns login check response
     """
     try:
-      response = openurl(url, timeout=20)
-      response_code = response.getcode()
+      login_url = format('{url}/service/users/1')
+      search_policy_url = self.url_policies
+      base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
+      headers = {
+        "Content-Type": "application/json"
+      }
+      request = urllib2.Request(login_url, "", headers)
+      request.add_header("Authorization", "Basic {0}".format(base_64_string))
+      result = openurl(request, timeout=20)
+      response_code = result.getcode()
       return response_code
     except urllib2.URLError, e:
       if isinstance(e, urllib2.HTTPError):

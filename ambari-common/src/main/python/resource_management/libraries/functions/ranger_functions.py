@@ -204,7 +204,7 @@ class Rangeradmin:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
   @safe_retry(times=75, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
-  def check_ranger_login_urllib2(self, url):
+  def check_ranger_login_urllib2(self, url, ambari_username_password_for_ranger):
     """
     :param url: ranger admin host url
     :return Returns login check response

@@ -542,4 +542,18 @@
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
+  <property>
+    <name>ranger_admin_heap</name>
+    <value>1024</value>
+    <description>Maximum amount of memory each Ranger Admin can use.</description>
+    <display-name>Ranger Admin Maximum Memory</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+      <maximum>16384</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>

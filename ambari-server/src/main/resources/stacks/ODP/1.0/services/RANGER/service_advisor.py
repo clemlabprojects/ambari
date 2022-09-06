@@ -78,7 +78,10 @@ class RangerServiceAdvisor(service_advisor.ServiceAdvisor):
     Modify the dictionary of heap size properties.
     Must be overriden in child class.
     """
-    pass
+    self.heap_size_properties = {"RANGER_ADMIN":
+                                   [{"config-name": "ranger-env",
+                                     "property": "ranger_admin_heapsize",
+                                     "default": "1024m"}]}
 
   def modifyNotValuableComponents(self):
     """
