@@ -18,19 +18,9 @@
 {
   "input":[
     {
-      "type":"spark2_jobhistory_server",
+      "type":"flink_jobhistory_server",
       "rowtype":"service",
-      "path":"{{default('/configurations/spark2-env/spark_log_dir', '/var/log/spark2')}}/spark-*-org.apache.spark.deploy.history.HistoryServer*.out"
-    },
-    {
-      "type":"spark2_thriftserver",
-      "rowtype":"service",
-      "path":"{{default('/configurations/spark2-env/spark_log_dir', '/var/log/spark2')}}/spark-*-org.apache.spark.sql.hive.thriftserver.HiveThriftServer2*.out"
-    },
-    {
-      "type":"livy2_server",
-      "rowtype":"service",
-      "path":"{{default('/configurations/livy2-env/livy2_log_dir', '/var/log/livy2')}}/livy-{{default('/configurations/livy2-env/livy2_user', 'livy')}}-server.out"
+      "path":"{{default('/configurations/flink-env/flink_log_dir', '/var/log/flink')}}/flink-*.out"
     }
   ],
   "filter":[
@@ -39,15 +29,13 @@
       "conditions":{
         "fields":{
           "type":[
-            "spark2_jobhistory_server",
-            "spark2_thriftserver",
-            "livy2_server"
+            "flink_jobhistory_server"
           ]
         }
       },
       "log4j_format":"",
-      "multiline_pattern":"^(%{SPARK_DATESTAMP:logtime}%{SPACE}%{LOGLEVEL:level})",
-      "message_pattern":"(?m)^%{SPARK_DATESTAMP:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{JAVAFILE:file}:%{SPACE}%{GREEDYDATA:log_message}",
+      "multiline_pattern":"^(%{FLINK_DATESTAMP:logtime}%{SPACE}%{LOGLEVEL:level})",
+      "message_pattern":"(?m)^%{FLINK_DATESTAMP:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{JAVAFILE:file}:%{SPACE}%{GREEDYDATA:log_message}",
       "post_map_values":{
         "logtime":{
           "map_date":{
