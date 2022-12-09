@@ -148,7 +148,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat8,redhat7</osFamily>
+          <osFamily>almalinux8,redhat8,redhat7</osFamily>
           <packages>
             <package>
               <name>atlas_${stack_version}-metadata</name>

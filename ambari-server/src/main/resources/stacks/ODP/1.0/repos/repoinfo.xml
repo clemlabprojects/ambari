@@ -33,5 +33,13 @@
       <unique>true</unique>
     </repo>
   </os>
+    <os family="almalinux8">
+    <repo>
+      <baseurl>http://repo.clemlab.com/centos8/odp_1.0.2.0-1</baseurl>
+      <repoid>ODP-1.0</repoid>
+      <reponame>ODP</reponame>
+      <unique>true</unique>
+    </repo>
+  </os>
 
 </reposinfo>
