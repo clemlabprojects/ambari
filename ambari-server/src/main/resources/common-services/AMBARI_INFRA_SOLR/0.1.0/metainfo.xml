@@ -146,7 +146,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>almalinux8,almalinux8,redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>ambari-infra-solr-client</name>

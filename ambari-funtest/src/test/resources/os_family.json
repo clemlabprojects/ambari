@@ -4,7 +4,8 @@
       "redhat",
       "fedora",
       "centos",
-      "oraclelinux"
+      "oraclelinux",
+      "almalinux"
     ],
     "versions": [
       5,
