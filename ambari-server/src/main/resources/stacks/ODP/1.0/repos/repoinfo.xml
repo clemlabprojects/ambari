@@ -19,24 +19,24 @@
   <latest>http://repo.clemlab.com/ODP/odp_urlinfo.json</latest>
   <os family="redhat7">
     <repo>
-      <baseurl>http://repo.clemlab.com/centos7/odp_1.0.2.0-1</baseurl>
-      <repoid>ODP-1.0</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.0.5.0-47/rpms/</baseurl>
+      <repoid>ODP-1.0.5.0-47</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="redhat8">
     <repo>
-      <baseurl>http://repo.clemlab.com/centos8/odp_1.0.2.0-1</baseurl>
-      <repoid>ODP-1.0</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.0.5.0-47/rpms/</baseurl>
+      <repoid>ODP-1.0.5.0-47</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
     <os family="almalinux8">
     <repo>
-      <baseurl>http://repo.clemlab.com/centos8/odp_1.0.2.0-1</baseurl>
-      <repoid>ODP-1.0</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.0.5.0-47/rpms/</baseurl>
+      <repoid>ODP-1.0.5.0-47</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
