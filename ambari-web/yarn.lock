@@ -2824,9 +2824,9 @@ phantomjs-prebuilt@^2.1.7:
     request-progress "~2.0.1"
     which "~1.2.10"
 
-phantomjs@1.9.7-15:
-  version "1.9.7-15"
-  resolved "https://registry.yarnpkg.com/phantomjs/-/phantomjs-1.9.7-15.tgz#0b3a7ce630486a83be91ff4e832eee20e971115b"
+phantomjs@1.9.8:
+  version "1.9.8"
+  resolved "https://registry.yarnpkg.com/phantomjs/-/phantomjs-1.9.8.tgz#9cbea8b0105d338d1808b6dfb2f3bb2bd98575cd"
   dependencies:
     adm-zip "0.2.1"
     kew "~0.1.7"
