@@ -1,0 +1,902 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!-- some documentation about https://issues.apache.org/jira/browse/HDDS-4677-->
+<!-- Put site-specific property overrides in this file. -->
+<configuration supports_final="true">
+    <!-- file system properties -->
+    <property>
+        <name>ozone.container.cache.size</name>
+        <!-- cluster variant -->
+        <value>256</value>
+        <display-name>Ozone Container Cache Size</display-name>
+        <description>The open container is cached on the data node side. We maintain
+            an LRU
+            cache for caching the recently used containers. This setting controls the
+            size of that cache.
+        </description>
+        <final>true</final>
+        <value-attributes>
+            <type>int</type>
+            <minimum>128</minimum>
+            <maximum>4096</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>true</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>ozone.container.cache.lock.stripes</name>
+        <value>256</value>
+        <display-name>Ozone Container Lock Stripes</display-name>
+        <description>Container DB open is an exclusive operation. We use a stripe
+            lock to guarantee that different threads can open different container DBs
+            concurrently, while for one container DB, only one thread can open it at
+            the same time. This setting controls the lock stripes.</description>
+        <final>true</final>
+        <value-attributes>
+            <type>int</type>
+            <minimum>128</minimum>
+            <maximum>4096</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>true</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>ozone.http.filter.initializers</name>
+        </value>
+        <description>Set to org.apache.hadoop.security.AuthenticationFilterInitializer
+        to enable Kerberos authentication for Ozone HTTP web consoles
+        is enabled using the SPNEGO protocol. When this property is
+        set, ozone.security.http.kerberos.enabled should be set to true.
+        </description>
+        <final>true</final>
+        <display-name>Enable Kerberos for Ozone web consoles</display-name>
+        <value-attributes>
+            <type>boolean</type>
+            <overridable>true</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.grpc.tls.enabled</name>
+        <value>true</value>
+        <description>If HDDS GRPC server TLS is enabled. The hdds.grpc.tls.enabled property will not be effective unless the value of the ozone.security.enabled is also set to true</description>
+        <final>true</final>
+        <display-name>Enable mTLS in Ozone</display-name>
+        <value-attributes>
+            <type>boolean</type>
+            <overridable>true</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.administrators</name>
+        <value/>
+        <display-name>Ozone Administrators</display-name>
+        <description>Ozone administrator users delimited by the comma.
+            If not set, only the user who launches an ozone service will be the admin
+            user. This property must be set if ozone services are started by different
+            users. Otherwise, the RPC layer will reject calls from other servers which
+            are started by users not in the list.
+        </description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>ozone.administrators.groups</name>
+        <display-name>Ozone Administrator Groups</display-name>
+        <value/>
+        <description>This is the list of groups who can access admin only information
+            from ozone.
+            It is enough to either have the name defined in ozone.administrators
+            or be directly or indirectly in a group defined in this property.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.fs.trash.checkpoint.interval</name>
+        <value>60</value>
+        <display-name>Ozone Trash checkpoint time interval</display-name>
+        <description>Interval at which Ozone trash checkpoint directory is deleted and
+            the time interval between the creation of trash checkpoint directories.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.fs.trash.interval</name>
+        <value>1440</value>
+        <display-name>Ozone Trash Interval deletion</display-name>
+        <description>This property specifies the time period after which an Ozone trash checkpoint directory is deleted.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.http.header.Strict-Transport-Security</name>
+        <display-name>Enable Ozone HSTS (HTTP Strict Transport Security)</display-name>
+        <value>max-age=63072000; includeSubDomains;</value>
+        <description>The HTTP Strict-Transport-Security response header informs browsers that the site should only be accessed using HTTPS,
+            and that any future attempts to access it using HTTP should automatically be converted to HTTPS.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.metadata.dirs</name>
+        <value>/var/lib/hadoop-ozone/om/ozone-metadata</value>
+        <description>This setting is the fallback location for SCM, OM, Recon and DataNodes
+            to store their metadata. This setting may be used only in test/PoC
+            clusters to simplify configuration.
+
+            For production clusters or any time you care about performance, it is
+            recommended that ozone.om.db.dirs, ozone.scm.db.dirs and
+            dfs.container.ratis.datanode.storage.dir be configured separately.
+        </description>
+        <final>true</final>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.acl.enabled</name>
+        <value>true</value>
+        <description>Key to enable/disable ozone acls.
+        </description>
+        <value-attributes>
+            <type>boolean</type>
+            <overridable>true</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+<!--    Ozone Manager related properties -->
+    <property>
+        <name>ozone.om.http-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone Manager Bind host address</display-name>
+        <description>The actual address the OM web server will bind to. If this optional
+            the address is set, it overrides only the hostname portion of
+            ozone.om.http-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.https-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone Manager Bind Host Address when TLS is enabled</display-name>
+        <description>The actual address the OM web server will bind to using HTTPS.
+            If this optional address is set, it overrides only the hostname portion of
+            ozone.om.https-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.ratis.enable</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone Manager Ratis (HA) enabled</display-name>
+        <description>Property to enable or disable Ratis server on OM.
+        Please note - this is a temporary property to disable OM Ratis server.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.internal.service.id</name>
+        <value/>
+        <display-name>Ozone Manager Default Service ID</display-name>
+        <description>Service ID of the Ozone Manager. If this is not set fall back to
+      ozone.om.service.ids to find the service ID it belongs to.
+        </description>
+        <on-ambari-upgrade add="false"/>
+        <value-attributes>
+            <overridable>false</overridable>
+            <empty-value-valid>false</empty-value-valid>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>ozone-site</type>
+                <name>ozone.om.ratis.enable</name>
+            </property>
+        </depends-on>
+    </property>
+    <property>
+        <name>ozone.om.http-port</name>
+        <value>9874</value>
+        <display-name>Ozone Manager HTTP unsecure port</display-name>
+        <description>The network port used by Ozone Manager when TLS is not enabled.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.https-port</name>
+        <value>9875</value>
+        <display-name>Ozone Manager Bind Port when TLS is enabled</display-name>
+        <description>The network port used by Ozone Manager when TLS is enabled.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.ratis-port</name>
+        <value>9872</value>
+        <display-name>Ozone Manager Ratis port for communication</display-name>
+        <description>Ozone Manager Ratis port for communication
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.replication</name>
+        <value>3</value>
+        <display-name>Ozone default replication</display-name>
+        <description>
+            The ozone default replication.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.server.default.replication</name>
+        <value>3</value>
+        <display-name>Ozone Server default replication</display-name>
+        <description>
+            The ozone server default replication.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.multitenancy.enabled</name>
+        <value>false</value>
+        <display-name>Enable S3 Multi-Tenancy</display-name>
+        <description>
+            Enable S3 Multi-Tenancy. If disabled, all S3 multi-tenancy requests are rejected.
+        </description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.multitenancy.ranger.sync.interval</name>
+        <value>10m</value>
+        <display-name>S3 Multi-Tenancy Ranger Sync Interval</display-name>
+        <description>
+            Determines how often the Multi-Tenancy Ranger background sync thread
+            service should run. Background thread periodically checks
+            Ranger policies and roles created by Multi-Tenancy feature.
+            And overwrites them if obvious discrepancies are detected.
+            Value should be set with a unit suffix (ns,ms,s,m,h,d)
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.multitenancy.ranger.sync.timeout</name>
+        <value>10m</value>
+        <display-name>S3 Multi-Tenancy Ranger Sync Timeout</display-name>
+        <description>
+            The timeout for each Multi-Tenancy Ranger background sync thread run.
+            If the timeout has been reached, a warning message will be logged.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.ranger.service</name>
+        <value>ozone_ranger</value>
+        <display-name>Ranger Ozone Repository Name</display-name>
+        <description>
+            The Ranger Repository as seen in Ranger Security Admin service
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.service.ids</name>
+        <value/>
+        <display-name>Ozone Manager Security server port</display-name>
+        <description>Comma-separated list of Manager service Ids. This property allows the client
+            to figure out quorum of OzoneManager address.
+        </description>
+    </property>
+    <property>
+        <name>ozone.acl.authorizer.class</name>
+        <description>
+            Acl authorizer for Ozone.
+        </description>
+        <depends-on>
+            <property>
+                <type>ranger-ozone-plugin-properties</type>
+                <name>ranger-ozone-plugin-enabled</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.db.dirs</name>
+        <value>/var/lib/hadoop-ozone/om/ozone-metadata</value>
+        <display-name>Ozone Manager Metadata directories</display-name>
+        <description>Directory where the OzoneManager stores its metadata. This should
+            be specified as a single directory. If the directory does not
+            exist then the OM will attempt to create it.
+
+            If undefined, then the OM will log a warning and fallback to
+            ozone.metadata.dirs. This fallback approach is not recommended for
+            production environments.
+        </description>
+        <final>true</final>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.ratis.storage.dir</name>
+        <value>/var/lib/hadoop-ozone/om/ratis</value>
+        <display-name>Ozone Manager Metadata directories</display-name>
+        <description>This directory is used for storing OM's Ratis metadata like
+            logs. If this is not set then default metadata dirs is used. A warning
+            will be logged if this not set. Ideally, this should be mapped to a
+            fast disk like an SSD.
+            If undefined, OM ratis storage dir will fallback to ozone.metadata.dirs.
+            This fallback approach is not recommended for production environments.
+        </description>
+        <final>true</final>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>ozone-site</type>
+                <name>ozone.om.ratis.enable</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+
+    
+<!--    Ozone Storage Container Manager related properties -->
+    <property>
+        <name>ozone.scm.db.dirs</name>
+        <value>/var/lib/hadoop-ozone/scm/data</value>
+        <description>Directory where the StorageContainerManager stores its metadata.
+            This should be specified as a single directory. If the directory
+            does not exist then the SCM will attempt to create it.
+
+            If undefined, then the SCM will log a warning and fallback to
+            ozone.metadata.dirs. This fallback approach is not recommended for
+            production environments.
+        </description>
+        <final>true</final>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.block.client.port</name>
+        <value>9863</value>
+        <display-name>Ozone SCM block client service Port.</display-name>
+        <description>The port number of the Ozone SCM block client service.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.grpc.port</name>
+        <value>9895</value>
+        <display-name>Ozone SCM GRPC Server service Port.</display-name>
+        <description>The port number of the SCM's grpc server.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.ha.ratis.storage.dir</name>
+        <value>/hadoop/ozone/scm/ratis</value>
+        <display-name>Ozone SCM HA Log Dir</display-name>
+        <description>Storage directory used by SCM to write Ratis logs.
+        </description>
+        <final>true</final>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>ozone-site</type>
+                <name>ozone.om.ratis.enable</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.http-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone SCM server bind host</display-name>
+        <description>The actual address the SCM web server will bind to. If this
+            optional address is set, it overrides only the hostname portion of
+            ozone.scm.http-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.http-port</name>
+        <value>9876</value>
+        <display-name>Ozone SCM HTTP unsecure port</display-name>
+        <description>The network port used by Ozone Storage Container when TLS is not enabled.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.https-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone SCM server bind host</display-name>
+        <description>The actual address the SCM web server will bind to when TLS is enabled. If this
+            optional address is set, it overrides only the hostname portion of
+            ozone.scm.http-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.https-port</name>
+        <value>9877</value>
+        <display-name>Ozone SCM server bind host</display-name>
+        <description>The network port used by Ozone Storage Container when TLS is enabled.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.scm.primordial.node.id</name>
+        <value/>
+        <display-name>Ozone SCM Primordial Node ID</display-name>
+        <description>optional config, if being set will cause scm --init to only take effect on
+            the specific node and ignore scm --bootstrap cmd.
+            Similarly, scm --init will be ignored on the non-primordial scm nodes.
+            The config can either be set equal to the hostname or the node id of any
+            of the scm nodes.
+            With the config set, applications/admins can safely execute init and
+            bootstrap commands safely on all scm instances.
+
+            If a cluster is upgraded from non-ratis to ratis based SCM, scm --init
+            needs to re-run for switching from
+            non-ratis based SCM to ratis-based SCM on the primary node.
+        </description>
+        <on-ambari-upgrade add="false"/>
+        <value-attributes>
+            <overridable>false</overridable>
+            <empty-value-valid>false</empty-value-valid>
+        </value-attributes>
+    </property>
+    <property>
+        <name>ozone.scm.default.service.id</name>
+        <value/>
+        <display-name>Ozone SCM Default Service ID</display-name>
+        <description>Service ID of the SCM. If this is not set fall back to
+      ozone.scm.service.ids to find the service ID it belongs to.
+        </description>
+        <on-ambari-upgrade add="false"/>
+        <value-attributes>
+            <overridable>false</overridable>
+            <empty-value-valid>false</empty-value-valid>
+        </value-attributes>
+    </property>
+    <property>
+        <name>ozone.scm.ratis.port</name>
+        <value>9894</value>
+        <display-name>Ozone SCM Ratis Server port</display-name>
+        <description>The port number of the SCM's Ratis server.
+        </description>
+    </property>
+    <property>
+        <name>ozone.scm.security.service.port</name>
+        <value>9961</value>
+        <display-name>Ozone SCM Security server port</display-name>
+        <description>SCM security server port.
+        </description>
+    </property>
+    <property>
+        <name>ozone.scm.service.ids</name>
+        <value/>
+        <display-name>Ozone SCM Security server port</display-name>
+        <description>Comma-separated list of SCM service Ids. This property allows the client
+            to figure out quorum of OzoneManager address.
+        </description>
+    </property>
+    <property>
+        <name>ozone.scm.names</name>
+        <value/>
+        <display-name>Ozone SCM server Names</display-name>
+        <description>The value of this property is a set of DNS | DNS:PORT | IP
+            Address | IP:PORT. Written as a comma separated string. e.g. scm1,
+            scm2:8020, 7.7.7.7:7777.
+            This property allows datanodes to discover where SCM is, so that
+            datanodes can send heartbeat to SCM.
+        </description>
+        <value-attributes>
+            <overridable>false</overridable>
+        </value-attributes>
+    </property>
+    <property>
+        <name>ozone.scm.ratis.enable</name>
+        <value>false</value>
+        <display-name>Enable Ozone SCM HA</display-name>
+        <description>HA mode of Storage Container Manager can be enabled with the following settings in
+        </description>
+        <value-attributes>
+            <overridable>false</overridable>
+            <type>boolean</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>hdds.scm.http.auth.type</name>
+        <value></value>
+        <display-name>Ozone SCM HTTP Authentication Type</display-name>
+        <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
+            will be used for http authentication.
+        </description>
+        <value-attributes>
+            <overridable>false</overridable>
+        </value-attributes>
+    </property>
+    <property>
+        <name>zone.scm.skip.bootstrap.validation</name>
+        <value></value>
+        <display-name>Skip Ozone Boostrap Validation</display-name>
+        <description>optional config, the config when set to true skips the clusterId
+            validation from leader scm during bootstrap
+        </description>
+        <value-attributes>
+            <type>boolean</type>
+            <overridable>false</overridable>
+        </value-attributes>
+    </property>
+    <!--    Ozone Recon UI related properties-->
+    <property>
+        <name>ozone.recon.db.dir</name>
+        <value>/var/lib/hadoop-ozone/recon/data</value>
+        <display-name>Ozone RECON UI data directory</display-name>
+        <description>Directory where the Recon Server stores its metadata. This should
+            be specified as a single directory. If the directory does not
+            exist then the Recon will attempt to create it.
+
+            If undefined, then the Recon will log a warning and fallback to
+            ozone.metadata.dirs. This fallback approach is not recommended for
+            production environments.
+        </description>
+    </property>
+    <property>
+        <name>ozone.recon.http-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone RECON UI unsecure bind host</display-name>
+        <description>The actual address the Recon server will bind to. If this optional
+            the address is set, it overrides only the hostname portion of
+            ozone.recon.http-address (TLS disabled).
+        </description>
+    </property>
+    <property>
+        <name>ozone.recon.https-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone RECON UI TLS bind host</display-name>
+        <description>The actual address the Recon server will bind to. If this optional
+            the address is set, it overrides only the hostname portion of
+            ozone.recon.http-address (TLS enable).
+        </description>
+    </property>
+    <property>
+        <name>ozone.recon.http-port</name>
+        <value>9888</value>
+        <display-name>Ozone RECON UI HTTP unsecure port</display-name>
+        <description>The network port used by Ozone RECON when TLS is not enabled.
+        </description>
+    </property>
+    <property>
+        <name>ozone.recon.https-port</name>
+        <value>9889</value>
+        <display-name>Ozone RECON UI TLS port</display-name>
+        <description>The HTTP port used by Ozone RECON when TLS is enabled.
+        </description>
+    </property>
+    <property>
+        <name>ozone.recon.om.db.dir</name>
+        <value>/var/lib/hadoop-ozone/recon/om/data</value>
+        <display-name>Ozone RECON - OM Data dir</display-name>
+        <description>Directory where the Recon Server stores its OM snapshot DB. This should
+            be specified as a single directory. If the directory does not
+            exist then the Recon will attempt to create it.
+
+            If undefined, then the Recon will log a warning and fallback to
+            ozone.metadata.dirs. This fallback approach is not recommended for
+            production environments.
+        </description>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>ozone.recon.scm.db.dir</name>
+        <value>/var/lib/hadoop-ozone/recon/scm/data</value>
+        <display-name>Ozone RECON - SCM Data dir</display-name>
+        <description>Directory where the Recon Server stores its SCM snapshot DB. This should
+            be specified as a single directory. If the directory does not
+            exist then the Recon will attempt to create it.
+
+            If undefined, then the Recon will log a warning and fallback to
+            ozone.metadata.dirs. This fallback approach is not recommended for
+            production environments.
+        </description>
+        <value-attributes>
+            <type>directories</type>
+        </value-attributes>
+    </property>
+    <property>
+        <name>ozone.recon.rpc-port</name>
+        <value>9891</value>
+        <display-name>Ozone RECON UI TLS port</display-name>
+        <description>Port used by Datanodes to communicate with Recon Server (reporting).
+        </description>
+    </property>
+    <!--    Ozone S3 Gateway related properties-->
+    <property>
+        <name>ozone.s3g.http-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone S3 Gateway unsecure bind host</display-name>
+        <description>The actual address the HTTP server will bind to. If this optional address
+            is set, it overrides only the hostname portion of ozone.s3g.http-address.
+            This is useful for making the Ozone S3Gateway HTTP server listen on all
+            interfaces by setting it to 0.0.0.0 (TLS not enabled).
+        </description>
+    </property>
+    <property>
+        <name>ozone.s3g.https-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone S3 Gateway secured bind host</display-name>
+        <description>The actual address the HTTP server will bind to when TLS is enabled. If this optional address
+            is set, it overrides only the hostname portion of ozone.s3g.http-address.
+            This is useful for making the Ozone S3Gateway HTTP server listen on all
+            interfaces by setting it to 0.0.0.0 (TLS enabled).
+        </description>
+    </property>
+    <property>
+        <name>ozone.s3g.http-port</name>
+        <value>9878</value>
+        <display-name>Ozone S3 Gateway unsecure port</display-name>
+        <description>The network port used by Ozone S3 Gateway Container when TLS is not enabled.
+        </description>
+    </property>
+    <property>
+        <name>ozone.s3g.https-port</name>
+        <value>9879</value>
+        <display-name>Ozone S3 Gateway TLS port</display-name>
+        <description>The HTTP port used by Ozone S3 Gateway when TLS is enabled.
+        </description>
+    </property>
+    <property>
+        <name>ozone.s3g.http.auth.type</name>
+        <value>simple</value>
+        <display-name>Ozone S3 Gateway HTTP Authentication Type</display-name>
+        <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
+            will be used for http authentication.
+        </description>
+    </property>
+    <property>
+        <name>ozone.s3g.http-address</name>
+        <value>0.0.0.0:9878</value>
+        <display-name>Ozone S3 Gateway unsecure HTTP address</display-name>
+        <description>The address and the base port where the Ozone S3Gateway
+            Server will listen on , when TLS/SSL is not enabled.</description>
+    </property>
+    <property>
+        <name>ozone.s3g.https-address</name>
+        <value>0.0.0.0:9879</value>
+        <display-name>Ozone S3 Gateway TLS/SSL HTTP address</display-name>
+        <description>The address and the base port where the Ozone S3Gateway
+            Server will listen on, when TLS/SSL is enabled</description>
+    </property>
+    <!--    Ozone Balancer SCM related properties-->
+    <property>
+        <name>hdds.container.balancer.balancing.iteration.interval</name>
+        <value>60m</value>
+        <display-name>Balancing Interval</display-name>
+        <description>The interval period between each iteration of Container Balancer. Units Supported: d, h, m, s, ms.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.datanodes.involved.max.percentage.per.iteration</name>
+        <value>20</value>
+        <display-name>The Max Percentage of Datanodes Involved in Balancing</display-name>
+        <description>Maximum percentage of healthy, in-service datanodes that can be involved in balancing in one iteration (for example, '20' for 20%).
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.exclude.containers</name>
+        <value></value>
+        <display-name>Containers to exclude from Balancing</display-name>
+        <description>Containers to exclude from scm balancing process. It should be specified as a string of Container IDs (for example, '1, 2, 3').
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.exclude.datanodes</name>
+        <value></value>
+        <display-name>Datanodes to exclude from Balancing</display-name>
+        <description>A comma separated string of Datanode hostnames or IP addresses that will be excluded from balancing.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.include.datanodes</name>
+        <value></value>
+        <display-name>Datanodes to include from Balancing</display-name>
+        <description>A comma separated string of Datanode hostnames or IP addresses that will be included in balancing.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.iterations</name>
+        <value>10</value>
+        <display-name>Number of Balancing Iterations</display-name>
+        <description>Number of iterations that Container Balancer will run for.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.move.timeout</name>
+        <value>45m</value>
+        <display-name>Container Move Timeout</display-name>
+        <description>The amount of time to allow a single container to move from source to target. Units Supported: d, h, m, s, ms.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.size.entering.target.max</name>
+        <value>26gb</value>
+        <display-name>Maximum in-size Datanode per balancer iteration</display-name>
+        <description>The maximum size that can be copied to a datanode during one iteration of SCM balancer. This is the sum of data from multiple sources. The units can be specified as: eb, pb, tb, gb, mb, kb, b.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.size.leaving.source.max</name>
+        <value>26gb</value>
+        <display-name>Maximum out-size Datanode per balancer iteration</display-name>
+        <description>The maximum size that can be copied from a datanode during one iteration of SCM balancer. This is the sum of data entering multiple target. The units can be specified as: eb, pb, tb, gb, mb, kb, b.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.size.moved.max.per.iteration</name>
+        <value>500gb</value>
+        <display-name>Maximum Size to Move in Balancing</display-name>
+        <description>The maximum size of data that will be moved by Container Balancer in one iteration. Units supported: eb, pb, tb, gb, mb, kb, b.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.utilization.threshold</name>
+        <value>10.0</value>
+        <display-name>Balancing Threshold</display-name>
+        <description>The percentage deviation from average utilization, after which a node will be rebalanced (for example, '10' for 10%).
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.container.balancer.utilization.threshold</name>
+        <value>10.0</value>
+        <display-name>Balancing Threshold</display-name>
+        <description>The percentage deviation from average utilization, after which a node will be rebalanced (for example, '10' for 10%).
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>net.topology.script.file.name</name>
+        <value>/etc/hadoop/conf/ozone_topology_script.py</value>
+        <display-name>Balancing Threshold</display-name>
+        <description>Rack information can be identified with the help of an external script:
+            If implementing an external script, it will be specified with the `net.topology.script.file.name` parameter in the configuration files.
+            Unlike the java class, the external topology script is not included with the Ozone distribution and is provided by the administrator.
+            Ozone will send multiple IP addresses to ARGV when forking the topology script.
+            The number of IP addresses sent to the topology script is controlled with `net.topology.script.number.args` and defaults to 100.
+            If `net.topology.script.number.args` was changed to 1, a topology script would get forked for each IP submitted.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+<!--    Ozone Datanode related properties -->
+    <property>
+        <name>dfs.container.ratis.admin.port</name>
+        <value>9857</value>
+        <display-name>Ozone Datanode IPC port</display-name>
+        <description>The ipc port number of container for admin requests.
+        </description>
+    </property>
+    <property>
+        <name>dfs.container.ratis.datanode.storage.dir</name>
+        <value>/var/lib/hadoop-ozone/datanode/ratis/data</value>
+        <display-name>Ozone Datanode Data Directory</display-name>
+        <description>This directory is used for storing Ratis metadata like logs. If
+            this is not set then default metadata dirs is used. A warning will be logged if
+            this not set. Ideally, this should be mapped to a fast disk like an SSD.
+        </description>
+    </property>
+    <property>
+        <name>dfs.container.ratis.server.port</name>
+        <value>9856</value>
+        <display-name>Ozone Datanode Intra-node IPC port</display-name>
+        <description>The ipc port number of container for server-server communication.
+        </description>
+    </property>
+    <property>
+        <name>hdds.datanode.dir</name>
+        <value>/data/hadoop-ozone/datanode/data</value>
+        <display-name>Ozone Datanode Data directories.</display-name>
+        <description>Determines where on the local filesystem HDDS data will be
+            stored. Defaults to dfs.datanode.data.dir if not specified.
+            The directories should be tagged with corresponding storage types
+            ([SSD]/[DISK]/[ARCHIVE]/[RAM_DISK]) for storage policies. The default
+            storage type will be DISK if the directory does not have a storage type
+            tagged explicitly.
+        </description>
+    </property>
+    <property>
+        <name>hdds.datanode.http-address</name>
+        <value>0.0.0.0:9882</value>
+        <display-name>Ozone DataNode server bind host</display-name>
+        <description>The address and the base port where the Datanode web ui will listen on.
+      If the port is 0 then the server will start on a free port.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.datanode.http-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone DataNode server bind host</display-name>
+        <description>The actual address the Datanode web server will bind to. If this
+      optional address is set, it overrides only the hostname portion of
+      hdds.datanode.http-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.datanode.https-bind-host</name>
+        <value>0.0.0.0</value>
+        <display-name>Ozone SCM server bind host</display-name>
+        <description>The actual address the SCM web server will bind to when TLS is enabled. If this
+            optional address is set, it overrides only the hostname portion of
+            hdds.datanode.http-address.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.datanode.http.auth.type</name>
+        <value>simple</value>
+        <display-name>Ozone DataNode HTTP Authentication Type</display-name>
+        <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
+            will be used for http authentication.
+        </description>
+    </property>
+    <property>
+        <name>hdds.datanode.https-address</name>
+        <value>9883</value>
+        <display-name>Ozone DataNode server bind address</display-name>
+        <description>The address and the base port where the Datanode web UI will listen
+            on using HTTPS.
+
+            If the port is 0 then the server will start on a free port.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.datanode.datanode.id.dir</name>
+        <value>/var/lib/hadoop-ozone/datanode</value>
+        <display-name>Ozone Datanode ID directory</display-name>
+        <description>The path that datanodes will use to store the datanode ID.
+            If this value is not set, then datanode ID is created under the
+            metadata directory.
+        </description>
+    </property>
+</configuration>

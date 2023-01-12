@@ -328,7 +328,9 @@ App.StackService.displayOrder = [
   'SMARTSENSE',
   'SPARK',
   'SPARK2',
-  'ZEPPELIN'
+  'ZEPPELIN',
+  'FLINK',
+  'OZONE'
 ];
 
 App.StackService.componentsOrderForService = {
@@ -503,6 +505,26 @@ App.StackService.configCategories = function () {
     case 'FLINK':
       serviceConfigCategories.pushObjects([
         App.ServiceConfigCategory.create({ name: 'FLINK_HISTORY', displayName: 'Job History Server', showHost: true})
+      ]);
+      break;
+    case 'OZONE':
+      serviceConfigCategories.pushObjects([
+        App.ServiceConfigCategory.create({ name: 'OZONE_MANAGER_SETTINGS', displayName: 'Ozone Manager Settings', showHost: true}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_SCM_SETTINGS', displayName: 'Ozone Storage Container Manager Settings', showHost: true}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_DN_SETTINGS', displayName: 'Ozone DataNode Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_S3G_SETTINGS', displayName: 'Ozone S3 Gateway Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_RECON_SETTINGS', displayName: 'Ozone Recon Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_OM_SSL', displayName: 'Ozone Manager SSL/TLS Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_OM_LOG4J', displayName: 'Ozone Manager Log4j settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_SCM_SSL', displayName: 'Ozone Storage Container SSL/TLS Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_SCM_LOG4J', displayName: 'Ozone Storage Container Manager Log4j settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_S3G_SSL', displayName: 'Ozone S3 Gateway SSL/TLS Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_S3G_LOG4J', displayName: 'Ozone S3 Gateway settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_DN_SSL', displayName: 'Ozone DataNode SSL/TLS Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_DN_LOG4J', displayName: 'Ozone DataNode Log4j settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_RECON_SSL', displayName: 'Ozone RECON UI SSL/TLS Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_RECON_LOG4J', displayName: 'Ozone RECON Log4j settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_GATEWAY_LOG4J', displayName: 'Ozone Client Log4j settings'}),
       ]);
       break;
     default:
