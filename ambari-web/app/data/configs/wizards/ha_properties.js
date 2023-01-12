@@ -26,10 +26,11 @@ module.exports =
       App.ServiceConfigCategory.create({ name: 'HBASE', displayName: 'HBase'}),
       App.ServiceConfigCategory.create({ name: 'ACCUMULO', displayName: 'Accumulo'}),
       App.ServiceConfigCategory.create({ name: 'AMBARI_METRICS', displayName: 'Ambari Metrics'}),
-      App.ServiceConfigCategory.create({ name: 'HAWQ', displayName: 'HAWQ'}), 
+      App.ServiceConfigCategory.create({ name: 'HAWQ', displayName: 'HAWQ'}),
+      App.ServiceConfigCategory.create({ name: 'OZONE', displayName: 'OZONE'}),
       App.ServiceConfigCategory.create({ name: 'RANGER', displayName: 'Ranger'})
     ],
-    sites: ['core-site', 'hdfs-site', 'hbase-site', 'accumulo-site', 'ams-hbase-site', 'hawq-site', 'hdfs-client', 'ranger-env', 'ranger-knox-plugin-properties', 'ranger-kms-audit', 'ranger-storm-plugin-properties', 'ranger-hbase-plugin-properties', 'ranger-hdfs-plugin-properties', 'ranger-hive-plugin-properties', 'ranger-kafka-audit', 'ranger-knox-audit', 'ranger-hdfs-audit', 'ranger-hive-audit', 'ranger-atlas-audit', 'ranger-storm-audit', 'ranger-hbase-audit', 'ranger-yarn-audit'],
+    sites: ['core-site', 'hdfs-site', 'hbase-site', 'accumulo-site', 'ams-hbase-site', 'hawq-site', 'hdfs-client', 'ozone-env','ozone-site','ranger-env', 'ranger-knox-plugin-properties', 'ranger-kms-audit',  'ranger-ozone-audit', 'ranger-ozone-plugin-properties','ranger-storm-plugin-properties', 'ranger-hbase-plugin-properties', 'ranger-hdfs-plugin-properties', 'ranger-hive-plugin-properties', 'ranger-kafka-audit', 'ranger-knox-audit', 'ranger-hdfs-audit', 'ranger-hive-audit', 'ranger-atlas-audit', 'ranger-storm-audit', 'ranger-hbase-audit', 'ranger-yarn-audit'],
     configs: [
     /**********************************************HDFS***************************************/
       {

@@ -1,0 +1,35 @@
+{
+  "name": "default",
+  "description": "default quick links configuration",
+  "configuration": {
+    "protocol":
+    {
+      "type":"https",
+      "checks":[
+        {
+          "property":"ozone.http.policy",
+          "desired":"HTTPS_ONLY",
+          "site":"ozone-site"
+        }
+      ]
+    },
+
+    "links": [
+      {
+        "name": "recon_ui",
+        "label": "Ozone RECON UI",
+        "component_name": "OZONE_RECON",
+        "url":"%@://%@:%@/",
+        "requires_user_name": "false",
+        "port":{
+          "http_property": "ozone.recon.http-address",
+          "http_default_port": "9888",
+          "https_property": "ozone.recon.https-address",
+          "https_default_port": "9889",
+          "regex": "\\w*:(\\d+)",
+          "site": "ozone-site"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,457 @@
+#!/usr/bin/python2
+"""
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+"""
+import os
+import status_params
+import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
+
+from functions import calc_xmn_from_xms, ensure_unit_for_memory
+
+from ambari_commons.constants import AMBARI_SUDO_BINARY
+from ambari_commons.os_check import OSCheck
+from ambari_commons.str_utils import string_set_intersection
+
+from resource_management.libraries.resources.hdfs_resource import HdfsResource
+from resource_management.libraries.functions import conf_select
+from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import format
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
+from resource_management.libraries.functions.default import default
+from resource_management.libraries.functions import get_kinit_path
+from resource_management.libraries.functions import is_empty
+from resource_management.libraries.functions import get_unique_id_and_date
+from resource_management.libraries.functions import om_ha_utils
+from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.expect import expect
+from ambari_commons.ambari_metrics_helper import select_metric_collector_hosts_from_hostnames
+
+from resource_management.libraries.functions.setup_ranger_plugin_xml import get_audit_configs, generate_ranger_service_config
+
+# server configurations
+config = Script.get_config()
+exec_tmp_dir = Script.get_tmp_dir()
+sudo = AMBARI_SUDO_BINARY
+hostname = config['agentLevelParams']['hostname']
+
+jsvc_path = "/usr/lib/bigtop-utils"
+
+ozone_secure_dn_user = status_params.ozone_user
+
+stack_name = status_params.stack_name
+agent_stack_retry_on_unavailability = config['ambariLevelParams']['agent_stack_retry_on_unavailability']
+agent_stack_retry_count = expect("/ambariLevelParams/agent_stack_retry_count", int)
+version = default("/commandParams/version", None)
+component_directory = status_params.component_directory
+etc_prefix_dir = "/etc/hadoop"
+
+stack_version_unformatted = status_params.stack_version_unformatted
+stack_version_formatted = status_params.stack_version_formatted
+stack_root = status_params.stack_root
+
+# get the correct version to use for checking stack features
+version_for_stack_feature_checks = get_stack_feature_version(config)
+
+stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
+stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
+
+# hadoop default parameters
+hadoop_ozone_bin_dir = stack_select.get_hadoop_ozone_dir("bin")
+hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
+daemon_script = format('{stack_root}/current/ozone-client/bin/ozone')
+ozone_cmd = format('{stack_root}/current/ozone-client/bin/ozone')
+
+ozone_conf_dir = status_params.ozone_conf_dir
+ROLE_NAME_MAP_CONF = {
+      'ozone-manager': 'ozone.om',
+      'ozone-s3g': 'ozone.s3g',
+      'ozone-datanode': 'ozone.datanode',
+      'ozone-recon': 'ozone.recon',
+      'ozone-scm': 'ozone.scm',
+
+}
+ROLE_NAME_MAP_DAEMON = {
+      'ozone-manager': 'om',
+      'ozone-s3g': 's3g',
+      'ozone-datanode': 'datanode',
+      'ozone-recon': 'recon',
+      'ozone-scm': 'scm',
+
+}
+limits_conf_dir = status_params.limits_conf_dir
+
+ozone_user_nofile_limit = default("/configurations/ozone-env/ozone_user_nofile_limit", "32000")
+ozone_user_nproc_limit = default("/configurations/ozone-env/ozone_user_nproc_limit", "16000")
+
+ozone_excluded_hosts = config['commandParams']['excluded_hosts']
+ozone_drain_only = default("/commandParams/mark_draining_only",False)
+ozone_included_hosts = config['commandParams']['included_hosts']
+
+ozone_user = status_params.ozone_user
+ozone_principal_name = config['configurations']['ozone-env']['ozone_principal_name']
+smokeuser = config['configurations']['cluster-env']['smokeuser']
+_authentication = config['configurations']['core-site']['hadoop.security.authentication']
+security_enabled = config['configurations']['cluster-env']['security_enabled']
+ozone_security_enabled = config['configurations']['ozone-site']['hadoop.security.authentication'] == 'kerberos'
+
+# this is "hadoop-metrics.properties" for 1.x stacks
+metric_prop_file_name = "hadoop-metrics2-hbase.properties"
+
+# not supporting 32 bit jdk.
+java64_home = config['ambariLevelParams']['java_home']
+java_version = expect("/ambariLevelParams/java_version", int)
+
+pid_dir = config['configurations']['ozone-env']['ozone_pid_dir_prefix']
+log_dir = config['configurations']['ozone-env']['ozone_log_dir_prefix']
+java_io_tmpdir = default("/configurations/ozone-env/ozone_java_io_tmpdir", "/tmp")
+
+## Ozone heapsizes
+
+ozone_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_heapsize'])
+ozone_manager_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_heapsize'])
+ozone_manager_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_newsize'])
+ozone_manager_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_maxnewsize'])
+ozone_manager_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_permsize'])
+ozone_manager_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_maxpermsize'])
+ozone_scm_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_scm_heapsize'])
+ozone_scm_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_scm_opt_newsize'])
+ozone_scm_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_scm_opt_maxnewsize'])
+ozone_scm_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_scm_opt_permsize'])
+ozone_scm_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_scm_opt_maxpermsize'])
+ozone_datanode_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_datanode_heapsize'])
+ozone_datanode_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_datanode_opt_newsize'])
+ozone_datanode_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_datanode_opt_maxnewsize'])
+ozone_datanode_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_datanode_opt_permsize'])
+ozone_datanode_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_datanode_opt_maxpermsize'])
+ozone_s3g_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_s3g_heapsize'])
+ozone_s3g_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_s3g_opt_newsize'])
+ozone_s3g_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_s3g_opt_maxnewsize'])
+ozone_s3g_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_s3g_opt_permsize'])
+ozone_s3g_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_s3g_opt_maxpermsize'])
+ozone_recon_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_heapsize'])
+ozone_recon_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_newsize'])
+ozone_recon_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_maxnewsize'])
+ozone_recon_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_permsize'])
+ozone_recon_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_maxpermsize'])
+
+## Ozone JAVA options
+
+ozone_java_opts = default("/configurations/ozone-env/ozone_java_opts", "")
+ozone_manager_java_opts = default("/configurations/ozone-env/ozone_manager_java_opts", "")
+ozone_scm_java_opts = default("/configurations/ozone-env/ozone_scm_java_opts", "")
+ozone_datanode_java_opts = default("/configurations/ozone-env/ozone_datanode_java_opts", "")
+ozone_recon_java_opts = default("/configurations/ozone-env/ozone_recon_java_opts", "")
+ozone_s3g_java_opts = default("/configurations/ozone-env/ozone_s3g_java_opts", "")
+
+
+underscored_version = stack_version_unformatted.replace('.', '_')
+dashed_version = stack_version_unformatted.replace('.', '-')
+pid_dir = status_params.pid_dir
+tmp_dir = status_params.tmp_dir
+
+ozone_om_jaas_config_file = "ozone_om_jaas.conf"
+ozone_scm_jaas_config_file = "ozone_scm_jaas.conf"
+ozone_dn_jaas_config_file = "ozone_datanode_jaas.conf"
+ozone_s3g_jaas_config_file = "ozone_gateway_jaas.conf"
+
+set_instanceId = "false"
+if 'cluster-env' in config['configurations'] and \
+    'metrics_collector_external_hosts' in config['configurations']['cluster-env']:
+  ams_collector_hosts = config['configurations']['cluster-env']['metrics_collector_external_hosts']
+  set_instanceId = "true"
+else:
+  ams_collector_hosts = ",".join(default("/clusterHostInfo/metrics_collector_hosts", []))
+has_metric_collector = not len(ams_collector_hosts) == 0
+metric_collector_port = None
+if has_metric_collector:
+  if 'cluster-env' in config['configurations'] and \
+      'metrics_collector_external_port' in config['configurations']['cluster-env']:
+    metric_collector_port = config['configurations']['cluster-env']['metrics_collector_external_port']
+  else:
+    metric_collector_web_address = default("/configurations/ams-site/timeline.metrics.service.webapp.address", "0.0.0.0:6188")
+    if metric_collector_web_address.find(':') != -1:
+      metric_collector_port = metric_collector_web_address.split(':')[1]
+    else:
+      metric_collector_port = '6188'
+  if default("/configurations/ams-site/timeline.metrics.service.http.policy", "HTTP_ONLY") == "HTTPS_ONLY":
+    metric_collector_protocol = 'https'
+  else:
+    metric_collector_protocol = 'http'
+  metric_truststore_path= default("/configurations/ams-ssl-client/ssl.client.truststore.location", "")
+  metric_truststore_type= default("/configurations/ams-ssl-client/ssl.client.truststore.type", "")
+  metric_truststore_password= default("/configurations/ams-ssl-client/ssl.client.truststore.password", "")
+  pass
+metrics_report_interval = default("/configurations/ams-site/timeline.metrics.sink.report.interval", 60)
+metrics_collection_period = default("/configurations/ams-site/timeline.metrics.sink.collection.period", 10)
+
+host_in_memory_aggregation = default("/configurations/ams-site/timeline.metrics.host.inmemory.aggregation", True)
+host_in_memory_aggregation_port = default("/configurations/ams-site/timeline.metrics.host.inmemory.aggregation.port", 61888)
+is_aggregation_https_enabled = False
+if default("/configurations/ams-site/timeline.metrics.host.inmemory.aggregation.http.policy", "HTTP_ONLY") == "HTTPS_ONLY":
+  host_in_memory_aggregation_protocol = 'https'
+  is_aggregation_https_enabled = True
+else:
+  host_in_memory_aggregation_protocol = 'http'
+
+smoke_test_user = config['configurations']['cluster-env']['smokeuser']
+smokeuser_principal =  config['configurations']['cluster-env']['smokeuser_principal_name']
+smokeuser_permissions = "RWXCA"
+service_check_data = get_unique_id_and_date()
+user_group = config['configurations']['cluster-env']["user_group"]
+
+if security_enabled:
+  _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
+  ## ozone manager
+  om_jaas_princ = config['configurations']['ozone-site']['ozone.om.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  om_keytab_path = config['configurations']['ozone-site']['ozone.om.kerberos.keytab.file']
+  ## ozone scm
+  scm_jaas_princ = config['configurations']['ozone-site']['hdds.scm.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  scm_keytab_path = config['configurations']['ozone-site']['hdds.scm.kerberos.keytab.file']
+  ## ozone dn
+  dn_jaas_princ = config['configurations']['ozone-site']['dfs.datanode.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  dn_keytab_path = config['configurations']['ozone-site']['dfs.datanode.keytab.file']
+
+smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
+ozone_user_keytab = config['configurations']['ozone-env']['ozone_user_keytab']
+kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
+if security_enabled:
+  kinit_cmd = format("{kinit_path_local} -kt {ozone_user_keytab} {ozone_principal_name};")
+  kinit_cmd_om = format("{kinit_path_local} -kt {om_keytab_path} {om_jaas_princ};")
+  master_security_config = format("-Djava.security.auth.login.config={ozone_conf_dir}/ozone.om/ozone_om_jaas.conf")
+else:
+  kinit_cmd = ""
+  kinit_cmd_master = ""
+  master_security_config = ""
+
+# Log4j Properties
+## each service has its own properties
+#  Manager
+ozone_manager_log_level = default('configurations/ozone-env/ozone_manager_log_level','INFO')
+ozone_manager_security_log_max_backup_size = default('configurations/ozone-log4j-om/ozone_security_log_max_backup_size',256)
+ozone_manager_security_log_number_of_backup_files = default('configurations/ozone-log4j-om/ozone_security_log_number_of_backup_files',20)
+ozone_manager_ozone_log_max_backup_size = default('configurations/ozone-log4j-om/ozone_log_max_backup_size',256)
+ozone_manager_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-om/ozone_log_number_of_backup_files',20)
+  
+# Storage Container Manager
+ozone_scm_log_level = default('configurations/ozone-env/ozone_scm_log_level','INFO')
+ozone_scm_security_log_max_backup_size = default('configurations/ozone-log4j-scm/ozone_security_log_max_backup_size',256)
+ozone_scm_security_log_number_of_backup_files = default('configurations/ozone-log4j-scm/ozone_security_log_number_of_backup_files',20)
+ozone_scm_ozone_log_max_backup_size = default('configurations/ozone-log4j-scm/ozone_log_max_backup_size',256)
+ozone_scm_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-scm/ozone_log_number_of_backup_files',20)
+
+# Datanode
+ozone_datanode_log_level = default('configurations/ozone-env/ozone_datanode_log_level','INFO')
+ozone_datanode_security_log_max_backup_size = default('configurations/ozone-log4j-datanode/ozone_security_log_max_backup_size',256)
+ozone_datanode_security_log_number_of_backup_files = default('configurations/ozone-log4j-datanode/ozone_security_log_number_of_backup_files',20)
+ozone_datanode_ozone_log_max_backup_size = default('configurations/ozone-log4j-datanode/ozone_log_max_backup_size',256)
+ozone_datanode_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-datanode/ozone_log_number_of_backup_files',20)
+
+# Recon
+ozone_recon_log_level = default('configurations/ozone-env/ozone_recon_log_level','INFO')
+ozone_recon_security_log_max_backup_size = default('configurations/ozone-log4j-recon/ozone_security_log_max_backup_size',256)
+ozone_recon_security_log_number_of_backup_files = default('configurations/ozone-log4j-recon/ozone_security_log_number_of_backup_files',20)
+ozone_recon_ozone_log_max_backup_size = default('configurations/ozone-log4j-recon/ozone_log_max_backup_size',256)
+ozone_recon_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-recon/ozone_log_number_of_backup_files',20)
+
+# S3 Gateway
+ozone_s3g_log_level = default('configurations/ozone-env/ozone_s3g_log_level','INFO')
+ozone_s3g_security_log_max_backup_size = default('configurations/ozone-log4j-s3g/ozone_security_log_max_backup_size',256)
+ozone_s3g_security_log_number_of_backup_files = default('configurations/ozone-log4j-s3g/ozone_security_log_number_of_backup_files',20)
+ozone_s3g_ozone_log_max_backup_size = default('configurations/ozone-log4j-s3g/ozone_log_max_backup_size',256)
+ozone_s3g_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-s3g/ozone_log_number_of_backup_files',20)
+
+## High Availability, Bootstrap and Init related params
+
+ozone_env_sh_template = config['configurations']['ozone-env']['content']
+
+scm_hosts = default("/clusterHostInfo/ozone_scm_hosts", [])
+om_hosts = default("/clusterHostInfo/ozone_om_hosts", [])
+ozone_scm_ha_is_enabled = len(scm_hosts) > 1
+
+ozone_scm_db_dirs = config['configurations']['ozone-site']['ozone.scm.db.dirs']
+# fallback on ozone.metadata.dirs if ozone.scm.db.dirs is not defined
+if ozone_scm_db_dirs is None:
+  ozone_scm_db_dirs =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+
+# ozone scm ha enabled
+ozone_scm_ha_current_cluster_nameservice = default('/configurations/ozone-site/ozone.scm.default.service.id', None)
+ozone_scm_ha_enabled = ozone_scm_ha_current_cluster_nameservice != None
+ozone_scm_ha_dirs = ''
+if ozone_scm_ha_enabled: 
+  ozone_scm_ha_dirs = config['configurations']['ozone-site']['ozone.scm.ha.ratis.storage.dir']
+ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_scm_format_disabled", False)
+ozone_scm_primordial_node_id = config['configurations']['ozone-site']['ozone.scm.primordial.node.id']
+ozone_scm_ha_ratis_port = default("/configurations/ozone-site/ozone.scm.ratis.port", 9894)
+
+
+ozone_manager_db_dirs = config['configurations']['ozone-site']['ozone.om.db.dirs']
+# fallback on ozone.metadata.dirs if ozone.om.db.dirs is not defined
+if ozone_manager_db_dirs is None:
+  ozone_manager_db_dirs =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+#Ozone Manager High Availability
+command_phase = default("/commandParams/phase","")
+
+# Ozone Manager High Availability properties
+ozone_om_ha_current_cluster_nameservice = default('/configurations/ozone-site/ozone.om.internal.service.id', None)
+ozone_om_ha_is_enabled = ozone_om_ha_current_cluster_nameservice != None
+ozone_om_ha_props = [
+  'ozone.om.internal.service.id',
+  'ozone.om.service.ids'
+]
+ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_om_format_disabled", False)
+ozone_ha_om_active = om_ha_utils.get_initial_active_om(default("/configurations/ozone-env", {}))
+if ozone_ha_om_active == '':
+  ozone_ha_om_active = config['clusterHostInfo']['ozone_manager_hosts'][0]
+# ranger ozone plugin section start
+
+# to get db connector jar
+jdk_location = config['ambariLevelParams']['jdk_location']
+
+# ranger host
+ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
+has_ranger_admin = not len(ranger_admin_hosts) == 0
+
+# ranger support xml_configuration flag, instead of depending on ranger xml_configurations_supported/ranger-env introduced, using stack feature
+xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
+
+# ranger ozone plugin enabled property
+enable_ranger_ozone = default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")
+enable_ranger_ozone = True if enable_ranger_ozone.lower() == 'yes' else False
+ranger_policy_config = {}
+# ranger ozone properties
+if enable_ranger_ozone:
+  # get ranger policy url
+  policymgr_mgr_url = config['configurations']['admin-properties']['policymgr_external_url']
+  if xml_configurations_supported:
+    policymgr_mgr_url = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.policy.rest.url']
+
+  if not is_empty(policymgr_mgr_url) and policymgr_mgr_url.endswith('/'):
+    policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
+
+  # ranger audit db user
+  xa_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
+
+  # ranger ozone service/repository name
+  repo_name = str(config['clusterName']) + '_ozone'
+  repo_name_value = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.service.name']
+  if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
+    repo_name = repo_name_value
+
+  common_name_for_certificate = config['configurations']['ranger-ozone-plugin-properties']['common.name.for.certificate']
+  repo_config_username = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_USERNAME']
+  ranger_plugin_properties = config['configurations']['ranger-ozone-plugin-properties']
+  policy_user = config['configurations']['ranger-ozone-plugin-properties']['policy_user']
+  repo_config_password = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
+
+  # ranger-env config
+  ranger_env = config['configurations']['ranger-env']
+
+  # create ranger-env config having external ranger credential properties
+  if not has_ranger_admin and enable_ranger_ozone:
+    external_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_admin_username', 'admin')
+    external_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_admin_password', 'admin')
+    external_ranger_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_username', 'amb_ranger_admin')
+    external_ranger_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_password', 'amb_ranger_admin')
+    ranger_env = {}
+    ranger_env['admin_username'] = external_admin_username
+    ranger_env['admin_password'] = external_admin_password
+    ranger_env['ranger_admin_username'] = external_ranger_admin_username
+    ranger_env['ranger_admin_password'] = external_ranger_admin_password
+
+  xa_audit_db_password = ''
+  if not is_empty(config['configurations']['admin-properties']['audit_db_password']) and stack_supports_ranger_audit_db and has_ranger_admin:
+    xa_audit_db_password = config['configurations']['admin-properties']['audit_db_password']
+
+  downloaded_custom_connector = None
+  previous_jdbc_jar_name = None
+  driver_curl_source = None
+  driver_curl_target = None
+  previous_jdbc_jar = None
+
+  if has_ranger_admin and stack_supports_ranger_audit_db:
+    xa_audit_db_flavor = config['configurations']['admin-properties']['DB_FLAVOR']
+    jdbc_jar_name, previous_jdbc_jar_name, audit_jdbc_url, jdbc_driver = get_audit_configs(config)
+
+    downloaded_custom_connector = format("{exec_tmp_dir}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+    driver_curl_source = format("{jdk_location}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+    driver_curl_target = format("{stack_root}/current/{component_directory}/lib/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+    previous_jdbc_jar = format("{stack_root}/current/{component_directory}/lib/{previous_jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+    sql_connector_jar = ''
+
+  ozone_ranger_plugin_config = {
+    'username': repo_config_username,
+    'password': repo_config_password,
+    'ozone.om.http-address': ozone_om_address,
+    'hadoop.security.authentication': hadoop_security_authentication,
+    'hadoop.security.authorization': hadoop_security_authorization,
+    'hadoop.security.auth_to_local': hadoop_security_auth_to_local,
+    'commonNameForCertificate': common_name_for_certificate
+  }
+
+  if security_enabled:
+    ozone_ranger_plugin_config['policy.download.auth.users'] = ozone_user
+    ozone_ranger_plugin_config['tag.download.auth.users'] = ozone_user
+    ozone_ranger_plugin_config['policy.grantrevoke.auth.users'] = ozone_user
+
+  # hbase_ranger_plugin_config['setup.additional.default.policies'] = "true"
+  # hbase_ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Hbase"
+  # hbase_ranger_plugin_config['default-policy.1.resource.table'] = "ambarismoketest"
+  # hbase_ranger_plugin_config['default-policy.1.resource.column-family'] = "*"
+  # hbase_ranger_plugin_config['default-policy.1.resource.column'] = "*"
+  # hbase_ranger_plugin_config['default-policy.1.policyItem.1.users'] = policy_user
+  # hbase_ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "read,write,create"
+
+  # custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
+  # if len(custom_ranger_service_config) > 0:
+  #   hbase_ranger_plugin_config.update(custom_ranger_service_config)
+
+  ozone_ranger_plugin_repo = {
+    'isEnabled': 'true',
+    'configs': ozone_ranger_plugin_config,
+    'description': 'ozone repo',
+    'name': repo_name,
+    'type': 'ozone'
+  }
+
+  ranger_ozone_principal = None
+  ranger_ozone_keytab = None
+  if stack_supports_ranger_kerberos and security_enabled and 'ozone-manager' in component_directory.lower():
+    ranger_ozone_principal = om_jaas_princ
+    ranger_ozone_keytab = om_keytab_path
+  
+
+  xa_audit_db_is_enabled = False
+  if xml_configurations_supported and stack_supports_ranger_audit_db:
+    xa_audit_db_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.solr']
+
+  xa_audit_hdfs_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
+  ssl_keystore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None
+  ssl_truststore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password'] if xml_configurations_supported else None
+  credential_file = format('/etc/ranger/{repo_name}/cred.jceks')
+
+  # for SQLA explicitly disable audit to DB for Ranger
+  if has_ranger_admin and stack_supports_ranger_audit_db and xa_audit_db_flavor.lower() == 'sqla':
+    xa_audit_db_is_enabled = False
+
+# need this to capture cluster name from where ranger hbase plugin is enabled
+cluster_name = config['clusterName']
+
+# ranger hbase plugin section end

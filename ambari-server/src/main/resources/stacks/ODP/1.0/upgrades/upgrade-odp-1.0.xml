@@ -17,7 +17,7 @@
 -->
 
 <upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-pack.xsd">
-  <target>1.0.4.*</target>
+  <target>1.0.*</target>
   <target-stack>ODP-1.0</target-stack>
   <skip-failures>false</skip-failures>
   <skip-service-check-failures>false</skip-service-check-failures>
@@ -172,6 +172,11 @@
       <service name="HBASE">
         <component>HBASE_MASTER</component>
       </service>
+
+      <service name="OZONE">
+        <component>OZONE_MANAGER</component>
+        <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
+      </service>
     </group>
 
     <group name="SERVICE_CHECK_1" title="All Service Checks" xsi:type="service-check">
@@ -183,6 +188,7 @@
         <service>YARN</service>
         <service>MAPREDUCE2</service>
         <service>HBASE</service>
+        <service>OZONE</service>
       </priority>
       <exclude>
         <service>AMBARI_METRICS</service>
@@ -205,6 +211,10 @@
 
       <service name="YARN">
         <component>NODEMANAGER</component>
+      </service>
+
+      <service name="OZONE">
+        <component>OZONE_DATANODe</component>
       </service>
 
       <batch>
@@ -341,6 +351,12 @@
 
       <service name="HBASE">
         <component>HBASE_CLIENT</component>
+      </service>
+
+      <service name="OZONE">
+        <component>OZONE_S3_GATEWAY</component>
+        <component>OZONE_RECON</component>
+        <component>OZONE_CLIENT</component>
       </service>
 
       <service name="PIG">
