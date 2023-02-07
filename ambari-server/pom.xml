@@ -428,6 +428,7 @@
       <plugin>
         <groupId>com.github.kongchen</groupId>
         <artifactId>swagger-maven-plugin</artifactId>
+        <version>3.0.1</version>
         <configuration>
           <apiSources>
             <apiSource>

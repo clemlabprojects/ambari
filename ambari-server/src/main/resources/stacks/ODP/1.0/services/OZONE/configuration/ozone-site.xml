@@ -62,7 +62,7 @@
     </property>
     <property>
         <name>ozone.http.filter.initializers</name>
-        </value>
+        <value> </value>
         <description>Set to org.apache.hadoop.security.AuthenticationFilterInitializer
         to enable Kerberos authentication for Ozone HTTP web consoles
         is enabled using the SPNEGO protocol. When this property is
@@ -70,10 +70,6 @@
         </description>
         <final>true</final>
         <display-name>Enable Kerberos for Ozone web consoles</display-name>
-        <value-attributes>
-            <type>boolean</type>
-            <overridable>true</overridable>
-        </value-attributes>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
@@ -90,7 +86,7 @@
     </property>
     <property>
         <name>ozone.administrators</name>
-        <value/>
+        <value>ozone,hdfs</value>
         <display-name>Ozone Administrators</display-name>
         <description>Ozone administrator users delimited by the comma.
             If not set, only the user who launches an ozone service will be the admin
@@ -103,7 +99,7 @@
     <property>
         <name>ozone.administrators.groups</name>
         <display-name>Ozone Administrator Groups</display-name>
-        <value/>
+        <value>hadoop</value>
         <description>This is the list of groups who can access admin only information
             from ozone.
             It is enough to either have the name defined in ozone.administrators
@@ -138,12 +134,12 @@
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
-        <name>ozone.metadata.dirs</name>
-        <value>/var/lib/hadoop-ozone/om/ozone-metadata</value>
+        <name>ozone.metadata.dirs</name><!--for now used only for datanode-->
+        <value>/var/lib/hadoop-ozone/services-metadata</value>
         <description>This setting is the fallback location for SCM, OM, Recon and DataNodes
             to store their metadata. This setting may be used only in test/PoC
             clusters to simplify configuration.
-
+            
             For production clusters or any time you care about performance, it is
             recommended that ozone.om.db.dirs, ozone.scm.db.dirs and
             dfs.container.ratis.datanode.storage.dir be configured separately.
@@ -163,6 +159,48 @@
         <on-ambari-upgrade add="false"/>
     </property>
 <!--    Ozone Manager related properties -->
+    <property>
+        <name>ozone.om.service.ids</name>
+        <value/>
+        <display-name>Ozone Manager Service id</display-name>
+        <description>Comma-separated list of SCM service Ids. This property allows the client
+            to figure out quorum of OzoneManager address.
+        </description>
+    </property>
+    <property>
+        <name>ozone.om.ratis.snapshot.dir</name>
+        <value>/var/lib/hadoop-ozone/om-snapshots</value>
+        <tag>OZONE, OM, STORAGE, MANAGEMENT, RATIS</tag>
+        <description>This directory is used for storing OM's snapshot
+        related files like the ratisSnapshotIndex and DB checkpoint from leader
+        OM.
+        If undefined, OM snapshot dir will fallback to ozone.metadata.dirs.
+        This fallback approach is not recommended for production environments.
+        </description>
+  </property>
+    <property>
+        <name>ozone.om.http-address</name>
+        <value>0.0.0.0:9874</value>
+        <display-name>Ozone Manager Bind host address</display-name>
+        <description>
+            The address and the base port where the OM web UI will listen on.
+            If the port is 0, then the server will start on a free port. However, it
+            is best to specify a well-known port, so it is easy to connect and see
+            the OM management UI.
+            </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.om.https-address</name>
+        <value>0.0.0.0:9875</value>
+        <display-name>Ozone Manager Bind host address</display-name>
+        <description>
+            The address and the base port where the OM web UI will listen
+            on using HTTPS.
+            If the port is 0 then the server will start on a free port.
+            </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
     <property>
         <name>ozone.om.http-bind-host</name>
         <value>0.0.0.0</value>
@@ -192,7 +230,7 @@
         </description>
         <on-ambari-upgrade add="false"/>
     </property>
-    <property>
+    <!-- <property>
         <name>ozone.om.internal.service.id</name>
         <value/>
         <display-name>Ozone Manager Default Service ID</display-name>
@@ -210,7 +248,7 @@
                 <name>ozone.om.ratis.enable</name>
             </property>
         </depends-on>
-    </property>
+    </property> -->
     <property>
         <name>ozone.om.http-port</name>
         <value>9874</value>
@@ -297,14 +335,14 @@
         </description>
         <on-ambari-upgrade add="false"/>
     </property>
-    <property>
+    <!-- <property>
         <name>ozone.om.service.ids</name>
         <value/>
-        <display-name>Ozone Manager Security server port</display-name>
+        <display-name>Ozone Manager Security ids</display-name>
         <description>Comma-separated list of Manager service Ids. This property allows the client
             to figure out quorum of OzoneManager address.
         </description>
-    </property>
+    </property> -->
     <property>
         <name>ozone.acl.authorizer.class</name>
         <description>
@@ -471,7 +509,7 @@
             <empty-value-valid>false</empty-value-valid>
         </value-attributes>
     </property>
-    <property>
+    <!-- <property>
         <name>ozone.scm.default.service.id</name>
         <value/>
         <display-name>Ozone SCM Default Service ID</display-name>
@@ -483,6 +521,13 @@
             <overridable>false</overridable>
             <empty-value-valid>false</empty-value-valid>
         </value-attributes>
+    </property> -->
+    <property>
+        <name>ozone.scm.datanode.port</name>
+        <value>9861</value>
+        <display-name>Ozone SCM service Datanode port</display-name>
+        <description>The port number of the Ozone SCM service.
+        </description>
     </property>
     <property>
         <name>ozone.scm.ratis.port</name>
@@ -533,7 +578,7 @@
     </property>
     <property>
         <name>hdds.scm.http.auth.type</name>
-        <value></value>
+        <value>simple</value>
         <display-name>Ozone SCM HTTP Authentication Type</display-name>
         <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
             will be used for http authentication.
@@ -544,7 +589,7 @@
     </property>
     <property>
         <name>zone.scm.skip.bootstrap.validation</name>
-        <value></value>
+        <value/>
         <display-name>Skip Ozone Boostrap Validation</display-name>
         <description>optional config, the config when set to true skips the clusterId
             validation from leader scm during bootstrap
@@ -617,7 +662,7 @@
         </value-attributes>
     </property>
     <property>
-        <name>ozone.recon.scm.db.dir</name>
+        <name>ozone.recon.scm.db.dirs</name>
         <value>/var/lib/hadoop-ozone/recon/scm/data</value>
         <display-name>Ozone RECON - SCM Data dir</display-name>
         <description>Directory where the Recon Server stores its SCM snapshot DB. This should
@@ -715,7 +760,7 @@
     </property>
     <property>
         <name>hdds.container.balancer.exclude.containers</name>
-        <value></value>
+        <value> </value>
         <display-name>Containers to exclude from Balancing</display-name>
         <description>Containers to exclude from scm balancing process. It should be specified as a string of Container IDs (for example, '1, 2, 3').
         </description>
@@ -723,7 +768,7 @@
     </property>
     <property>
         <name>hdds.container.balancer.exclude.datanodes</name>
-        <value></value>
+        <value> </value>
         <display-name>Datanodes to exclude from Balancing</display-name>
         <description>A comma separated string of Datanode hostnames or IP addresses that will be excluded from balancing.
         </description>
@@ -731,7 +776,7 @@
     </property>
     <property>
         <name>hdds.container.balancer.include.datanodes</name>
-        <value></value>
+        <value> </value>
         <display-name>Datanodes to include from Balancing</display-name>
         <description>A comma separated string of Datanode hostnames or IP addresses that will be included in balancing.
         </description>
@@ -806,6 +851,7 @@
         </description>
         <on-ambari-upgrade add="false"/>
     </property>
+    <!-- ozone.scm.datanode.ratis.volume.free-space.min -->
 <!--    Ozone Datanode related properties -->
     <property>
         <name>dfs.container.ratis.admin.port</name>
@@ -817,7 +863,7 @@
     <property>
         <name>dfs.container.ratis.datanode.storage.dir</name>
         <value>/var/lib/hadoop-ozone/datanode/ratis/data</value>
-        <display-name>Ozone Datanode Data Directory</display-name>
+        <display-name>Ozone Datanode Ratis Data Directory</display-name>
         <description>This directory is used for storing Ratis metadata like logs. If
             this is not set then default metadata dirs is used. A warning will be logged if
             this not set. Ideally, this should be mapped to a fast disk like an SSD.

@@ -24,6 +24,7 @@ from ambari_commons.constants import SERVICE
 from ozone import ozone
 from ozone_service import ozone_service
 from resource_management.core.exceptions import Fail
+from resource_management.core.source import Template, InlineTemplate
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.libraries.script.script import Script
@@ -61,7 +62,13 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    self.format_scm(env)
+    File(os.path.join(params.ozone_topology_file),
+        owner='root',
+        group='root',
+        mode=0644,
+        content=Template("ozone_topology_script.py")
+    )
+    format_scm(env)
     ozone_service('ozone-scm', action = 'start')
     
   def stop(self, env, upgrade_type=None):
@@ -72,15 +79,16 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    check_process_status(status_params.ozone_scm_pid_file)
+    import params
+    check_process_status(params.ozone_scm_pid_file)
 
   def security_status(self, env):
     import status_params
 
     env.set_params(status_params)
     if status_params.security_enabled:
-      props_value_check = {"ozone.security.enabled" : "true",
-                           "ozone.acl.enabled": "true",
+      props_value_check = {"ozone --config {conf_dir}.security.enabled" : "true",
+                           "ozone --config {conf_dir}.acl.enabled": "true",
                            "hdds.grpc.tls.enabled": "true",
                            "hadoop.security.authentication": "kerberos"}
       props_empty_check = ['hdds.scm.kerberos.principal',
@@ -136,13 +144,14 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
 
   def get_pid_files(self):
     import status_params
-    return [status_params.ozone_scm_pid_file]
+    import params
+    return [params.ozone_scm_pid_file]
 
 ## formatting SCM server directories
 
 def is_scm_server_bootstrapped():
   import params
-  bootstrapped_path = os.path.join(params.ozone_scm_db_dirs, '/current/VERSION')
+  bootstrapped_path = format("{params.ozone_scm_db_dirs}/current/VERSION")
   if params.ozone_scm_format_disabled:
     Logger.info("ozone_scm_format_disabled is disabled in cluster-env configuration, Skipping")
     return True
@@ -163,6 +172,13 @@ def is_scm_server_primordial_node_id():
 
 def format_scm(force=None):
   import params
+  Directory( params.ozone_scm_db_dirs,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0755,
+  )
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   if params.ozone_scm_ha_enabled:
     Logger.info(format("Ozone SCM Server HA is enabled. Running bootstrapping actions..."))
     if is_scm_server_bootstrapped():
@@ -173,7 +189,7 @@ def format_scm(force=None):
       if is_scm_server_primordial_node_id():
         Logger.info(format("Ozone SCM Server {params.hostname} is the primordial node. Initializing..."))
         try:
-          Execute(format("ozone scm --init"),
+          Execute(format("ozone --config {conf_dir} scm --init"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
             logoutput=True
@@ -181,7 +197,7 @@ def format_scm(force=None):
         except Fail:
           # We need to clean-up directories
           for scm_db_dir in params.ozone_scm_db_dirs.split(','):
-            Execute(format("rm -rf {nn_name_dir}/*"),
+            Execute(format("rm -rf {scm_db_dir}/*"),
                     user = params.ozone_user,
             )
           raise Fail('Could Not Initialize Primordial Node')
@@ -192,14 +208,14 @@ def format_scm(force=None):
         # bootstrapp not primary node
         try:
           Logger.info(format("Bootstrapping scm node..."))
-          Execute(format("ozone scm --bootstrap"),
+          Execute(format("ozone --config {conf_dir} scm --bootstrap"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
             logoutput=True
           )
         except Fail:
           for scm_db_dir in params.ozone_scm_db_dirs.split(','):
-            Execute(format("rm -rf {nn_name_dir}/*"),
+            Execute(format("rm -rf {scm_db_dir}/*"),
                     user = params.ozone_user,
             )
           raise Fail('Could not bootstrap scm node')
@@ -211,7 +227,7 @@ def format_scm(force=None):
     else:
       Logger.info(format("Ozone SCM Server {params.hostname} is the primordial node. Initializing..."))
       try:
-        Execute(format("ozone scm --init"),
+        Execute(format("ozone --config {conf_dir} scm --init"),
           user = params.ozone_user,
           path = [params.hadoop_ozone_bin_dir],
           logoutput=True
@@ -219,7 +235,7 @@ def format_scm(force=None):
       except Fail:
         # We need to clean-up directories
         for scm_db_dir in params.ozone_scm_db_dirs.split(','):
-          Execute(format("rm -rf {nn_name_dir}/*"),
+          Execute(format("rm -rf {scm_db_dir}/*"),
                   user = params.ozone_user,
           )
         raise Fail('Could not initial primary scm node')
@@ -229,6 +245,7 @@ def wait_for_primary_node_to_started(ozone_binary, afterwait_sleep=0, execute_ki
   Wait for the primary scm server to be up and running on its ratis port 5when HA is enabled)
   """
   import params
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   if not params.ozone_scm_ha_enabled:
     Logger.info("Skipping waiting for primordial node")
     return
@@ -239,7 +256,7 @@ def wait_for_primary_node_to_started(ozone_binary, afterwait_sleep=0, execute_ki
       kinit_command = format("{params.kinit_path_local} -kt {params.ozone_scm_user_keytab} {params.ozone_scm_principal_name}")
       Execute(kinit_command, user=params.ozone_user, logoutput=True)
     try:
-      Execute(format("ozone admin scm roles --scm {params.hostname}:{params.ozone_scm_ha_ratis_port}"),
+      Execute(format("ozone --config {conf_dir} admin scm roles --scm {params.hostname}:{params.ozone_scm_ha_ratis_port}"),
         user = params.ozone_user,
         path = [params.hadoop_ozone_bin_dir],
         logoutput=True
@@ -254,6 +271,7 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   Instead of looping on test safe mode, we use the included ozone command wait safemode using timeout parameters.
   """
   import params
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   #Logger.info("Waiting up to {0} minutes for the SCM Server to leave Safemode...".format(sleep_minutes))
   if params.security_enabled and execute_kinit:
     kinit_command = format("{params.kinit_path_local} -kt {params.ozone_scm_user_keytab} {params.ozone_scm_principal_name}")
@@ -261,7 +279,7 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   timeout = retries*(sleep_seconds+afterwait_sleep)
 
   try:
-    Execute(format("ozone admin safemode wait --timeout {timeout}"),
+    Execute(format("ozone --config {conf_dir} admin safemode wait --timeout {timeout}"),
       user = params.ozone_user,
       path = [params.hadoop_ozone_bin_dir],
       logoutput=True

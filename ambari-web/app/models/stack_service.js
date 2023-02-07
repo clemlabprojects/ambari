@@ -176,7 +176,7 @@ App.StackService = DS.Model.extend({
 
   // Is the service a distributed filesystem
   isDFS: function () {
-    return this.get('serviceType') === 'HCFS' || ['HDFS', 'GLUSTERFS'].contains(this.get('serviceName'));
+    return this.get('serviceType') === 'HCFS' || ['HDFS', 'GLUSTERFS', 'OZONE'].contains(this.get('serviceName'));
   }.property('serviceName', 'serviceType'),
 
   // Primary DFS. used if there is more than one DFS in a stack.
@@ -269,7 +269,7 @@ App.StackService = DS.Model.extend({
     var configTypes = this.get('configTypes');
     var serviceComponents = this.get('serviceComponents');
     if (configTypes && Object.keys(configTypes).length) {
-      var pattern = ["General", "ResourceType", "CapacityScheduler", "ContainerExecutor", "Registry", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson"];
+      var pattern = ["General", "ResourceType", "CapacityScheduler", "ContainerExecutor", "Registry", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson","OZONE.*"];
       configCategories = App.StackService.configCategories.call(this).filter(function (_configCategory) {
         var serviceComponentName = _configCategory.get('name');
         var isServiceComponent = serviceComponents.someProperty('componentName', serviceComponentName);
@@ -509,8 +509,8 @@ App.StackService.configCategories = function () {
       break;
     case 'OZONE':
       serviceConfigCategories.pushObjects([
-        App.ServiceConfigCategory.create({ name: 'OZONE_MANAGER_SETTINGS', displayName: 'Ozone Manager Settings', showHost: true}),
-        App.ServiceConfigCategory.create({ name: 'OZONE_SCM_SETTINGS', displayName: 'Ozone Storage Container Manager Settings', showHost: true}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_MANAGER_SETTINGS', displayName: 'Ozone Manager Settings'}),
+        App.ServiceConfigCategory.create({ name: 'OZONE_SCM_SETTINGS', displayName: 'Ozone Storage Container Manager Settings'}),
         App.ServiceConfigCategory.create({ name: 'OZONE_DN_SETTINGS', displayName: 'Ozone DataNode Settings'}),
         App.ServiceConfigCategory.create({ name: 'OZONE_S3G_SETTINGS', displayName: 'Ozone S3 Gateway Settings'}),
         App.ServiceConfigCategory.create({ name: 'OZONE_RECON_SETTINGS', displayName: 'Ozone Recon Settings'}),

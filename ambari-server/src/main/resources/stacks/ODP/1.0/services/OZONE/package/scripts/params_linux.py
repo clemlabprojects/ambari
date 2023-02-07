@@ -43,7 +43,7 @@ from resource_management.libraries.functions.get_not_managed_resources import ge
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.expect import expect
 from ambari_commons.ambari_metrics_helper import select_metric_collector_hosts_from_hostnames
-
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.setup_ranger_plugin_xml import get_audit_configs, generate_ranger_service_config
 
 # server configurations
@@ -54,7 +54,7 @@ hostname = config['agentLevelParams']['hostname']
 
 jsvc_path = "/usr/lib/bigtop-utils"
 
-ozone_secure_dn_user = status_params.ozone_user
+ozone_secure_dn_user = config['configurations']['ozone-env']['ozone_user']
 
 stack_name = status_params.stack_name
 agent_stack_retry_on_unavailability = config['ambariLevelParams']['agent_stack_retry_on_unavailability']
@@ -62,6 +62,7 @@ agent_stack_retry_count = expect("/ambariLevelParams/agent_stack_retry_count", i
 version = default("/commandParams/version", None)
 component_directory = status_params.component_directory
 etc_prefix_dir = "/etc/hadoop"
+ozone_base_conf_dir = format("{etc_prefix_dir}/conf")
 
 stack_version_unformatted = status_params.stack_version_unformatted
 stack_version_formatted = status_params.stack_version_formatted
@@ -79,7 +80,6 @@ hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
 daemon_script = format('{stack_root}/current/ozone-client/bin/ozone')
 ozone_cmd = format('{stack_root}/current/ozone-client/bin/ozone')
 
-ozone_conf_dir = status_params.ozone_conf_dir
 ROLE_NAME_MAP_CONF = {
       'ozone-manager': 'ozone.om',
       'ozone-s3g': 'ozone.s3g',
@@ -96,6 +96,15 @@ ROLE_NAME_MAP_DAEMON = {
       'ozone-scm': 'scm',
 
 }
+ROLE_CONF_MAP = {
+      'ozone-manager': {},
+      'ozone-s3g': {},
+      'ozone-datanode': {},
+      'ozone-recon': {},
+      'ozone-scm': {},
+      'ozone-client': {}
+}
+
 limits_conf_dir = status_params.limits_conf_dir
 
 ozone_user_nofile_limit = default("/configurations/ozone-env/ozone_user_nofile_limit", "32000")
@@ -105,12 +114,22 @@ ozone_excluded_hosts = config['commandParams']['excluded_hosts']
 ozone_drain_only = default("/commandParams/mark_draining_only",False)
 ozone_included_hosts = config['commandParams']['included_hosts']
 
-ozone_user = status_params.ozone_user
+ozone_user = config['configurations']['ozone-env']['ozone_user']
 ozone_principal_name = config['configurations']['ozone-env']['ozone_principal_name']
 smokeuser = config['configurations']['cluster-env']['smokeuser']
-_authentication = config['configurations']['core-site']['hadoop.security.authentication']
+_authentication = 'simple'
+hadoop_security_authorization = ''
+hadoop_security_auth_to_local = 'DEFAULT'
+if 'core-site' in config['configurations'] and config['configurations']['ozone-env']['run_in_hdfs']:
+  _authentication = config['configurations']['core-site']['hadoop.security.authentication']
+  hadoop_security_authorization = config['configurations']['core-site']['hadoop.security.authorization']
+  hadoop_security_auth_to_local = config['configurations']['core-site']['hadoop.security.auth_to_local']
+else:
+  config['configurations']['ozone-core-site']['hadoop.security.authentication']
+  hadoop_security_authorization = config['configurations']['ozone-core-site']['hadoop.security.authorization']
+  hadoop_security_auth_to_local = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
+hadoop_security_authentication = _authentication
 security_enabled = config['configurations']['cluster-env']['security_enabled']
-ozone_security_enabled = config['configurations']['ozone-site']['hadoop.security.authentication'] == 'kerberos'
 
 # this is "hadoop-metrics.properties" for 1.x stacks
 metric_prop_file_name = "hadoop-metrics2-hbase.properties"
@@ -122,10 +141,61 @@ java_version = expect("/ambariLevelParams/java_version", int)
 pid_dir = config['configurations']['ozone-env']['ozone_pid_dir_prefix']
 log_dir = config['configurations']['ozone-env']['ozone_log_dir_prefix']
 java_io_tmpdir = default("/configurations/ozone-env/ozone_java_io_tmpdir", "/tmp")
+dfs_data_dirs = config['configurations']['ozone-site']['hdds.datanode.dir']
+data_dir_mount_file = "/var/lib/ambari-agent/data/datanode/hdds_data_dir_mount.hist"
+ozone_dn_ratis_dir = config['configurations']['ozone-site']['dfs.container.ratis.datanode.storage.dir']
 
+## SSL related properties
+# for component in ['om','scm','datanode','s3g', 'recon']:
+
+## SSL related properties
+
+# Ozone Manager TLS related params #
+
+
+ozone_om_credential_file_path = config['configurations']['ssl-server-om']['hadoop.security.credential.provider.path']
+ozone_dn_credential_file_path = config['configurations']['ssl-server-datanode']['hadoop.security.credential.provider.path']
+ozone_scm_credential_file_path = config['configurations']['ssl-server-scm']['hadoop.security.credential.provider.path']
+ozone_recon_credential_file_path = config['configurations']['ssl-server-recon']['hadoop.security.credential.provider.path']
+ozone_s3g_credential_file_path = config['configurations']['ssl-server-s3g']['hadoop.security.credential.provider.path']
+ozone_om_tls_ssl_keystore_password = config['configurations']['ssl-server-om']['ssl.server.keystore.password']
+ozone_om_tls_ssl_key_password = config['configurations']['ssl-server-om']['ssl.server.keystore.keypassword']
+ozone_om_tls_ssl_truststore_password = config['configurations']['ssl-server-om']['ssl.server.truststore.password']
+ozone_om_tls_ssl_client_truststore_password = config['configurations']['ssl-client-om']['ssl.client.truststore.password']
+
+ssl_server_props_ignore = [
+  'ssl.server.keystore.password',
+  'ssl.server.keystore.keypassword',
+  'ssl.server.truststore.password'
+]
+ssl_client_props_ignore = [
+  'ssl.client.truststore.password'
+]
+om_ssl_server_dict = {}
+om_ssl_client_dict = {}
+
+om_ssl_enabled = default("/configurations/ozone-env/ozone_manager_ssl_enabled", False)
+if om_ssl_enabled:
+  Logger.debug("Preparing Ozone Manager SSL/TLS Dictionaries")
+  for prop in config['configurations']['ssl-server-om'].keys():
+    if prop not in ssl_server_props_ignore:
+      om_ssl_server_dict[prop] = config['configurations']['ssl-server-om'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing om_ssl_server")
+  for prop in config['configurations']['ssl-client-om'].keys():
+    if prop not in ssl_client_props_ignore:
+      om_ssl_client_dict[prop] = config['configurations']['ssl-client-om'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing om_ssl_client")
+
+
+scm_ssl_enabled = default("/configurations/ozone-env/ozone_scm_ssl_enabled", False)
+datanode_ssl_enabled = default("/configurations/ozone-env/ozone_datanode_ssl_enabled", False)
+recon_ssl_enabled = default("/configurations/ozone-env/ozone_recon_ssl_enabled", False)
+s3g_ssl_enabled = default("/configurations/ozone-env/ozone_s3g_ssl_enabled", False)
 ## Ozone heapsizes
 
-ozone_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_heapsize'])
+ozone_client_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_heapsize'])
 ozone_manager_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_heapsize'])
 ozone_manager_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_newsize'])
 ozone_manager_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_manager_opt_maxnewsize'])
@@ -154,7 +224,7 @@ ozone_recon_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['o
 
 ## Ozone JAVA options
 
-ozone_java_opts = default("/configurations/ozone-env/ozone_java_opts", "")
+ozone_client_java_opts = default("/configurations/ozone-env/ozone_java_opts", "")
 ozone_manager_java_opts = default("/configurations/ozone-env/ozone_manager_java_opts", "")
 ozone_scm_java_opts = default("/configurations/ozone-env/ozone_scm_java_opts", "")
 ozone_datanode_java_opts = default("/configurations/ozone-env/ozone_datanode_java_opts", "")
@@ -164,8 +234,6 @@ ozone_s3g_java_opts = default("/configurations/ozone-env/ozone_s3g_java_opts", "
 
 underscored_version = stack_version_unformatted.replace('.', '_')
 dashed_version = stack_version_unformatted.replace('.', '-')
-pid_dir = status_params.pid_dir
-tmp_dir = status_params.tmp_dir
 
 ozone_om_jaas_config_file = "ozone_om_jaas.conf"
 ozone_scm_jaas_config_file = "ozone_scm_jaas.conf"
@@ -235,7 +303,7 @@ kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executab
 if security_enabled:
   kinit_cmd = format("{kinit_path_local} -kt {ozone_user_keytab} {ozone_principal_name};")
   kinit_cmd_om = format("{kinit_path_local} -kt {om_keytab_path} {om_jaas_princ};")
-  master_security_config = format("-Djava.security.auth.login.config={ozone_conf_dir}/ozone.om/ozone_om_jaas.conf")
+  master_security_config = format("-Djava.security.auth.login.config={ozone_base_conf_dir}ozone.om/ozone_om_jaas.conf")
 else:
   kinit_cmd = ""
   kinit_cmd_master = ""
@@ -249,20 +317,22 @@ ozone_manager_security_log_max_backup_size = default('configurations/ozone-log4j
 ozone_manager_security_log_number_of_backup_files = default('configurations/ozone-log4j-om/ozone_security_log_number_of_backup_files',20)
 ozone_manager_ozone_log_max_backup_size = default('configurations/ozone-log4j-om/ozone_log_max_backup_size',256)
 ozone_manager_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-om/ozone_log_number_of_backup_files',20)
-  
+ozone_manager_log4j_content = config['configurations']['ozone-log4j-om']['content']
+
 # Storage Container Manager
 ozone_scm_log_level = default('configurations/ozone-env/ozone_scm_log_level','INFO')
 ozone_scm_security_log_max_backup_size = default('configurations/ozone-log4j-scm/ozone_security_log_max_backup_size',256)
 ozone_scm_security_log_number_of_backup_files = default('configurations/ozone-log4j-scm/ozone_security_log_number_of_backup_files',20)
 ozone_scm_ozone_log_max_backup_size = default('configurations/ozone-log4j-scm/ozone_log_max_backup_size',256)
 ozone_scm_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-scm/ozone_log_number_of_backup_files',20)
-
+ozone_scm_log4j_content = config['configurations']['ozone-log4j-scm']['content']
 # Datanode
 ozone_datanode_log_level = default('configurations/ozone-env/ozone_datanode_log_level','INFO')
 ozone_datanode_security_log_max_backup_size = default('configurations/ozone-log4j-datanode/ozone_security_log_max_backup_size',256)
 ozone_datanode_security_log_number_of_backup_files = default('configurations/ozone-log4j-datanode/ozone_security_log_number_of_backup_files',20)
 ozone_datanode_ozone_log_max_backup_size = default('configurations/ozone-log4j-datanode/ozone_log_max_backup_size',256)
 ozone_datanode_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-datanode/ozone_log_number_of_backup_files',20)
+ozone_datanode_log4j_content = config['configurations']['ozone-log4j-datanode']['content']
 
 # Recon
 ozone_recon_log_level = default('configurations/ozone-env/ozone_recon_log_level','INFO')
@@ -270,6 +340,7 @@ ozone_recon_security_log_max_backup_size = default('configurations/ozone-log4j-r
 ozone_recon_security_log_number_of_backup_files = default('configurations/ozone-log4j-recon/ozone_security_log_number_of_backup_files',20)
 ozone_recon_ozone_log_max_backup_size = default('configurations/ozone-log4j-recon/ozone_log_max_backup_size',256)
 ozone_recon_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-recon/ozone_log_number_of_backup_files',20)
+ozone_recon_log4j_content = config['configurations']['ozone-log4j-recon']['content']
 
 # S3 Gateway
 ozone_s3g_log_level = default('configurations/ozone-env/ozone_s3g_log_level','INFO')
@@ -277,20 +348,51 @@ ozone_s3g_security_log_max_backup_size = default('configurations/ozone-log4j-s3g
 ozone_s3g_security_log_number_of_backup_files = default('configurations/ozone-log4j-s3g/ozone_security_log_number_of_backup_files',20)
 ozone_s3g_ozone_log_max_backup_size = default('configurations/ozone-log4j-s3g/ozone_log_max_backup_size',256)
 ozone_s3g_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-s3g/ozone_log_number_of_backup_files',20)
+ozone_s3g_log4j_content = config['configurations']['ozone-log4j-s3g']['content']
 
 ## High Availability, Bootstrap and Init related params
 
 ozone_env_sh_template = config['configurations']['ozone-env']['content']
+ozone_log4j_content = config['configurations']['ozone-log4j-properties']['content']
 
 scm_hosts = default("/clusterHostInfo/ozone_scm_hosts", [])
 om_hosts = default("/clusterHostInfo/ozone_om_hosts", [])
 ozone_scm_ha_is_enabled = len(scm_hosts) > 1
+ozone_om_ha_is_enabled = len(om_hosts) >1
+
+ozone_manager_web_port = 9874
+om_protocol = 'https' if config['configurations']['ozone-env']['ozone_manager_ssl_enabled'] else 'http'
+om_prop = format("ozone.om.{om_protocol}-address")
+web_port = config['configurations']['ozone-site'][om_prop].split(':')[1]
+om_web_address = format("{hostname}:{web_port}")
+
 
 ozone_scm_db_dirs = config['configurations']['ozone-site']['ozone.scm.db.dirs']
-# fallback on ozone.metadata.dirs if ozone.scm.db.dirs is not defined
-if ozone_scm_db_dirs is None:
-  ozone_scm_db_dirs =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_manager_ha_dirs = config['configurations']['ozone-site']['ozone.om.ratis.storage.dir']
+ozone_om_snapshot_dirs = config['configurations']['ozone-site']['ozone.om.ratis.snapshot.dir']
+ozone_recon_db_dir = config['configurations']['ozone-site']['ozone.recon.db.dir']
 
+#for now ozone datanode and manager use `ozone.metadata.dirs` as configuration key
+for prop in config['configurations']['ozone-site'].keys():
+  ROLE_CONF_MAP['ozone-manager'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-datanode'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-s3g'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-recon'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-scm'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-client'][prop] = config['configurations']['ozone-site'][prop]
+
+ozone_datanode_metadata_dir = config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_manager_metadata_dir =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_recon_scm_metadata_dir =  config['configurations']['ozone-site']['ozone.recon.scm.db.dirs']
+ozone_recon_om_metadata_dir =  config['configurations']['ozone-site']['ozone.recon.om.db.dir']
+override_metadata_dir_user =  default("/configurations/ozone-env/override_metadata_dir", False)
+if not override_metadata_dir_user:
+  ROLE_CONF_MAP['ozone-manager']['ozone.metadata.dirs'] = format(str(ROLE_CONF_MAP['ozone-manager']['ozone.metadata.dirs'])+"/"+'om-metadata')
+  ROLE_CONF_MAP['ozone-datanode']['ozone.metadata.dirs'] = str(ROLE_CONF_MAP['ozone-datanode']['ozone.metadata.dirs'])+"/"+'dn-metadata'
+
+ozone_fallback_metadatir = config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_datanode_metadata_dir=  ROLE_CONF_MAP['ozone-datanode']['ozone.metadata.dirs']
+ozone_manager_metadata_dir=  ROLE_CONF_MAP['ozone-manager']['ozone.metadata.dirs']
 # ozone scm ha enabled
 ozone_scm_ha_current_cluster_nameservice = default('/configurations/ozone-site/ozone.scm.default.service.id', None)
 ozone_scm_ha_enabled = ozone_scm_ha_current_cluster_nameservice != None
@@ -303,9 +405,8 @@ ozone_scm_ha_ratis_port = default("/configurations/ozone-site/ozone.scm.ratis.po
 
 
 ozone_manager_db_dirs = config['configurations']['ozone-site']['ozone.om.db.dirs']
-# fallback on ozone.metadata.dirs if ozone.om.db.dirs is not defined
-if ozone_manager_db_dirs is None:
-  ozone_manager_db_dirs =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_topology_file = config['configurations']['ozone-site']['net.topology.script.file.name']
+
 #Ozone Manager High Availability
 command_phase = default("/commandParams/phase","")
 
@@ -399,7 +500,7 @@ if enable_ranger_ozone:
   ozone_ranger_plugin_config = {
     'username': repo_config_username,
     'password': repo_config_password,
-    'ozone.om.http-address': ozone_om_address,
+    'ozone.om.http-address': om_web_address,
     'hadoop.security.authentication': hadoop_security_authentication,
     'hadoop.security.authorization': hadoop_security_authorization,
     'hadoop.security.auth_to_local': hadoop_security_auth_to_local,
@@ -454,4 +555,16 @@ if enable_ranger_ozone:
 # need this to capture cluster name from where ranger hbase plugin is enabled
 cluster_name = config['clusterName']
 
-# ranger hbase plugin section end
+# ranger ozone plugin section end
+role_scm = ROLE_NAME_MAP_DAEMON['ozone-scm']
+role_om = ROLE_NAME_MAP_DAEMON['ozone-manager']
+role_s3g = ROLE_NAME_MAP_DAEMON['ozone-s3g']
+role_datanode = ROLE_NAME_MAP_DAEMON['ozone-datanode']
+role_recon = ROLE_NAME_MAP_DAEMON['ozone-recon']
+ozone_scm_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_scm}.pid")
+ozone_datanode_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_datanode}.pid")
+ozone_manager_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_om}.pid")
+ozone_recon_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_recon}.pid")
+ozone_s3g_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_s3g}.pid")
+
+

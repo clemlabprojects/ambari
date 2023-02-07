@@ -22,21 +22,22 @@ from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.core.shell import as_sudo
 from resource_management.core.resources.system import Execute, File
+import os
 
 def ozone_service(
   name,
   action = 'start'): # 'start' or 'stop' or 'status'
     
     import params
-    conf_dir = params.ozone_conf_dir.join(params.ROLE_NAME_MAP_CONF(name))
-    role = params.ROLE_NAME_MAP_DAEMON(name)
+    conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF[name])
+    role = params.ROLE_NAME_MAP_DAEMON[name]
     cmd = format("{daemon_script} --config {conf_dir}")
     pid_file = format("{pid_dir}/ozone-{ozone_user}-{role}.pid")
     pid_expression = as_sudo(["cat", pid_file])
     no_op_test = as_sudo(["test", "-f", pid_file]) + format(" && ps -p `{pid_expression}` >/dev/null 2>&1")
     
     if action == 'start':
-      daemon_cmd = format("{cmd} start {role}")
+      daemon_cmd = format("{cmd} --daemon start {role}")
       
       try:
         Execute ( daemon_cmd,
@@ -47,7 +48,7 @@ def ozone_service(
         show_logs(params.log_dir, params.ozone_user)
         raise
     elif action == 'stop':
-      daemon_cmd = format("{cmd} stop {role}")
+      daemon_cmd = format("{cmd} --daemon stop {role}")
 
       try:
         Execute ( daemon_cmd,

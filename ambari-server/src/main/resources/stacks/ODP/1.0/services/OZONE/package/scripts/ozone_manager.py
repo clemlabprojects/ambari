@@ -35,6 +35,7 @@ from ambari_commons.constants import SERVICE
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.libraries.functions.setup_credential_file import setup_credential_file
 import sys, os
 import upgrade
 import time
@@ -63,7 +64,29 @@ class OzoneManagerDefault(OzoneManager):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    self.bootstrap_server(env)
+    bootstrap_server(env)
+        ## creating ssl keystore credential file if needed
+    if params.om_ssl_enabled:
+      passwords =  [ 
+        {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_om_tls_ssl_keystore_password}')},
+        {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_om_tls_ssl_key_password}')},
+        {'alias': 'ssl.server.truststore.password', 'value': format('{ozone_om_tls_ssl_truststore_password}')},
+        {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_om_tls_ssl_client_truststore_password}')}
+      ]
+      setup_credential_file(params.java64_home, None,
+                        params.ozone_om_credential_file_path, 'ozone', params.user_group,
+                        passwords, 'ozone-manager' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.ozone_om_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
+
     setup_ranger_ozone(upgrade_type=upgrade_type, service_name="ozone-manager")
     ozone_service('ozone-manager', action = 'start')
     
@@ -75,11 +98,13 @@ class OzoneManagerDefault(OzoneManager):
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    check_process_status(status_params.ozone_manager_pid_file)
+    import params
+    check_process_status(params.ozone_manager_pid_file)
 
   def security_status(self, env):
     import status_params
-
+    import params
+    conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
     env.set_params(status_params)
     if status_params.security_enabled:
       props_value_check = {"ozone.security.enabled" : "true",
@@ -136,20 +161,21 @@ class OzoneManagerDefault(OzoneManager):
     return params.ozone_user
 
   def get_pid_files(self):
-    import status_params
-    return [status_params.ozone_manager_pid_file]
+    import params
+    return [params.ozone_manager_pid_file]
 
 ## formatting Ozone Manager server directories
 def om_server_is_bootstrapped():
   import params
-  bootstrapped_path = os.path.join(params.ozone_manager_db_dirs, '/current/VERSION')
+  bootstrapped_path = format("{params.ozone_manager_db_dirs}/current/VERSION")
   return os.path.exists(bootstrapped_path)
 
 def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   import params
   """
-  Wait for the primary om server to be up and running on its ratis port 5when HA is enabled)
+  Wait for the primary om server to be up and running on its ratis port when HA is enabled)
   """
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   if not params.ozone_om_ha_enabled:
     Logger.info("Skipping waiting for primordial node")
     return
@@ -160,7 +186,7 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
       Execute(kinit_command, user=params.ozone_user, logoutput=True)
     while True:
       try:
-        Execute(format("ozone admin om getserviceroles -id {params.ozone_om_ha_current_cluster_nameservice} | grep {params.ozone_ha_om_active} | grep LEADER"),
+        Execute(format("ozone --config {conf_dir} admin om getserviceroles -id {params.ozone_om_ha_current_cluster_nameservice} | grep {params.ozone_ha_om_active} | grep LEADER"),
           user = params.ozone_user,
           path = [params.hadoop_ozone_bin_dir],
           logoutput=True
@@ -171,12 +197,51 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
         time.sleep(afterwait_sleep)
   return
 
-def wait_scm_primordial_node_availability():
+def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
+  """
+  Wait for Safe Mode Off on SCM Servers
+  Instead of looping on test safe mode, we use the included ozone command wait safemode using timeout parameters.
+  """
   import params
-  return
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
+  #Logger.info("Waiting up to {0} minutes for the SCM Server to leave Safemode...".format(sleep_minutes))
+  if params.security_enabled and execute_kinit:
+    kinit_command = format("{params.kinit_path_local} -kt {params.ozone_scm_user_keytab} {params.ozone_scm_principal_name}")
+    Execute(kinit_command, user=params.ozone_user, logoutput=True)
+  timeout = retries*(sleep_seconds+afterwait_sleep)
+
+  try:
+    Execute(format("ozone --config {conf_dir} admin safemode wait --timeout {timeout}"),
+      user = params.ozone_user,
+      path = [params.hadoop_ozone_bin_dir],
+      logoutput=True
+    )
+    time.sleep(afterwait_sleep)
+  except Fail:
+    Logger.error("Ozone SCM did not leave Safe Mode after {timeout} seconds. Exiting")
 
 def bootstrap_server(env=None):
   import params
+  Directory( params.ozone_manager_db_dirs,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0755,
+  )
+  Directory( params.ozone_manager_ha_dirs,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0755,
+  )
+  Directory( params.ozone_om_snapshot_dirs,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0755,
+  )
+  
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   if om_server_is_bootstrapped():
     Logger.info("Ozone OM is already initialized. Skipping")
     return None
@@ -185,12 +250,12 @@ def bootstrap_server(env=None):
       if params.hostname.lowercase() == params.ozone_ha_om_active:
         Logger.info("Ozone Manager HA is enabled")
         Logger.info("Waiting for Ozone SCM primordial node before initializing om. Waiting...")
-        wait_scm_primordial_node_availability()
+        wait_ozone_scm_safemode(params.ozone_cmd)
         Logger.info("Ozone OM is the first leader. Initializing")
          # bootstrapp the primary node
         try:
           Logger.info(format("Bootstrapping om leader node..."))
-          Execute(format("ozone om --init"),
+          Execute(format("ozone --config {conf_dir} om --init"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
             logoutput=True
@@ -207,7 +272,7 @@ def bootstrap_server(env=None):
         # bootstrapp not primary node
         try:
           Logger.info(format("Bootstrapping om node..."))
-          Execute(format("ozone om --bootstrap"),
+          Execute(format("ozone --config {conf_dir} om --bootstrap"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
             logoutput=True
@@ -221,10 +286,10 @@ def bootstrap_server(env=None):
     else:
       Logger.info("Ozone Manager HA is disabled")
       Logger.info("Waiting for Ozone SCM primordial node before initializing om. Waiting...")
-      wait_scm_primordial_node_availability()
+      wait_ozone_scm_safemode(params.ozone_cmd)
       try:
         Logger.info(format("Bootstrapping om node..."))
-        Execute(format("ozone om --init"),
+        Execute(format("ozone --config {conf_dir} om --init"),
           user = params.ozone_user,
           path = [params.hadoop_ozone_bin_dir],
           logoutput=True

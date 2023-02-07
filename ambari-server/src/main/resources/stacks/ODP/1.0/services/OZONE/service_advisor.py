@@ -24,6 +24,7 @@ import traceback
 import re
 import socket
 import fnmatch
+import inspect
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STACKS_DIR = os.path.join(SCRIPT_DIR, "../../../../")
@@ -67,7 +68,13 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
     Modify the dictionary of cardinalities.
     Must be overridden in child class.
     """
-    # Nothing to do
+    self.cardinalitiesDict.update(
+        {
+            'OZONE_MANAGER': {"min": 3},
+            'OZONE_STORAGE_CONTAINER_MANAGER': {"min": 3},
+            'OZONE_RECON': {"min": 3}
+        }
+    )
     pass
 
 
@@ -114,7 +121,7 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
     Must be overridden in child class.
     """
 
-    return self.getServiceComponentCardinalityValidations(services, hosts, "OOZIE")
+    return self.getServiceComponentCardinalityValidations(services, hosts, "OZONE")
 
 
   def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
@@ -197,6 +204,12 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
     # validationItems = [{"config-name": 'dfs.datanode.du.reserved', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'dfs.datanode.du.reserved')},
     #                    {"config-name": 'dfs.datanode.data.dir', "item": self.validatorOneDataDirPerPartition(properties, 'dfs.datanode.data.dir', services, hosts, clusterEnv)}]
     validationItems = []
+    defaultReplication = services["configurations"]["ozone-site"]["properties"]["ozone.replication"]
+    dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
+    if defaultReplication < 2 :
+      validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
+    if dnHosts < defaultReplication:
+      validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher %s than the number of Ozone Datanode Hosts %s " %defaultReplication % dnHosts )}])
     return self.toConfigurationValidationProblems(validationItems, "ozone-site")
 
   def validateOzoneEnvConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
@@ -228,7 +241,7 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneEnvProperty = self.putProperty(configurations, "ozone-env", services)
     putOzoneEnvPropertyAttributes = self.putPropertyAttribute(configurations, "ozone-env")
     putOzoneSiteProperty = self.putProperty(configurations, "ozone-site", services)
-    putOzoneSitePropertyAttributes = self.putPropertyAttribute(configurations, "ozone-site")
+    putOzoneSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-site")
     putOzoneRangerAuditSiteProperty = self.putProperty(configurations, "ranger-ozone-audit", services)
 
     ## default configuration
@@ -270,10 +283,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       managerCores = int(managerHosts[0]['Hosts']['cpu_count'])
     putOzoneSiteProperty("ozone.om.handler.count.key", 25 * managerCores)
     if 25 * managerCores > 200:
-      putOzoneSitePropertyAttributes("ozone.om.handler.count.key", "maximum", 25 * managerCores)
+      putOzoneSitePropertyAttribute("ozone.om.handler.count.key", "maximum", 25 * managerCores)
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
-    if ('ranger-hdfs-plugin-properties' in services['configurations']) and (
+    if ('ranger-ozone-plugin-properties' in services['configurations']) and (
       'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']):
       rangerPluginEnabled = services['configurations']['ranger-ozone-plugin-properties']['properties'][
         'ranger-ozone-plugin-enabled']
@@ -313,10 +326,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       scmCores = int(scmHosts[0]['Hosts']['cpu_count'])
     putOzoneSiteProperty("ozone.om.handler.count.key", 25 * scmCores)
     if 25 * scmCores > 200:
-      putOzoneSitePropertyAttributes("ozone.om.handler.count.key", "maximum", 25 * scmCores)
+      putOzoneSitePropertyAttribute("ozone.om.handler.count.key", "maximum", 25 * scmCores)
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
-    if ('ranger-hdfs-plugin-properties' in services['configurations']) and (
+    if ('ranger-ozone-plugin-properties' in services['configurations']) and (
       'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']):
       rangerPluginEnabled = services['configurations']['ranger-ozone-plugin-properties']['properties'][
         'ranger-ozone-plugin-enabled']
@@ -405,9 +418,63 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneEnvProperty('ozone_manager_opt_newsize', max(int(manager_heapsize / 8), 128))
     putOzoneEnvProperty('ozone_manager_opt_maxnewsize', max(int(manager_heapsize / 8), 128))
 
-    # define primordial Node
+    ## computes ids for SCM
+    scm_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.datanode.port"]
+    putOzoneSiteProperty("ozone.scm.primordial.node.id", scmHosts[0]["Hosts"]["host_name"])
+
+    scm_names = ','.join(str(x['Hosts']['host_name']+":"+str(scm_port)) for x in scmHosts)
+    defaultSCMServiceName = 'scmservice'
+    defaultOMServiceName = 'omservice'
+    putOzoneSiteProperty("ozone.scm.names", scm_names)
     
-  
+    if  "ozone.scm.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
+      if services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"] is None:
+        putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
+      else:
+        defaultSCMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"].split(',')[0]
+    else:
+      putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
+    # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
+    boundaries = [0] if len(scmHosts) is 1 else [0, len(scmHosts)-1]
+    putOzoneSiteProperty("ozone.scm.nodes."+str(defaultSCMServiceName), ','.join(str("scm"+str(x)) for x in boundaries))
+    scm_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.http-port"]
+    scm_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.https-port"]
+    for x in [ 0, len(scmHosts)-1]:
+      scmhost = scmHosts[x]
+      scmhostname = scmhost['Hosts']['host_name']
+      putOzoneSiteProperty("ozone.scm.address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
+      putOzoneSiteProperty("ozone.scm.http-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_http_port))
+      putOzoneSiteProperty("ozone.scm.https-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_https_port))
+
+    default_ozone_port = 9862 #client port
+    if "ozone.om.address" in services["configurations"]["ozone-site"]["properties"]:
+      parts = services["configurations"]["ozone-site"]["properties"]["ozone.om.address"].split(':')
+      default_ozone_port = parts[1] if len(parts) > 1 else 9862
+    ## computes ids for OM
+    if  "ozone.om.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
+      if services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"] is None:
+        putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
+      else:
+        defaultOMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"].split(',')[0]
+    else:
+      putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
+    # configure ozone.om.nodes.EXAMPLESOMSERVICEID
+    boundaries = [0] if len(managerHosts) is 1 else [0, len(managerHosts)-1]
+    putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
+    om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
+    om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
+    for x in [ 0, len(managerHosts)-1]:
+      omhost = managerHosts[x]
+      omhostname = omhost['Hosts']['host_name']
+      putOzoneSiteProperty("ozone.om.address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name'])+":"+str(default_ozone_port))
+      putOzoneSiteProperty("ozone.om.http-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_http_port))
+      putOzoneSiteProperty("ozone.om.https-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_https_port))
+
+    dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
+    # update ozone replication to size of dnHosts
+    replicationReco = min(3, dnHosts)
+    putOzoneSiteProperty("ozone.replication", replicationReco)
+    # ozone om address calculating value for ozone.om.http-address
   def is_kerberos_enabled(self, configurations, services):
     """
     Tests if Ozone has Kerberos enabled by first checking the recommended changes and then the
@@ -428,9 +495,9 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     return config and \
            (
              "ozone-site" in config and
-             'ozone.security.enabled' in config['oozie-site']["properties"] and
-             (config['oozie-site']["properties"]['ozone.security.enabled'] or
-              config['oozie-site']["properties"]['hadoop.security.authentication'] == 'kerberos')
+             'ozone.security.enabled' in config['ozone-site']["properties"] and
+             (config['ozone-site']["properties"]['ozone.security.enabled'] or
+              config['ozone-site']["properties"]['hadoop.security.authentication'] == 'kerberos')
            )
 
   def validateRangerAuthorizerFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):

@@ -23,16 +23,16 @@
     <property>
         <name>ssl.server.keystore.location</name>
         <value>/etc/hadoop/conf/ozone.recon/keystore.jks</value>
-        <display-name>Ozone Manager Keystore Location</display-name>
-        <description>File containing Ozone Manager JAVA KeyStore.
+        <display-name>Ozone RECON UI Keystore Location</display-name>
+        <description>File containing Ozone RECON UI JAVA KeyStore.
         </description>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
         <name>ssl.server.keystore.password</name>
         <value>changeit</value>
-        <display-name>Ozone Manager Keystore Password</display-name>
-        <description>Ozone Manager Keystore Password</description>
+        <display-name>Ozone RECON UI Keystore Password</display-name>
+        <description>Ozone RECON UI Keystore Password</description>
         <value-attributes>
             <type>password</type>
         </value-attributes>
@@ -41,8 +41,8 @@
     <property>
         <name>ssl.server.keystore.keypassword</name>
         <value>changeit</value>
-        <display-name>Ozone Manager Keystore Key Password</display-name>
-        <description>Ozone Manager Keystore Key Password</description>
+        <display-name>Ozone RECON UI Keystore Key Password</display-name>
+        <description>Ozone RECON UI Keystore Key Password</description>
         <value-attributes>
             <type>password</type>
         </value-attributes>
@@ -51,22 +51,22 @@
     <property>
         <name>ssl.server.keystore.type</name>
         <value>jks</value>
-        <display-name>Ozone Manager Keystore Type</display-name>
-        <description>Ozone Manager Keystore Type</description>
+        <display-name>Ozone RECON UI Keystore Type</display-name>
+        <description>Ozone RECON UI Keystore Type</description>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
         <name>ssl.server.exclude.cipher.list</name>
         <value>^TLS_DHE.*$,^.*SHA$,^TLS_RSA_WITH.*$,^.*MD5.*$,^TLS_DH_.*$,^.*RC4.*$,^.*CCM.*$</value>
-        <display-name>Ozone Manager Keystore Type</display-name>
-        <description>Ozone Manager Keystore Type</description>
+        <display-name>Ozone RECON UI Keystore Type</display-name>
+        <description>Ozone RECON UI Keystore Type</description>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
         <name>hadoop.security.credential.provider.path</name>
         <value>localjceks://file/etc/hadoop/conf/ozone.recon/credential.jceks</value>
-        <display-name>Ozone Manager Hadoop Crendential Provider</display-name>
-        <description>Keystore used by Ozone Manager to store SSL related secrets.</description>
+        <display-name>Ozone RECON UI Hadoop Crendential Provider</display-name>
+        <description>Keystore used by Ozone RECON UI to store SSL related secrets.</description>
         <on-ambari-upgrade add="false"/>
     </property>
 </configuration>

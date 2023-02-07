@@ -81,7 +81,7 @@
                   "section-rows": "1",
                   "subsections": [
                     {
-                      "name": "subsection-scm-col1",
+                      "name": "subsection-recon-col1",
                       "row-index": "0",
                       "column-index": "0",
                       "row-span": "1",
@@ -100,7 +100,7 @@
                   "section-rows": "1",
                   "subsections": [
                     {
-                      "name": "subsection-scm-col1",
+                      "name": "subsection-s3g-col1",
                       "row-index": "0",
                       "column-index": "0",
                       "row-span": "1",

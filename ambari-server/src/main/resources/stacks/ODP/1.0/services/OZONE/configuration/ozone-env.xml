@@ -82,7 +82,7 @@
   </property>
   <property>
     <name>ozone_java_opts</name>
-    <value></value>
+    <value>  </value>
     <description>Ozone Gateway JAVA Extra args</description>
     <display-name>Ozone Gateway JAVA options</display-name>
     <on-ambari-upgrade add="false"/>
@@ -212,7 +212,7 @@
   </property>
   <property>
     <name>ozone_manager_java_opts</name>
-    <value></value>
+    <value> </value>
     <description>Ozone Manager JAVA Extra args</description>
     <display-name>Ozone Manager JAVA options</display-name>
     <on-ambari-upgrade add="false"/>
@@ -348,8 +348,8 @@
     </property>
     <property>
         <name>ozone_scm_java_opts</name>
-        <value></value>
-        <description>Ozone Storage Container Manager JAVA Extra args</description>
+        <value> </value>
+        <description>Ozone Storage Container Manager JAVA Extra args.</description>
         <display-name>Ozone Storage Container Manager JAVA options</display-name>
         <on-ambari-upgrade add="false"/>
     </property>
@@ -484,7 +484,7 @@
     </property>
     <property>
         <name>ozone_datanode_java_opts</name>
-        <value></value>
+        <value> </value>
         <description>Ozone Datanode JAVA Extra args</description>
         <display-name>Ozone Datanode JAVA options</display-name>
         <on-ambari-upgrade add="false"/>
@@ -620,7 +620,7 @@
     </property>
     <property>
         <name>ozone_s3g_java_opts</name>
-        <value></value>
+        <value> </value>
         <description>Ozone S3 Gateway JAVA Extra args</description>
         <display-name>Ozone S3 Gateway JAVA options</display-name>
         <on-ambari-upgrade add="false"/>
@@ -756,7 +756,7 @@
     </property>
     <property>
         <name>ozone_recon_java_opts</name>
-        <value></value>
+        <value> </value>
         <description>Ozone Recon UI JAVA Extra args</description>
         <display-name>Ozone Recon UI JAVA options</display-name>
         <on-ambari-upgrade add="false"/>
@@ -855,7 +855,7 @@
 
             # Set Ozone-specific environment variables here.
 
-            export JAVA_HOME={{java_home}}
+            export JAVA_HOME={{java64_home}}
 
             # Location of Ozone.  By default, Ozone will attempt to determine
             # this location based upon its execution path.
@@ -923,7 +923,7 @@
             # Where (primarily) daemon log files are stored.
             # ${OZONE_HOME}/logs by default.
             # Java property: hadoop.log.dir
-            export OZONE_LOG_DIR={{ozone_log_dir_prefix}}/$USER
+            export OZONE_LOG_DIR={{ozone_log_dir_prefix}}
 
             # A string representing this instance of Ozone. $USER by default.
             # This is used in writing log and pid files, so keep that in mind!
@@ -934,7 +934,7 @@
             # export OZONE_STOP_TIMEOUT=5
 
             # Where pid files are stored.  /tmp by default.
-            export OZONE_PID_DIR={{ozone_pid_dir_prefix}}/$USER
+            export OZONE_PID_DIR={{ozone_pid_dir_prefix}}
 
             # Default log4j setting for interactive commands
             # Java property: hadoop.root.logger
@@ -978,9 +978,9 @@
             # Java property: hadoop.log.dir
             export OZONE_SECURE_LOG=${OZONE_LOG_DIR}
             {% if java_version &lt; 8 %}
-            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/$USER/hs_err_pid%p.log"
+            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log"
             {% else %}
-            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/$USER/hs_err_pid%p.log -Xloggc:{{ozone_log_dir_prefix}}/$USER/gc.log-`date +'%Y%m%d%H%M'` -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:CMSInitiatingOccupancyFraction=70 -XX:+UseCMSInitiatingOccupancyOnly"
+            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log -Xloggc:{{ozone_log_dir_prefix}}/gc.log-`date +'%Y%m%d%H%M'` -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:CMSInitiatingOccupancyFraction=70 -XX:+UseCMSInitiatingOccupancyOnly"
             {% endif %}
             #
             # When running a secure daemon, the default value of OZONE_IDENT_STRING
@@ -1005,7 +1005,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            # export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
 
             ###
             # HDFS StorageContainerManager specific parameters

@@ -67,8 +67,9 @@ class OzoneS3GatewayDefault(OzoneS3Gateway):
 
   def status(self, env):
     import status_params
+    import params
     env.set_params(status_params)
-    check_process_status(status_params.ozone_s3g_pid_file)
+    check_process_status(params.ozone_s3g_pid_file)
 
   def get_log_folder(self):
     import params
@@ -79,8 +80,8 @@ class OzoneS3GatewayDefault(OzoneS3Gateway):
     return params.ozone_user
 
   def get_pid_files(self):
-    import status_params
-    return [status_params.ozone_s3g_pid_file]
+    import params
+    return [params.ozone_s3g_pid_file]
 
 if __name__ == "__main__":
   OzoneS3Gateway().execute()

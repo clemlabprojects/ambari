@@ -352,6 +352,95 @@
           ]
         }
       },
+      "OZONE": {
+        "OZONE_CLIENT": {
+          "STACK-SELECT-PACKAGE": "ozone-client",
+          "INSTALL": [
+            "ozone-client"
+          ],
+          "PATCH": [
+            "ozone-client"
+          ],
+          "STANDARD": [
+            "ozone-client"
+          ]
+        },
+        "OZONE_MANAGER": {
+          "STACK-SELECT-PACKAGE": "ozone-manager",
+          "INSTALL": [
+            "ozone-client",
+            "ozone-manager"
+          ],
+          "PATCH": [
+            "ozone-client",
+            "ozone-manager"
+          ],
+          "STANDARD": [
+            "ozone-client",
+            "ozone-manager"
+          ]
+        },
+        "OZONE_DATANODE": {
+          "STACK-SELECT-PACKAGE": "ozone-datanode",
+          "INSTALL": [
+            "ozone-client",
+            "ozone-datanode"
+          ],
+          "PATCH": [
+            "ozone-client",
+            "ozone-datanode"
+          ],
+          "STANDARD": [
+            "ozone-client",
+            "ozone-datanode"
+          ]
+        },
+        "OZONE_RECON": {
+          "STACK-SELECT-PACKAGE": "ozone-recon",
+          "INSTALL": [
+            "ozone-client",
+            "ozone-recon"
+          ],
+          "PATCH": [
+            "ozone-client",
+            "ozone-recon"
+          ],
+          "STANDARD": [
+            "ozone-client",
+            "ozone-recon"
+          ]
+        },
+        "OZONE_STORAGE_CONTAINER_MANAGER": {
+          "STACK-SELECT-PACKAGE": "ozone-storage-container-manager",
+          "INSTALL": [
+            "ozone-client",
+            "ozone-storage-container-manager"
+          ],
+          "PATCH": [
+            "ozone-client",
+            "ozone-storage-container-manager"
+          ],
+          "STANDARD": [
+            "ozone-client",
+            "ozone-storage-container-manager"
+          ]
+        },
+        "OZONE_S3_GATEWAY": {
+          "STACK-SELECT-PACKAGE": "ozone-s3-gateway",
+          "INSTALL": [
+            "ozone-client",
+            "ozone-s3-gateway"
+          ],
+          "PATCH": [
+            "ozone-client",
+            "ozone-s3-gateway"
+          ],
+          "STANDARD": [
+            "ozone-client",
+            "ozone-s3-gateway"
+          ]
+        }
+      },
       "RANGER": {
         "RANGER_ADMIN": {
           "STACK-SELECT-PACKAGE": "ranger-admin",
@@ -748,6 +837,36 @@
         {
           "conf_dir": "/etc/oozie/conf",
           "current_dir": "{0}/current/oozie-client/conf"
+        }
+      ],
+      "ozone-manager": [
+        {
+          "conf_dir": "/etc/hadoop/conf/ozone.om",
+          "current_dir": "{0}/current/ozone-manager/conf"
+        }
+      ],
+      "ozone-storage-container-manager": [
+        {
+          "conf_dir": "/etc/hadoop/conf/ozone.scm",
+          "current_dir": "{0}/current/ozone-storage-container-manager/conf"
+        }
+      ],
+      "ozone-datanode": [
+        {
+          "conf_dir": "/etc/hadoop/conf/ozone.datanode",
+          "current_dir": "{0}/current/ozone-datanode/conf"
+        }
+      ],
+      "ozone-s3g": [
+        {
+          "conf_dir": "/etc/hadoop/conf/ozone.s3g",
+          "current_dir": "{0}/current/ozone-recon/conf"
+        }
+      ],
+      "ozone-recon": [
+        {
+          "conf_dir": "/etc/hadoop/conf/ozone.recon",
+          "current_dir": "{0}/current/ozone-recon/conf"
         }
       ],
       "phoenix": [
