@@ -16,11 +16,7 @@
  * limitations under the License.
  */
 
-var App = require('app');
-
-module.exports =
-{
-  "configProperties": [
+module.exports = [
   //***************************************** ODP stack **************************************
   /**********************************************OZONE***************************************/
   /* OZONE - JAVA - Memory - Settings */
@@ -37,7 +33,7 @@ module.exports =
       "isVisible": true,
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 1
     },
     {
@@ -51,7 +47,7 @@ module.exports =
       "isVisible": true,
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 2
     },
     {
@@ -65,7 +61,7 @@ module.exports =
       "isVisible": true,
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 3
     },
     {
@@ -79,7 +75,7 @@ module.exports =
       "isVisible": true,
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 4
     },
     {
@@ -93,7 +89,7 @@ module.exports =
       "isVisible": true,
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 5
     },
     {
@@ -102,7 +98,7 @@ module.exports =
       "description": "JAVA Arguments for Ozone Manager.",
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
-      "category": "OZONE_OM_SETTINGS",
+      "category": "OZONE_MANAGER_SETTINGS",
       "index": 6
     },
     /* Ozone Storage Container Manager JVM */
@@ -176,7 +172,7 @@ module.exports =
       "category": "OZONE_SCM_SETTINGS",
       "index": 5
     },
-        {
+    {
       "name": "ozone_scm_java_opts",
       "displayName": "Ozone Storage Container Manager JVM Options",
       "description": "JAVA Arguments for Ozone Manager.",
@@ -418,7 +414,7 @@ module.exports =
     },
     {
       "name": "ozone_s3g_java_opts",
-      "displayName": "Ozone S3 Gateway JVM Options",
+      "displayName": "Ozone S3 JVM Options",
       "description": "JAVA Arguments for Ozone Manager.",
       "serviceName": "OZONE",
       "filename": "ozone-env.xml",
@@ -1197,6 +1193,5 @@ module.exports =
       "filename": "ozone-log4j-properties.xml",
       "category": "OZONE_GATEWAY_LOG4J",
       "index": 6
-    },
-  ]
-};
+    }
+  ];

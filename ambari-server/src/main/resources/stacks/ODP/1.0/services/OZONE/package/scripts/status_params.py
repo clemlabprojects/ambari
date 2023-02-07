@@ -41,10 +41,6 @@ SERVER_ROLE_DIRECTORY_MAP = {
 component_directory = Script.get_component_from_role(SERVER_ROLE_DIRECTORY_MAP, "OZONE_CLIENT")
 
 config = Script.get_config()
-
-pid_dir = config['configurations']['ozone-env']['ozone_pid_dir_prefix']
-ozone_user = config['configurations']['ozone-env']['ozone_user']
-
 # Security related/required params
 hostname = config['agentLevelParams']['hostname']
 security_enabled = config['configurations']['cluster-env']['security_enabled']
@@ -55,9 +51,9 @@ stack_version_unformatted = str(config['clusterLevelParams']['stack_version'])
 stack_version_formatted = format_stack_version(stack_version_unformatted)
 stack_root = Script.get_stack_root()
 
-ozone_conf_dir = "/etc/hadoop-ozone/conf"
+ozone_conf_dir = "/etc/hadoop/conf"
 limits_conf_dir = "/etc/security/limits.d"
-if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, stack_version_formatted):
-  ozone_conf_dir = format("{stack_root}/current/{component_directory}/conf")
+# if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, stack_version_formatted):
+#   ozone_conf_dir = format("{stack_root}/current/{component_directory}/conf")
     
 stack_name = default("/clusterLevelParams/stack_name", None)

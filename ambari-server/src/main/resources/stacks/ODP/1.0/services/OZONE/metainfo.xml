@@ -84,13 +84,20 @@
           <reassignAllowed>false</reassignAllowed>
           <dependencies>
             <dependency>
+              <name>OZONE/OZONE_STORAGE_CONTAINER_MANAGER</name>
+              <scope>cluster</scope>
+              <auto-deploy>
+                <enabled>false</enabled>
+              </auto-deploy>
+            </dependency>
+            <dependency>
               <name>HDFS/NAMENODE</name>
               <scope>cluster</scope>
               <auto-deploy>
                 <enabled>false</enabled>
               </auto-deploy>
               <conditions>
-                <condition xsi:type="config" type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals"/>
+                <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
                   <configType>ozone-env</configType>
                   <property>run_in_hdfs</property>
                 </condition>
@@ -152,7 +159,7 @@
                   <enabled>false</enabled>
                 </auto-deploy>
                 <conditions>
-                  <condition xsi:type="config" type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals"/>
+                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
                     <configType>ozone-env</configType>
                     <property>run_in_hdfs</property>
                   </condition>
@@ -260,7 +267,7 @@
                   <enabled>false</enabled>
                 </auto-deploy>
                 <conditions>
-                  <condition xsi:type="config" type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals"/>
+                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
                     <configType>ozone-env</configType>
                     <property>run_in_hdfs</property>
                   </condition>
@@ -311,7 +318,7 @@
               </dependency>
           </dependencies>
           <commandScript>
-            <script>scripts/ozone_recon.py</script>
+            <script>scripts/ozone_s3_gateway.py</script>
             <scriptType>PYTHON</scriptType>
           </commandScript>
           <configFiles>
@@ -372,9 +379,7 @@
         <scriptType>PYTHON</scriptType>
         <timeout>300</timeout>
       </commandScript>
-
       
-
       <configuration-dependencies>
         <config-type>ozone-site</config-type>
         <config-type>ozone-env</config-type>
@@ -382,20 +387,13 @@
         <config-type>ranger-ozone-security</config-type>
       </configuration-dependencies>
 
-      <themes>
-        <theme>
-          <fileName>directories.json</fileName>
-          <default>true</default>
-        </theme>
-      </themes>
-
       <!-- <sso>
         <supported>true</supported>
         <kerberosRequired>true</kerberosRequired>
         <ssoEnabledTest>
           {
           "equals": [
-          "ozone-site/oozie.authentication.type",
+          "ozone-site/ozone.authentication.type",
           "org.apache.hadoop.security.authentication.server.JWTRedirectAuthenticationHandler"
           ]
           }
@@ -427,6 +425,17 @@
           <default>true</default>
         </quickLinksConfiguration>
       </quickLinksConfigurations>
+  
+      <themes>
+        <theme>
+          <fileName>theme.json</fileName>
+          <default>true</default>
+        </theme>
+        <theme>
+          <fileName>directories.json</fileName>
+          <default>true</default>
+        </theme>
+      </themes>
     </service>
   </services>
 </metainfo>

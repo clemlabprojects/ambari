@@ -18,29 +18,30 @@ limitations under the License.
 
 """
 
-from ambari_commons import OSCheck, OSConst
-from ambari_commons.os_family_impl import OsFamilyImpl
-from ambari_commons.constants import SERVICE
-from ozone import ozone
-from ozone_service import ozone_service
-from resource_management.core.exceptions import Fail
-from resource_management.core.logger import Logger
-from resource_management.core.resources.system import Directory, Execute, File
+import sys
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
-import sys, os
+from ozone import ozone
+from ozone_service import ozone_service
 import upgrade
-import time
+from setup_ranger_ozone import setup_ranger_ozone
+from ambari_commons import OSCheck, OSConst
+from ambari_commons.os_family_impl import OsFamilyImpl
+import os
+from ambari_commons.constants import SERVICE
+from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Directory, Execute, File
 
-class OzoneDatanode(Script):
+
+class OzoneRecon(Script):
   def configure(self, env):
     import params
     env.set_params(params)
-    ozone(name='ozone-datanode')
+    ozone(name='ozone-recon')
 
   def install(self, env):
     import params
@@ -48,7 +49,7 @@ class OzoneDatanode(Script):
     self.install_packages(env)
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
-class OzoneDatanodeDefault(OzoneDatanode):
+class OzoneReconDefault(OzoneRecon):
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
@@ -58,24 +59,48 @@ class OzoneDatanodeDefault(OzoneDatanode):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    Directory( params.ozone_dn_ratis_dir,
-      owner = params.ozone_user,
-      create_parents = True,
-      cd_access = "a",
-      mode = 0750,
-    )
-    ozone_service('ozone-datanode', action = 'start')
+    
+    if os.path.isdir(params.ozone_recon_db_dir):
+      Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_db_dir)
+    else:
+      Logger.info("Creating directory %s" % params.ozone_recon_db_dir)
+      Directory( params.ozone_recon_db_dir,
+        owner = params.ozone_user,
+        create_parents = True,
+        cd_access = "a",
+        mode = 0750,
+      )
+    if os.path.isdir(params.ozone_recon_scm_metadata_dir):
+      Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_scm_metadata_dir)
+    else:
+      Logger.info("Creating directory %s" % params.ozone_recon_scm_metadata_dir)
+      Directory( params.ozone_recon_scm_metadata_dir,
+        owner = params.ozone_user,
+        create_parents = True,
+        cd_access = "a",
+        mode = 0750,
+      )
+    if os.path.isdir(params.ozone_recon_om_metadata_dir):
+      Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_om_metadata_dir)
+    else:
+      Logger.info("Creating directory %s" % params.ozone_recon_om_metadata_dir)
+      Directory(params.ozone_recon_om_metadata_dir,
+        owner = params.ozone_user,
+        create_parents = True,
+        cd_access = "a",
+        mode = 0750,
+      )
+    ozone_service('ozone-recon', action = 'start')
     
   def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    ozone_service('ozone-datanode', action = 'stop')
+    ozone_service('ozone-recon', action = 'stop')
 
   def status(self, env):
-    import status_params
     import params
-    env.set_params(status_params)
-    check_process_status(params.ozone_datanode_pid_file)
+    env.set_params(params)
+    check_process_status(params.ozone_recon_pid_file)
 
   def get_log_folder(self):
     import params
@@ -87,7 +112,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
 
   def get_pid_files(self):
     import params
-    return [params.ozone_datanode_pid_file]
+    return [params.ozone_recon_pid_file]
 
 if __name__ == "__main__":
-  OzoneDatanode().execute()
+  OzoneRecon().execute()

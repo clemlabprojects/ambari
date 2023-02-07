@@ -18,9 +18,9 @@
 {
   "input":[
     {
-      "type":"oozie_app",
+      "type":"ozone_app",
       "rowtype":"service",
-      "path":"{{default('/configurations/oozie-env/ozone_log_dir_prefix', '/var/log/hadoop-ozone')}}/ozone.log"
+      "path":"{{default('/configurations/ozone-env/ozone_log_dir_prefix', '/var/log/hadoop-ozone')}}/ozone.log"
     }
   ],
   "filter":[
@@ -29,7 +29,7 @@
       "conditions":{
         "fields":{
           "type":[
-            "oozie_app"
+            "ozone_app"
           ]
         }
       },

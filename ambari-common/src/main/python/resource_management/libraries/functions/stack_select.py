@@ -401,7 +401,7 @@ def get_hadoop_dir(target):
 
   return hadoop_dir
 
-def get_ozone_dir(target):
+def get_hadoop_ozone_dir(target):
   """
   Return the hadoop ozone shared directory which should be used for the command's component. The
   directory including the component's version is tried first, but if that doesn't exist,

@@ -47,6 +47,11 @@ describe('App.StackService', function () {
       ss.propertyDidChange('isDFS');
       expect(ss.get('isDFS')).to.be.true;
     });
+    it('service name is "OZONE"', function () {
+      ss.set('serviceName', 'OZONE');
+      ss.propertyDidChange('isDFS');
+      expect(ss.get('isDFS')).to.be.true;
+    });
   });
 
   describe('#isPrimaryDFS', function () {
