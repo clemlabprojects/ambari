@@ -65,7 +65,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     File(os.path.join(params.ozone_topology_file),
         owner='root',
         group='root',
-        mode=0644,
+        mode=0755,
         content=Template("ozone_topology_script.py")
     )
     format_scm(env)
