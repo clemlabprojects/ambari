@@ -601,6 +601,13 @@
     </property>
     <!--    Ozone Recon UI related properties-->
     <property>
+        <name>ozone.recon.address</name>
+        <value>0.0.0.0:9891</value>
+        <display-name>Ozone RECON UI RPC address</display-name>
+        <description>The RECON UI RPC listening port for DataNode heartbeats and registration.
+        </description>
+    </property>
+    <property>
         <name>ozone.recon.db.dir</name>
         <value>/var/lib/hadoop-ozone/recon/data</value>
         <display-name>Ozone RECON UI data directory</display-name>

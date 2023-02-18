@@ -208,8 +208,8 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
     dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
     if defaultReplication < 2 :
       validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
-    if dnHosts < defaultReplication:
-      validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher %s than the number of Ozone Datanode Hosts %s " %defaultReplication % dnHosts )}])
+    if int(dnHosts) < int(defaultReplication):
+      validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher "+str(defaultReplication)+" than the number of Ozone Datanode Hosts " + str(dnHosts) )}])
     return self.toConfigurationValidationProblems(validationItems, "ozone-site")
 
   def validateOzoneEnvConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
@@ -275,6 +275,7 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
 
     managerHosts = self.getHostsWithComponent("OZONE", "OZONE_MANAGER", services, hosts)
     scmHosts = self.getHostsWithComponent("OZONE", "OZONE_STORAGE_CONTAINER_MANAGER", services, hosts)
+    reconHosts = self.getHostsWithComponent("OZONE", "OZONE_RECON", services, hosts)
 
     ## Ozone Manager
     # 25 * # of cores on NameNode
@@ -447,9 +448,13 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       putOzoneSiteProperty("ozone.scm.https-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_https_port))
 
     default_ozone_port = 9862 #client port
+    default_ozone_dn_to_recon_port = 9891
     if "ozone.om.address" in services["configurations"]["ozone-site"]["properties"]:
       parts = services["configurations"]["ozone-site"]["properties"]["ozone.om.address"].split(':')
       default_ozone_port = parts[1] if len(parts) > 1 else 9862
+    if "ozone.recon.address" in services["configurations"]["ozone-site"]["properties"]:
+      parts = services["configurations"]["ozone-site"]["properties"]["ozone.recon.address"].split(':')
+      default_ozone_dn_to_recon_port = parts[1] if len(parts) > 1 else 9891
     ## computes ids for OM
     if  "ozone.om.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
       if services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"] is None:
@@ -460,6 +465,7 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
     # configure ozone.om.nodes.EXAMPLESOMSERVICEID
     boundaries = [0] if len(managerHosts) is 1 else [0, len(managerHosts)-1]
+    putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name']+":"+str(default_ozone_dn_to_recon_port)))
     putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
     om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
     om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
