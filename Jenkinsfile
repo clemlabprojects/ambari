@@ -81,8 +81,8 @@ void runODPBUILD(osType, osTarget) {
                     }
                     
                     stage('Upload Realease dir') {
-                        sh "aws s3 cp $RELEASE_DIR s3://clemlabs/${osType}/ambari-release/2.7.6.0-$BUILD_NUMBER --recursive"
-                        sh "aws s3 cp /var/www/html/repos-ambari.tar.gz s3://clemlabs/${osType}/ambari-release/2.7.6.0-$BUILD_NUMBER/repos-ambari.tar.gz"
+                        sh "aws s3 cp $RELEASE_DIR s3://clemlabs/${osType}/ambari-tests/2.7.6.0-$BUILD_NUMBER --recursive"
+                        sh "aws s3 cp /var/www/html/repos-ambari.tar.gz s3://clemlabs/${osType}/ambari-tests/2.7.6.0-$BUILD_NUMBER/repos-ambari.tar.gz"
                         sh 'aws s3 website --index-document index.htm s3://clemlabs'
 
                     }
