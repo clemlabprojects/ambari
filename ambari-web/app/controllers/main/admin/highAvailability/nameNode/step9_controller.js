@@ -173,6 +173,28 @@ App.HighAvailabilityWizardStep9Controller = App.HighAvailabilityProgressPageCont
         });
       }
     }
+    if (App.Service.find().someProperty('serviceName', 'OZONE')) {
+      siteNames = [];
+      var knoxPluginConfig = data.items.findProperty('type', 'ranger-ozone-plugin-properties');
+      if (ozonePluginConfig) {
+        if ('xasecure.audit.destination.hdfs.dir' in ozonePluginConfig.properties) {
+          siteNames.push('ranger-ozone-plugin-properties');
+        }
+      }
+      var ozoneAuditConfig = data.items.findProperty('type', 'ranger-ozone-audit');
+      if (ozoneAuditConfig) {
+        if ('xasecure.audit.destination.hdfs.dir' in ozoneAuditConfig.properties) {
+          siteNames.push('ranger-ozone-audit');
+        }
+      }
+      if(siteNames.length) {
+        configs.push({
+          Clusters: {
+            desired_config: this.reconfigureSites(siteNames, data, Em.I18n.t('admin.highAvailability.step4.save.configuration.note').format(App.format.role('NAMENODE', false)))
+          }
+        });
+      }
+    }
     if (App.Service.find().someProperty('serviceName', 'ATLAS')) {
       siteNames = [];
       var atlasAuditConfig = data.items.findProperty('type', 'ranger-atlas-audit');

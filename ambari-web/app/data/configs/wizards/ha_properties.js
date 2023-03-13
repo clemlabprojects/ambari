@@ -30,7 +30,7 @@ module.exports =
       App.ServiceConfigCategory.create({ name: 'OZONE', displayName: 'OZONE'}),
       App.ServiceConfigCategory.create({ name: 'RANGER', displayName: 'Ranger'})
     ],
-    sites: ['core-site', 'hdfs-site', 'hbase-site', 'accumulo-site', 'ams-hbase-site', 'hawq-site', 'hdfs-client', 'ozone-env','ozone-site','ranger-env', 'ranger-knox-plugin-properties', 'ranger-kms-audit',  'ranger-ozone-audit', 'ranger-ozone-plugin-properties','ranger-storm-plugin-properties', 'ranger-hbase-plugin-properties', 'ranger-hdfs-plugin-properties', 'ranger-hive-plugin-properties', 'ranger-kafka-audit', 'ranger-knox-audit', 'ranger-hdfs-audit', 'ranger-hive-audit', 'ranger-atlas-audit', 'ranger-storm-audit', 'ranger-hbase-audit', 'ranger-yarn-audit'],
+    sites: ['core-site', 'hdfs-site', 'hbase-site', 'accumulo-site', 'ams-hbase-site', 'hawq-site', 'hdfs-client', 'ozone-env','ozone-site','ranger-env', 'ranger-knox-plugin-properties', 'ranger-kms-audit',  'ranger-ozone-audit', 'ranger-ozone-plugin-properties','ranger-storm-plugin-properties', 'ranger-hbase-plugin-properties', 'ranger-hdfs-plugin-properties', 'ranger-hive-plugin-properties','ranger-ozone-plugin-properties', 'ranger-kafka-audit', 'ranger-knox-audit', 'ranger-hdfs-audit', 'ranger-hive-audit', 'ranger-atlas-audit', 'ranger-storm-audit', 'ranger-hbase-audit', 'ranger-yarn-audit','ranger-ozone-audit'],
     configs: [
     /**********************************************HDFS***************************************/
       {
@@ -454,6 +454,30 @@ module.exports =
         "category": "RANGER_KMS",
         "isVisible": false,
         "filename": "ranger-kms-audit",
+        "serviceName": 'MISC'
+      },
+      {
+        "name": "xasecure.audit.destination.hdfs.dir",
+        "displayName": "Destination HDFS Directory",
+        "description": "HDFS folder to write audit to, make sure all service user has required permissions. This property is overridable at service level.",
+        "isReconfigurable": false,
+        "recommendedValue": "hdfs://haCluster",
+        "value": "hdfs://haCluster",
+        "category": "OZONE",
+        "isVisible": false,
+        "filename": "ranger-ozone-plugin-properties",
+        "serviceName": 'MISC'
+      },
+      {
+        "name": "xasecure.audit.destination.hdfs.dir",
+        "displayName": "Destination HDFS Directory",
+        "description": "HDFS folder to write audit to, make sure all service user has required permissions. This property is overridable at service level.",
+        "isReconfigurable": false,
+        "recommendedValue": "hdfs://haCluster",
+        "value": "hdfs://haCluster",
+        "category": "OZONE",
+        "isVisible": false,
+        "filename": "ranger-ozone-audit",
         "serviceName": 'MISC'
       },
     /**********************************************HAWQ***************************************/
