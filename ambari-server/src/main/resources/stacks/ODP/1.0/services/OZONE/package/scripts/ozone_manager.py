@@ -62,20 +62,25 @@ class OzoneManagerDefault(OzoneManager):
 
   def start(self, env, upgrade_type=None):
     import params
+    from setup_credential_ozone import setup_credential_ozone
     env.set_params(params)
     self.configure(env) # for security
     bootstrap_server(env)
-        ## creating ssl keystore credential file if needed
+    ## creating ssl keystore credential file if needed
     if params.om_ssl_enabled:
       passwords =  [ 
         {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_om_tls_ssl_keystore_password}')},
         {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_om_tls_ssl_key_password}')},
-        {'alias': 'ssl.server.truststore.password', 'value': format('{ozone_om_tls_ssl_truststore_password}')},
         {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_om_tls_ssl_client_truststore_password}')}
       ]
-      setup_credential_file(params.java64_home, None,
-                        params.ozone_om_credential_file_path, 'ozone', params.user_group,
-                        passwords, 'ozone-manager' )
+      if params.is_hdfs_enabled:
+        setup_credential_file(params.java64_home, None,
+                          params.ozone_om_credential_file_path, 'ozone', params.user_group,
+                          passwords, 'ozone-manager' )
+      else:
+        setup_credential_ozone(params.java64_home,
+                      params.ozone_om_credential_file_path, 'ozone', params.user_group,
+                      passwords, 'ozone-manager' )
 
       separator = ('jceks://file')
       file_to_chown = params.ozone_om_credential_file_path.split(separator)[1]
@@ -96,8 +101,6 @@ class OzoneManagerDefault(OzoneManager):
     ozone_service('ozone-manager', action = 'stop')
 
   def status(self, env):
-    import status_params
-    env.set_params(status_params)
     import params
     check_process_status(params.ozone_manager_pid_file)
 
@@ -261,10 +264,12 @@ def bootstrap_server(env=None):
             logoutput=True
           )
         except Fail:
-          for om_db_dir in params.ozone_manager_db_dirs.split(','):
-            Execute(format("rm -rf {om_db_dir}/om*"),
-                    user = params.ozone_user,
-            )
+          # for now disable cleanup
+          # for om_db_dir in params.ozone_manager_db_dirs.split(','):
+
+          #   Execute(format("rm -rf {om_db_dir}/om*"),
+          #           user = params.ozone_user,
+          #   )
           raise Fail('Could not bootstrap om node')
       else:
         Logger.info("Ozone OM is not the first leader. Waiting for leader to be active")
@@ -278,10 +283,11 @@ def bootstrap_server(env=None):
             logoutput=True
           )
         except Fail:
-          for om_db_dir in params.ozone_manager_db_dirs.split(','):
-            Execute(format("rm -rf {om_db_dir}/om*"),
-                    user = params.ozone_user,
-            )
+          # for now disable cleanup
+          # for om_db_dir in params.ozone_manager_db_dirs.split(','):
+          #   Execute(format("rm -rf {om_db_dir}/om*"),
+          #           user = params.ozone_user,
+          #   )
           raise Fail('Could not bootstrap om node')
     else:
       Logger.info("Ozone Manager HA is disabled")
@@ -295,10 +301,11 @@ def bootstrap_server(env=None):
           logoutput=True
         )
       except Fail:
-        for om_db_dir in params.ozone_manager_db_dirs.split(','):
-          Execute(format("rm -rf {om_db_dir}/om*"),
-                  user = params.ozone_user,
-          )
+        # for now disable cleanup
+        # for om_db_dir in params.ozone_manager_db_dirs.split(','):
+        #   Execute(format("rm -rf {om_db_dir}/om*"),
+        #           user = params.ozone_user,
+        #   )
         raise Fail('Could not bootstrap om node')
 
 def wait_scm_server_started():

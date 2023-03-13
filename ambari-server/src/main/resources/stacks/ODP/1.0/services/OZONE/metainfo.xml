@@ -360,7 +360,7 @@
           <osFamily>amazonlinux2,redhat7,redhat8,almalinux8</osFamily>
           <packages>
             <package>
-              <name>ozone_${stack_version}</name>
+              <name>zookeeper_${stack_version},ozone_${stack_version}</name>
             </package>
           </packages>
         </osSpecific>
