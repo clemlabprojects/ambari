@@ -750,6 +750,30 @@
     </property>
     <!--    Ozone Balancer SCM related properties-->
     <property>
+        <name>hdds.metadata.dir</name>
+        <value>/var/lib/hadoop-ozone/hdds-metadata</value>
+        <display-name>Absolute path to HDDS metadata dir.</display-name>
+        <description>Absolute path to HDDS metadata dir.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.x509.file.name</name>
+        <value>certificate.crt</value>
+        <display-name>Certificate file name.</display-name>
+        <description>Certificate file name.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>hdds.key.dir.name</name>
+        <value>keys</value>
+        <display-name>Directory to store public/private key for SCM CA. This is relative to ozone/hdds metadata dir.</display-name>
+        <description>Directory to store public/private key for SCM CA. This is relative to ozone/hdds metadata dir.
+        </description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
         <name>hdds.container.balancer.balancing.iteration.interval</name>
         <value>60m</value>
         <display-name>Balancing Interval</display-name>

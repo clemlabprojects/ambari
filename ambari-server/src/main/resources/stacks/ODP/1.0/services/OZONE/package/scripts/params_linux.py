@@ -131,6 +131,10 @@ else:
 hadoop_security_authentication = _authentication
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
+# HDFS/OZONE cohabitation params
+nn_hosts = default("/clusterHostInfo/namenode_hosts", [])
+is_hdfs_enabled = 'hdfs-site' in config['configurations'].keys() and len(nn_hosts) >= 1
+
 # this is "hadoop-metrics.properties" for 1.x stacks
 metric_prop_file_name = "hadoop-metrics2-hbase.properties"
 
@@ -150,33 +154,25 @@ ozone_dn_ratis_dir = config['configurations']['ozone-site']['dfs.container.ratis
 
 ## SSL related properties
 
-# Ozone Manager TLS related params #
-
-
-ozone_om_credential_file_path = config['configurations']['ssl-server-om']['hadoop.security.credential.provider.path']
-ozone_dn_credential_file_path = config['configurations']['ssl-server-datanode']['hadoop.security.credential.provider.path']
-ozone_scm_credential_file_path = config['configurations']['ssl-server-scm']['hadoop.security.credential.provider.path']
-ozone_recon_credential_file_path = config['configurations']['ssl-server-recon']['hadoop.security.credential.provider.path']
-ozone_s3g_credential_file_path = config['configurations']['ssl-server-s3g']['hadoop.security.credential.provider.path']
-ozone_om_tls_ssl_keystore_password = config['configurations']['ssl-server-om']['ssl.server.keystore.password']
-ozone_om_tls_ssl_key_password = config['configurations']['ssl-server-om']['ssl.server.keystore.keypassword']
-ozone_om_tls_ssl_truststore_password = config['configurations']['ssl-server-om']['ssl.server.truststore.password']
-ozone_om_tls_ssl_client_truststore_password = config['configurations']['ssl-client-om']['ssl.client.truststore.password']
-
 ssl_server_props_ignore = [
   'ssl.server.keystore.password',
   'ssl.server.keystore.keypassword',
-  'ssl.server.truststore.password'
 ]
 ssl_client_props_ignore = [
   'ssl.client.truststore.password'
 ]
+
+# Ozone Manager TLS related params #
+ozone_om_credential_file_path = config['configurations']['ssl-server-om']['hadoop.security.credential.provider.path']
+ozone_om_tls_ssl_keystore_password = config['configurations']['ssl-server-om']['ssl.server.keystore.password']
+ozone_om_tls_ssl_key_password = config['configurations']['ssl-server-om']['ssl.server.keystore.keypassword']
+ozone_om_tls_ssl_client_truststore_password = config['configurations']['ssl-client-om']['ssl.client.truststore.password']
 om_ssl_server_dict = {}
 om_ssl_client_dict = {}
 
 om_ssl_enabled = default("/configurations/ozone-env/ozone_manager_ssl_enabled", False)
 if om_ssl_enabled:
-  Logger.debug("Preparing Ozone Manager SSL/TLS Dictionaries")
+  Logger.debug("Preparing Ozone Manager SSL/TLS Dictionnaries")
   for prop in config['configurations']['ssl-server-om'].keys():
     if prop not in ssl_server_props_ignore:
       om_ssl_server_dict[prop] = config['configurations']['ssl-server-om'][prop]
@@ -188,11 +184,90 @@ if om_ssl_enabled:
     else:
       Logger.debug("Skipping property {prop} when computing om_ssl_client")
 
-
+# Ozone Storage Container TLS related params #
+ozone_scm_credential_file_path = config['configurations']['ssl-server-scm']['hadoop.security.credential.provider.path']
+ozone_scm_tls_ssl_keystore_password = config['configurations']['ssl-server-scm']['ssl.server.keystore.password']
+ozone_scm_tls_ssl_key_password = config['configurations']['ssl-server-scm']['ssl.server.keystore.keypassword']
+ozone_scm_tls_ssl_client_truststore_password = config['configurations']['ssl-client-scm']['ssl.client.truststore.password']
+scm_ssl_server_dict = {}
+scm_ssl_client_dict = {}
 scm_ssl_enabled = default("/configurations/ozone-env/ozone_scm_ssl_enabled", False)
-datanode_ssl_enabled = default("/configurations/ozone-env/ozone_datanode_ssl_enabled", False)
+if scm_ssl_enabled:
+  Logger.debug("Preparing Ozone Storage Container Manager SSL/TLS Dictionnaries")
+  for prop in config['configurations']['ssl-server-scm'].keys():
+    if prop not in ssl_server_props_ignore:
+      scm_ssl_server_dict[prop] = config['configurations']['ssl-server-scm'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing scm_ssl_server")
+  for prop in config['configurations']['ssl-client-scm'].keys():
+    if prop not in ssl_client_props_ignore:
+      scm_ssl_client_dict[prop] = config['configurations']['ssl-client-scm'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing scm_ssl_client")
+
+# Ozone Datanode TLS related params #
+ozone_dn_credential_file_path = config['configurations']['ssl-server-datanode']['hadoop.security.credential.provider.path']
+ozone_dn_tls_ssl_keystore_password = config['configurations']['ssl-server-datanode']['ssl.server.keystore.password']
+ozone_dn_tls_ssl_key_password = config['configurations']['ssl-server-datanode']['ssl.server.keystore.keypassword']
+ozone_dn_tls_ssl_client_truststore_password = config['configurations']['ssl-client-datanode']['ssl.client.truststore.password']
+dn_ssl_enabled = default("/configurations/ozone-env/ozone_datanode_ssl_enabled", False)
+dn_ssl_server_dict = {}
+dn_ssl_client_dict = {}
+if dn_ssl_enabled:
+  Logger.debug("Preparing Ozone Datanode SSL/TLS Dictionnaries")
+  for prop in config['configurations']['ssl-server-datanode'].keys():
+    if prop not in ssl_server_props_ignore:
+      dn_ssl_server_dict[prop] = config['configurations']['ssl-server-datanode'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing dn_ssl_server")
+  for prop in config['configurations']['ssl-client-datanode'].keys():
+    if prop not in ssl_client_props_ignore:
+      dn_ssl_client_dict[prop] = config['configurations']['ssl-client-datanode'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing dn_ssl_client")
+
+# Ozone Recon TLS related params #
+ozone_recon_credential_file_path = config['configurations']['ssl-server-recon']['hadoop.security.credential.provider.path']
+ozone_recon_tls_ssl_keystore_password = config['configurations']['ssl-server-recon']['ssl.server.keystore.password']
+ozone_recon_tls_ssl_key_password = config['configurations']['ssl-server-recon']['ssl.server.keystore.keypassword']
+ozone_recon_tls_ssl_client_truststore_password = config['configurations']['ssl-client-recon']['ssl.client.truststore.password']
 recon_ssl_enabled = default("/configurations/ozone-env/ozone_recon_ssl_enabled", False)
+recon_ssl_server_dict = {}
+recon_ssl_client_dict = {}
+if recon_ssl_enabled:
+  Logger.debug("Preparing Ozone Datanode SSL/TLS Dictionnaries")
+  for prop in config['configurations']['ssl-server-recon'].keys():
+    if prop not in ssl_server_props_ignore:
+      recon_ssl_server_dict[prop] = config['configurations']['ssl-server-recon'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing recon_ssl_server")
+  for prop in config['configurations']['ssl-client-recon'].keys():
+    if prop not in ssl_client_props_ignore:
+      recon_ssl_client_dict[prop] = config['configurations']['ssl-client-recon'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing recon_ssl_client")
+
+# Ozone S3G TLS related params #
+ozone_s3g_credential_file_path = config['configurations']['ssl-server-s3g']['hadoop.security.credential.provider.path']
+ozone_s3g_tls_ssl_keystore_password = config['configurations']['ssl-server-s3g']['ssl.server.keystore.password']
+ozone_s3g_tls_ssl_key_password = config['configurations']['ssl-server-s3g']['ssl.server.keystore.keypassword']
+ozone_s3g_tls_ssl_client_truststore_password = config['configurations']['ssl-client-s3g']['ssl.client.truststore.password']
 s3g_ssl_enabled = default("/configurations/ozone-env/ozone_s3g_ssl_enabled", False)
+s3g_ssl_server_dict = {}
+s3g_ssl_client_dict = {}
+if s3g_ssl_enabled:
+  Logger.debug("Preparing Ozone Datanode SSL/TLS Dictionnaries")
+  for prop in config['configurations']['ssl-server-s3g'].keys():
+    if prop not in ssl_server_props_ignore:
+      s3g_ssl_server_dict[prop] = config['configurations']['ssl-server-s3g'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing s3g_ssl_server")
+  for prop in config['configurations']['ssl-client-s3g'].keys():
+    if prop not in ssl_client_props_ignore:
+      s3g_ssl_client_dict[prop] = config['configurations']['ssl-client-s3g'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing s3g_ssl_client")
+
 ## Ozone heapsizes
 
 ozone_client_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_heapsize'])
@@ -296,6 +371,9 @@ if security_enabled:
   ## ozone dn
   dn_jaas_princ = config['configurations']['ozone-site']['dfs.datanode.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   dn_keytab_path = config['configurations']['ozone-site']['dfs.datanode.keytab.file']
+  ## ozone s3g
+  s3g_jaas_princ = config['configurations']['ozone-site']['ozone.s3g.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  s3g_keytab_path = config['configurations']['ozone-site']['ozone.s3g.kerberos.keytab.file']
 
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 ozone_user_keytab = config['configurations']['ozone-env']['ozone_user_keytab']
@@ -372,6 +450,7 @@ ozone_manager_ha_dirs = config['configurations']['ozone-site']['ozone.om.ratis.s
 ozone_om_snapshot_dirs = config['configurations']['ozone-site']['ozone.om.ratis.snapshot.dir']
 ozone_recon_db_dir = config['configurations']['ozone-site']['ozone.recon.db.dir']
 
+ozone_core_site = config['configurations']['ozone-core-site']
 #for now ozone datanode and manager use `ozone.metadata.dirs` as configuration key
 for prop in config['configurations']['ozone-site'].keys():
   ROLE_CONF_MAP['ozone-manager'][prop] = config['configurations']['ozone-site'][prop]
@@ -421,7 +500,16 @@ ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_om_format
 ozone_ha_om_active = om_ha_utils.get_initial_active_om(default("/configurations/ozone-env", {}))
 if ozone_ha_om_active == '':
   ozone_ha_om_active = config['clusterHostInfo']['ozone_manager_hosts'][0]
-# ranger ozone plugin section start
+om_service_id = ''
+if ozone_om_ha_is_enabled:
+  om_service_id = ozone_om_ha_current_cluster_nameservice
+else:
+  if "ozone.om.address" in config["configurations"]["ozone-site"]:
+    om_service_id = config["configurations"]["ozone-site"]["ozone.om.address"]
+  else:
+    om_service_id = config['clusterHostInfo']['ozone_manager_hosts'][0]
+
+ozone_hdds_metadata_dir = config['configurations']['ozone-site']['hdds.metadata.dir']
 
 # to get db connector jar
 jdk_location = config['ambariLevelParams']['jdk_location']

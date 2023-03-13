@@ -158,68 +158,6 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
     return validator.validateListOfConfigUsingMethod(configurations, recommendedDefaults, services, hosts, validator.validators)
     
 
-class OzoneValidator(service_advisor.ServiceAdvisor):
-  """
-  Ozone Validator checks the correctness of properties whenever the service is first added or the user attempts to
-  change configs via the UI.
-  """
-
-  def __init__(self, *args, **kwargs):
-    self.as_super = super(OzoneValidator, self)
-    self.as_super.__init__(*args, **kwargs)
-
-    self.validators = [("ozone-site", self.validateOzoneConfigurationsFromODP10),
-                       ("ozone-env", self.validateOzoneEnvConfigurationsFromODP10)]
-
-    # **********************************************************
-    # Example of how to add a function that validates a certain config type.
-    # If the same config type has multiple functions, can keep adding tuples to self.validators
-    #self.validators.append(("hadoop-env", self.sampleValidator))
-
-  def sampleValidator(self, properties, recommendedDefaults, configurations, services, hosts):
-    """
-    Example of a validator function other other Service Advisors to emulate.
-    :return: A list of configuration validation problems.
-    """
-    validationItems = []
-
-    '''
-    Item is a simple dictionary.
-    Two functions can be used to construct it depending on the log level: WARN|ERROR
-    E.g.,
-    self.getErrorItem(message) or self.getWarnItem(message)
-
-    item = {"level": "ERROR|WARN", "message": "value"}
-    '''
-    validationItems.append({"config-name": "my_config_property_name",
-                            "item": self.getErrorItem("My custom message in method %s" % inspect.stack()[0][3])})
-    return self.toConfigurationValidationProblems(validationItems, "hadoop-env")
-
-  def validateOzoneConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
-    """
-    Added in ODP 1.0.6.0 ; validate ozone-site
-    :return: A list of configuration validation problems.
-    """
-    clusterEnv = self.getSiteProperties(configurations, "cluster-env")
-    # validationItems = [{"config-name": 'dfs.datanode.du.reserved', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'dfs.datanode.du.reserved')},
-    #                    {"config-name": 'dfs.datanode.data.dir', "item": self.validatorOneDataDirPerPartition(properties, 'dfs.datanode.data.dir', services, hosts, clusterEnv)}]
-    validationItems = []
-    defaultReplication = services["configurations"]["ozone-site"]["properties"]["ozone.replication"]
-    dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
-    if defaultReplication < 2 :
-      validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
-    if int(dnHosts) < int(defaultReplication):
-      validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher "+str(defaultReplication)+" than the number of Ozone Datanode Hosts " + str(dnHosts) )}])
-    return self.toConfigurationValidationProblems(validationItems, "ozone-site")
-
-  def validateOzoneEnvConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
-    """
-    Added in ODP 1.0.6.0 ; validate ozone-env
-    :return: A list of configuration validation problems.
-    """
-    validationItems = []
-    return self.toConfigurationValidationProblems(validationItems, "ozone-env")
-
 class OzoneRecommender(service_advisor.ServiceAdvisor):
   """
   Oozie Recommender suggests properties when adding the service for the first time or modifying configurations via the UI.
@@ -419,68 +357,80 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneEnvProperty('ozone_manager_opt_newsize', max(int(manager_heapsize / 8), 128))
     putOzoneEnvProperty('ozone_manager_opt_maxnewsize', max(int(manager_heapsize / 8), 128))
 
-    ## computes ids for SCM
-    scm_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.datanode.port"]
-    putOzoneSiteProperty("ozone.scm.primordial.node.id", scmHosts[0]["Hosts"]["host_name"])
+    if 'ozone-site' in services['configurations']:
+      ## computes ids for SCM
+      scm_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.datanode.port"]
+      putOzoneSiteProperty("ozone.scm.primordial.node.id", scmHosts[0]["Hosts"]["host_name"])
 
-    scm_names = ','.join(str(x['Hosts']['host_name']+":"+str(scm_port)) for x in scmHosts)
-    defaultSCMServiceName = 'scmservice'
-    defaultOMServiceName = 'omservice'
-    putOzoneSiteProperty("ozone.scm.names", scm_names)
-    
-    if  "ozone.scm.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
-      if services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"] is None:
+      scm_names = ','.join(str(x['Hosts']['host_name']+":"+str(scm_port)) for x in scmHosts)
+      defaultSCMServiceName = 'scmservice'
+      defaultOMServiceName = 'omservice'
+      putOzoneSiteProperty("ozone.scm.names", scm_names)
+      
+      if  "ozone.scm.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
+        if services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"] is None:
+          putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
+        else:
+          defaultSCMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"].split(',')[0]
+      else:
         putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
-      else:
-        defaultSCMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"].split(',')[0]
-    else:
-      putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
-    # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
-    boundaries = [0] if len(scmHosts) is 1 else [0, len(scmHosts)-1]
-    putOzoneSiteProperty("ozone.scm.nodes."+str(defaultSCMServiceName), ','.join(str("scm"+str(x)) for x in boundaries))
-    scm_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.http-port"]
-    scm_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.https-port"]
-    for x in [ 0, len(scmHosts)-1]:
-      scmhost = scmHosts[x]
-      scmhostname = scmhost['Hosts']['host_name']
-      putOzoneSiteProperty("ozone.scm.address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
-      putOzoneSiteProperty("ozone.scm.http-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_http_port))
-      putOzoneSiteProperty("ozone.scm.https-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_https_port))
+      # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
+      boundaries = [0] if len(scmHosts) is 1 else [0, len(scmHosts)-1]
+      putOzoneSiteProperty("ozone.scm.nodes."+str(defaultSCMServiceName), ','.join(str("scm"+str(x)) for x in boundaries))
+      scm_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.http-port"]
+      scm_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.https-port"]
+      for x in [ 0, len(scmHosts)-1]:
+        scmhost = scmHosts[x]
+        scmhostname = scmhost['Hosts']['host_name']
+        putOzoneSiteProperty("ozone.scm.address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
+        putOzoneSiteProperty("ozone.scm.http-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_http_port))
+        putOzoneSiteProperty("ozone.scm.https-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_https_port))
 
-    default_ozone_port = 9862 #client port
-    default_ozone_dn_to_recon_port = 9891
-    if "ozone.om.address" in services["configurations"]["ozone-site"]["properties"]:
-      parts = services["configurations"]["ozone-site"]["properties"]["ozone.om.address"].split(':')
-      default_ozone_port = parts[1] if len(parts) > 1 else 9862
-    if "ozone.recon.address" in services["configurations"]["ozone-site"]["properties"]:
-      parts = services["configurations"]["ozone-site"]["properties"]["ozone.recon.address"].split(':')
-      default_ozone_dn_to_recon_port = parts[1] if len(parts) > 1 else 9891
-    ## computes ids for OM
-    if  "ozone.om.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
-      if services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"] is None:
+      default_ozone_port = 9862 #client port
+      default_ozone_dn_to_recon_port = 9891
+      if "ozone.om.address" in services["configurations"]["ozone-site"]["properties"]:
+        parts = services["configurations"]["ozone-site"]["properties"]["ozone.om.address"].split(':')
+        default_ozone_port = parts[1] if len(parts) > 1 else 9862
+      if "ozone.recon.address" in services["configurations"]["ozone-site"]["properties"]:
+        parts = services["configurations"]["ozone-site"]["properties"]["ozone.recon.address"].split(':')
+        default_ozone_dn_to_recon_port = parts[1] if len(parts) > 1 else 9891
+      ## computes ids for OM
+      if  "ozone.om.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
+        if services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"] is None:
+          putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
+        else:
+          defaultOMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"].split(',')[0]
+      else:
         putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
-      else:
-        defaultOMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"].split(',')[0]
-    else:
-      putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
-    # configure ozone.om.nodes.EXAMPLESOMSERVICEID
-    boundaries = [0] if len(managerHosts) is 1 else [0, len(managerHosts)-1]
-    putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name']+":"+str(default_ozone_dn_to_recon_port)))
-    putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
-    om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
-    om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
-    for x in [ 0, len(managerHosts)-1]:
-      omhost = managerHosts[x]
-      omhostname = omhost['Hosts']['host_name']
-      putOzoneSiteProperty("ozone.om.address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name'])+":"+str(default_ozone_port))
-      putOzoneSiteProperty("ozone.om.http-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_http_port))
-      putOzoneSiteProperty("ozone.om.https-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_https_port))
+      # configure ozone.om.nodes.EXAMPLESOMSERVICEID
+      boundaries = [0] if len(managerHosts) is 1 else [0, len(managerHosts)-1]
+      putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name']+":"+str(default_ozone_dn_to_recon_port)))
+      putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
+      om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
+      om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
+      for x in [ 0, len(managerHosts)-1]:
+        omhost = managerHosts[x]
+        omhostname = omhost['Hosts']['host_name']
+        putOzoneSiteProperty("ozone.om.address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name'])+":"+str(default_ozone_port))
+        putOzoneSiteProperty("ozone.om.http-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_http_port))
+        putOzoneSiteProperty("ozone.om.https-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_https_port))
 
-    dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
-    # update ozone replication to size of dnHosts
-    replicationReco = min(3, dnHosts)
-    putOzoneSiteProperty("ozone.replication", replicationReco)
-    # ozone om address calculating value for ozone.om.http-address
+      dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
+      # update ozone replication to size of dnHosts
+      replicationReco = min(3, dnHosts)
+      putOzoneSiteProperty("ozone.replication", replicationReco)
+
+      ## Ranger Logic
+      ranger_ozone_plugin_enabled = ''
+      if 'ranger-ozone-plugin-properties' in configurations and 'ranger-ozone-plugin-enabled' in configurations['ranger-ozone-plugin-properties']['properties']:
+        ranger_ozone_plugin_enabled = configurations['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
+      elif 'ranger-ozone-plugin-properties' in services['configurations'] and 'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']:
+        ranger_ozone_plugin_enabled = services['configurations']['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
+      if ranger_ozone_plugin_enabled and (ranger_ozone_plugin_enabled.lower() == 'Yes'.lower()):
+        putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer')
+      else:
+        putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')
+      
   def is_kerberos_enabled(self, configurations, services):
     """
     Tests if Ozone has Kerberos enabled by first checking the recommended changes and then the
@@ -506,6 +456,70 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
               config['ozone-site']["properties"]['hadoop.security.authentication'] == 'kerberos')
            )
 
+
+class OzoneValidator(service_advisor.ServiceAdvisor):
+  """
+  Ozone Validator checks the correctness of properties whenever the service is first added or the user attempts to
+  change configs via the UI.
+  """
+
+  def __init__(self, *args, **kwargs):
+    self.as_super = super(OzoneValidator, self)
+    self.as_super.__init__(*args, **kwargs)
+
+    self.validators = [("ozone-site", self.validateOzoneConfigurationsFromODP10),
+                       ("ozone-env", self.validateOzoneEnvConfigurationsFromODP10),
+                       ("ozone-site", self.validateRangerAuthorizerFromODP10)]
+                       
+    # **********************************************************
+    # Example of how to add a function that validates a certain config type.
+    # If the same config type has multiple functions, can keep adding tuples to self.validators
+    #self.validators.append(("hadoop-env", self.sampleValidator))
+
+  # def sampleValidator(self, properties, recommendedDefaults, configurations, services, hosts):
+  #   """
+  #   Example of a validator function other other Service Advisors to emulate.
+  #   :return: A list of configuration validation problems.
+  #   """
+  #   validationItems = []
+
+  #   '''
+  #   Item is a simple dictionary.
+  #   Two functions can be used to construct it depending on the log level: WARN|ERROR
+  #   E.g.,
+  #   self.getErrorItem(message) or self.getWarnItem(message)
+
+  #   item = {"level": "ERROR|WARN", "message": "value"}
+  #   '''
+  #   validationItems.append({"config-name": "my_config_property_name",
+  #                           "item": self.getErrorItem("My custom message in method %s" % inspect.stack()[0][3])})
+  #   return self.toConfigurationValidationProblems(validationItems, "hadoop-env")
+
+  def validateOzoneConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
+    """
+    Added in ODP 1.0.6.0 ; validate ozone-site
+    :return: A list of configuration validation problems.
+    """
+    clusterEnv = self.getSiteProperties(configurations, "cluster-env")
+    # validationItems = [{"config-name": 'dfs.datanode.du.reserved', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'dfs.datanode.du.reserved')},
+    #                    {"config-name": 'dfs.datanode.data.dir', "item": self.validatorOneDataDirPerPartition(properties, 'dfs.datanode.data.dir', services, hosts, clusterEnv)}]
+    validationItems = []
+    defaultReplication = services["configurations"]["ozone-site"]["properties"]["ozone.replication"]
+    dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
+    if defaultReplication < 2 :
+      validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
+    if int(dnHosts) < int(defaultReplication):
+      validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher "+str(defaultReplication)+" than the number of Ozone Datanode Hosts " + str(dnHosts) )}])
+    return self.toConfigurationValidationProblems(validationItems, "ozone-site")
+
+  def validateOzoneEnvConfigurationsFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
+    """
+    Added in ODP 1.0.6.0 ; validate ozone-env
+    :return: A list of configuration validation problems.
+    """
+    validationItems = []
+    return self.toConfigurationValidationProblems(validationItems, "ozone-env")
+
   def validateRangerAuthorizerFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
     """
     If Ranger service is present and the ranger plugin is enabled, check that the provider class is correctly set.
@@ -519,7 +533,12 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     ranger_plugin_enabled = ranger_plugin_properties['ranger-ozone-plugin-enabled'] if ranger_plugin_properties else 'No'
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     if ("RANGER" in servicesList) and (ranger_plugin_enabled.lower() == 'yes'):
-
+      ranger_env = self.getServicesSiteProperties(services, 'ranger-env')
+      if not ranger_env or not 'ranger-ozone-plugin-enabled' in ranger_env or \
+                      ranger_env['ranger-ozone-plugin-enabled'].lower() != 'yes':
+        validationItems.append({"config-name": 'ranger-ozone-plugin-enabled',
+                                "item": self.getWarnItem(
+                                  "ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled must correspond ranger-env/ranger-ozone-plugin-enabled")})
       try:
         if ozone_site['ozone.acl.authorizer.class'].lower() != 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer'.lower():
           raise ValueError()
@@ -527,3 +546,4 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         message = "ozone.acl.authorizer.class needs to be set to 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer' if Ranger Ozone Plugin is enabled."
         validationItems.append({"config-name": 'ozone.acl.authorizer.class',
                                 "item": self.getWarnItem(message)})
+    return self.toConfigurationValidationProblems(validationItems, 'ozone-site')

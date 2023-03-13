@@ -1038,7 +1038,7 @@
             export OZONE_OM_OPTS="$OZONE_OM_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_om_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             export OZONE_SMC_OPTS="$OZONE_SMC_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_scm_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_datanode_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
-            # export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             {% endif %}
         </value>
