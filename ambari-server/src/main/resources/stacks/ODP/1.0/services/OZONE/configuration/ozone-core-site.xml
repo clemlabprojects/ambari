@@ -19,54 +19,6 @@
 <!-- Put site-specific property overrides in this file. -->
 <configuration xmlns:xi="http://www.w3.org/2001/XInclude" supports_final="true">
   <property>
-    <name>io.file.buffer.size</name>
-    <value>131072</value>
-    <description>The size of buffer for use in sequence files.
-  The size of this buffer should probably be a multiple of hardware
-  page size (4096 on Intel x86), and it determines how much data is
-  buffered during read and write operations.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>io.serializations</name>
-    <value>org.apache.hadoop.io.serializer.WritableSerialization</value>
-    <description> A list of comma-delimited serialization classes that can be used for obtaining serializers and deserializers.
-    </description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>io.compression.codecs</name>
-    <value>org.apache.hadoop.io.compress.GzipCodec,org.apache.hadoop.io.compress.DefaultCodec,org.apache.hadoop.io.compress.SnappyCodec</value>
-    <description>A list of the compression codec classes that can be used
-                 for compression/decompression.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <!-- file system properties -->
-  <property>
-    <name>fs.defaultFS</name>
-    <!-- cluster variant -->
-    <value>hdfs://localhost:8020</value>
-    <description>The name of the default file system.  Either the
-  literal string "local" or a host:port for HDFS.</description>
-    <final>true</final>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>ipc.client.connection.maxidletime</name>
-    <value>30000</value>
-    <description>The maximum time after which a client will bring down the
-               connection to the server.
-  </description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>ipc.client.connect.max.retries</name>
-    <value>50</value>
-    <description>Defines the maximum number of retries for IPC connections.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <!-- Web Interface Configuration -->
-  <property>
     <name>hadoop.security.authentication</name>
     <value>simple</value>
     <description>
@@ -127,62 +79,6 @@ DEFAULT
     <value-attributes>
       <type>multiLine</type>
     </value-attributes>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>net.topology.script.file.name</name>
-    <value>/etc/hadoop/conf/topology_script.py</value>
-    <description>
-      Location of topology script used by Hadoop to determine the rack location of nodes.
-    </description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-
-  <!-- These configs were inherited from HDP 2.2 -->
-  <property>
-    <name>hadoop.http.authentication.simple.anonymous.allowed</name>
-    <value>true</value>
-    <description>
-      Indicates if anonymous requests are allowed when using &apos;simple&apos; authentication.
-    </description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-<!-- CORS properties-->
-  <property>
-    <name>hadoop.http.cross-origin.allowed-origins</name>
-    <value>*</value>
-    <description>Comma separated list of origins that are allowed for web services
-    needing cross-origin (CORS) support.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>hadoop.http.cross-origin.allowed-methods</name>
-    <value>GET,PUT,POST,OPTIONS,HEAD,DELETE</value>
-    <description>Comma separated list of methods that are allowed for web
-    services needing cross-origin (CORS) support.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-    <property>
-    <name>hadoop.http.cross-origin.allowed-headers</name>
-    <value>X-Requested-With,Content-Type,Accept,Origin,WWW-Authenticate,Accept-Encoding,Transfer-Encoding</value>
-    <description>Comma separated list of headers that are allowed for web
-    services needing cross-origin (CORS) support.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-    <property>
-    <name>hadoop.http.cross-origin.max-age</name>
-    <value>1800</value>
-    <description>The number of seconds a pre-flighted request can be cached
-    for web services needing cross-origin (CORS) support.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-  <property>
-    <name>hadoop.security.instrumentation.requires.admin</name>
-    <value>false</value>
-    <description>
-      Indicates if administrator ACLs are required to access
-      instrumentation servlets (JMX, METRICS, CONF, STACKS).
-    </description>
     <on-ambari-upgrade add="false"/>
   </property>
 </configuration>

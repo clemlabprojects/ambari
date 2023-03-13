@@ -21,7 +21,7 @@ limitations under the License.
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.core.shell import as_sudo
-from resource_management.core.resources.system import Execute, File
+from resource_management.core.resources.system import Execute, File, Directory
 import os
 
 def ozone_service(
@@ -29,6 +29,12 @@ def ozone_service(
   action = 'start'): # 'start' or 'stop' or 'status'
     
     import params
+    Directory( params.ozone_hdds_metadata_dir,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0755,
+    )
     conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF[name])
     role = params.ROLE_NAME_MAP_DAEMON[name]
     cmd = format("{daemon_script} --config {conf_dir}")
