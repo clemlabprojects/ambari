@@ -191,6 +191,28 @@
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
+    <property>
+    <name>ranger-ozone-plugin-enabled</name>
+    <value>No</value>
+    <display-name>Ozone Ranger Plugin</display-name>
+    <description>Enable Ozone Ranger plugin</description>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>Yes</value>
+          <label>ON</label>
+        </entry>
+        <entry>
+          <value>No</value>
+          <label>OFF</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
   <property>
     <name>xml_configurations_supported</name>
     <value>true</value>
