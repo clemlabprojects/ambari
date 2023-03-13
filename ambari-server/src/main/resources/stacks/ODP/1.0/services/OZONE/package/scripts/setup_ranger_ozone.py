@@ -40,8 +40,8 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
         params.HdfsResource("/ranger/audit",
                            type="directory",
                            action="create_on_execute",
-                           owner=params.hdfs_user,
-                           group=params.hdfs_user,
+                           owner=params.ozone_user,
+                           group=params.ozone_user,
                            mode=0755,
                            recursive_chmod=True
         )
@@ -55,10 +55,10 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
         )
         params.HdfsResource(None, action="execute")
       except Exception, err:
-        Logger.exception("Audit directory creation in HDFS for HBASE Ranger plugin failed with error:\n{0}".format(err))
+        Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
 
     api_version = 'v2'
-
+    print(params.config['configurations']['ranger-ozone-audit']
     setup_ranger_plugin('ozone-client', 'ozone', params.previous_jdbc_jar, params.downloaded_custom_connector,
                         params.driver_curl_source, params.driver_curl_target, params.java64_home,
                         params.repo_name, params.ozone_ranger_plugin_repo,
@@ -75,7 +75,7 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
                         stack_version_override = stack_version, skip_if_rangeradmin_down= not params.retryAble, api_version=api_version,
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos if params.security_enabled else None,
-                        component_user_principal=params.ranger_hbase_principal if params.security_enabled else None,
-                        component_user_keytab=params.ranger_hbase_keytab if params.security_enabled else None)
+                        component_user_principal=params.ranger_ozone_principal if params.security_enabled else None,
+                        component_user_keytab=params.ranger_ozone_keytab if params.security_enabled else None)
   else:
     Logger.info('Ranger Ozone plugin is not enabled')
