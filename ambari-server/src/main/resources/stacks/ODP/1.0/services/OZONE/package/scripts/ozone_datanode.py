@@ -56,6 +56,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
 
   def start(self, env, upgrade_type=None):
     import params
+    from setup_credential_ozone import setup_credential_ozone
     env.set_params(params)
     self.configure(env) # for security
     Directory( params.ozone_dn_ratis_dir,
@@ -64,6 +65,31 @@ class OzoneDatanodeDefault(OzoneDatanode):
       cd_access = "a",
       mode = 0750,
     )
+    if params.dn_ssl_enabled:
+      passwords =  [
+        {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_dn_tls_ssl_keystore_password}')},
+        {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_dn_tls_ssl_key_password}')},
+        {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_dn_tls_ssl_client_truststore_password}')}
+      ]
+      if params.is_hdfs_enabled:
+        setup_credential_file(params.java64_home, None,
+                          params.ozone_dn_credential_file_path, 'ozone', params.user_group,
+                          passwords, 'ozone-datanode' )
+      else:
+        setup_credential_ozone(params.java64_home,
+                      params.ozone_dn_credential_file_path, 'ozone', params.user_group,
+                      passwords, 'ozone-datanode' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.ozone_dn_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
+
     ozone_service('ozone-datanode', action = 'start')
     
   def stop(self, env, upgrade_type=None):
@@ -72,9 +98,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
     ozone_service('ozone-datanode', action = 'stop')
 
   def status(self, env):
-    import status_params
     import params
-    env.set_params(status_params)
     check_process_status(params.ozone_datanode_pid_file)
 
   def get_log_folder(self):

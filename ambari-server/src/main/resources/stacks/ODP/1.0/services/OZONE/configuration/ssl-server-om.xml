@@ -64,7 +64,7 @@
     </property>
     <property>
         <name>hadoop.security.credential.provider.path</name>
-        <value>localjceks://file/etc/hadoop/conf/ozone.manager/credential.jceks</value>
+        <value>localjceks://file/etc/hadoop/conf/ozone.om/credential.jceks</value>
         <display-name>Ozone Manager Hadoop Crendential Provider</display-name>
         <description>Keystore used by Ozone Manager to store SSL related secrets.</description>
         <on-ambari-upgrade add="false"/>

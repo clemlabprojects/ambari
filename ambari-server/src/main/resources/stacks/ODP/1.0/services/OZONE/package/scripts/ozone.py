@@ -98,6 +98,8 @@ def ozone(name=None):
       cd_access = "a",
       mode = 0750,
     )
+
+  ## Servers side tasks
   if name != "ozone-client":
     Directory( params.pid_dir,
       owner = params.ozone_user,
@@ -130,6 +132,106 @@ def ozone(name=None):
         mode=0644,
         content=Template("ozone.conf.j2")
         )
+    ## ssl properties
+    if params.om_ssl_enabled:
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.om_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.om_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    ## ssl properties
+    if params.dn_ssl_enabled:
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.dn_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.dn_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    ## ssl properties
+    if params.scm_ssl_enabled:
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.scm_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.scm_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    ## ssl properties
+    if params.recon_ssl_enabled:
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.recon_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.recon_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    ## ssl properties
+    if params.s3g_ssl_enabled:
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.s3g_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.s3g_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    ## Server Side Properties
+    # always render core-site in /etc/hadoop/conf/{component_name}/core-site.xml
+    if params.is_hdfs_enabled:
+      XmlConfig("core-site.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.core_site,
+        configuration_attributes=params.config['configurationAttributes']['core-site'],
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    else:
+      XmlConfig("core-site.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.ozone_core_site,
+        configuration_attributes=params.config['configurationAttributes']['ozone-core-site'],
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+  else:
+    if params.is_hdfs_enabled:
+      Logger.info("Skipping rendering of /etc/hadoop/conf/core-site.xml from OZONE as HDFS is installed")
+    else:
+      XmlConfig("core-site.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.ozone_core_site,
+        configuration_attributes=params.config['configurationAttributes']['ozone-core-site'],
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+    
 
   if name == 'ozone-datanode':
       Logger.info(format("Handling Datanode Data dir creation"))
@@ -216,21 +318,27 @@ def ozone(name=None):
   if params.security_enabled:
     ozone_TemplateConfig(name, params, conf_dir)
 
+def renderJaas(jaas_name, conf_dir):
+  import params
+  TemplateConfig(format("{conf_dir}/{jaas_name}"),
+      owner = params.ozone_user
+  )
 
 def ozone_TemplateConfig(name, params=None, conf_dir=None):
   if name == 'ozone-manager':
     jaas_name = params.ozone_om_jaas_config_file 
+    renderJaas(jaas_name, conf_dir)
   elif name == 'ozone-scm':
     jaas_name = params.ozone_scm_jaas_config_file 
+    renderJaas(jaas_name, conf_dir)
   elif name == 'ozone-datanode':
     jaas_name = params.ozone_dn_jaas_config_file
+    renderJaas(jaas_name, conf_dir)
   elif name == 'ozone-s3g':
     jaas_name = params.ozone_s3g_jaas_config_file
+    renderJaas(jaas_name, conf_dir)
   else:
     pass
-  TemplateConfig(format("{conf_dir}/{jaas_name}"),
-      owner = params.ozone_user
-  )
   
 def getDictObjectForComponent(name=None, params=None, type="env"):
   if type == "env":
