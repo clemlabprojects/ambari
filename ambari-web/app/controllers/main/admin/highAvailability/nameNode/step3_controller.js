@@ -165,6 +165,21 @@ App.HighAvailabilityWizardStep3Controller = Em.Controller.extend({
           });
         }
       }
+      if (App.Service.find().someProperty('serviceName', 'OZONE')) {
+        if('ranger-ozone-audit' in data.Clusters.desired_configs) {
+          var rangerOzoneAuditTag = data.Clusters.desired_configs['ranger-ozone-audit'].tag;
+          urlParams.push('(type=ranger-ozone-audit&tag=' + rangerOzoneAuditTag + ')');
+          this.set("rangerOzoneAuditTag", {name: "rangerOzoneAuditTag", value: rangerOzoneAuditTag});
+        }
+        if('ranger-ozone-plugin-properties' in data.Clusters.desired_configs) {
+          var rangerOzonePluginPropertiesTag = data.Clusters.desired_configs['ranger-ozone-plugin-properties'].tag;
+          urlParams.push('(type=ranger-ozone-plugin-properties&tag=' + rangerOzonePluginPropertiesTag + ')');
+          this.set("rangerOzonePluginPropertiesTag", {
+            name: "rangerOzonePluginPropertiesTag",
+            value: rangerOzonePluginPropertiesTag
+          });
+        }
+      }
       if (App.Service.find().someProperty('serviceName', 'STORM')) {
         if('ranger-storm-audit' in data.Clusters.desired_configs) {
           var rangerStormAuditTag = data.Clusters.desired_configs['ranger-storm-audit'].tag;

@@ -104,6 +104,12 @@ App.MainServiceInfoSummaryController = Em.Controller.extend({
       type: 'ranger-nifi-plugin-properties',
       propertyName: 'ranger-nifi-plugin-enabled',
       valueForEnable: 'Yes'
+    },
+    {
+      serviceName: 'OZONE',
+      type: 'ranger-ozone-plugin-properties',
+      propertyName: 'ranger-ozone-plugin-enabled',
+      valueForEnable: 'Yes'
     }
   ],
 
