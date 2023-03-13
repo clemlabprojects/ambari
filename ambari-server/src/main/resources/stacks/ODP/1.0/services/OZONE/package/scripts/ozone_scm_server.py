@@ -61,6 +61,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
   def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
+    from setup_credential_ozone import setup_credential_ozone
     self.configure(env) # for security
     File(os.path.join(params.ozone_topology_file),
         owner='root',
@@ -68,6 +69,31 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
         mode=0755,
         content=Template("ozone_topology_script.py")
     )
+    if params.scm_ssl_enabled:
+      passwords =  [
+        {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_scm_tls_ssl_keystore_password}')},
+        {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_scm_tls_ssl_key_password}')},
+        {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_scm_tls_ssl_client_truststore_password}')}
+      ]
+      if params.is_hdfs_enabled:
+        setup_credential_file(params.java64_home, None,
+                          params.ozone_scm_credential_file_path, 'ozone', params.user_group,
+                          passwords, 'ozone-scm' )
+      else:
+        setup_credential_ozone(params.java64_home,
+                      params.ozone_scm_credential_file_path, 'ozone', params.user_group,
+                      passwords, 'ozone-storage-container-manager' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.ozone_scm_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
+
     format_scm(env)
     ozone_service('ozone-scm', action = 'start')
     
@@ -77,8 +103,6 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     ozone_service('ozone-scm', action = 'stop')
 
   def status(self, env):
-    import status_params
-    env.set_params(status_params)
     import params
     check_process_status(params.ozone_scm_pid_file)
 
@@ -195,11 +219,12 @@ def format_scm(force=None):
             logoutput=True
           )
         except Fail:
+          # for now disable cleanup of directories
           # We need to clean-up directories
-          for scm_db_dir in params.ozone_scm_db_dirs.split(','):
-            Execute(format("rm -rf {scm_db_dir}/*"),
-                    user = params.ozone_user,
-            )
+          # for scm_db_dir in params.ozone_scm_db_dirs.split(','):
+          #   Execute(format("rm -rf {scm_db_dir}/*"),
+          #           user = params.ozone_user,
+          #   )
           raise Fail('Could Not Initialize Primordial Node')
       else:
         Logger.info(format("Ozone SCM Server {params.hostname} is not the primordial node. Waiting for primordial node to be started..."))

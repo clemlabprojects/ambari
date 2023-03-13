@@ -22,6 +22,7 @@ import sys
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.check_process_status import check_process_status
+from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
@@ -57,7 +58,32 @@ class OzoneS3GatewayDefault(OzoneS3Gateway):
   def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
+    from setup_credential_ozone import setup_credential_ozone
     self.configure(env) # for security
+    if params.s3g_ssl_enabled:
+      passwords =  [
+        {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_s3g_tls_ssl_keystore_password}')},
+        {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_s3g_tls_ssl_key_password}')},
+        {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_s3g_tls_ssl_client_truststore_password}')}
+      ]
+      if params.is_hdfs_enabled:
+        setup_credential_file(params.java64_home, None,
+                          params.ozone_s3g_credential_file_path, 'ozone', params.user_group,
+                          passwords, 'ozone-s3-gateway' )
+      else:
+        setup_credential_ozone(params.java64_home,
+                      params.ozone_s3g_credential_file_path, 'ozone', params.user_group,
+                      passwords, 'ozone-s3-gateway' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.ozone_s3g_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
     ozone_service('ozone-s3g', action = 'start')
     
   def stop(self, env, upgrade_type=None):
@@ -66,9 +92,7 @@ class OzoneS3GatewayDefault(OzoneS3Gateway):
     ozone_service('ozone-s3g', action = 'stop')
 
   def status(self, env):
-    import status_params
     import params
-    env.set_params(status_params)
     check_process_status(params.ozone_s3g_pid_file)
 
   def get_log_folder(self):

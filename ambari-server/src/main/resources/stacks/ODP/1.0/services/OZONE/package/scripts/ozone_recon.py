@@ -58,6 +58,7 @@ class OzoneReconDefault(OzoneRecon):
   def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
+    from setup_credential_ozone import setup_credential_ozone
     self.configure(env) # for security
     
     if os.path.isdir(params.ozone_recon_db_dir):
@@ -90,6 +91,30 @@ class OzoneReconDefault(OzoneRecon):
         cd_access = "a",
         mode = 0750,
       )
+    if params.recon_ssl_enabled:
+      passwords =  [
+        {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_recon_tls_ssl_keystore_password}')},
+        {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_recon_tls_ssl_key_password}')},
+        {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_recon_tls_ssl_client_truststore_password}')}
+      ]
+      if params.is_hdfs_enabled:
+        setup_credential_file(params.java64_home, None,
+                          params.ozone_recon_credential_file_path, 'ozone', params.user_group,
+                          passwords, 'ozone-recon' )
+      else:
+        setup_credential_ozone(params.java64_home,
+                      params.ozone_recon_credential_file_path, 'ozone', params.user_group,
+                      passwords, 'ozone-recon' )
+
+      separator = ('jceks://file')
+      file_to_chown = params.ozone_recon_credential_file_path.split(separator)[1]
+      if os.path.exists(file_to_chown):
+          Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
+                  sudo=True
+                  )
+          Execute(('chmod', '640', file_to_chown),
+                  sudo=True
+                  )
     ozone_service('ozone-recon', action = 'start')
     
   def stop(self, env, upgrade_type=None):
