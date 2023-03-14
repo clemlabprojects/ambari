@@ -171,7 +171,6 @@ App.MainDashboardWidgetsView = Em.View.extend(App.Persist, App.LocalStorage, App
     }
     this.loadWidgetsSettings().complete(() => {
       this.get('widgetGroupsDeferred').done(() => {
-        if (this.get('isDestroyed')) return;
         this.checkServicesChange();
         this.renderWidgets();
         this.set('isDataLoaded', true);
