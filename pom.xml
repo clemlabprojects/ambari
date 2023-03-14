@@ -445,6 +445,7 @@
         <module>contrib/views</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-server-spi</module>
         <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-logsearch</module>
@@ -467,6 +468,7 @@
         <module>ambari-views/examples</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-server-spi</module>
         <module>ambari-funtest</module>
         <module>ambari-agent</module>
       </modules>
@@ -479,6 +481,7 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-server-spi</module>
         <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-logsearch</module>
@@ -500,6 +503,7 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-server-spi</module>
         <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-logsearch</module>
@@ -534,6 +538,7 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-server-spi</module>
         <module>ambari-funtest</module>
         <module>ambari-agent</module>
       </modules>
