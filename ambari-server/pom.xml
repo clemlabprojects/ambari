@@ -20,8 +20,6 @@
   <artifactId>ambari-server</artifactId>
   <packaging>jar</packaging>
   <name>Ambari Server</name>
-  <packaging>${packagingFormat}</packaging>
-  <name>Ambari Server</name>
   <version>2.7.6.0.0</version>
   <description>Ambari Server</description>
   <properties>
