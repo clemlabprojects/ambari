@@ -29,7 +29,7 @@
   <version>2.7.6.0.0</version>
   <name>Ambari Contrib Views</name>
   <properties>
-    <ambari.version>2.7.5.0.0</ambari.version>
+    <ambari.version>2.7.6.0.0</ambari.version>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
     <hadoop.version>3.1.0</hadoop.version>
     <views.jars.dir>views-jars</views.jars.dir>
