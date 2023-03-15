@@ -32,7 +32,6 @@ App.MoveNameNodeConfigInitializer = App.MoveComponentConfigInitializerClass.crea
     'dfs.namenode.https-address.{{namespaceId}}.{{suffix}}': App.MoveComponentConfigInitializerClass.getTargetHostConfig(50470),
     'dfs.namenode.rpc-address.{{namespaceId}}.{{suffix}}': App.MoveComponentConfigInitializerClass.getTargetHostConfig(8020),
     'dfs.namenode.servicerpc-address.{{namespaceId}}.{{suffix}}': App.MoveComponentConfigInitializerClass.getTargetHostConfig(8021),
-    'dfs.namenode.lifeline.rpc-address.{{namespaceId}}.{{suffix}}': App.MoveComponentConfigInitializerClass.getTargetHostConfig(8050)
   },
 
   uniqueInitializers: {
