@@ -23,7 +23,7 @@ import static org.apache.ambari.server.controller.internal.ViewPrivilegeResource
 import static org.apache.ambari.server.controller.internal.ViewPrivilegeResourceProvider.VIEW_NAME;
 
 import java.util.EnumSet;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
