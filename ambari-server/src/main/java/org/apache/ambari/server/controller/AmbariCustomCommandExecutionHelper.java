@@ -270,6 +270,7 @@ public class AmbariCustomCommandExecutionHelper {
 
     String clusterName = stage.getClusterName();
     final Cluster cluster = clusters.getCluster(clusterName);
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
 
     // start with all hosts
     Set<String> candidateHosts = new HashSet<>(resourceFilter.getHostNames());
@@ -361,7 +362,7 @@ public class AmbariCustomCommandExecutionHelper {
       // performing ugprades), fetching configuration tags can take a very long
       // time - if it's not needed, then don't do it
       if (!execCmd.getForceRefreshConfigTagsBeforeExecution()) {
-        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName);
+        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName, desiredConfigs);
       }
 
       HostRoleCommand cmd = stage.getHostRoleCommand(hostName, componentName);
@@ -402,8 +403,6 @@ public class AmbariCustomCommandExecutionHelper {
       Map<String, String> hostLevelParams = new TreeMap<>();
       hostLevelParams.put(STACK_NAME, stackId.getStackName());
       hostLevelParams.put(STACK_VERSION, stackId.getStackVersion());
-
-      Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
 
       Set<String> userSet = configHelper.getPropertyValuesWithPropertyType(stackId, PropertyType.USER, cluster, desiredConfigs);
       String userList = gson.toJson(userSet);
@@ -706,6 +705,7 @@ public class AmbariCustomCommandExecutionHelper {
     String clusterName = stage.getClusterName();
     Cluster cluster = clusters.getCluster(clusterName);
     Service service = cluster.getService(serviceName);
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     ServiceComponent component = null;
     if (null != componentName) {
       component = service.getServiceComponent(componentName);
@@ -745,7 +745,7 @@ public class AmbariCustomCommandExecutionHelper {
     // performing ugprades), fetching configuration tags can take a very long
     // time - if it's not needed, then don't do it
     if (!execCmd.getForceRefreshConfigTagsBeforeExecution()) {
-      configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostname);
+      configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostname, desiredConfigs);
     }
 
     execCmd.setConfigurations(configurations);

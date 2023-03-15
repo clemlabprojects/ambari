@@ -48,6 +48,7 @@ import org.apache.ambari.server.customactions.ActionDefinition;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ComponentInfo;
+import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
@@ -267,7 +268,7 @@ public class AmbariActionExecutionHelper {
     } else {
       cluster = null;
     }
-
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     ComponentInfo componentInfo = null;
     List<RequestResourceFilter> resourceFilters = actionContext.getResourceFilters();
     final RequestResourceFilter resourceFilter;
@@ -292,6 +293,7 @@ public class AmbariActionExecutionHelper {
 
     if (null != cluster) {
 //      StackId stackId = cluster.getCurrentStackVersion();
+
       if (serviceName != null && !serviceName.isEmpty()) {
         if (componentName != null && !componentName.isEmpty()) {
           Service service = cluster.getService(serviceName);
@@ -445,7 +447,7 @@ public class AmbariActionExecutionHelper {
       // time - if it's not needed, then don't do it
       Map<String, Map<String, String>> configTags = new TreeMap<>();
       if (!execCmd.getForceRefreshConfigTagsBeforeExecution()) {
-        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName);
+        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName, desiredConfigs);
       }
 
       execCmd.setConfigurationTags(configTags);
