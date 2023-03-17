@@ -54,7 +54,7 @@
         <download.solr>true</download.solr>
       </properties>
       <activation>
-      <activeByDefault>true</activeByDefault>
+      <activeByDefault>false</activeByDefault>
     </activation>
       <build>
         <plugins>
