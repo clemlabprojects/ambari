@@ -58,7 +58,6 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
         Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
 
     api_version = 'v2'
-    print(params.config['configurations']['ranger-ozone-audit']
     setup_ranger_plugin('ozone-client', 'ozone', params.previous_jdbc_jar, params.downloaded_custom_connector,
                         params.driver_curl_source, params.driver_curl_target, params.java64_home,
                         params.repo_name, params.ozone_ranger_plugin_repo,
