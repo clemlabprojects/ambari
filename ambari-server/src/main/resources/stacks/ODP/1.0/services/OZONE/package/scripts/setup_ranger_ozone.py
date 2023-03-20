@@ -75,6 +75,6 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos if params.security_enabled else None,
                         component_user_principal=params.ranger_ozone_principal if params.security_enabled else None,
-                        component_user_keytab=params.ranger_ozone_keytab if params.security_enabled else None)
+                        component_user_keytab=params.ranger_ozone_keytab if params.security_enabled else None, copy_jar = False)
   else:
     Logger.info('Ranger Ozone plugin is not enabled')
