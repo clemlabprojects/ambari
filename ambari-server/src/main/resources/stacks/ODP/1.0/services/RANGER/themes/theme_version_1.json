@@ -1035,6 +1035,26 @@
           ]
         },
         {
+          "config": "ranger-env/ranger-ozone-plugin-enabled",
+          "subsection-name": "section-ranger-plugin-row1-col1",
+          "depends-on": [
+            {
+              "resource": "service",
+              "if": "OZONE",
+              "then": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              }
+            }
+          ]
+        },
+        {
           "config": "ranger-env/xasecure.audit.destination.solr",
           "subsection-name": "subsection-ranger-solr-row1-col1"
         },
@@ -1717,6 +1737,12 @@
       },
       {
         "config": "ranger-env/ranger-nifi-plugin-enabled",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "ranger-env/ranger-ozone-plugin-enabled",
         "widget": {
           "type": "toggle"
         }

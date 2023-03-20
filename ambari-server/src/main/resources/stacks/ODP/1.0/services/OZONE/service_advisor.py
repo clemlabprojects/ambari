@@ -426,7 +426,7 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         ranger_ozone_plugin_enabled = configurations['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
       elif 'ranger-ozone-plugin-properties' in services['configurations'] and 'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']:
         ranger_ozone_plugin_enabled = services['configurations']['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
-      if ranger_ozone_plugin_enabled and (ranger_ozone_plugin_enabled.lower() == 'Yes'.lower()):
+      if ranger_ozone_plugin_enabled.lower() == 'Yes'.lower():
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer')
       else:
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')

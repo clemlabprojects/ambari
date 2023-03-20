@@ -1193,5 +1193,11 @@ module.exports = [
       "filename": "ozone-log4j-properties.xml",
       "category": "OZONE_GATEWAY_LOG4J",
       "index": 6
+    },
+    {
+      "filename": "ranger-ozone-plugin-properties.xml",
+      "index": 1,
+      "name": "ranger-ozone-plugin-enabled",
+      "serviceName": "OZONE"
     }
   ];
