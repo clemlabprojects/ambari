@@ -114,17 +114,20 @@ public class SecurityConfigurationFactory {
         if (persistEmbeddedDescriptor) {
           descriptorReference = persistKerberosDescriptor(descriptorText);
         }
-        securityConfiguration = new SecurityConfiguration(SecurityType.KERBEROS, descriptorReference, descriptorText);
+        Map<?, ?> descriptorMap = (Map<?, ?>) descriptorJsonMap;
+        securityConfiguration = persistEmbeddedDescriptor
+                ? SecurityConfiguration.withReference(descriptorReference)
+                : SecurityConfiguration.withDescriptor(descriptorMap);
       } else if (descriptorReference != null) { // this means the reference is not null
         LOGGER.debug("Found descriptor reference: {}", descriptorReference);
         securityConfiguration = loadSecurityConfigurationByReference(descriptorReference);
       } else {
         LOGGER.debug("There is no security descriptor found in the request");
-        securityConfiguration = new SecurityConfiguration(SecurityType.KERBEROS);
+        securityConfiguration = SecurityConfiguration.KERBEROS;
       }
     } else {
       LOGGER.debug("There is no security configuration found in the request");
-      securityConfiguration = new SecurityConfiguration(SecurityType.NONE);
+      securityConfiguration = SecurityConfiguration.NONE;
     }
     return securityConfiguration;
   }
@@ -145,7 +148,9 @@ public class SecurityConfigurationFactory {
       throw new IllegalArgumentException("No security configuration found for the reference: " + reference);
     }
 
-    securityConfiguration = new SecurityConfiguration(SecurityType.KERBEROS, reference, descriptorEntity.getKerberosDescriptorText());
+    String descriptorText = descriptorEntity.getKerberosDescriptorText();
+    Map<String, ?> descriptorMap = jsonSerializer.<Map<String, ?>>fromJson(descriptorText, Map.class);
+    securityConfiguration =  SecurityConfiguration.withDescriptor(descriptorMap);
 
     return securityConfiguration;
 

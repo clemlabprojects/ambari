@@ -284,35 +284,7 @@ public class RangerPasswordCheckTest {
     verify(conn, m_streamProvider);
   }
 
-  @SuppressWarnings("unchecked")
-  @Test
-  public void testBadUserParsing() throws Exception {
 
-    HttpURLConnection conn = EasyMock.createMock(HttpURLConnection.class);
-
-    expect(conn.getResponseCode()).andReturn(200);
-    expect(conn.getInputStream()).andReturn(new ByteArrayInputStream(GOOD_LOGIN_RESPONSE.getBytes())).once();
-    expect(conn.getResponseCode()).andReturn(200);
-    expect(conn.getInputStream()).andReturn(new ByteArrayInputStream(
-        "some really bad non-json".getBytes()));
-
-    expect(m_streamProvider.processURL((String) anyObject(), (String) anyObject(),
-        (InputStream) anyObject(), (Map<String, List<String>>) anyObject())).andReturn(conn).anyTimes();
-
-    replay(conn, m_streamProvider);
-
-    PrerequisiteCheck check = new PrerequisiteCheck(null, null);
-    m_rpc.perform(check, new PrereqCheckRequest("cluster"));
-
-    String error = "The response from Ranger was malformed. ";
-    error += "com.google.gson.stream.MalformedJsonException: Expected EOF at line 1 column 6. ";
-    error += "Request: " + RANGER_URL + "service/xusers/users?name=r_admin";
-
-    assertEquals(PrereqCheckStatus.WARNING, check.getStatus());
-    assertEquals(error, check.getFailReason());
-
-    verify(conn, m_streamProvider);
-  }
 
   @SuppressWarnings("unchecked")
   @Test

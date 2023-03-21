@@ -62,9 +62,11 @@ public class OSFamilyTest {
   public void testOSListing() throws Exception{
    Set<String> actual_oslist =  os_family.os_list();
    Set<String> expected_oslist = new HashSet<>(Arrays.asList(
-     "redhat6", "oraclelinux5", "suse11", "fedora6", "opensuse11",
-     "centos6", "fedora5", "centos5", "ubuntu12", "redhat5", "sles11",
-     "oraclelinux6", "debian12", "sled11", "win2012server6", "win2012serverr26", "win2008serverr26", "win2008server6"
+           "oraclelinux6", "win2008server6", "oraclelinux7", "oraclelinux8",
+           "sled11", "centos8", "win2012server6", "centos6", "centos7", "centos5", "fedora7",
+           "almalinux7", "fedora8", "almalinux8", "fedora5", "almalinux5", "fedora6", "almalinux6", "redhat5", "redhat7", "win2008serverr26"
+           , "redhat6", "redhat8", "win2012serverr26", "debian12", "opensuse11", "suse11", "sles11",
+           "oraclelinux5", "ubuntu12"
    ));
 
    Assert.assertNotNull(actual_oslist);

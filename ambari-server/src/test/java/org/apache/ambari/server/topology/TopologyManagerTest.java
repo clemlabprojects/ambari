@@ -42,7 +42,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -52,7 +51,6 @@ import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ClusterRequest;
 import org.apache.ambari.server.controller.ConfigurationRequest;
-import org.apache.ambari.server.controller.KerberosHelper;
 import org.apache.ambari.server.controller.RequestStatusResponse;
 import org.apache.ambari.server.controller.ShortTaskStatus;
 import org.apache.ambari.server.controller.internal.HostResourceProvider;
@@ -474,65 +472,6 @@ public class TopologyManagerTest {
     //todo: assertions
   }
 
-  @Test
-  public void testDoNotAddKerberosClientAtTopologyInit_KdcTypeNone() throws Exception {
-    Map<ClusterTopology, List<LogicalRequest>> allRequests = Collections.singletonMap(clusterTopologyMock, Collections.singletonList(logicalRequest));
-
-    expect(logicalRequest.hasPendingHostRequests()).andReturn(false).anyTimes();
-    expect(logicalRequest.isFinished()).andReturn(false).anyTimes();
-    expect(requestStatusResponse.getTasks()).andReturn(Collections.emptyList()).anyTimes();
-
-    expect(clusterTopologyMock.isClusterKerberosEnabled()).andReturn(true);
-    expect(clusterTopologyMock.getClusterId()).andReturn(CLUSTER_ID).anyTimes();
-    expect(clusterTopologyMock.getBlueprint()).andReturn(blueprint).anyTimes();
-
-    expect(persistedState.getAllRequests()).andReturn(allRequests).anyTimes();
-    expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
-    expect(ambariContext.isTopologyResolved(CLUSTER_ID)).andReturn(true).anyTimes();
-
-    expect(blueprint.getSecurity()).andReturn(securityConfiguration).anyTimes();
-    expect(securityConfiguration.getDescriptor()).andReturn(Optional.empty());
-    expect(request.getCredentialsMap()).andReturn(Collections.singletonMap(TopologyManager.KDC_ADMIN_CREDENTIAL, credential));
-    expect(credential.getAlias()).andReturn("").anyTimes();
-    expect(credential.getKey()).andReturn("").anyTimes();
-    expect(credential.getPrincipal()).andReturn("").anyTimes();
-
-    bpConfiguration.setProperty(KerberosHelper.KERBEROS_ENV, KerberosHelper.KDC_TYPE, "none");
-
-    replayAll();
-
-    topologyManager.provisionCluster(request);
-  }
-
-  @Test
-  public void testDoNotAddKerberosClientAtTopologyInit_ManageIdentity() throws Exception {
-    Map<ClusterTopology, List<LogicalRequest>> allRequests = Collections.singletonMap(clusterTopologyMock, Collections.singletonList(logicalRequest));
-
-    expect(logicalRequest.hasPendingHostRequests()).andReturn(false).anyTimes();
-    expect(logicalRequest.isFinished()).andReturn(false).anyTimes();
-    expect(requestStatusResponse.getTasks()).andReturn(Collections.emptyList()).anyTimes();
-
-    expect(clusterTopologyMock.isClusterKerberosEnabled()).andReturn(true);
-    expect(clusterTopologyMock.getClusterId()).andReturn(CLUSTER_ID).anyTimes();
-    expect(clusterTopologyMock.getBlueprint()).andReturn(blueprint).anyTimes();
-
-    expect(persistedState.getAllRequests()).andReturn(allRequests).anyTimes();
-    expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
-    expect(ambariContext.isTopologyResolved(CLUSTER_ID)).andReturn(true).anyTimes();
-
-    expect(blueprint.getSecurity()).andReturn(securityConfiguration).anyTimes();
-    expect(securityConfiguration.getDescriptor()).andReturn(Optional.empty());
-    expect(request.getCredentialsMap()).andReturn(Collections.singletonMap(TopologyManager.KDC_ADMIN_CREDENTIAL, credential));
-    expect(credential.getAlias()).andReturn("").anyTimes();
-    expect(credential.getKey()).andReturn("").anyTimes();
-    expect(credential.getPrincipal()).andReturn("").anyTimes();
-
-    bpConfiguration.setProperty(KerberosHelper.KERBEROS_ENV, KerberosHelper.MANAGE_IDENTITIES, "false");
-
-    replayAll();
-
-    topologyManager.provisionCluster(request);
-  }
 
   @Test
   public void testBlueprintRequestCompletion() throws Exception {

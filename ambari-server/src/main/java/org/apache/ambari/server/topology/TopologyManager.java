@@ -314,7 +314,7 @@ public class TopologyManager {
     ambariContext.createAmbariResources(topology, clusterName, securityType, repoVersion, repoVersionID);
 
     if (securityConfiguration != null && securityConfiguration.getDescriptor() != null) {
-      submitKerberosDescriptorAsArtifact(clusterName, securityConfiguration.getDescriptor());
+      securityConfiguration.getDescriptor().ifPresent(descriptor -> submitKerberosDescriptorAsArtifact(clusterName, descriptor));
     }
 
     if (credential != null) {
@@ -465,7 +465,7 @@ public class TopologyManager {
     return securityConfiguration;
   }
 
-  private void submitKerberosDescriptorAsArtifact(String clusterName, String descriptor) {
+  private void submitKerberosDescriptorAsArtifact(String clusterName, Map<?,?> descriptor) {
 
     ResourceProvider artifactProvider =
         ambariContext.getClusterController().ensureResourceProvider(Resource.Type.Artifact);

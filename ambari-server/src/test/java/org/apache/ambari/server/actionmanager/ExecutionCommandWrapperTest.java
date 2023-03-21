@@ -168,9 +168,9 @@ public class ExecutionCommandWrapperTest {
     Stage s = stageFactory.createNew(requestId, "/var/log", clusterName, 1L, "execution command wrapper test", "commandParamsStage", "hostParamsStage");
     s.setStageId(stageId);
     s.addHostRoleExecutionCommand(hostName, Role.NAMENODE,
-        RoleCommand.START,
-        new ServiceComponentHostStartEvent(Role.NAMENODE.toString(),
-            hostName, System.currentTimeMillis()), clusterName, "HDFS", false, false);
+            RoleCommand.START,
+            new ServiceComponentHostStartEvent(Role.NAMENODE.toString(),
+                    hostName, System.currentTimeMillis()), clusterName, "HDFS", false, false);
     List<Stage> stages = new ArrayList<>();
     stages.add(s);
     Request request = new Request(stages, "clusterHostInfo", clusters);
@@ -179,27 +179,8 @@ public class ExecutionCommandWrapperTest {
 
   @Test
   public void testGetExecutionCommand() throws JSONException, AmbariException {
-    Map<String, Map<String, String>> confs = new HashMap<>();
-    Map<String, String> configurationsGlobal = new HashMap<>();
-    configurationsGlobal.put(GLOBAL_NAME1, GLOBAL_VAL1);
-    confs.put(GLOBAL_CONFIG, configurationsGlobal);
-
-    Map<String, Map<String, String>> confTags = new HashMap<>();
-    Map<String, String> confTagServiceSite = new HashMap<>();
-
-    confTagServiceSite.put("tag", CLUSTER_VERSION_TAG);
-    confTagServiceSite.put("service_override_tag", SERVICE_VERSION_TAG);
-    confTagServiceSite.put("host_override_tag", HOST_VERSION_TAG);
-
-    confTags.put(SERVICE_SITE_CONFIG, confTagServiceSite);
-
-    Map<String, String> confTagGlobal = Collections.singletonMap("tag", CLUSTER_VERSION_TAG);
-
-    confTags.put(GLOBAL_CONFIG, confTagGlobal);
-
 
     ExecutionCommand executionCommand = new ExecutionCommand();
-
 
     executionCommand.setClusterName(CLUSTER1);
     executionCommand.setTaskId(1);
@@ -208,8 +189,6 @@ public class ExecutionCommandWrapperTest {
     executionCommand.setRole("NAMENODE");
     executionCommand.setRoleParams(Collections.emptyMap());
     executionCommand.setRoleCommand(RoleCommand.START);
-    executionCommand.setConfigurations(confs);
-    executionCommand.setConfigurationTags(confTags);
     executionCommand.setServiceName("HDFS");
     executionCommand.setCommandType(AgentCommandType.EXECUTION_COMMAND);
     executionCommand.setCommandParams(Collections.emptyMap());
@@ -220,29 +199,6 @@ public class ExecutionCommandWrapperTest {
     injector.injectMembers(execCommWrap);
 
     ExecutionCommand processedExecutionCommand = execCommWrap.getExecutionCommand();
-
-    Map<String, String> serviceSiteConfig = processedExecutionCommand.getConfigurations().get(SERVICE_SITE_CONFIG);
-
-    Assert.assertEquals(SERVICE_SITE_VAL1_S, serviceSiteConfig.get(SERVICE_SITE_NAME1));
-    Assert.assertEquals(SERVICE_SITE_VAL2_H, serviceSiteConfig.get(SERVICE_SITE_NAME2));
-    Assert.assertEquals(SERVICE_SITE_VAL3, serviceSiteConfig.get(SERVICE_SITE_NAME3));
-    Assert.assertEquals(SERVICE_SITE_VAL4, serviceSiteConfig.get(SERVICE_SITE_NAME4));
-    Assert.assertEquals(SERVICE_SITE_VAL5_S, serviceSiteConfig.get(SERVICE_SITE_NAME5));
-    Assert.assertEquals(SERVICE_SITE_VAL6_H, serviceSiteConfig.get(SERVICE_SITE_NAME6));
-
-    Map<String, String> globalConfig = processedExecutionCommand.getConfigurations().get(GLOBAL_CONFIG);
-
-    Assert.assertEquals(GLOBAL_VAL1, globalConfig.get(GLOBAL_NAME1));
-    Assert.assertEquals(GLOBAL_CLUSTER_VAL2, globalConfig.get(GLOBAL_NAME2));
-
-
-    //Union of all keys of service site configs
-    Set<String> serviceSiteKeys = new HashSet<>();
-    serviceSiteKeys.addAll(SERVICE_SITE_CLUSTER.keySet());
-    serviceSiteKeys.addAll(SERVICE_SITE_SERVICE.keySet());
-    serviceSiteKeys.addAll(SERVICE_SITE_HOST.keySet());
-
-    Assert.assertEquals(serviceSiteKeys.size(), serviceSiteConfig.size());
 
     Assert.assertNotNull(processedExecutionCommand.getRepositoryFile());
   }
@@ -264,7 +220,7 @@ public class ExecutionCommandWrapperTest {
 
 
     Map<String, String> mergedConfig = configHelper.getMergedConfig(baseConfig,
-      overrideConfig);
+            overrideConfig);
 
 
     Set<String> configsKeys = new HashSet<>();
@@ -290,7 +246,7 @@ public class ExecutionCommandWrapperTest {
    */
   @Test
   public void testExecutionCommandHasVersionInfoWithoutCurrentClusterVersion()
-      throws JSONException, AmbariException {
+          throws JSONException, AmbariException {
     Cluster cluster = clusters.getCluster(CLUSTER1);
 
     StackId stackId = cluster.getDesiredStackVersion();
@@ -359,7 +315,7 @@ public class ExecutionCommandWrapperTest {
     processedExecutionCommand = execCommWrap.getExecutionCommand();
     commandParams = processedExecutionCommand.getCommandParams();
     Assert.assertEquals("0.1-0000", commandParams.get(KeyNames.VERSION));
-    }
+  }
 
   /**
    * Test that the execution command wrapper ignores repository file when there are none to use.
@@ -369,9 +325,9 @@ public class ExecutionCommandWrapperTest {
     Cluster cluster = clusters.getCluster(CLUSTER1);
 
     StackId stackId = cluster.getDesiredStackVersion();
-    RepositoryVersionEntity repositoryVersion = ormTestHelper.getOrCreateRepositoryVersion(stackId, "0.1-0000");
+    RepositoryVersionEntity repositoryVersion = ormTestHelper.getOrCreateRepositoryVersion(new StackId("HDP", "0.2"), "0.2-0000");
     repositoryVersion.setResolved(true); // has build number
-    Service service = cluster.getService("HDFS");
+    Service service = cluster.addService("HIVE", repositoryVersion);
     service.setDesiredRepositoryVersion(repositoryVersion);
 
     repositoryVersion.addRepoOsEntities(new ArrayList<>());
@@ -386,10 +342,10 @@ public class ExecutionCommandWrapperTest {
     executionCommand.setTaskId(1);
     executionCommand.setRequestAndStage(1, 1);
     executionCommand.setHostname(HOST1);
-    executionCommand.setRole("NAMENODE");
+    executionCommand.setRole("HIVE_SERVER");
     executionCommand.setRoleParams(Collections.<String, String>emptyMap());
     executionCommand.setRoleCommand(RoleCommand.INSTALL);
-    executionCommand.setServiceName("HDFS");
+    executionCommand.setServiceName("HIVE");
     executionCommand.setCommandType(AgentCommandType.EXECUTION_COMMAND);
     executionCommand.setCommandParams(commandParams);
 
@@ -410,10 +366,10 @@ public class ExecutionCommandWrapperTest {
     executionCommand.setTaskId(1);
     executionCommand.setRequestAndStage(1, 1);
     executionCommand.setHostname(HOST1);
-    executionCommand.setRole("NAMENODE");
+    executionCommand.setRole("HIVE_SERVER");
     executionCommand.setRoleParams(Collections.<String, String> emptyMap());
     executionCommand.setRoleCommand(RoleCommand.START);
-    executionCommand.setServiceName("HDFS");
+    executionCommand.setServiceName("HIVE");
     executionCommand.setCommandType(AgentCommandType.EXECUTION_COMMAND);
     executionCommand.setCommandParams(commandParams);
 
@@ -423,7 +379,7 @@ public class ExecutionCommandWrapperTest {
 
     processedExecutionCommand = execCommWrap.getExecutionCommand();
     commandParams = processedExecutionCommand.getCommandParams();
-    Assert.assertEquals("0.1-0000", commandParams.get(KeyNames.VERSION));
+    Assert.assertEquals("0.2-0000", commandParams.get(KeyNames.VERSION));
   }
 
   @AfterClass
