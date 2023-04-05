@@ -1,0 +1,447 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<metainfo>
+  <schemaVersion>2.0</schemaVersion>
+  <services>
+    <service>
+      <name>OZONE</name>
+      <displayName>Ozone</displayName>
+      <comment>Apache Ozone is a distributed, scalable, and high performance object store, 
+      available with the Hadoop Open Source Data Platform. Use case to separate storage from compute.
+      </comment>
+      <version>1.2.1</version>
+      <credential-store>
+        <supported>true</supported>
+        <enabled>true</enabled>
+      </credential-store>
+      <components>
+        <component>
+          <name>OZONE_STORAGE_CONTAINER_MANAGER</name>
+          <displayName>Ozone Storage Container Manager</displayName>
+          <category>MASTER</category>
+          <cardinality>1</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <reassignAllowed>false</reassignAllowed>
+          <dependencies>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_scm_server.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>1800</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>ozone_app</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-scm</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+            <config-type>ozone-site</config-type>
+            <config-type>ozone-env</config-type>
+            <config-type>ozone-log4j-scm</config-type>
+            <config-type>ssl-client-scm</config-type>
+            <config-type>ssl-server-scm</config-type>
+          </configuration-dependencies>
+        </component>
+        <component>
+          <name>OZONE_MANAGER</name>
+          <displayName>Ozone Manager</displayName>
+          <category>MASTER</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <reassignAllowed>false</reassignAllowed>
+          <dependencies>
+            <dependency>
+              <name>OZONE/OZONE_STORAGE_CONTAINER_MANAGER</name>
+              <scope>cluster</scope>
+              <auto-deploy>
+                <enabled>false</enabled>
+              </auto-deploy>
+            </dependency>
+            <dependency>
+              <name>HDFS/NAMENODE</name>
+              <scope>cluster</scope>
+              <auto-deploy>
+                <enabled>false</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
+                  <configType>ozone-env</configType>
+                  <property>run_in_hdfs</property>
+                </condition>
+              </conditions>
+            </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_manager.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>1800</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>ozone_app</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-manager</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+              <config-type>ozone-site</config-type>
+              <config-type>ozone-env</config-type>
+              <config-type>ozone-log4j-om</config-type>
+              <config-type>ranger-ozone-audit</config-type>
+              <config-type>ranger-ozone-plugin-properties</config-type>
+              <config-type>ranger-ozone-policymgr-ssl</config-type>
+              <config-type>ranger-ozone-security</config-type>
+              <config-type>ssl-client-om</config-type>
+              <config-type>ssl-server-om</config-type>
+          </configuration-dependencies>
+        </component>
+        <component>
+          <name>OZONE_DATANODE</name>
+          <displayName>Ozone Datanode</displayName>
+          <category>SLAVE</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <decommissionAllowed>true</decommissionAllowed>
+          <dependencies>
+            <dependency>
+                <name>HDFS/DATANODE</name>
+                <scope>host</scope>
+                <auto-deploy>
+                  <enabled>false</enabled>
+                </auto-deploy>
+                <conditions>
+                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
+                    <configType>ozone-env</configType>
+                    <property>run_in_hdfs</property>
+                  </condition>
+                </conditions>
+              </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_datanode.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>1200</timeout>
+          </commandScript>
+          <bulkCommands>
+            <displayName>Ozone DataNodes</displayName>
+            <!-- Used by decommission and recommission -->
+            <masterComponent>OZONE_MANAGER</masterComponent>
+          </bulkCommands>
+          <logs>
+            <log>
+              <logId>ozone_datanode</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-datanode</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+            <config-type>ozone-site</config-type>
+            <config-type>ozone-env</config-type>
+            <config-type>ozone-log4j-datanode</config-type>
+            <config-type>ssl-client-datanode</config-type>
+            <config-type>ssl-server-datanode</config-type>
+          </configuration-dependencies>
+        </component>
+
+        <component>
+          <name>OZONE_RECON</name>
+          <displayName>Oozie Recon WEB console</displayName>
+          <category>MASTER</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <dependencies>
+            <dependency>
+              <name>OZONE/OZONE_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+            </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_recon.py</script>
+            <scriptType>PYTHON</scriptType>
+          </commandScript>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-recon</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+            <config-type>ozone-site</config-type>
+            <config-type>ozone-env</config-type>
+            <config-type>ozone-log4j-recon</config-type>
+            <config-type>ssl-client-recon</config-type>
+            <config-type>ssl-server-recon</config-type>
+          </configuration-dependencies>
+        </component>
+
+        <component>
+          <name>OZONE_CLIENT</name>
+          <displayName>Ozone Client Gateway</displayName>
+          <category>CLIENT</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <dependencies>
+              <dependency>
+                <name>HDFS/HDFS_CLIENT</name>
+                <scope>host</scope>
+                <auto-deploy>
+                  <enabled>false</enabled>
+                </auto-deploy>
+                <conditions>
+                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
+                    <configType>ozone-env</configType>
+                    <property>run_in_hdfs</property>
+                  </condition>
+                </conditions>
+              </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_client.py</script>
+            <scriptType>PYTHON</scriptType>
+          </commandScript>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-properties</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+            <config-type>ozone-log4j-properties</config-type>
+            <config-type>ssl-client</config-type>
+            <config-type>ssl-server</config-type>
+          </configuration-dependencies>
+        </component>
+
+        <component>
+          <name>OZONE_S3_GATEWAY</name>
+          <displayName>Ozone S3 Gateway</displayName>
+          <category>MASTER</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <dependencies>
+              <dependency>
+                <name>OZONE/OZONE_CLIENT</name>
+                <scope>host</scope>
+                <auto-deploy>
+                  <enabled>false</enabled>
+                </auto-deploy>
+              </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/ozone_s3_gateway.py</script>
+            <scriptType>PYTHON</scriptType>
+          </commandScript>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-s3g</dictionaryName>
+            </configFile>
+          </configFiles>
+        </component>
+        <configuration-dependencies>
+            <config-type>ozone-log4j-s3g</config-type>
+            <config-type>ssl-client-s3g</config-type>
+            <config-type>ssl-server-s3g</config-type>
+        </configuration-dependencies>
+      </components>
+  
+
+      <osSpecifics>
+        <osSpecific>
+          <osFamily>any</osFamily>
+          <packages>
+            <package>
+              <name>zip</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>amazonlinux2,redhat7,redhat8,almalinux8</osFamily>
+          <packages>
+            <package>
+              <name>zookeeper_${stack_version}</name>
+            </package>
+            <package>
+              <name>ozone_${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16</osFamily>
+          <packages>
+            <package>
+              <name>zookeeper_${stack_version}</name>
+            </package>
+            <package>
+              <name>ozone-${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+      </osSpecifics>
+
+      <commandScript>
+        <script>scripts/service_check.py</script>
+        <scriptType>PYTHON</scriptType>
+        <timeout>300</timeout>
+      </commandScript>
+      
+      <configuration-dependencies>
+        <config-type>ozone-site</config-type>
+        <config-type>ozone-env</config-type>
+        <config-type>ranger-ozone-plugin-properties</config-type>
+        <config-type>ranger-ozone-security</config-type>
+      </configuration-dependencies>
+
+      <!-- <sso>
+        <supported>true</supported>
+        <kerberosRequired>true</kerberosRequired>
+        <ssoEnabledTest>
+          {
+          "equals": [
+          "ozone-site/ozone.authentication.type",
+          "org.apache.hadoop.security.authentication.server.JWTRedirectAuthenticationHandler"
+          ]
+          }
+        </ssoEnabledTest>
+      </sso> -->
+
+      <kerberosEnabledTest>
+        {
+        "and": [
+        {
+        "equals": [
+        "ozone-site/ozone.security.enabled",
+        "true"
+        ]
+        },
+        {
+        "equals": [
+        "ozone-site/hadoop.security.authentication",
+        "kerberos"
+        ]
+        }
+        ]
+        }
+      </kerberosEnabledTest>
+
+      <quickLinksConfigurations>
+        <quickLinksConfiguration>
+          <fileName>quicklinks.json</fileName>
+          <default>true</default>
+        </quickLinksConfiguration>
+      </quickLinksConfigurations>
+  
+      <themes>
+        <theme>
+          <fileName>theme.json</fileName>
+          <default>true</default>
+        </theme>
+        <theme>
+          <fileName>directories.json</fileName>
+          <default>true</default>
+        </theme>
+      </themes>
+    </service>
+  </services>
+</metainfo>

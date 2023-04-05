@@ -481,7 +481,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'HBASE', 'audit_file': 'ranger-hbase-audit'},
       {'service_name': 'HIVE', 'audit_file': 'ranger-hive-audit'},
       {'service_name': 'KNOX', 'audit_file': 'ranger-knox-audit'},
-      {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'}
+      {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'},
+      {'service_name': 'OZONE', 'audit_file': 'ranger-ozone-audit'},
     ]
 
     for item in range(len(ranger_services)):
@@ -536,7 +537,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'HIVE', 'config_type': 'ranger-hive-security'},
       {'service_name': 'KNOX', 'config_type': 'ranger-knox-security'},
       {'service_name': 'KAFKA', 'config_type': 'ranger-kafka-security'},
-      {'service_name': 'RANGER_KMS','config_type': 'ranger-kms-security'}
+      {'service_name': 'RANGER_KMS','config_type': 'ranger-kms-security'},
+      {'service_name': 'OZONE','config_type': 'ranger-ozone-security'}
     ]
 
     # recommendation for ranger url for ranger-supported plugins
@@ -628,7 +630,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'KNOX', 'audit_file': 'ranger-knox-audit'},
       {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'},
       {'service_name': 'RANGER_KMS', 'audit_file': 'ranger-kms-audit'},
-      {'service_name': 'ATLAS', 'audit_file': 'ranger-atlas-audit'}
+      {'service_name': 'ATLAS', 'audit_file': 'ranger-atlas-audit'},
+      {'service_name': 'OZONE', 'audit_file': 'ranger-ozone-audit'}
     ]
 
     for item in range(len(ranger_services)):
@@ -669,7 +672,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'KNOX', 'file_name': 'knox-env', 'config_name': 'knox_user', 'target_configname': 'ranger.plugins.knox.serviceuser'},
       {'service_name': 'KAFKA', 'file_name': 'kafka-env', 'config_name': 'kafka_user', 'target_configname': 'ranger.plugins.kafka.serviceuser'},
       {'service_name': 'RANGER_KMS', 'file_name': 'kms-env', 'config_name': 'kms_user', 'target_configname': 'ranger.plugins.kms.serviceuser'},
-      {'service_name': 'ATLAS', 'file_name': 'atlas-env', 'config_name': 'metadata_user', 'target_configname': 'ranger.plugins.atlas.serviceuser'}
+      {'service_name': 'ATLAS', 'file_name': 'atlas-env', 'config_name': 'metadata_user', 'target_configname': 'ranger.plugins.atlas.serviceuser'},
+      {'service_name': 'OZONE', 'file_name': 'ozone-env', 'config_name': 'ozone_user', 'target_configname': 'ranger.plugins.ozone.serviceuser'}
     ]
 
     for item in range(len(ranger_plugins_serviceuser)):

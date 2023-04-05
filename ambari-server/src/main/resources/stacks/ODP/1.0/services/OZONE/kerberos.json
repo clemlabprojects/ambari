@@ -1,0 +1,300 @@
+{
+  "services": [
+    {
+      "name": "OZONE",
+      "identities": [
+        {
+          "name": "ozone_spnego",
+          "reference": "/spnego"
+        },
+        {
+          "name": "ozone",
+          "principal": {
+            "value": "${ozone-env/ozone_user}${principal_suffix}@${realm}",
+            "type" : "user",
+            "configuration": "ozone-env/ozone_principal_name",
+            "local_username": "${ozone-env/ozone_user}"
+          },
+          "keytab": {
+            "file": "${keytab_dir}/ozone.headless.keytab",
+            "owner": {
+              "name": "${ozone-env/ozone_user}",
+              "access": "r"
+            },
+            "group": {
+              "name": "${cluster-env/user_group}",
+              "access": "r"
+            },
+            "configuration": "ozone-env/ozone_user_keytab"
+          }
+        },
+        {
+          "name": "ozone_smokeuser",
+          "reference": "/smokeuser"
+        }
+      ],
+      "auth_to_local_properties" : [
+        "ozone-core-site/hadoop.security.auth_to_local"
+      ],
+      "configurations": [
+        {
+          "ozone-core-site": {
+            "hadoop.security.authentication": "kerberos",
+            "hadoop.security.authorization": "true"
+          }
+        },
+        {
+          "ozone-site": {
+            "ozone.security.enabled": "true",
+            "ozone.acl.enabled": "true",
+            "ozone.http.filter.initializers": "org.apache.hadoop.security.AuthenticationFilterInitializer"
+          }
+        },
+        {
+          "ranger-ozone-audit": {
+            "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
+            "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
+            "xasecure.audit.jaas.Client.option.useKeyTab": "true",
+            "xasecure.audit.jaas.Client.option.storeKey": "false",
+            "xasecure.audit.jaas.Client.option.serviceName": "solr",
+            "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "OZONE_MANAGER", 
+          "identities": [
+            {
+              "name": "ozone_ozone_manager_ozone",  
+              "reference": "/OZONE/MANAGER/ozone"
+            },
+            {
+              "name": "ozone_manager_ozone",
+              "principal": {
+                "value": "om/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-site/ozone.om.kerberos.principal",
+                "local_username": "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.om.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-site/ozone.om.kerberos.keytab.file"
+              }
+            },
+            {
+              "name": "ozone_ozone_master_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-site/ozone.om.http.auth.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-site/ozone.om.http.auth.kerberos.keytab"
+              }
+            },
+            {
+              "name" : "ranger_ozone_audit",
+              "reference": "/OZONE/OZONE_MANAGER/ozone_manager_ozone",
+              "principal": {
+                "configuration": "ranger-ozone-audit/xasecure.audit.jaas.Client.option.principal"
+              },
+              "keytab": {
+                "configuration": "ranger-ozone-audit/xasecure.audit.jaas.Client.option.keyTab"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "ozone-site": {
+                "ozone.om.http.auth.type": "kerberos"
+              },
+              "ozone-core-site": {
+                "hadoop.security.authentication": "kerberos"
+              }
+            }
+          ]
+        },
+        {
+          "name": "OZONE_STORAGE_CONTAINER_MANAGER",
+          "identities": [
+            {
+              "name": "ozone_scm_ozone",
+              "principal": {
+                "value": "scm/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-site/hdds.scm.kerberos.principal",
+                "local_username": "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.scm.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-site/hdds.scm.kerberos.keytab.file"
+              }
+            },
+            {
+              "name": "ozone_ozone_scm_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-site/hdds.scm.http.auth.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-site/hdds.scm.http.auth.kerberos.keytab"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "ozone-site": {
+                "hdds.scm.http.auth.type": "kerberos"
+              }
+            }
+          ]
+        },
+        {
+          "name": "OZONE_DATANODE",
+          "configurations": [
+            {
+              "ozone-site": {
+                "hdds.datanode.http.auth.type": "true"
+              }
+            }
+          ],
+          "identities": [
+            {
+              "name": "ozone_datanode_ozone",
+              "principal": {
+                "value": "dn/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-site/dfs.datanode.kerberos.principal",
+                "local_username": "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.dn.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-site/dfs.datanode.keytab.file"
+              }
+            },
+            {
+              "name": "ozone_ozone_datanode_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-site/hdds.datanode.http.auth.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-site/hdds.datanode.http.auth.kerberos.keytab"
+              }
+            }
+          ]
+        },
+        {
+          "name": "OZONE_S3_GATEWAY",
+          "identities": [
+            {
+              "name": "ozone_s3g_ozone",
+              "principal": {
+                "value": "s3g/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-site/ozone.s3g.kerberos.principal",
+                "local_username": "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.s3g.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-site/ozone.s3g.kerberos.keytab.file"
+              }
+            },
+            {
+              "name": "ozone_ozone_s3g_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-site/ozone.s3g.http.auth.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-site/ozone.s3g.http.auth.kerberos.keytab"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "ozone-site": {
+                "ozone.s3g.http.auth.type": "kerberos"
+              }
+            }
+          ]
+        },
+        {
+          "name": "OZONE_RECON",
+          "identities": [
+            {
+              "name": "ozone_recon_ozone",
+              "principal": {
+                "value": "recon/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-site/ozone.recon.kerberos.principal",
+                "local_username": "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.recon.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-site/ozone.recon.kerberos.keytab.file"
+              }
+            },
+            {
+              "name": "ozone_ozone_recon_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-site/ozone.recon.http.auth.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-site/ozone.recon.http.auth.kerberos.keytab"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "ozone-site": {
+                "ozone.recon.http.auth.type": "kerberos"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,305 @@
+{
+  "name": "default",
+  "description": "Default theme for Ozone service",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "default",
+        "tabs": [
+          {
+            "name": "settings",
+            "display-name": "Settings",
+            "layout": {
+              "tab-columns": "3",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-manager",
+                  "display-name": "Manager",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-manager-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-datanode",
+                  "display-name": "Datanode",
+                  "row-index": "0",
+                  "column-index": "1",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-datanode-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-scm",
+                  "display-name": "Storage Container Manager",
+                  "row-index": "0",
+                  "column-index": "2",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-scm-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-recon",
+                  "display-name": "Recon UI",
+                  "row-index": "1",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-recon-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-s3g",
+                  "display-name": "S3 Gateway",
+                  "row-index": "1",
+                  "column-index": "1",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-s3g-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-gateway",
+                  "display-name": "Cient",
+                  "row-index": "2",
+                  "column-index": "1",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-gateway-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config": "ozone-site/ozone.om.db.dirs",
+          "subsection-name": "subsection-manager-col1"
+        },
+        {
+          "config": "ozone-site/ozone.om.ratis.storage.dir",
+          "subsection-name": "subsection-manager-col1"
+        },
+        {
+          "config": "ozone-env/ozone_manager_heapsize",
+          "subsection-name": "subsection-manager-col1"
+        },
+        {
+          "config": "ozone-site/hdds.datanode.dir",
+          "subsection-name": "subsection-datanode-col1"
+        },
+        {
+          "config": "ozone-env/ozone_datanode_heapsize",
+          "subsection-name": "subsection-datanode-col1"
+        },
+        {
+          "config": "ozone-site/ozone.scm.db.dirs",
+          "subsection-name": "subsection-scm-col1"
+        },
+        {
+          "config": "ozone-site/ozone.scm.ha.ratis.storage.dir",
+          "subsection-name": "subsection-scm-col1"
+        },
+        {
+          "config": "ozone-env/ozone_scm_heapsize",
+          "subsection-name": "subsection-scm-col1"
+        },
+        {
+          "config": "ozone-site/ozone.recon.db.dir",
+          "subsection-name": "subsection-recon-col1"
+        },
+        {
+          "config": "ozone-site/ozone.recon.scm.db.dir",
+          "subsection-name": "subsection-recon-col1"
+        },
+        {
+          "config": "ozone-env/ozone_recon_heapsize",
+          "subsection-name": "subsection-recon-col1"
+        },
+        {
+          "config": "ozone-env/ozone_s3g_heapsize",
+          "subsection-name": "subsection-s3g-col1"
+        },
+        {
+          "config": "ozone-env/ozone_heapsize",
+          "subsection-name": "subsection-gateway-col1"
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "ozone-site/ozone.om.db.dirs",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/ozone.om.ratis.storage.dir",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/hdds.datanode.dir",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/ozone.scm.db.dirs",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/ozone.scm.ha.ratis.storage.dir",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/ozone.recon.db.dir",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-site/ozone.recon.scm.db.dir",
+        "widget": {
+          "type": "directories"
+        }
+      },
+      {
+        "config": "ozone-env/ozone_manager_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "ozone-env/ozone_datanode_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "ozone-env/ozone_scm_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "ozone-env/ozone_recon_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "ozone-env/ozone_s3g_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "ozone-env/ozone_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+

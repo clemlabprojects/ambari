@@ -1,0 +1,1051 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+  <property>
+    <name>ozone_conf_dir</name>
+    <value>/etc/hadoop-ozone/conf</value>
+    <description>Ozone conf dir</description>
+    <display-name>Ozone conf dir</display-name>
+    <value-attributes>
+        <type>directory</type>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_log_dir_prefix</name>
+    <value>/var/log/hadoop-ozone</value>
+    <description>Ozone Log Dir Prefix</description>
+    <display-name>Ozone Log Dir Prefix</display-name>
+    <value-attributes>
+        <type>directory</type>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_pid_dir_prefix</name>
+    <value>/var/run/hadoop-ozone</value>
+    <display-name>Ozone PID Dir Prefix</display-name>
+    <description>Ozone PID Dir Prefix</description>
+    <value-attributes>
+        <type>directory</type>
+        <overridable>false</overridable>
+        <editable-only-at-install>true</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_principal_name</name>
+    <description>Ozone principal name</description>
+    <property-type>KERBEROS_PRINCIPAL</property-type>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_user_keytab</name>
+    <description>Ozone keytab path</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_heapsize</name>
+    <value>1024</value>
+    <description>Ozone Client Heapsize</description>
+    <display-name>Ozone Client Heapsize</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+      <maximum>16384</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_java_opts</name>
+    <value>  </value>
+    <description>Ozone Gateway JAVA Extra args</description>
+    <display-name>Ozone Gateway JAVA options</display-name>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+<!--    ozone manager related env properties -->
+  <property>
+    <name>ozone_manager_log_level</name>
+    <value>INFO</value>
+    <display-name>Ozone Manager Log Level</display-name>
+    <value-attributes>
+        <type>value-list</type>
+        <entries>
+            <entry>
+                <value>INFO</value>
+                <label>INFO (Recommended)</label>
+            </entry>
+            <entry>
+                <value>DEBUG</value>
+                <label>DEBUG (Most Verbose)</label>
+            </entry>
+            <entry>
+                <value>WARN</value>
+                <label>WARN</label>
+            </entry>
+            <entry>
+                <value>ERROR</value>
+                <label>ERROR (Least Verbose)</label>
+            </entry>
+        </entries>
+        <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_heapsize</name>
+    <value>1024</value>
+    <description>Ozone Manager Java heap size</description>
+    <display-name>Ozone Manager Java heap size</display-name>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>268435456</maximum>
+        <unit>MB</unit>
+        <increment-step>256</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+        <property>
+            <type>hdfs-site</type>
+            <name>dfs.datanode.data.dir</name>
+        </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_opt_newsize</name>
+    <value>200</value>
+    <description>Default size of Java new generation for Ozone Manager (Java option -XX:NewSize) Note: The value of Ozone Manager new generation size (default size of Java new generation for Ozone Manager (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_manager_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+    <display-name>Ozone Manager new generation size</display-name>
+    <depends-on>
+        <property>
+            <type>ozone-env</type>
+            <name>ozone_manager_heapsize</name>
+        </property>
+    </depends-on>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>16384</maximum>
+        <unit>MB</unit>
+        <increment-step>256</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_opt_maxnewsize</name>
+    <value>200</value>
+    <description>Ozone Manager maximum new generation size</description>
+    <display-name>Ozone Manager maximum new generation size</display-name>
+    <depends-on>
+        <property>
+            <type>ozone-env</type>
+            <name>ozone_manager_heapsize</name>
+        </property>
+    </depends-on>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>16384</maximum>
+        <unit>MB</unit>
+        <increment-step>256</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_opt_permsize</name>
+    <value>128</value>
+    <description>Ozone Manager permanent generation size</description>
+    <display-name>Ozone Manager permanent generation size</display-name>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>2096</maximum>
+        <unit>MB</unit>
+        <increment-step>128</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_opt_maxpermsize</name>
+    <value>256</value>
+    <description>Ozone Manager maximum permanent generation size</description>
+    <display-name>Ozone Manager maximum permanent generation size</display-name>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>2096</maximum>
+        <unit>MB</unit>
+        <increment-step>128</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_java_opts</name>
+    <value> </value>
+    <description>Ozone Manager JAVA Extra args</description>
+    <display-name>Ozone Manager JAVA options</display-name>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>ozone_manager_ssl_enabled</name>
+    <value></value>
+    <description>Enable TLS/SSL on Ozone Manager</description>
+    <display-name>Enable SSL</display-name>
+    <on-ambari-upgrade add="false"/>
+  </property>
+<!--    Ozone Storage Container Manager related properties -->
+    <property>
+        <name>ozone_scm_log_level</name>
+        <value>INFO</value>
+        <display-name>Ozone Storage Container Manager Log Level</display-name>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>INFO</value>
+                    <label>INFO (Recommended)</label>
+                </entry>
+                <entry>
+                    <value>DEBUG</value>
+                    <label>DEBUG (Most Verbose)</label>
+                </entry>
+                <entry>
+                    <value>WARN</value>
+                    <label>WARN</label>
+                </entry>
+                <entry>
+                    <value>ERROR</value>
+                    <label>ERROR (Least Verbose)</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_heapsize</name>
+        <value>1024</value>
+        <description>Ozone Storage Container Manager Java heap size</description>
+        <display-name>Ozone Storage Container Manager Java heap size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>268435456</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>hdfs-site</type>
+                <name>dfs.datanode.data.dir</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_opt_newsize</name>
+        <value>200</value>
+        <description>Default size of Java new generation for Ozone Storage Container Manager (Java option -XX:NewSize) Note: The value of Ozone Storage Container Manager new generation size (default size of Java new generation for Ozone Storage Container Manager (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_manager_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+        <display-name>Ozone Storage Container Manager new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_scm_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_opt_maxnewsize</name>
+        <value>200</value>
+        <description>Ozone Storage Container Manager maximum new generation size</description>
+        <display-name>Ozone Storage Container Manager maximum new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_scm_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_opt_permsize</name>
+        <value>128</value>
+        <description>Ozone Storage Container Manager permanent generation size</description>
+        <display-name>Ozone Storage Container Manager  permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_opt_maxpermsize</name>
+        <value>256</value>
+        <description>Ozone Storage Container Manager maximum permanent generation size</description>
+        <display-name>Ozone Storage Container Manager maximum permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_java_opts</name>
+        <value> </value>
+        <description>Ozone Storage Container Manager JAVA Extra args.</description>
+        <display-name>Ozone Storage Container Manager JAVA options</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_scm_ssl_enabled</name>
+        <value></value>
+        <description>Enable TLS/SSL on Ozone Storage Container Manager</description>
+        <display-name>Enable SSL</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+<!--    Ozone Datanode related Properties -->
+    <property>
+        <name>ozone_datanode_log_level</name>
+        <value>INFO</value>
+        <display-name>Ozone Datanode Log Level</display-name>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>INFO</value>
+                    <label>INFO (Recommended)</label>
+                </entry>
+                <entry>
+                    <value>DEBUG</value>
+                    <label>DEBUG (Most Verbose)</label>
+                </entry>
+                <entry>
+                    <value>WARN</value>
+                    <label>WARN</label>
+                </entry>
+                <entry>
+                    <value>ERROR</value>
+                    <label>ERROR (Least Verbose)</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_heapsize</name>
+        <value>1024</value>
+        <description>Ozone Datanode Java heap size</description>
+        <display-name>Ozone Datanode Java heap size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>268435456</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>hdfs-site</type>
+                <name>dfs.datanode.data.dir</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_opt_newsize</name>
+        <value>200</value>
+        <description>Default size of Java new generation for Ozone DataNode (Java option -XX:NewSize) Note: The value of Ozone DataNode new generation size (default size of Java new generation for Ozone DataNode (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_datanode_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+        <display-name>Ozone DataNode new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_datanode_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_opt_maxnewsize</name>
+        <value>200</value>
+        <description>Ozone DataNode maximum new generation size</description>
+        <display-name>Ozone DataNode maximum new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_datanode_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_opt_permsize</name>
+        <value>128</value>
+        <description>Ozone DataNode permanent generation size</description>
+        <display-name>Ozone DataNode permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_opt_maxpermsize</name>
+        <value>256</value>
+        <description>Ozone DataNode maximum permanent generation size</description>
+        <display-name>Ozone DataNode maximum permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_java_opts</name>
+        <value> </value>
+        <description>Ozone Datanode JAVA Extra args</description>
+        <display-name>Ozone Datanode JAVA options</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_datanode_ssl_enabled</name>
+        <value></value>
+        <description>Enable TLS/SSL on Ozone DataNode</description>
+        <display-name>Enable SSL</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <!--  Ozone S3 Gateway related properties  -->
+    <property>
+        <name>ozone_s3g_log_level</name>
+        <value>INFO</value>
+        <display-name>Ozone S3 Gateway Log Level</display-name>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>INFO</value>
+                    <label>INFO (Recommended)</label>
+                </entry>
+                <entry>
+                    <value>DEBUG</value>
+                    <label>DEBUG (Most Verbose)</label>
+                </entry>
+                <entry>
+                    <value>WARN</value>
+                    <label>WARN</label>
+                </entry>
+                <entry>
+                    <value>ERROR</value>
+                    <label>ERROR (Least Verbose)</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+    <name>ozone_s3g_heapsize</name>
+    <value>1024</value>
+    <description>Ozone S3 Gateway Java heap size</description>
+    <display-name>Ozone S3 Gateway Java heap size</display-name>
+    <value-attributes>
+        <type>int</type>
+        <minimum>0</minimum>
+        <maximum>268435456</maximum>
+        <unit>MB</unit>
+        <increment-step>256</increment-step>
+        <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+        <property>
+            <type>hdfs-site</type>
+            <name>dfs.datanode.data.dir</name>
+        </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+</property>
+    <property>
+        <name>ozone_s3g_opt_newsize</name>
+        <value>200</value>
+        <description>Default size of Java new generation for Ozone S3 Gateway (Java option -XX:NewSize) Note: The value of Ozone S3 Gateway new generation size (default size of Java new generation for Ozone S3 Gateway (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_s3_tgw_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+        <display-name>Ozone S3 Gateway new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_s3g_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_s3g_opt_maxnewsize</name>
+        <value>200</value>
+        <description>Ozone S3 Gateway maximum new generation size</description>
+        <display-name>Ozone S3 Gateway maximum new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_s3g_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_s3g_opt_permsize</name>
+        <value>128</value>
+        <description>Ozone S3 Gateway permanent generation size</description>
+        <display-name>Ozone S3 Gateway permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_s3g_opt_maxpermsize</name>
+        <value>256</value>
+        <description>Ozone S3 Gateway maximum permanent generation size</description>
+        <display-name>Ozone S3 Gateway maximum permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_s3g_java_opts</name>
+        <value> </value>
+        <description>Ozone S3 Gateway JAVA Extra args</description>
+        <display-name>Ozone S3 Gateway JAVA options</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_s3g_ssl_enabled</name>
+        <value></value>
+        <description>Enable TLS/SSL on Ozone S3 Gateway</description>
+        <display-name>Enable SSL</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <!--  Ozone S3 Recon related properties  -->
+    <property>
+        <name>ozone_recon_log_level</name>
+        <value>INFO</value>
+        <display-name>Ozone Recon Log Level</display-name>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>INFO</value>
+                    <label>INFO (Recommended)</label>
+                </entry>
+                <entry>
+                    <value>DEBUG</value>
+                    <label>DEBUG (Most Verbose)</label>
+                </entry>
+                <entry>
+                    <value>WARN</value>
+                    <label>WARN</label>
+                </entry>
+                <entry>
+                    <value>ERROR</value>
+                    <label>ERROR (Least Verbose)</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_heapsize</name>
+        <value>1024</value>
+        <description>Ozone Recon UI Java heap size</description>
+        <display-name>Ozone Recon UI Java heap size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>268435456</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>hdfs-site</type>
+                <name>dfs.datanode.data.dir</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_opt_newsize</name>
+        <value>200</value>
+        <description>Default size of Java new generation for Ozone Recon UI (Java option -XX:NewSize) Note: The value of Ozone Recon UI new generation size (default size of Java new generation for Ozone Recon UI (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_recon_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+        <display-name>Ozone Recon UI new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_recon_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_opt_maxnewsize</name>
+        <value>200</value>
+        <description>Ozone Recon UI maximum new generation size</description>
+        <display-name>Ozone Recon UI maximum new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_recon_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_opt_permsize</name>
+        <value>128</value>
+        <description>Ozone Recon UI permanent generation size</description>
+        <display-name>Ozone Recon UI permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_opt_maxpermsize</name>
+        <value>256</value>
+        <description>Ozone Recon UI maximum permanent generation size</description>
+        <display-name>Ozone Recon UI maximum permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_java_opts</name>
+        <value> </value>
+        <description>Ozone Recon UI JAVA Extra args</description>
+        <display-name>Ozone Recon UI JAVA options</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_recon_ssl_enabled</name>
+        <value></value>
+        <description>Enable TLS/SSL on Ozone Recon UI</description>
+        <display-name>Enable SSL</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_user</name>
+        <display-name>Ozone User</display-name>
+        <value>hdfs</value>
+        <property-type>USER</property-type>
+        <description>User to run Ozone as</description>
+        <value-attributes>
+            <type>user</type>
+            <overridable>false</overridable>
+            <user-groups>
+                <property>
+                    <type>cluster-env</type>
+                    <name>user_group</name>
+                </property>
+            </user-groups>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_user_nofile_limit</name>
+        <value>128000</value>
+        <description>Max open files limit setting for Ozone user.</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_user_nproc_limit</name>
+        <value>65536</value>
+        <description>Max number of processes limit setting for Ozone user.</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_user_keytab</name>
+        <description>Ozone keytab path</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_principal_name</name>
+        <description>Ozone principal name</description>
+        <property-type>KERBEROS_PRINCIPAL</property-type>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>run_in_hdfs</name>
+        <value>false</value>
+        <description>Run Ozone as part of HDFS</description>
+        <display-name>Run Ozone as part of HDFS</display-name>
+        <final>true</final>
+        <value-attributes>
+            <type>boolean</type>
+            <overridable>true</overridable>
+        </value-attributes>
+        <depends-on>
+            <property>
+                <type>hdfs-site</type>
+                <name>dfs.datanode.data.dir</name>
+            </property>
+        </depends-on>
+        <on-ambari-upgrade add="false"/>
+    </property>
+
+    <!-- ozone-env.sh -->
+    <property>
+        <name>content</name>
+        <display-name>ozone-env template</display-name>
+        <description>This is the jinja template for ozone-env.sh file</description>
+        <value>
+            #  -- Auto-Managed File by Ambari -- #
+            # Set ozone-specific environment variables here.
+            #
+            # Licensed to the Apache Software Foundation (ASF) under one
+            # or more contributor license agreements.  See the NOTICE file
+            # distributed with this work for additional information
+            # regarding copyright ownership.  The ASF licenses this file
+            # to you under the Apache License, Version 2.0 (the
+            # "License"); you may not use this file except in compliance
+            # with the License.  You may obtain a copy of the License at
+            #
+            #     http://www.apache.org/licenses/LICENSE-2.0
+            #
+            # Unless required by applicable law or agreed to in writing, software
+            # distributed under the License is distributed on an "AS IS" BASIS,
+            # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+            # See the License for the specific language governing permissions and
+            # limitations under the License.
+
+            # Set Ozone-specific environment variables here.
+
+            export JAVA_HOME={{java64_home}}
+
+            # Location of Ozone.  By default, Ozone will attempt to determine
+            # this location based upon its execution path.
+            export OZONE_HOME=${OZONE_HOME:-{{ozone_home}}}
+
+            export OZONE_CONF_DIR={{ozone_conf_dir}}
+            #export OZONE_HEAPSIZE_MAX={{ozone_heapsize}}
+            #export OZONE_HEAPSIZE_MIN={{ozone_heapsize}}
+            export OZONE_OPTS="${OZONE_OPTS} -Djava.net.preferIPv4Stack=true"
+            # For Kerberos debugging, an extended option set logs more information
+
+            # export OZONE_OPTS="-Djava.net.preferIPv4Stack=true -Dsun.security.krb5.debug=true -Dsun.security.spnego.debug"
+
+            # Some parts of the shell code may do special things dependent upon
+            # the operating system.  We have to set this here. See the next
+            # section as to why....
+            export OZONE_OS_TYPE=${OZONE_OS_TYPE:-$(uname -s)}
+
+            # Extra Java runtime options for some Ozone commands
+            # and clients (e.g., ozone sh).  These get appended to OZONE_OPTS for
+            # such commands.  In most cases, this should be left empty and
+            # let users supply it on the command line.
+            export OZONE_CLIENT_OPTS="$OZONE_OPTS $OZONE_CLIENT_OPTS"
+
+            #
+            # A note about classpaths.
+            #
+            # By default, Apache Ozone overrides Java's CLASSPATH
+            # environment variable.  It is configured such
+            # that it starts out blank with new entries added after passing
+            # a series of checks (file/dir exists, not already listed aka
+            # de-deduplication).  During de-deduplication, wildcards and/or
+            # directories are *NOT* expanded to keep it simple. Therefore,
+            # if the computed classpath has two specific mentions of
+            # awesome-methods-1.0.jar, only the first one added will be seen.
+            # If two directories are in the classpath that both contain
+            # awesome-methods-1.0.jar, then Java will pick up both versions.
+
+            # An additional, custom CLASSPATH. Site-wide configs should be
+            # handled via the shellprofile functionality, utilizing the
+            # ozone_add_classpath function for greater control and much
+            # harder for apps/end-users to accidentally override.
+            # Similarly, end users should utilize ${HOME}/.ozonerc .
+            # This variable should ideally only be used as a short-cut,
+            # interactive way for temporary additions on the command line.
+            export OZONE_CLASSPATH=${OZONE_CLASSPATH}:/usr/odp/$ODP_VERSION/ozone/share/ozone/lib/libext/*
+
+            # Should OZONE_CLASSPATH be first in the official CLASSPATH?
+            export OZONE_USER_CLASSPATH_FIRST="no"
+
+            # If OZONE_USE_CLIENT_CLASSLOADER is set, OZONE_CLASSPATH and
+            # OZONE_USER_CLASSPATH_FIRST are ignored.
+            # export OZONE_USE_CLIENT_CLASSLOADER=true
+
+
+            #
+            # Many options may also be specified as Java properties.  It is
+            # very common, and in many cases, desirable, to hard-set these
+            # in daemon _OPTS variables.  Where applicable, the appropriate
+            # Java property is also identified.  Note that many are re-used
+            # or set differently in certain contexts (e.g., secure vs
+            # non-secure)
+            #
+
+            # Where (primarily) daemon log files are stored.
+            # ${OZONE_HOME}/logs by default.
+            # Java property: hadoop.log.dir
+            export OZONE_LOG_DIR={{ozone_log_dir_prefix}}
+
+            # A string representing this instance of Ozone. $USER by default.
+            # This is used in writing log and pid files, so keep that in mind!
+            # Java property: hadoop.id.str
+            # export OZONE_IDENT_STRING=$USER
+
+            # How many seconds to pause after stopping a daemon
+            # export OZONE_STOP_TIMEOUT=5
+
+            # Where pid files are stored.  /tmp by default.
+            export OZONE_PID_DIR={{ozone_pid_dir_prefix}}
+
+            # Default log4j setting for interactive commands
+            # Java property: hadoop.root.logger
+            export OZONE_ROOT_LOGGER={{ozone_log_level}},console
+
+
+            # Default log4j setting for daemons spawned explicitly by
+            # --daemon option of ozone command.
+            # Java property: hadoop.root.logger
+            export OZONE_DAEMON_ROOT_LOGGER={{ozone_log_level}},RFA
+
+            # Default log level and output location for security-related messages.
+            # You will almost certainly want to change this on a per-daemon basis via
+            # the Java property (i.e., -Dhadoop.security.logger=foo).
+            # Java property: hadoop.security.logger
+            # export OZONE_SECURITY_LOGGER={{ozone_log_level}},DRFAS
+
+            # Default process priority level
+            # Note that sub-processes will also run at this level!
+            # export OZONE_NICENESS=10
+
+            # Default name for the service level authorization file
+            # Java property: hadoop.policy.file
+            # export OZONE_POLICYFILE="hadoop-policy.xml"
+
+            ###
+            # Secure/privileged execution
+            ###
+
+            # Path to jsvc required by secure Ozone datanode
+            export JSVC_HOME={{jsvc_path}}
+
+            export OZONE_DATANODE_SECURE_USER=${OZONE_DATANODE_SECURE_USER:-{{ozone_secure_dn_user}}}
+
+            # This directory contains pids for secure and privileged processes.
+            # On secure datanodes, user to run the datanode as after dropping privileges
+            #export OZONE_SECURE_PID_DIR=${OZONE_SECURE_PID_DIR:-{{ozone_pid_dir_prefix}}/$OZONE_DATANODE_SECURE_USER}
+
+            #
+            # This directory contains the logs for secure and privileged processes.
+            # Java property: hadoop.log.dir
+            export OZONE_SECURE_LOG=${OZONE_LOG_DIR}
+            {% if java_version &lt; 8 %}
+            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log"
+            {% else %}
+            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log -Xloggc:{{ozone_log_dir_prefix}}/gc.log-`date +'%Y%m%d%H%M'` -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:CMSInitiatingOccupancyFraction=70 -XX:+UseCMSInitiatingOccupancyOnly"
+            {% endif %}
+            #
+            # When running a secure daemon, the default value of OZONE_IDENT_STRING
+            # ends up being a bit bogus.  Therefore, by default, the code will
+            # replace OZONE_IDENT_STRING with OZONE_xx_SECURE_USER.  If one wants
+            # to keep OZONE_IDENT_STRING untouched, then uncomment this line.
+            # export OZONE_SECURE_IDENT_PRESERVE="true"
+
+            ###
+            # Ozone Manager specific parameters
+            ###
+            # Specify the JVM options to be used when starting the Ozone Manager.
+            # These options will be appended to the options specified as OZONE_OPTS
+            # and therefore may override any similar flags set in OZONE_OPTS
+            #
+            export OZONE_OM_OPTS="$OZONE_OM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+
+            ###
+            # Ozone DataNode specific parameters
+            ###
+            # Specify the JVM options to be used when starting Ozone DataNodes.
+            # These options will be appended to the options specified as OZONE_OPTS
+            # and therefore may override any similar flags set in OZONE_OPTS
+            #
+            export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+
+            ###
+            # HDFS StorageContainerManager specific parameters
+            ###
+            # Specify the JVM options to be used when starting the HDFS Storage Container Manager.
+            # These options will be appended to the options specified as OZONE_OPTS
+            # and therefore may override any similar flags set in OZONE_OPTS
+            #
+            export OZONE_SCM_OPTS="$OZONE_SCM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+
+            ###
+            # Ozone Recon UI specific parameters
+            ###
+            # Specify the JVM options to be used when starting the Ozone Recon UI.
+            # These options will be appended to the options specified as OZONE_OPTS
+            # and therefore may override any similar flags set in OZONE_OPTS
+            #
+            export OZONE_RECON_OPTS="$OZONE_RECON_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+
+            ###
+            # Ozone S3 Gateway specific parameters
+            ###
+            # Specify the JVM options to be used when starting the HDFS Storage Container Manager.
+            # These options will be appended to the options specified as OZONE_OPTS
+            # and therefore may override any similar flags set in OZONE_OPTS
+            #
+            export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+
+            {% if security_enabled %}
+            export OZONE_OM_OPTS="$OZONE_OM_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_om_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_SMC_OPTS="$OZONE_SMC_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_scm_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_datanode_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+        </value>
+        <value-attributes>
+            <type>content</type>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+
+</configuration>

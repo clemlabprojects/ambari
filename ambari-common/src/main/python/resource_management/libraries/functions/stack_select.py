@@ -73,6 +73,13 @@ HADOOP_DIR_DEFAULTS = {
   "lib": "/usr/lib/hadoop/lib",
   "conf": "/etc/hadoop/conf"
 }
+HADOOP_OZONE_DIR_DEFAULTS = {
+  "home": "/usr/lib/hadoop-ozone",
+  "sbin": "/usr/lib/hadoop-ozone/sbin",
+  "bin": "/usr/bin",
+  "lib": "/usr/lib/hadoop-ozone/lib",
+  "conf": "/etc/hadoop-ozone/conf"
+}
 
 PACKAGE_SCOPE_INSTALL = "INSTALL"
 PACKAGE_SCOPE_STANDARD = "STANDARD"
@@ -394,6 +401,41 @@ def get_hadoop_dir(target):
 
   return hadoop_dir
 
+def get_hadoop_ozone_dir(target):
+  """
+  Return the hadoop ozone shared directory which should be used for the command's component. The
+  directory including the component's version is tried first, but if that doesn't exist,
+  this will fallback to using "current".
+
+  :target: the target directory
+  """
+  stack_root = Script.get_stack_root()
+  stack_version = Script.get_stack_version()
+
+  if not target in HADOOP_OZONE_DIR_DEFAULTS:
+    raise Fail("Target {0} not defined".format(target))
+
+  hadoop_ozone_dir = HADOOP_OZONE_DIR_DEFAULTS[target]
+
+  formatted_stack_version = format_stack_version(stack_version)
+
+  if stack_features.check_stack_feature(StackFeature.ROLLING_UPGRADE, formatted_stack_version):
+    # read the desired version from the component map and use that for building the hadoop home
+    version = component_version.get_component_repository_version()
+    if version is None:
+      version = default("/commandParams/version", None)
+
+    # home uses a different template
+    if target == "home":
+      hadoop_ozone_dir = HADOOP_HOME_DIR_TEMPLATE.format(stack_root, version, "ozone")
+      if version is None or sudo.path_isdir(hadoop_ozone_dir) is False:
+        hadoop_ozone_dir = HADOOP_HOME_DIR_TEMPLATE.format(stack_root, "current", "ozone-client")
+    else:
+      hadoop_ozone_dir = HADOOP_DIR_TEMPLATE.format(stack_root, version, "ozone", target)
+      if version is None or sudo.path_isdir(hadoop_ozone_dir) is False:
+        hadoop_ozone_dir = HADOOP_DIR_TEMPLATE.format(stack_root, "current", "ozone-client", target)
+
+  return hadoop_ozone_dir
 
 def get_hadoop_dir_for_stack_version(target, stack_version):
   """

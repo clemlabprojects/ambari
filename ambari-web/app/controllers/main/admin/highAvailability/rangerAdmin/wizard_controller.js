@@ -81,6 +81,10 @@ App.RAHighAvailabilityWizardController = App.WizardController.extend({
     {
       siteName: 'ranger-atlas-security',
       propertyName: 'ranger.plugin.atlas.policy.rest.url'
+    },
+    {
+      siteName: 'ranger-ozone-security',
+      propertyName: 'ranger.plugin.ozone.policy.rest.url'
     }
   ],
 

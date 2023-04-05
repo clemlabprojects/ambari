@@ -56,16 +56,16 @@ void runODPBUILD(osType, osTarget) {
                         sh """
                             export RPMS_RELEASE_DIR=/var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                             mkdir -p /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-agent/target/rpm/ambari-agent/RPMS/x86_64/ambari-agent-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-infra/target/rpm/ambari-infra/RPMS/noarch/ambari-infra-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-infra/ambari-infra-manager/target/rpm/ambari-infra-manager/RPMS/noarch/ambari-infra-manager-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-infra/ambari-infra-solr-client/target/rpm/ambari-infra-solr-client/RPMS/noarch/ambari-infra-solr-client-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-infra/ambari-infra-assembly/target/rpm/ambari-infra-solr/RPMS/noarch/ambari-infra-solr-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-server/target/rpm/ambari-server/RPMS/x86_64/ambari-server-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-views/target/rpm/ambari-views/RPMS/noarch/ambari-views-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/contrib/views/files/target/rpm/files/RPMS/noarch/files-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/contrib/views/capacity-scheduler/target/rpm/capacity-scheduler/RPMS/noarch/capacity-scheduler-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
-                            cp /var/lib/jenkins/workspace/ambari-release-full/ambari-metrics/ambari-metrics-assembly/target/rpm/ambari-metrics-*/RPMS/x86_64/*.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-agent/target/rpm/ambari-agent/RPMS/x86_64/ambari-agent-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-infra/target/rpm/ambari-infra/RPMS/noarch/ambari-infra-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-infra/ambari-infra-manager/target/rpm/ambari-infra-manager/RPMS/noarch/ambari-infra-manager-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-infra/ambari-infra-solr-client/target/rpm/ambari-infra-solr-client/RPMS/noarch/ambari-infra-solr-client-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-infra/ambari-infra-assembly/target/rpm/ambari-infra-solr/RPMS/noarch/ambari-infra-solr-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-server/target/rpm/ambari-server/RPMS/x86_64/ambari-server-2.7.6.0-0.x86_64.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-views/target/rpm/ambari-views/RPMS/noarch/ambari-views-2.7.6.0-0.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/contrib/views/files/target/rpm/files/RPMS/noarch/files-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/contrib/views/capacity-scheduler/target/rpm/capacity-scheduler/RPMS/noarch/capacity-scheduler-1.0.0.0-SNAPSHOT.noarch.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
+                            cp /var/lib/jenkins/workspace/ambari-full-AMBARI-15/ambari-metrics/ambari-metrics-assembly/target/rpm/ambari-metrics-*/RPMS/x86_64/*.rpm /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                             /var/lib/jenkins/signall_rpms.sh /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                             createrepo /var/www/html/ambari-release/dist/${osType}/1.x/BUILDS/2.7.6.0-$BUILD_NUMBER/rpms
                         """
@@ -81,8 +81,8 @@ void runODPBUILD(osType, osTarget) {
                     }
                     
                     stage('Upload Realease dir') {
-                        sh "aws s3 cp $RELEASE_DIR s3://clemlabs/${osType}/ambari-release/2.7.6.0-$BUILD_NUMBER --recursive"
-                        sh "aws s3 cp /var/www/html/repos-ambari.tar.gz s3://clemlabs/${osType}/ambari-release/2.7.6.0-$BUILD_NUMBER/repos-ambari.tar.gz"
+                        sh "aws s3 cp $RELEASE_DIR s3://clemlabs/${osType}/ambari-tests/2.7.6.0-$BUILD_NUMBER --recursive"
+                        sh "aws s3 cp /var/www/html/repos-ambari.tar.gz s3://clemlabs/${osType}/ambari-tests/2.7.6.0-$BUILD_NUMBER/repos-ambari.tar.gz"
                         sh 'aws s3 website --index-document index.htm s3://clemlabs'
 
                     }

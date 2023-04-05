@@ -1,0 +1,9 @@
+{
+  "_comment" : "Dependencies that are used when Ozone is running inside HDFS",
+  "ozone_run_in_hdfs_role_order_dependencies": {
+    "NAMENODE-START": ["ZKFC-START", "JOURNALNODE-START", "ZOOKEEPER_SERVER-START"],
+    "ZKFC-START": ["ZOOKEEPER_SERVER-START"],
+    "ZKFC-STOP": ["NAMENODE-STOP"],
+    "JOURNALNODE-STOP": ["NAMENODE-STOP"]
+  }
+}
