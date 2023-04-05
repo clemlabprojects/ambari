@@ -292,6 +292,9 @@ public class TimelineMetricConfiguration {
   public static final String TIMELINE_METRICS_SUPPORT_MULTIPLE_CLUSTERS =
     "timeline.metrics.support.multiple.clusters";
 
+  public static final String TIMELINE_METRICS_DEFAULT_INSTANCE_ID =
+    "timeline.metrics.default.instanceid";
+
   public static final String TIMELINE_METRICS_EVENT_METRIC_PATTERNS =
     "timeline.metrics.downsampler.event.metric.patterns";
 
@@ -510,6 +513,13 @@ public class TimelineMetricConfiguration {
       return Boolean.parseBoolean(metricsConf.get(TIMELINE_METRICS_SUPPORT_MULTIPLE_CLUSTERS, "false"));
     }
     return false;
+  }
+
+  public String getDefaultInstanceId() {
+    if (metricsConf != null) {
+      return metricsConf.get(TIMELINE_METRICS_DEFAULT_INSTANCE_ID, DEFAULT_INSTANCE_ID);
+    }
+    return DEFAULT_INSTANCE_ID;
   }
 
   public String getTimelineServiceRpcAddress() {

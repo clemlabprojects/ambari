@@ -231,11 +231,11 @@ function start()
 {
   hadoop_java_setup
 
-
+  rm -f $STARTUPFILE #Deleting startup file
   # hbase_daemon "zookeeper" "start"
   #	hbase_daemon "master" "start"
   #	hbase_daemon "regionserver" "start"
-  if [ !"${DISTRIBUTED_HBASE}" ]; then
+  if [ "${DISTRIBUTED_HBASE}" == "false" ]; then
     echo "$(date) Starting HBase." | tee -a $STARTUPFILE
     hbase_daemon "master" "start"
   else
@@ -261,7 +261,7 @@ function start()
     rm -f "${PIDFILE}" >/dev/null 2>&1
   fi
 
-  nohup "${JAVA}" "-Xms$AMS_COLLECTOR_HEAPSIZE" "-Xmx$AMS_COLLECTOR_HEAPSIZE" ${AMS_COLLECTOR_OPTS} "-cp" "/usr/lib/ambari-metrics-collector/*:${COLLECTOR_CONF_DIR}:${COLLECTOR_ADDITIONAL_CLASSPATH}" "-Djava.net.preferIPv4Stack=true" "-Dams.log.dir=${AMS_COLLECTOR_LOG_DIR}" "-Dproc_${DAEMON_NAME}" "${CLASS}" "$@" > $OUTFILE 2>&1 &
+  nohup "${JAVA}" "-Xms$AMS_COLLECTOR_HEAPSIZE" "-Xmx$AMS_COLLECTOR_HEAPSIZE" ${AMS_COLLECTOR_OPTS} "-cp" "${COLLECTOR_CONF_DIR}:/usr/lib/ambari-metrics-collector/*:${COLLECTOR_ADDITIONAL_CLASSPATH}" "-Djava.net.preferIPv4Stack=true" "-Dams.log.dir=${AMS_COLLECTOR_LOG_DIR}" "-Dproc_${DAEMON_NAME}" "${CLASS}" "$@" > $OUTFILE 2>&1 &
   PID=$!
   write_pidfile "${PIDFILE}"
   sleep 2
@@ -281,7 +281,6 @@ function start()
     exit -1
   fi
 
-  rm -f $STARTUPFILE #Deleting startup file
   echo "$(date) Collector successfully started." | tee -a $STARTUPFILE
   if [[ "${AMS_HBASE_INIT_CHECK_ENABLED}" == "true" || "${AMS_HBASE_INIT_CHECK_ENABLED}" == "True" ]]
   then
@@ -330,7 +329,7 @@ function start_upgrade()
 
   #get rid of the first command argument and pass the rest to java
   shift
-  nohup "${JAVA}" "-cp" "/usr/lib/ambari-metrics-collector/*:${COLLECTOR_CONF_DIR}:${COLLECTOR_ADDITIONAL_CLASSPATH}" "-Dams.log.dir=${AMS_COLLECTOR_LOG_DIR}" "-Dams.log.file=${UPGRADE_LOGFILE}" "${CLASS}" "${AMS_COLLECTOR_LOG_DIR}/ambari-metrics-migration-state.txt" "$@" > $OUTFILE 2>&1 &
+  nohup "${JAVA}" "-cp" "${COLLECTOR_CONF_DIR}:/usr/lib/ambari-metrics-collector/*:${COLLECTOR_ADDITIONAL_CLASSPATH}" "-Dams.log.dir=${AMS_COLLECTOR_LOG_DIR}" "-Dams.log.file=${UPGRADE_LOGFILE}" "${CLASS}" "${AMS_COLLECTOR_LOG_DIR}/ambari-metrics-migration-state.txt" "$@" > $OUTFILE 2>&1 &
   PID=$!
   write_pidfile "${UPGRADE_PIDFILE}"
   sleep 1
@@ -390,7 +389,7 @@ function stop()
   fi
 
   #stop hbase daemons
-  if [ !"${DISTRIBUTED_HBASE}" ]; then
+  if [ "${DISTRIBUTED_HBASE}" == "false" ]; then
     echo "Stopping HBase master" | tee -a $STARTUPFILE
     hbase_daemon "master" "stop"
   fi

@@ -73,6 +73,7 @@ public class AggregatedMetricsPublisher extends AbstractMetricPublisher {
             double max = Integer.MIN_VALUE;
             double min = Integer.MAX_VALUE;
             int count = 0;
+            TimelineMetric tmpMetric = new TimelineMetric(metrics.getMetrics().iterator().next());
             for (TimelineMetric metric : metrics.getMetrics()) {
                 for (Double value : metric.getMetricValues().values()) {
                     sum+=value;
@@ -80,8 +81,10 @@ public class AggregatedMetricsPublisher extends AbstractMetricPublisher {
                     min = Math.min(min, value);
                     count++;
                 }
+                if (metric.getStartTime() > tmpMetric.getStartTime()) {
+                    tmpMetric.setStartTime(metric.getStartTime());
+                }
             }
-            TimelineMetric tmpMetric = new TimelineMetric(metrics.getMetrics().get(0));
             tmpMetric.setMetricValues(new TreeMap<Long, Double>());
             metricAggregateMap.add(new TimelineMetricWithAggregatedValues(tmpMetric, new MetricHostAggregate(sum, count, 0d, max, min)));
         }

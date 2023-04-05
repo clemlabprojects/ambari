@@ -23,12 +23,9 @@ import logging.handlers
 import os
 import sys
 import signal
-from ambari_commons.os_utils import remove_file
-
 from core.controller import Controller
 from core.config_reader import Configuration, PID_OUT_FILE
 from core.stop_handler import bind_signal_handlers
-
 
 logger = logging.getLogger()
 
@@ -38,6 +35,7 @@ def save_pid(pid, pidfile):
   """
     Save pid to pidfile.
   """
+  pfile = None
   try:
     pfile = open(pidfile, "w")
     pfile.write("%s\n" % pid)
@@ -45,7 +43,8 @@ def save_pid(pid, pidfile):
     pass
   finally:
     try:
-      pfile.close()
+      if pfile:
+        pfile.close()
     except:
       pass
 
@@ -81,7 +80,7 @@ def server_process_main(stop_handler, scmStatus=None):
   #The controller thread finishes when the stop event is signaled
   controller.join()
 
-  remove_file(PID_OUT_FILE)
+  os.remove(PID_OUT_FILE)
   pass
 
 def _init_logging(config):

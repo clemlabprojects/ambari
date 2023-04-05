@@ -19,7 +19,7 @@ package org.apache.hadoop.metrics2.sink.timeline;
 
 import org.apache.commons.configuration2.SubsetConfiguration;
 import org.apache.commons.configuration2.convert.DefaultListDelimiterHandler;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.metrics2.AbstractMetric;
@@ -68,12 +68,10 @@ public class HadoopTimelineMetricsSink extends AbstractTimelineMetricsSink imple
   // Cache the rpc port used and the suffix to use if the port tag is found
   private Map<String, String> rpcPortSuffixes = new HashMap<>(10);
 
-  private final ExecutorService executorService = Executors.newSingleThreadExecutor(new ThreadFactory() {
-    public Thread newThread(Runnable r) {
-      Thread t = Executors.defaultThreadFactory().newThread(r);
-      t.setDaemon(true);
-      return t;
-    }
+  private final ExecutorService executorService = Executors.newSingleThreadExecutor(r -> {
+    Thread t = Executors.defaultThreadFactory().newThread(r);
+    t.setDaemon(true);
+    return t;
   });
   private int hostInMemoryAggregationPort;
   private boolean hostInMemoryAggregationEnabled;

@@ -17,7 +17,6 @@
  */
 package org.apache.ambari.metrics.core.timeline;
 
-import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.DEFAULT_INSTANCE_ID;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.USE_GROUPBY_AGGREGATOR_QUERIES;
 import static org.apache.ambari.metrics.core.timeline.availability.AggregationTaskRunner.ACTUAL_AGGREGATOR_NAMES;
 
@@ -87,6 +86,7 @@ public class HBaseTimelineMetricsService extends AbstractService implements Time
   private TimelineMetricMetadataManager metricMetadataManager;
   private MetricCollectorHAController haController;
   private boolean containerMetricsDisabled = false;
+  private String defaultInstanceId = "";
 
   /**
    * Construct the service.
@@ -218,6 +218,7 @@ public class HBaseTimelineMetricsService extends AbstractService implements Time
           "delay = " + initDelay + ", delay = " + delay);
       }
       containerMetricsDisabled = configuration.isContainerMetricsDisabled();
+      defaultInstanceId = configuration.getDefaultInstanceId();
       isInitialized = true;
     }
 
@@ -258,7 +259,7 @@ public class HBaseTimelineMetricsService extends AbstractService implements Time
     List<String> transientMetricNames = new ArrayList<>();
 
     if (configuration.getTimelineMetricsMultipleClusterSupport() && StringUtils.isEmpty(instanceId)) {
-      instanceId = DEFAULT_INSTANCE_ID;
+      instanceId = this.defaultInstanceId;
     }
 
     List<byte[]> uuids = metricMetadataManager.getUuidsForGetMetricQuery(metricFunctions.keySet(),
@@ -402,6 +403,7 @@ public class HBaseTimelineMetricsService extends AbstractService implements Time
     return metricsFunctions;
   }
 
+  @Override
   public TimelinePutResponse putMetricsSkipCache(TimelineMetrics metrics) throws SQLException, IOException {
     TimelinePutResponse response = new TimelinePutResponse();
     hBaseAccessor.insertMetricRecordsWithMetadata(metricMetadataManager, metrics, true);

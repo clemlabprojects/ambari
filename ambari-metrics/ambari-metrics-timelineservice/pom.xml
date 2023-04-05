@@ -42,33 +42,6 @@
   <build>
     <plugins>
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>build-helper-maven-plugin</artifactId>
-        <version>1.8</version>
-        <executions>
-          <execution>
-            <id>parse-version</id>
-            <phase>validate</phase>
-            <goals>
-              <goal>parse-version</goal>
-            </goals>
-          </execution>
-          <execution>
-            <id>regex-property</id>
-            <goals>
-              <goal>regex-property</goal>
-            </goals>
-            <configuration>
-              <name>ambariVersion</name>
-              <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
-              <replacement>$1.$2.$3.$4</replacement>
-              <failIfNoMatch>false</failIfNoMatch>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
         <artifactId>maven-dependency-plugin</artifactId>
         <executions>
           <execution>
@@ -93,7 +66,7 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>rpm-maven-plugin</artifactId>
-        <version>2.0.1</version>
+        <version>2.1.4</version>
         <executions>
           <execution>
             <!-- unbinds rpm creation from maven lifecycle -->
@@ -105,7 +78,7 @@
         </executions>
         <configuration>
           <name>ambari-metrics-collector</name>
-          <copyright>2012, Apache Software Foundation</copyright>
+          <license>2012, Apache Software Foundation</license>
           <group>Development</group>
           <description>Maven Recipe: RPM Package.</description>
           <autoRequires>false</autoRequires>
@@ -167,7 +140,6 @@
                   <includes>
                     <include>phoenix*.jar</include>
                     <include>antlr*.jar</include>
-                    <include>commons-lang*.jar</include>
                   </includes>
                 </source>
               </sources>
@@ -260,8 +232,6 @@
           <excludes>
             <exclude>conf/unix/metrics_whitelist</exclude>
             <exclude>conf/unix/amshbase_metrics_whitelist</exclude>
-            <exclude>conf/windows/metrics_whitelist</exclude>
-            <exclude>conf/windows/amshbase_metrics_whitelist</exclude>
           </excludes>
         </configuration>
         <executions>
@@ -313,6 +283,10 @@
           <artifactId>zookeeper</artifactId>
           <groupId>org.apache.zookeeper</groupId>
         </exclusion>
+        <exclusion>
+          <groupId>log4j</groupId>
+          <artifactId>log4j</artifactId>
+        </exclusion>
       </exclusions>
     </dependency>
     <!-- zkclient is helix-core dependency but it need to be 0.9 in order for AMS HA to work on secure cluster-->
@@ -322,14 +296,9 @@
       <version>0.9</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.phoenix</groupId>
-      <artifactId>phoenix-hbase-compat-2.2.5</artifactId>
-      <version>${phoenix.version}</version>
-    </dependency>
-    <dependency>
       <groupId>org.apache.zookeeper</groupId>
       <artifactId>zookeeper</artifactId>
-      <version>3.5.5.1.0.4.0-${odp.release.number}</version>
+      <version>${zookeeper.version}</version>
       <exclusions>
         <exclusion>
           <artifactId>jline</artifactId>
@@ -378,9 +347,15 @@
     </dependency>
 
     <dependency>
-      <groupId>commons-lang</groupId>
-      <artifactId>commons-lang</artifactId>
-      <version>2.6</version>
+      <groupId>org.apache.phoenix</groupId>
+      <artifactId>phoenix-hbase-compat-2.4.1</artifactId>
+      <version>${phoenix.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
+      <version>${commons-lang3.version}</version>
     </dependency>
 
     <dependency>
@@ -686,6 +661,17 @@
         </exclusion>
       </exclusions>
     </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-yarn-server-applicationhistoryservice</artifactId>
+      <version>${hadoop.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-databind</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
 
     <!-- 'mvn dependency:analyze' fails to detect use of this dependency -->
     <dependency>
@@ -704,13 +690,13 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>1.7.20</version>
+      <version>${slf4j.version}</version>
     </dependency>
 
     <dependency>
       <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-log4j12</artifactId>
-      <version>1.7.20</version>
+      <artifactId>slf4j-reload4j</artifactId>
+      <version>${slf4j.version}</version>
     </dependency>
 
     <dependency>
@@ -744,6 +730,7 @@
       <version>3.2</version>
       <scope>test</scope>
     </dependency>
+
     <!-- for unit tests only -->
     <dependency>
       <groupId>org.apache.phoenix</groupId>
@@ -815,7 +802,7 @@
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
-      <version>0.11.0.3</version>
+      <version>${kafka.version}</version>
     </dependency>
 
     <dependency>
@@ -835,12 +822,6 @@
     </dependency>
 
     <!-- Dependency in order to annotate unit tests with a category. -->
-    <dependency>
-      <groupId>org.apache.ambari</groupId>
-      <artifactId>ambari-utility</artifactId>
-      <version>1.0.0.0-SNAPSHOT</version>
-      <scope>test</scope>
-    </dependency>
     <dependency>
       <groupId>org.apache.ignite</groupId>
       <artifactId>ignite-core</artifactId>
@@ -932,72 +913,8 @@
                         compression="gzip"
                     />
                     <move
-                        file="${project.build.directory}/embedded/${phoenix.folder}/phoenix-server-hbase-2.2-${phoenix.version}.jar"
+                        file="${project.build.directory}/embedded/${phoenix.folder}/phoenix-server-hbase-2.4-${phoenix.version}.jar"
                         tofile="${project.build.directory}/embedded/${hbase.folder}/lib/phoenix-${phoenix.version}-server.jar"
-                    />
-                  </target>
-                </configuration>
-              </execution>
-              <execution>
-                <id>phoenix_download_compat</id>
-                <phase>generate-resources</phase>
-                <goals>
-                  <goal>run</goal>
-                </goals>
-                <configuration>
-                  <target name="Download Phoenix HBase compat">
-                    <get
-                        src="https://nexus.luc-data.com/repository/maven-releases/org/apache/phoenix/phoenix-hbase-compat-2.2.5/${phoenix.version}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
-                        dest="${project.build.directory}/embedded/${phoenix.folder}/phoenix-hbase-compat-2.2.5-${phoenix.version}.jar"
-                        usetimestamp="true"
-                    />
-                  </target>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-    <profile>
-      <id>windows</id>
-      <activation>
-        <os>
-          <family>win</family>
-        </os>
-      </activation>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-antrun-plugin</artifactId>
-            <version>1.7</version>
-            <executions>
-              <execution>
-                <id>hbase_download</id>
-                <phase>generate-resources</phase>
-                <goals>
-                  <goal>run</goal>
-                </goals>
-                <configuration>
-                  <target name="Download HBase">
-                    <mkdir dir="${project.build.directory}/embedded"/>
-                    <get
-                        src="${hbase.winpkg.zip}"
-                        dest="${project.build.directory}/embedded/hbase.zip"
-                        usetimestamp="true"
-                    />
-                    <unzip
-                        src="${project.build.directory}/embedded/hbase.zip"
-                        dest="${project.build.directory}/embedded/hbase.temp"
-                    />
-                    <unzip
-                        src="${project.build.directory}/embedded/hbase.temp/resources/${hbase.winpkg.folder}.zip"
-                        dest="${project.build.directory}/embedded"
-                    />
-                    <copy
-                        file="${project.build.directory}/embedded/hbase.temp/resources/servicehost.exe"
-                        tofile="${project.build.directory}/embedded/${hbase.winpkg.folder}/bin/ams_hbase_master.exe"
                     />
                   </target>
                 </configuration>

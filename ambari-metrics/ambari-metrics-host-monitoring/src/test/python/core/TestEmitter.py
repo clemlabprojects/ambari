@@ -23,19 +23,14 @@ import logging
 import time
 
 from unittest import TestCase
-from only_for_platform import get_platform, PLATFORM_WINDOWS
 from mock.mock import patch, MagicMock
 from security import CachedHTTPConnection
 from blacklisted_set import BlacklistedSet
 from spnego_kerberos_auth import SPNEGOKerberosAuth
 
-if get_platform() != PLATFORM_WINDOWS:
-  os_distro_value = ('Suse','11','Final')
-else:
-  os_distro_value = ('win2012serverr2','6.3','WindowsServer')
+os_distro_value = ('Suse','11','Final')
 
 with patch("platform.linux_distribution", return_value = os_distro_value):
-  from ambari_commons import OSCheck
   from application_metric_map import ApplicationMetricMap
   from config_reader import Configuration
   from emitter import Emitter
@@ -45,7 +40,6 @@ logger = logging.getLogger()
 
 class TestEmitter(TestCase):
 
-  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch.object(CachedHTTPConnection, "create_connection", new = MagicMock())
   @patch.object(CachedHTTPConnection, "request")
   @patch.object(CachedHTTPConnection, "getresponse")
@@ -67,7 +61,6 @@ class TestEmitter(TestCase):
     self.assertUrlData(request_mock)
 
 
-  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch.object(CachedHTTPConnection, "create_connection", new = MagicMock())
   @patch.object(CachedHTTPConnection, "getresponse", new = MagicMock())
   @patch.object(CachedHTTPConnection, "request")
@@ -87,7 +80,6 @@ class TestEmitter(TestCase):
     self.assertEqual(request_mock.call_count, 3)
     self.assertUrlData(request_mock)
 
-  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch.object(CachedHTTPConnection, "create_connection", new = MagicMock())
   @patch.object(SPNEGOKerberosAuth, "authenticate_handshake")
   @patch.object(CachedHTTPConnection, "getresponse")

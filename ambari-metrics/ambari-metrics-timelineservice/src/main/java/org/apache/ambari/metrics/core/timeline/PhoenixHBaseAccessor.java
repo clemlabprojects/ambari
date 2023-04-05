@@ -29,7 +29,6 @@ import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguratio
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.CLUSTER_SECOND_TABLE_TTL;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.CONTAINER_METRICS_TTL;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.DATE_TIERED_COMPACTION_POLICY;
-import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.DEFAULT_INSTANCE_ID;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.FIFO_COMPACTION_POLICY_CLASS;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.GLOBAL_MAX_RETRIES;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.GLOBAL_RESULT_LIMIT;
@@ -203,6 +202,7 @@ public class PhoenixHBaseAccessor {
   private TimelineMetricMetadataManager metadataManagerInstance;
   private Set<String> eventMetricPatterns = new HashSet<>();
   private boolean supportMultipleClusterMetrics = false;
+  private String defaultInstanceId = "";
 
   private Map<String, Integer> tableTTL = new HashMap<>();
 
@@ -263,6 +263,7 @@ public class PhoenixHBaseAccessor {
     tableTTL.put(METRIC_TRANSIENT_TABLE_NAME, metricsConf.getInt(METRICS_TRANSIENT_TABLE_TTL, 7 * 86400)); //7 days
 
     this.supportMultipleClusterMetrics = Boolean.valueOf(metricsConf.get(TIMELINE_METRICS_SUPPORT_MULTIPLE_CLUSTERS, "false"));
+    this.defaultInstanceId = configuration.getDefaultInstanceId();
 
     if (cacheEnabled) {
       LOG.debug("Initialising and starting metrics cache committer thread...");
@@ -903,6 +904,10 @@ public class PhoenixHBaseAccessor {
 
       boolean acceptMetric = TimelineMetricsFilter.acceptMetric(tm);
 
+      if (supportMultipleClusterMetrics && StringUtils.isEmpty(tm.getInstanceId())) {
+        tm.setInstanceId(defaultInstanceId);
+      }
+
       // Write to metadata cache on successful write to store
       if (metadataManager != null) {
         metadataManager.putIfModifiedTimelineMetricMetadata(
@@ -912,9 +917,6 @@ public class PhoenixHBaseAccessor {
                 tm.getHostName(), tm.getAppId());
 
         if (!tm.getAppId().equals("FLUME_HANDLER")) {
-          if (supportMultipleClusterMetrics && StringUtils.isEmpty(tm.getInstanceId())) {
-            tm.setInstanceId(DEFAULT_INSTANCE_ID);
-          }
           metadataManager.putIfModifiedHostedInstanceMetadata(tm.getInstanceId(), tm.getHostName());
         }
       }
@@ -1960,7 +1962,7 @@ public class PhoenixHBaseAccessor {
 
         TimelineMetricMetadataKey key = new TimelineMetricMetadataKey(metricName, appId, instanceId);
         metadata.setIsPersisted(true); // Always true on retrieval
-        metadata.setUuid(rs.getBytes("UUID"));
+        metadata.setUuid(checkForNull(rs.getBytes("UUID")));
         metadataMap.put(key, metadata);
       }
 
@@ -2016,7 +2018,7 @@ public class PhoenixHBaseAccessor {
             true
           );
 
-          metadata.setUuid(rs.getBytes("UUID"));
+          metadata.setUuid(checkForNull(rs.getBytes("UUID")));
           metadataList.add(metadata);
         }
       }
@@ -2151,5 +2153,19 @@ public class PhoenixHBaseAccessor {
   public void setMetadataInstance(TimelineMetricMetadataManager metadataManager) {
     this.metadataManagerInstance = metadataManager;
     TIMELINE_METRIC_READ_HELPER = new TimelineMetricReadHelper(this.metadataManagerInstance);
+  }
+
+ /**
+  * Null value are being saved to DB as array of zero bytes, so we need to make back converting
+  */
+  private byte[] checkForNull(byte[] uuid) {
+    if (uuid != null) {
+      for (byte b : uuid) {
+        if (b != 0) {
+          return uuid;
+        }
+      }
+    }
+    return null;
   }
 }

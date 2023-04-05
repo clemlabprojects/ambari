@@ -29,6 +29,11 @@ STOP_TIMEOUT=10
 OK=0
 NOTOK=1
 
+# checking for default Python 2
+if [ -a /usr/bin/python2 ] && [ -z "$PYTHON" ]; then
+  PYTHON=/usr/bin/python2
+fi
+
 if [ -a /usr/bin/python2.7 ] && [ -z "${PYTHON}" ]; then
   PYTHON=/usr/bin/python2.7
 fi
@@ -208,6 +213,8 @@ case "$1" in
           echo "WARNING: ${METRIC_MONITOR} did not stop gracefully after ${STOP_TIMEOUT} seconds: Trying to kill with kill -9"
           kill -9 "${pid}" >/dev/null 2>&1
         fi
+
+        sleep 2
 
         if ps -p "${pid}" > /dev/null 2>&1; then
           echo "ERROR: Unable to kill ${pid}"

@@ -25,6 +25,7 @@ from core.application_metric_map import ApplicationMetricMap
 from core.metric_collector import MetricsCollector
 from core.event_definition import HostMetricCollectEvent
 from core.host_info import HostInfo
+from core.config_reader import Configuration
 
 logger = logging.getLogger()
 
@@ -36,7 +37,7 @@ class TestMetricCollector(TestCase):
     amm_mock.return_value = None
     host_info_mock.return_value = {'metric_name' : 'metric_value'}
 
-    metric_collector = MetricsCollector(None, amm_mock, host_info_mock)
+    metric_collector = MetricsCollector(None, amm_mock, host_info_mock, Configuration())
 
     group_config = {'collect_every' : 1, 'metrics' : 'cpu'}
     

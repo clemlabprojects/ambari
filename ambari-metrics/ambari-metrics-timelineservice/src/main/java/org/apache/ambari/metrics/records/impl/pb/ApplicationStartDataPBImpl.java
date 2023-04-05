@@ -25,7 +25,7 @@ import org.apache.hadoop.yarn.proto.ApplicationHistoryServerProtos.ApplicationSt
 import org.apache.hadoop.yarn.proto.ApplicationHistoryServerProtos.ApplicationStartDataProtoOrBuilder;
 import org.apache.hadoop.yarn.proto.YarnProtos.ApplicationIdProto;
 
-import com.google.protobuf.TextFormat;
+import org.apache.hadoop.thirdparty.protobuf.TextFormat;
 
 public class ApplicationStartDataPBImpl extends ApplicationStartData {
 

@@ -304,7 +304,7 @@ public class ITMetricAggregator extends AbstractMiniHBaseClusterTest {
       "host", null);
 
     long endTime = startTime + 1000 * 60 * 4;
-    boolean success = aggregatorMinute.doWork(startTime - 1, endTime);
+    boolean success = aggregatorMinute.doWork(startTime - 1, endTime + 1);
     assertTrue(success);
 
     Condition condition = new DefaultCondition(uuids, metricNames, Collections.singletonList("local"), "host", null, startTime,

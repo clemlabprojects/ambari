@@ -36,6 +36,7 @@ import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.WebApplicationException;
@@ -288,6 +289,31 @@ public class TimelineWebServices {
   }
 
   @GET
+  @Path("metrics/{instanceId}")
+  @Produces({ MediaType.APPLICATION_JSON })
+  public TimelineMetrics getTimelineMetricsForInstance(
+    @Context HttpServletRequest req,
+    @Context HttpServletResponse res,
+    @PathParam("instanceId") String instanceId,
+    @QueryParam("metricNames") String metricNames,
+    @QueryParam("appId") String appId,
+    @QueryParam("hostname") String hostname,
+    @QueryParam("startTime") String startTime,
+    @QueryParam("endTime") String endTime,
+    @QueryParam("precision") String precision,
+    @QueryParam("limit") String limit,
+    @QueryParam("grouped") String grouped,
+    @QueryParam("topN") String topN,
+    @QueryParam("topNFunction") String topNFunction,
+    @QueryParam("isBottomN") String isBottomN,
+    @QueryParam("seriesAggregateFunction") String seriesAggregateFunction
+  ) {
+
+    return getTimelineMetrics(req, res, metricNames, appId, instanceId, hostname, startTime, endTime, precision, limit,
+      grouped, topN, topNFunction, isBottomN, seriesAggregateFunction);
+  }
+
+  @GET
   @Path("/metrics/summary")
   @Produces({ MediaType.APPLICATION_JSON })
   public TimelineMetricServiceSummary getTimelineMetricServiceSummary(
@@ -325,6 +351,28 @@ public class TimelineWebServices {
   }
 
   @GET
+  @Path("/metrics/{instanceId}/metadata")
+  @Produces({ MediaType.APPLICATION_JSON })
+  public Map<String, List<TimelineMetricMetadata>> getTimelineMetricMetadataForInstance(
+    @Context HttpServletRequest req,
+    @Context HttpServletResponse res,
+    @QueryParam("appId") String appId,
+    @QueryParam("metricName") String metricPattern,
+    @QueryParam("includeAll") String includeBlacklistedMetrics
+  ) {
+    init(res);
+
+    try {
+      return timelineMetricStore.getTimelineMetricMetadata(
+        parseStr(appId),
+        parseStr(metricPattern),
+        parseBoolean(includeBlacklistedMetrics));
+    } catch (Exception e) {
+      throw new WebApplicationException(e, Response.Status.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @GET
   @Path("/metrics/hosts")
   @Produces({ MediaType.APPLICATION_JSON })
   public Map<String, Set<String>> getHostedAppsMetadata(
@@ -341,13 +389,31 @@ public class TimelineWebServices {
   }
 
   @GET
-  @Path("/metrics/instances")
+  @Path("/metrics/instance")
   @Produces({ MediaType.APPLICATION_JSON })
   public Map<String, Map<String, Set<String>>> getClusterHostsMetadata(
     @Context HttpServletRequest req,
     @Context HttpServletResponse res,
     @QueryParam("appId") String appId,
     @QueryParam("instanceId") String instanceId
+  ) {
+    init(res);
+
+    try {
+      return timelineMetricStore.getInstanceHostsMetadata(instanceId, appId);
+    } catch (Exception e) {
+      throw new WebApplicationException(e, Response.Status.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @GET
+  @Path("/metrics/{instanceId}/instance")
+  @Produces({ MediaType.APPLICATION_JSON })
+  public Map<String, Map<String, Set<String>>> getClusterHostsMetadataForInstance(
+    @Context HttpServletRequest req,
+    @Context HttpServletResponse res,
+    @QueryParam("appId") String appId,
+    @PathParam("instanceId") String instanceId
   ) {
     init(res);
 

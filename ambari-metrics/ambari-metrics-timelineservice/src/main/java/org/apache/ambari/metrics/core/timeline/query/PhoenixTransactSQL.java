@@ -47,16 +47,6 @@ public class PhoenixTransactSQL {
 
   public static final String METRICS_RECORD_TABLE_NAME = "METRIC_RECORD_UUID";
 
-  public static final String SCAN_METRIC_METADATA_SQL = "SELECT METRIC_NAME, APP_ID, INSTANCE_ID, UUID FROM %s";
-
-  public static final String SCAN_HOST_METADATA_SQL = "SELECT HOSTNAME, UUID FROM %s";
-
-  public static final String METRICS_METADATA_TABLE_NAME =
-    "METRICS_METADATA_UUID";
-
-  public static final String HOST_METADATA_TABLE_NAME =
-    "HOSTED_APPS_METADATA_UUID";
-
   public static final String CREATE_METRICS_TABLE_SQL = "CREATE TABLE IF NOT " +
     "EXISTS " + METRICS_RECORD_TABLE_NAME + " (UUID BINARY(20) NOT NULL, " +
     "SERVER_TIME BIGINT NOT NULL, " +
@@ -387,6 +377,10 @@ public class PhoenixTransactSQL {
   public static final String GET_INSTANCE_HOST_METADATA_SQL = "SELECT " +
     "INSTANCE_ID, HOSTNAME FROM INSTANCE_HOST_METADATA";
 
+  public static final String SCAN_METRIC_METADATA_SQL = "SELECT METRIC_NAME, APP_ID, INSTANCE_ID, UUID FROM %s";
+
+  public static final String SCAN_HOST_METADATA_SQL = "SELECT HOSTNAME, UUID FROM %s";
+
   /**
    * Aggregate host metrics using a GROUP BY clause to take advantage of
    * N - way parallel scan where N = number of regions.
@@ -395,7 +389,7 @@ public class PhoenixTransactSQL {
     "INTO %s (UUID, SERVER_TIME, METRIC_SUM, METRIC_COUNT, METRIC_MAX, METRIC_MIN) " +
     "SELECT UUID, %s AS SERVER_TIME, " +
     "SUM(METRIC_SUM), SUM(METRIC_COUNT), MAX(METRIC_MAX), MIN(METRIC_MIN) " +
-    "FROM %s WHERE%s SERVER_TIME > %s AND SERVER_TIME <= %s GROUP BY UUID";
+    "FROM %s WHERE%s SERVER_TIME >= %s AND SERVER_TIME < %s GROUP BY UUID";
 
   /**
    * Downsample host metrics.
@@ -413,8 +407,8 @@ public class PhoenixTransactSQL {
    */
   public static final String GET_AGGREGATED_APP_METRIC_GROUPBY_SQL = "UPSERT " +
          "INTO %s (UUID, SERVER_TIME, METRIC_SUM, METRIC_COUNT, METRIC_MAX, METRIC_MIN) SELECT UUID, %s AS SERVER_TIME, " +
-         "ROUND(AVG(METRIC_SUM),2), ROUND(AVG(%s)), MAX(METRIC_MAX), MIN(METRIC_MIN) FROM %s WHERE%s SERVER_TIME > %s AND " +
-         "SERVER_TIME <= %s GROUP BY UUID";
+         "ROUND(AVG(METRIC_SUM),2), ROUND(AVG(%s)), MAX(METRIC_MAX), MIN(METRIC_MIN) FROM %s WHERE%s SERVER_TIME >= %s AND " +
+         "SERVER_TIME < %s GROUP BY UUID";
 
   /**
    * Downsample cluster metrics.
@@ -471,6 +465,12 @@ public class PhoenixTransactSQL {
     "METRIC_AGGREGATE_HOURLY_UUID";
   public static final String METRICS_CLUSTER_AGGREGATE_DAILY_TABLE_NAME =
     "METRIC_AGGREGATE_DAILY_UUID";
+
+  public static final String METRICS_METADATA_TABLE_NAME =
+    "METRICS_METADATA_UUID";
+
+  public static final String HOST_METADATA_TABLE_NAME =
+    "HOSTED_APPS_METADATA_UUID";
 
   public static final Pattern PHOENIX_TABLES_REGEX_PATTERN = Pattern.compile("METRIC_.*");
 

@@ -22,7 +22,7 @@ import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.M
 import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.METRICS_RECORD_TABLE_NAME;
 import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.PHOENIX_TABLES;
 import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.UPSERT_METRICS_SQL;
-// import static org.apache.phoenix.end2end.ParallelStatsDisabledIT.tearDownMiniCluster;
+import static org.apache.phoenix.end2end.ParallelStatsDisabledIT.tearDownMiniCluster;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -133,7 +133,7 @@ public abstract class AbstractMiniHBaseClusterTest extends BaseTest {
   @AfterClass
   public static void doTeardown() throws Exception {
     dropNonSystemTables();
-    // tearDownMiniCluster();
+    tearDownMiniCluster(1);
   }
 
   @Before

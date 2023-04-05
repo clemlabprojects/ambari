@@ -20,12 +20,8 @@ package org.apache.hadoop.metrics2.sink.kafka;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.ClassUtils;
@@ -36,7 +32,6 @@ import org.apache.hadoop.metrics2.sink.timeline.AbstractTimelineMetricsSink;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
 import org.apache.hadoop.metrics2.sink.timeline.cache.TimelineMetricsCache;
-import com.yammer.metrics.Metrics;
 import com.yammer.metrics.core.Counter;
 import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
@@ -48,6 +43,7 @@ import com.yammer.metrics.core.MetricsRegistry;
 import com.yammer.metrics.core.Summarizable;
 import com.yammer.metrics.core.Timer;
 import com.yammer.metrics.stats.Snapshot;
+import kafka.metrics.KafkaYammerMetrics;
 import kafka.metrics.KafkaMetricsConfig;
 import kafka.metrics.KafkaMetricsReporter;
 import kafka.utils.VerifiableProperties;
@@ -80,6 +76,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
   private static final String TIMELINE_DEFAULT_PROTOCOL = "http";
   private static final String EXCLUDED_METRICS_PROPERTY = "external.kafka.metrics.exclude.prefix";
   private static final String INCLUDED_METRICS_PROPERTY = "external.kafka.metrics.include.prefix";
+  private static final String INCLUDED_METRICS_REGEX_PROPERTY = "external.kafka.metrics.include.regex";
 
   private volatile boolean initialized = false;
   private boolean running = false;
@@ -97,6 +94,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
 
   private String[] excludedMetricsPrefixes;
   private String[] includedMetricsPrefixes;
+  private String[] includedMetricsRegex = new String[0];
   // Local cache to avoid prefix matching everytime
   private Set<String> excludedMetrics = new HashSet<>();
   private boolean hostInMemoryAggregationEnabled;
@@ -214,6 +212,13 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
           includedMetricsPrefixes = includedMetricsStr.trim().split(",");
         }
 
+        // Inclusion override
+        String includedMetricsRegexStr = props.getString(INCLUDED_METRICS_REGEX_PROPERTY, "");
+        if (!StringUtils.isEmpty(includedMetricsRegexStr.trim())) {
+          LOG.info("Including metrics which match the following regex patterns : " + includedMetricsRegexStr);
+          includedMetricsRegex = includedMetricsRegexStr.trim().split(",");
+        }
+
         initializeReporter();
         if (props.getBoolean(TIMELINE_REPORTER_ENABLED_PROPERTY, false)) {
           startReporter(metricsConfig.pollingIntervalSecs());
@@ -228,10 +233,12 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
     }
   }
 
+  @Override
   public String getMBeanName() {
     return "kafka:type=org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter";
   }
 
+  @Override
   public synchronized void startReporter(long period) {
     synchronized (lock) {
       if (initialized && !running) {
@@ -242,6 +249,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
     }
   }
 
+  @Override
   public synchronized void stopReporter() {
     synchronized (lock) {
       if (initialized && running) {
@@ -254,7 +262,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
   }
 
   private void initializeReporter() {
-    reporter = new TimelineScheduledReporter(Metrics.defaultRegistry(), "timeline-scheduled-reporter",
+    reporter = new TimelineScheduledReporter(KafkaYammerMetrics.defaultRegistry(), "timeline-scheduled-reporter",
         TimeUnit.SECONDS, TimeUnit.MILLISECONDS);
     initialized = true;
   }
@@ -273,7 +281,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
         ", include: " + StringUtils.startsWithAny(metricName, includedMetricsPrefixes));
     }
     if (StringUtils.startsWithAny(metricName, excludedMetricsPrefixes)) {
-      if (!StringUtils.startsWithAny(metricName, includedMetricsPrefixes)) {
+      if (!(StringUtils.startsWithAny(metricName, includedMetricsPrefixes) || Arrays.stream(includedMetricsRegex).anyMatch(metricName::matches))) {
         excludedMetrics.add(metricName);
         return true;
       }
@@ -315,11 +323,7 @@ public class KafkaTimelineMetricsReporter extends AbstractTimelineMetricsSink
         for (Entry<MetricName, Metric> entry : metrics) {
           final MetricName metricName = entry.getKey();
           final Metric metric = entry.getValue();
-          Context context = new Context() {
-            public List<TimelineMetric> getTimelineMetricList() {
-              return metricsList;
-            }
-          };
+          Context context = () -> metricsList;
           metric.processWith(this, metricName, context);
         }
       } catch (Throwable t) {

@@ -20,8 +20,8 @@ limitations under the License.
 
 import logging
 from time import time
-from host_info import HostInfo
 from event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
+from metering import MeteringMetricHandler
 
 logger = logging.getLogger()
 
@@ -34,10 +34,12 @@ class MetricsCollector():
   not required if Timer class is used for metric groups.
   """
 
-  def __init__(self, emit_queue, application_metric_map, host_info):
+  def __init__(self, emit_queue, application_metric_map, host_info, config):
     self.emit_queue = emit_queue
     self.application_metric_map = application_metric_map
     self.host_info = host_info
+    self.metering_enabled = config.is_metering_enabled()
+    self.metering_handler = MeteringMetricHandler(config)
   pass
 
   def process_event(self, event):
@@ -86,6 +88,12 @@ class MetricsCollector():
 
     if metrics:
       self.application_metric_map.put_metric(DEFAULT_HOST_APP_ID, metrics, startTime)
+      if self.metering_enabled:
+        metering_metrics = self.metering_handler.get_metering_metrics(metrics)
+        self.application_metric_map.put_metric(self.metering_handler.appId, metering_metrics, startTime)
+
+        instance_type_metrics = self.metering_handler.get_instance_type_metrics()
+        self.application_metric_map.put_metric(self.metering_handler.instance_type_metric_appId, instance_type_metrics, startTime)
     pass
 
   def process_process_collection_event(self, event):

@@ -31,7 +31,7 @@ var __extends = (this && this.__extends) || (function () {
 })();
 exports.__esModule = true;
 ///<reference path="../../../headers/common.d.ts" />
-var angular_1 = require("angular");
+require("angular");
 var lodash_1 = require("lodash");
 var sdk_1 = require("app/plugins/sdk");
 var AmbariMetricsQueryCtrl = /** @class */ (function (_super) {
@@ -39,75 +39,6 @@ var AmbariMetricsQueryCtrl = /** @class */ (function (_super) {
     /** @ngInject **/
     function AmbariMetricsQueryCtrl($scope, $injector) {
         var _this = _super.call(this, $scope, $injector) || this;
-        _this.targetBlur = function () {
-            this.target.errors = this.validateTarget(this.target);
-            // this does not work so good
-            if (!lodash_1["default"].isEqual(this.oldTarget, this.target) && lodash_1["default"].isEmpty(this.target.errors)) {
-                this.oldTarget = angular_1["default"].copy(this.target);
-                this.get_data();
-            }
-        };
-        _this.getTextValues = function (metricFindResult) {
-            return lodash_1["default"].map(metricFindResult, function (value) { return value.text; });
-        };
-        _this.suggestApps = function (query, callback) {
-            this.datasource.suggestApps(query)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.suggestClusters = function (query, callback) {
-            this.datasource.suggestClusters(this.target.app)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.suggestHosts = function (query, callback) {
-            this.datasource.suggestHosts(this.target.app, this.target.cluster)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.suggestMetrics = function (query, callback) {
-            this.datasource.suggestMetrics(query, this.target.app)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.suggestTagKeys = function (query, callback) {
-            this.datasource.metricFindQuery('tag_names(' + this.target.metric + ')')
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.suggestTagValues = function (query, callback) {
-            this.datasource.metricFindQuery('tag_values(' + this.target.metric + ',' + this.target.currentTagKey + ')')
-                .then(this.getTextValues)
-                .then(callback);
-        };
-        _this.addTag = function () {
-            if (!this.addTagMode) {
-                this.addTagMode = true;
-                return;
-            }
-            if (!this.target.tags) {
-                this.target.tags = {};
-            }
-            this.target.errors = this.validateTarget(this.target);
-            if (!this.target.errors.tags) {
-                this.target.tags[this.target.currentTagKey] = this.target.currentTagValue;
-                this.target.currentTagKey = '';
-                this.target.currentTagValue = '';
-                this.targetBlur();
-            }
-            this.addTagMode = false;
-        };
-        _this.removeTag = function (key) {
-            delete this.target.tags[key];
-            this.targetBlur();
-        };
-        _this.validateTarget = function (target) {
-            var errs = {};
-            if (target.tags && lodash_1["default"].has(target.tags, target.currentTagKey)) {
-                errs.tags = "Duplicate tag key '" + target.currentTagKey + "'.";
-            }
-            return errs;
-        };
         _this.errors = _this.validateTarget(_this.target);
         _this.aggregators = ['none', 'avg', 'sum', 'min', 'max'];
         _this.precisions = ['default', 'seconds', 'minutes', 'hours', 'days'];
@@ -144,8 +75,81 @@ var AmbariMetricsQueryCtrl = /** @class */ (function (_super) {
         _this.datasource.getAggregators().then(function (aggs) {
             this.aggregators = aggs;
         });
+        _this.suggestApps = function (query, callback) {
+            _this.datasource.suggestApps(query)
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.suggestClusters = function (query, callback) {
+            _this.datasource.suggestClusters(_this.target.app)
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.suggestHosts = function (query, callback) {
+            _this.datasource.suggestHosts(_this.target.app, _this.target.cluster)
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.suggestMetrics = function (query, callback) {
+            _this.datasource.suggestMetrics(query, _this.target.app)
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.suggestTagKeys = function (query, callback) {
+            _this.datasource.metricFindQuery('tag_names(' + _this.target.metric + ')')
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.suggestTagValues = function (query, callback) {
+            _this.datasource.metricFindQuery('tag_values(' + _this.target.metric + ',' + _this.target.currentTagKey + ')')
+                .then(_this.getTextValues)
+                .then(callback);
+        };
+        _this.getTextValues = function (metricFindResult) {
+            return metricFindResult.map(function (value) { return value.text; });
+        };
         return _this;
     }
+    AmbariMetricsQueryCtrl.prototype.targetBlur = function () {
+        this.target.errors = this.validateTarget(this.target);
+        this.refresh();
+    };
+    ;
+    AmbariMetricsQueryCtrl.prototype.addTag = function () {
+        if (!this.addTagMode) {
+            this.addTagMode = true;
+            return;
+        }
+        if (!this.target.tags) {
+            this.target.tags = {};
+        }
+        this.target.errors = this.validateTarget(this.target);
+        if (!this.target.errors.tags) {
+            this.target.tags[this.target.currentTagKey] = this.target.currentTagValue;
+            this.target.currentTagKey = '';
+            this.target.currentTagValue = '';
+            this.targetBlur();
+        }
+        this.addTagMode = false;
+    };
+    ;
+    AmbariMetricsQueryCtrl.prototype.removeTag = function (key) {
+        delete this.target.tags[key];
+        this.targetBlur();
+    };
+    ;
+    AmbariMetricsQueryCtrl.prototype.getCollapsedText = function () {
+        var text = this.target.metric + ' on ' + this.target.app;
+        return text;
+    };
+    ;
+    AmbariMetricsQueryCtrl.prototype.validateTarget = function (target) {
+        var errs = {};
+        if (target.tags && lodash_1["default"].has(target.tags, target.currentTagKey)) {
+            errs.tags = "Duplicate tag key '" + target.currentTagKey + "'.";
+        }
+        return errs;
+    };
     AmbariMetricsQueryCtrl.templateUrl = 'partials/query.editor.html';
     return AmbariMetricsQueryCtrl;
 }(sdk_1.QueryCtrl));

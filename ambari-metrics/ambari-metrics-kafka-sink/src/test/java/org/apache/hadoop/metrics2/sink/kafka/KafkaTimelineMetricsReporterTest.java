@@ -27,6 +27,7 @@ import com.yammer.metrics.core.Metric;
 import com.yammer.metrics.core.MetricsRegistry;
 import com.yammer.metrics.core.Timer;
 import junit.framework.Assert;
+import kafka.metrics.KafkaYammerMetrics;
 import kafka.utils.VerifiableProperties;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.cache.TimelineMetricsCache;
@@ -51,7 +52,7 @@ import static org.powermock.api.easymock.PowerMock.verifyAll;
 
 @RunWith(PowerMockRunner.class)
 @PrepareForTest({ Metrics.class, URL.class, OutputStream.class,
-  KafkaTimelineMetricsReporter.TimelineScheduledReporter.class })
+  KafkaTimelineMetricsReporter.TimelineScheduledReporter.class, KafkaYammerMetrics.class })
 @PowerMockIgnore({"javax.management.*", "org.apache.log4j.*", "org.slf4j.*"})
 public class KafkaTimelineMetricsReporterTest {
 
@@ -84,6 +85,7 @@ public class KafkaTimelineMetricsReporterTest {
     properties.setProperty("kafka.timeline.metrics.reporter.enabled", "true");
     properties.setProperty("external.kafka.metrics.exclude.prefix", "a.b.c");
     properties.setProperty("external.kafka.metrics.include.prefix", "a.b.c.d");
+    properties.setProperty("external.kafka.metrics.include.regex", "a.b.c.*.f");
     properties.setProperty("kafka.timeline.metrics.instanceId", "cluster");
     properties.setProperty("kafka.timeline.metrics.set.instanceId", "false");
     props = new VerifiableProperties(properties);
@@ -91,11 +93,11 @@ public class KafkaTimelineMetricsReporterTest {
 
   @Test
   public void testReporterStartStop() {
-    mockStatic(Metrics.class);
-    EasyMock.expect(Metrics.defaultRegistry()).andReturn(registry).times(2);
+    mockStatic(KafkaYammerMetrics.class);
+    EasyMock.expect(KafkaYammerMetrics.defaultRegistry()).andReturn(registry).times(2);
     TimelineMetricsCache timelineMetricsCache = getTimelineMetricsCache(kafkaTimelineMetricsReporter);
     kafkaTimelineMetricsReporter.setMetricsCache(timelineMetricsCache);
-    replay(Metrics.class, timelineMetricsCache);
+    replay(KafkaYammerMetrics.class, timelineMetricsCache);
     kafkaTimelineMetricsReporter.init(props);
     kafkaTimelineMetricsReporter.stopReporter();
     verifyAll();
@@ -103,11 +105,11 @@ public class KafkaTimelineMetricsReporterTest {
 
   @Test
   public void testReporterStartStopHttps() {
-    mockStatic(Metrics.class);
-    EasyMock.expect(Metrics.defaultRegistry()).andReturn(registry).times(2);
+    mockStatic(KafkaYammerMetrics.class);
+    EasyMock.expect(KafkaYammerMetrics.defaultRegistry()).andReturn(registry).times(2);
     TimelineMetricsCache timelineMetricsCache = getTimelineMetricsCache(kafkaTimelineMetricsReporter);
     kafkaTimelineMetricsReporter.setMetricsCache(timelineMetricsCache);
-    replay(Metrics.class, timelineMetricsCache);
+    replay(KafkaYammerMetrics.class, timelineMetricsCache);
 
     Properties properties = new Properties();
     properties.setProperty("zookeeper.connect", "localhost:2181");
@@ -118,6 +120,7 @@ public class KafkaTimelineMetricsReporterTest {
     properties.setProperty("kafka.timeline.metrics.reporter.enabled", "true");
     properties.setProperty("external.kafka.metrics.exclude.prefix", "a.b.c");
     properties.setProperty("external.kafka.metrics.include.prefix", "a.b.c.d");
+    properties.setProperty("external.kafka.metrics.include.regex", "a.b.c.*.f");
     properties.setProperty("kafka.timeline.metrics.protocol", "https");
     properties.setProperty("kafka.timeline.metrics.truststore.path", "");
     properties.setProperty("kafka.timeline.metrics.truststore.type", "");
@@ -131,18 +134,19 @@ public class KafkaTimelineMetricsReporterTest {
 
   @Test
   public void testMetricsExclusionPolicy() throws Exception {
-    mockStatic(Metrics.class);
-    EasyMock.expect(Metrics.defaultRegistry()).andReturn(registry).times(2);
+    mockStatic(KafkaYammerMetrics.class);
+    EasyMock.expect(KafkaYammerMetrics.defaultRegistry()).andReturn(registry).times(2);
     TimelineMetricsCache timelineMetricsCache = getTimelineMetricsCache(kafkaTimelineMetricsReporter);
     kafkaTimelineMetricsReporter.setMetricsCache(timelineMetricsCache);
 
-    replay(Metrics.class, timelineMetricsCache);
+    replay(KafkaYammerMetrics.class, timelineMetricsCache);
     kafkaTimelineMetricsReporter.init(props);
 
     Assert.assertTrue(kafkaTimelineMetricsReporter.isExcludedMetric("a.b.c"));
     Assert.assertFalse(kafkaTimelineMetricsReporter.isExcludedMetric("a.b"));
     Assert.assertFalse(kafkaTimelineMetricsReporter.isExcludedMetric("a.b.c.d"));
     Assert.assertFalse(kafkaTimelineMetricsReporter.isExcludedMetric("a.b.c.d.e"));
+    Assert.assertFalse(kafkaTimelineMetricsReporter.isExcludedMetric("a.b.c.e.f"));
 
     kafkaTimelineMetricsReporter.stopReporter();
     verifyAll();

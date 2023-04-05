@@ -31,18 +31,14 @@
       <outputDirectory>site-packages/resource_monitoring</outputDirectory>
     </fileSet>
     <fileSet>
-      <directory>${project.basedir}/../../ambari-common/src/main/python/ambari_commons</directory>
-      <outputDirectory>site-packages/resource_monitoring/ambari_commons</outputDirectory>
-      <includes>
-        <include>**/*</include>
-      </includes>
-    </fileSet>
-    <fileSet>
       <directory>${monitor.dir}/conf/unix</directory>
       <outputDirectory>conf</outputDirectory>
       <includes>
         <include>metric_groups.conf</include>
         <include>metric_monitor.ini</include>
+        <include>instance_type_provider_azure</include>
+        <include>instance_type_provider_ec2</include>
+        <include>instance_type_provider_gce</include>
       </includes>
     </fileSet>
     <fileSet>

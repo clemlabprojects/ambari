@@ -39,11 +39,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.ambari.metrics.core.timeline.MetricsSystemInitializationException;
 import org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration;
 import org.apache.ambari.metrics.core.timeline.uuid.MetricUuidGenStrategy;
-import org.apache.ambari.metrics.core.timeline.uuid.MD5UuidGenStrategy;
 import org.apache.ambari.metrics.core.timeline.uuid.Murmur3HashUuidGenStrategy;
 import org.apache.ambari.metrics.core.timeline.uuid.TimelineMetricUuid;
 import org.apache.commons.collections.CollectionUtils;
@@ -64,7 +64,6 @@ import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguratio
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.TRANSIENT_METRIC_PATTERNS;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.METRICS_METADATA_SYNC_INIT_DELAY;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.METRICS_METADATA_SYNC_SCHEDULE_DELAY;
-import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.TIMELINE_METRICS_UUID_GEN_STRATEGY;
 import static org.apache.ambari.metrics.core.timeline.TimelineMetricConfiguration.TIMELINE_METRIC_METADATA_FILTERS;
 import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.CREATE_HOSTED_APPS_METADATA_TABLE_SQL;
 import static org.apache.ambari.metrics.core.timeline.query.PhoenixTransactSQL.CREATE_INSTANCE_HOST_TABLE_SQL;
@@ -630,11 +629,9 @@ public class TimelineMetricMetadataManager {
                                                 String instanceId,
                                                 List<String> transientMetricNames) {
 
-    Collection<String> sanitizedMetricNames = new HashSet<>();
     List<byte[]> uuids = new ArrayList<>();
 
     boolean metricNameHasWildcard = false;
-
     for (String metricName : metricNames) {
       if (hasWildCard(metricName)) {
         metricNameHasWildcard = true;
@@ -862,10 +859,6 @@ public class TimelineMetricMetadataManager {
     metricMetadataSync.run();
   }
 
-  private boolean hasWildCard(String key) {
-    return StringUtils.isNotEmpty(key) && key.contains("%");
-  }
-
   public void updateMetadataCacheUsingV1Tables() throws SQLException {
     Map<TimelineMetricMetadataKey, TimelineMetricMetadata> metadataV1Map = getMetadataFromStoreV1();
     for (TimelineMetricMetadataKey key: METADATA_CACHE.keySet()) {
@@ -890,4 +883,9 @@ public class TimelineMetricMetadataManager {
       }
     }
   }
+
+  private boolean hasWildCard(String key) {
+    return StringUtils.isNotEmpty(key) && key.contains("%");
+  }
+
 }
