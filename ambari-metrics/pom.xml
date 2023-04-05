@@ -38,20 +38,21 @@
     <python.ver>python &gt;= 2.6</python.ver>
     <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
     <slf4j.version>2.0.0</slf4j.version>
-    <zookeeper.version>3.5.5.1.0.4.0-${odp.release.number}</zookeeper.version>
-    <hbase.version>2.2.4.1.0.4.0-${odp.release.number}</hbase.version>
+    <zookeeper.version>3.5.6.1.2.1.0-${odp.release.number}</zookeeper.version>
+    <hadoop.version>3.3.4.1.2.1.0-${odp.release.number}</hadoop.version>
+    <hbase.version>2.5.3.1.2.1.0-${odp.release.number}</hbase.version>
     <kafka.version>2.8.1.1.0.4.0-${odp.release.number}</kafka.version>
-    <phoenix.version>5.1.2.1.0.4.0-${odp.release.number}</phoenix.version>
+    <phoenix.version>5.1.3.1.2.1.0-${odp.release.number}</phoenix.version>
     <curator.version>4.2.0</curator.version>
     <commons-lang3.version>3.12.0</commons-lang3.version>
-    <hbase.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/hbase/hbase-2.2.4.1.0.4.0-${odp.release.number}-bin.tar.gz</hbase.tar>
-    <hbase.folder>hbase-2.2.4.1.0.4.0-${odp.release.number}</hbase.folder>
-    <hadoop.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/hadoop/hadoop-3.2.2.1.0.4.0-${odp.release.number}.tar.gz</hadoop.tar>
-    <hadoop.folder>hadoop-3.2.2.1.0.4.0-${odp.release.number}</hadoop.folder>
+    <hbase.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/hbase/hbase-2.5.3.1.2.1.0-${odp.release.number}-bin.tar.gz</hbase.tar>
+    <hbase.folder>hbase-2.5.3.1.2.1.0-${odp.release.number}</hbase.folder>
+    <hadoop.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/hadoop/hadoop-3.3.4.1.2.1.0-${odp.release.number}.tar.gz</hadoop.tar>
+    <hadoop.folder>hadoop-3.3.4.1.2.1.0-${odp.release.number}</hadoop.folder>
     <grafana.folder>grafana-9.3.2</grafana.folder>
     <grafana.tar>https://dl.grafana.com/oss/release/grafana-9.3.2.linux-amd64.tar.gz</grafana.tar>
-    <phoenix.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/phoenix/phoenix-hbase-2.2-5.1.2.1.0.4.0-${odp.release.number}-bin.tar.gz</phoenix.tar>
-    <phoenix.folder>phoenix-hbase-2.2-5.1.2.1.0.4.0-${odp.release.number}-bin</phoenix.folder>
+    <phoenix.tar>http://build.luc-data.com:10080/odp-release/dist/centos7/1.x/BUILDS/1.0.4.0-${odp.release.number}/tars/phoenix/phoenix-hbase-2.2-5.1.3.1.2.1.0-${odp.release.number}-bin.tar.gz</phoenix.tar>
+    <phoenix.folder>phoenix-hbase-2.2-5.1.3.1.2.1.0-${odp.release.number}-bin</phoenix.folder>
     <resmonitor.install.dir>/usr/lib/python2.6/site-packages/resource_monitoring</resmonitor.install.dir>
     <powermock.version>1.6.2</powermock.version>
     <distMgmtSnapshotsId>apache.snapshots.https</distMgmtSnapshotsId>
