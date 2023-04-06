@@ -33,7 +33,7 @@
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>
     <hadoop.version>3.0.0</hadoop.version>
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
-    <zookeeper.version>3.5.5.1.0.4.0-${odp.release.number}</zookeeper.version>
+    <zookeeper.version>3.5.6.${odp.release.stack}-${odp.release.number}</zookeeper.version>
     <skipSurefireTests>false</skipSurefireTests>
     <log4j2.version>2.16.0</log4j2.version>
   </properties>
