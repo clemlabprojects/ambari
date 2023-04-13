@@ -45,9 +45,11 @@
     <deb.architecture>amd64</deb.architecture>
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>
     <solr.version>7.7.0</solr.version>
-    <hadoop.version>3.0.0</hadoop.version>
+    <odp.release.stack>1.2.1.0</odp.release.stack>
+    <odp.release.number>21</odp.release.number>
+    <hadoop.version>3.3.4.1.2.1.0-${odp.release.number}</hadoop.version>
     <common.io.version>2.5</common.io.version>
-    <zookeeper.version>3.5.5.1.0.4.0-${odp.release.number}</zookeeper.version>
+    <zookeeper.version>3.5.6.1.2.1.0-${odp.release.number}</zookeeper.version>
     <forkCount>4</forkCount>
     <reuseForks>false</reuseForks>
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
