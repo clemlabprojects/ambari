@@ -58,9 +58,15 @@
 
   <repositories>
     <repository>
-      <id>apache-hadoop</id>
-      <name>hdp</name>
-      <url>https://repo.hortonworks.com/content/groups/public/</url>
+      <id>clemlab</id>
+      <name>clemlab</name>
+      <url>https://nexus.luc-data.com/repository/maven-releases/</url>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
     </repository>
     <repository>
       <id>oss.sonatype.org</id>
