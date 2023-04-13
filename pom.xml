@@ -130,19 +130,6 @@
         <enabled>false</enabled>
       </releases>
     </repository>
-    <!-- ToDo: remove after moving the Metrics HDP dependencies to the public nexus -->
-    <repository>
-      <id>private-nexus</id>
-      <name>private-nexus</name>
-      <url>https://nexus-private.hortonworks.com/nexus/content/groups/public/</url>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-      <releases>
-        <enabled>true</enabled>
-      </releases>
-    </repository>
-    <!-- //ToDo: END -->
   </repositories>
 
   <build>
