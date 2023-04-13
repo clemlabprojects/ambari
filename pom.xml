@@ -130,6 +130,19 @@
         <enabled>false</enabled>
       </releases>
     </repository>
+    <!-- ToDo: remove after moving the Metrics HDP dependencies to the public nexus -->
+    <repository>
+      <id>clemlab</id>
+      <name>clemlab</name>
+      <url>https://nexus.luc-data.com/repository/maven-releases/</url>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+    </repository>
+    <!-- //ToDo: END -->
   </repositories>
 
   <build>
