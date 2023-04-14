@@ -21,7 +21,7 @@
   <artifactId>ambari</artifactId>
   <packaging>pom</packaging>
   <name>Ambari Main</name>
-  <version>2.7.6.0.0</version>
+  <version>2.7.8.0.0</version>
   <description>Ambari</description>
   <url>https://ambari.apache.org/</url>
   <scm>
@@ -130,7 +130,6 @@
         <enabled>false</enabled>
       </releases>
     </repository>
-    <!-- ToDo: remove after moving the Metrics HDP dependencies to the public nexus -->
     <repository>
       <id>clemlab</id>
       <name>clemlab</name>
@@ -142,7 +141,6 @@
         <enabled>true</enabled>
       </releases>
     </repository>
-    <!-- //ToDo: END -->
   </repositories>
 
   <build>
