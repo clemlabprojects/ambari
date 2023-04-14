@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>KAFKA</name>
+      <version>2.8.1</version>
     </service>
   </services>
 </metainfo>

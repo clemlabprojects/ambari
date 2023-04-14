@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>TEZ</name>
+      <version>0.10.2</version>
     </service>
   </services>
 </metainfo>

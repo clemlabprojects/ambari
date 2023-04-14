@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>ZOOKEEPER</name>
+      <version>3.5.6</version>
     </service>
   </services>
 </metainfo>

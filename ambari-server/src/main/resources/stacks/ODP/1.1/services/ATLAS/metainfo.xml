@@ -20,7 +20,6 @@
   <services>
     <service>
       <name>ATLAS</name>
-      <version>2.3.0</version>
     </service>
   </services>
 </metainfo>

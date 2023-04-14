@@ -19,7 +19,7 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>AMBARI_METRICS</name>
     </service>
   </services>
 </metainfo>

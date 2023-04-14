@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>SPARK2</name>
+      <version>2.4.8</version>
     </service>
   </services>
 </metainfo>

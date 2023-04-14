@@ -20,7 +20,6 @@
   <services>
     <service>
       <name>NIFI_REGISTRY</name>
-      <version>0.8.0</version>
     </service>
   </services>
 </metainfo>

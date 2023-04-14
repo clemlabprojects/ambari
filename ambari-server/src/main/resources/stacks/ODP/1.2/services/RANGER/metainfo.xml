@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>RANGER</name>
+      <version>2.4.0</version>
     </service>
   </services>
 </metainfo>

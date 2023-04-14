@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>NIFI_REGISTRY</name>
+      <version>0.8.0</version>
     </service>
   </services>
 </metainfo>

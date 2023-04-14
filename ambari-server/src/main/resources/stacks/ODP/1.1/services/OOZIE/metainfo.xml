@@ -20,7 +20,6 @@
   <services>
     <service>
       <name>OOZIE</name>
-      <version>5.2.1</version>
     </service>
   </services>
 </metainfo>

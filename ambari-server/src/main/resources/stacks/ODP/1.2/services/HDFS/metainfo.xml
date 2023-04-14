@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>HDFS</name>
+      <version>3.3.4</version>
     </service>
   </services>
 </metainfo>

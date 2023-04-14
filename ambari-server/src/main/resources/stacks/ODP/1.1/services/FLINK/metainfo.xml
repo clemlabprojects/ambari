@@ -20,7 +20,6 @@
   <services>
     <service>
       <name>FLINK</name>
-      <version>1.17.0</version>
     </service>
   </services>
 </metainfo>

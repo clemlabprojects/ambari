@@ -19,7 +19,8 @@
   <schemaVersion>2.0</schemaVersion>
   <services>
     <service>
-      <name>ZEPPELIN</name>
+      <name>RANGER_KMS</name>
+      <version>2.3.0</version>
     </service>
   </services>
 </metainfo>

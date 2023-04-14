@@ -20,7 +20,6 @@
   <services>
     <service>
       <name>SPARK2</name>
-      <version>2.4.8</version>
     </service>
   </services>
 </metainfo>
