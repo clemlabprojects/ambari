@@ -181,7 +181,7 @@
       <groupId>org.apache.ambari</groupId>
       <artifactId>ambari-utility</artifactId>
       <scope>test</scope>
-      <version>${ambari-utility-version}</version>
+      <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>junit</groupId>
