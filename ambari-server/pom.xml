@@ -1810,7 +1810,7 @@
     <dependency>
       <groupId>org.apache.ambari</groupId>
       <artifactId>ambari-serviceadvisor</artifactId>
-      <version>2.7.8.0</version>
+      <version>${ambari-serviceadvisor-version}</version>
       <exclusions>
         <exclusion>
           <groupId>commons-httpclient</groupId>
@@ -1823,7 +1823,7 @@
     <dependency>
       <groupId>org.apache.ambari</groupId>
       <artifactId>ambari-utility</artifactId>
-      <version>2.7.8.0</version>
+      <version>${ambari-utility-version}</version>
       <scope>provided</scope> <!-- for @ApiIgnore -->
       <exclusions>
         <exclusion>
