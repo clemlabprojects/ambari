@@ -387,7 +387,7 @@ def copy_jdbc_connector(kms_home):
     Execute(as_sudo(['yes', '|', 'cp', params.libs_path_in_archive, params.jdbc_libs_dir], auto_escape=False),
       path=["/bin", "/usr/bin/"])
 
-    File(os.path.join(kms_home, 'ews', 'webapp', 'lib', 'sajdbc4.jar'), mode=0644)
+    File(os.path.join(kms_home, 'ews', 'webapp', 'WEB-INF', 'lib', 'sajdbc4.jar'), mode=0644)
   else:
     Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(kms_home, 'ews', 'webapp', 'lib')),
       path=["/bin", "/usr/bin/"],
