@@ -97,7 +97,7 @@ class RangeradminV2:
   def create_ranger_repository(self, component, repo_name, repo_properties,
                                ambari_ranger_admin, ambari_ranger_password,
                                admin_uname, admin_password, policy_user, is_security_enabled = False, is_stack_supports_ranger_kerberos = False,
-                               component_user = None, component_user_principal = None, component_user_keytab = None):
+                               component_user = None, component_user_principal = None, component_user_keytab = None, rangerlookup_password = None):
 
     ## TODO: move user creation to ranger start as it need to be created only once
     ## [BUG-1]: external user creation was inside the condition
@@ -112,6 +112,8 @@ class RangeradminV2:
       if response_code is None and response_code != 200:
         Logger.info("Creating Ambari Ranger External User")
         user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
+        if rangerlookup_password != None:
+          ranger_lookup_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
         retryCount += 1
         if user_resp_code is not None and user_resp_code == 200:
           Logger.info("Ambari Ranger External User Created Successfully")
@@ -348,6 +350,78 @@ class RangeradminV2:
         raise Fail("Error creating ambari admin user. Http status code - {0}. \n {1}".format(e.code, e.read()))
       else:
         raise Fail("Error creating ambari admin user. Reason - {0}.".format(e.reason))
+    except httplib.BadStatusLine:
+      raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
+    except TimeoutError:
+      raise Fail("Connection to Ranger Admin failed. Reason - timeout")
+
+  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  def create_rangerlookup_user(self, ranger_admin_username, ranger_admin_password, ranger_lookup_password):
+    """
+    :param ranger_admin_username: admin username
+    :param ranger_admin_password: admin password
+    :param ranger_lookup_password: rangerlookup password to create.
+    :return: response code.
+    """
+    flag_rangerlookup_present = False
+    match = re.match('[a-zA-Z0-9_\S]+$', ranger_lookup_password)
+    if match is None:
+      raise Fail('Invalid password given for Ranger rangerlookup user')
+    try:
+      url =  self.url_users + '?name=' + str('rangerlookup')
+      request = urllib2.Request(url)
+      base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+      request.add_header("Content-Type", "application/json")
+      request.add_header("Accept", "application/json")
+      request.add_header("Authorization", "Basic {0}".format(base_64_string))
+      result = openurl(request, timeout=20)
+      response_code = result.getcode()
+      response = json.loads(result.read())
+      if response_code == 200 and len(response['vXUsers']) >= 0:
+        for vxuser in response['vXUsers']:
+          if vxuser['name'] == 'rangerlookup':
+            flag_rangerlookup_present = True
+            break
+          else:
+            flag_rangerlookup_present = False
+
+        if flag_rangerlookup_present:
+          Logger.info('rangerlookup' + ' user already exists.')
+          return response_code
+        else:
+          Logger.info('rangerlookup' + ' user is not present, creating user using given configurations')
+          url = self.url_sec_users
+          rangerlookup_user = dict()
+          rangerlookup_user['status'] = 1
+          rangerlookup_user['userRoleList'] = ['ROLE_USER']
+          rangerlookup_user['name'] = 'rangerlookup'
+          rangerlookup_user['password'] = ranger_lookup_password
+          rangerlookup_user['description'] = 'rangerlookup user needed for repository creation'
+          rangerlookup_user['firstName'] = 'rangerlookup'
+          data =  json.dumps(rangerlookup_user)
+          base_64_string = base64.encodestring('{0}'.format(ranger_lookup_password)).replace('\n', '')
+          headers = {
+            'Accept': 'application/json',
+            "Content-Type": "application/json"
+          }
+          request = urllib2.Request(url, data, headers)
+          request.add_header("Authorization", "Basic {0}".format(base_64_string))
+          result = openurl(request, timeout=20)
+          response_code = result.getcode()
+          response = json.loads(json.JSONEncoder().encode(result.read()))
+          if response_code == 200 and response is not None:
+            Logger.info('rangerlookup user creation successful.')
+            return response_code
+          else:
+            Logger.error('rangerlookup user creation failed.')
+            return None
+      else:
+        return None
+    except urllib2.URLError, e:
+      if isinstance(e, urllib2.HTTPError):
+        raise Fail("Error creating rangerlookup user. Http status code - {0}. \n {1}".format(e.code, e.read()))
+      else:
+        raise Fail("Error creating rangerlookup user. Reason - {0}.".format(e.reason))
     except httplib.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:

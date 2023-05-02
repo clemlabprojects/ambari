@@ -49,7 +49,7 @@ def setup_ranger_plugin(component_select_name, service_name, previous_jdbc_jar,
                         xa_audit_db_password, ssl_truststore_password,
                         ssl_keystore_password, policy_config_dict=None, api_version=None, stack_version_override = None, skip_if_rangeradmin_down = True,
                         is_security_enabled = False, is_stack_supports_ranger_kerberos = False,
-                        component_user_principal = None, component_user_keytab = None, cred_lib_path_override = None, cred_setup_prefix_override = None, copy_jar = True):
+                        component_user_principal = None, component_user_keytab = None, cred_lib_path_override = None, cred_setup_prefix_override = None, copy_jar = True, rangerlookup_password = None):
 
   if audit_db_is_enabled and component_driver_curl_source is not None and not component_driver_curl_source.endswith("/None"):
     if previous_jdbc_jar and os.path.isfile(previous_jdbc_jar):
@@ -89,7 +89,7 @@ def setup_ranger_plugin(component_select_name, service_name, previous_jdbc_jar,
                                                 ranger_env_properties['ranger_admin_username'], ranger_env_properties['ranger_admin_password'],
                                                 ranger_env_properties['admin_username'], ranger_env_properties['admin_password'],
                                                 policy_user, is_security_enabled, is_stack_supports_ranger_kerberos, component_user,
-                                                component_user_principal, component_user_keytab)
+                                                component_user_principal, component_user_keytab, rangerlookup_password)
       else:
         Logger.info("RangerAdmin api version 1")
         ranger_adm_obj = Rangeradmin(url=policymgr_mgr_url, skip_if_rangeradmin_down=skip_if_rangeradmin_down)

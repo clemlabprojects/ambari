@@ -65,7 +65,8 @@ def setup_ranger_hdfs(upgrade_type=None):
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
                         component_user_principal = params.nn_principal_name if params.security_enabled else None,
-                        component_user_keytab = params.nn_keytab if params.security_enabled else None)
+                        component_user_keytab = params.nn_keytab if params.security_enabled else None,
+                        rangerlookup_password = params.rangerlookup_password if params.rangerlookup_create_user else None)
   else:
     Logger.info('Ranger Hdfs plugin is not enabled')
 

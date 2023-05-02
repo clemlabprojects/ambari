@@ -73,6 +73,7 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
+rangerlookup_create_user = config['configurations']['ranger-env']['rangerlookup_password'] if 'rangerlookup_password' in config['configurations']['ranger-env'] else False
 
 # hadoop default parameters
 hadoop_ozone_bin_dir = stack_select.get_hadoop_ozone_dir("bin")
