@@ -189,6 +189,16 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>hbase.zookeeper.property.admin.serverPort</name>
+    <display-name>HBase ZooKeeper Admin Server Port</display-name>
+    <value>8081</value>
+    <description>
+      Property from ZooKeeper's config zoo.cfg.
+      The port where admin server binds to (carefull to not collide with zookeeper ensemble).
+    </description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>hbase.client.scanner.caching</name>
     <value>10000</value>
     <description>
