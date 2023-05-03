@@ -819,15 +819,15 @@ def setup_system_services(config_dir=None):
     params.HdfsResource(format("{yarn_service_app_hdfs_path}"),
                         type="directory",
                         action="create_on_execute",
-                        owner=params.hdfs_user,
-                        group=params.hdfs_user,
+                        owner=params.yarn_user,
+                        group=params.user_group,
                         mode=0555,
                         )
     params.HdfsResource(format("{yarn_service_app_hdfs_path}/service-dep.tar.gz"),
                     type="file",
                     action="create_on_execute",
                     source=format("{yarn_service_dep_source_path}"),
-                    owner=params.hdfs_user,
+                    owner=params.yarn_user,
                     group=params.user_group,
                     mode=0444,
                     )
