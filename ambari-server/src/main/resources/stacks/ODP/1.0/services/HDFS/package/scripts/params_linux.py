@@ -473,7 +473,9 @@ ranger_policy_config = {}
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
-rangerlookup_create_user = config['configurations']['ranger-env']['rangerlookup_password'] if 'rangerlookup_password' in config['configurations']['ranger-env'] else False
+rangerlookup_create_user = False
+if has_ranger_admin:
+  rangerlookup_create_user = config['configurations']['ranger-env']['rangerlookup_password'] if 'rangerlookup_password' in config['configurations']['ranger-env'] else False
 # ranger support xml_configuration flag, instead of depending on ranger xml_configurations_supported/ranger-env, using stack feature
 xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
 
