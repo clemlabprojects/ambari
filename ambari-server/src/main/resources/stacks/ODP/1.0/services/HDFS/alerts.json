@@ -1636,8 +1636,8 @@
         "source": {
           "type": "WEB",
           "uri": {
-            "http": "{{hdfs-site/dfs.datanode.http.address}}",
-            "https": "{{hdfs-site/dfs.datanode.https.address}}",
+            "http": "{{hdfs-site/dfs.datanode.http.address}}/jmx",
+            "https": "{{hdfs-site/dfs.datanode.https.address}}/jmx",
             "https_property": "{{hdfs-site/dfs.http.policy}}",
             "https_property_value": "HTTPS_ONLY",
             "kerberos_keytab": "{{hdfs-site/dfs.web.authentication.kerberos.keytab}}",
