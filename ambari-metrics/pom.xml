@@ -45,7 +45,7 @@
     <hbase.version>2.2.4.${odp.release.stack}-${odp.release.number}</hbase.version>
     <kafka.version>2.8.1.${odp.release.stack}-${odp.release.number}</kafka.version>
     <phoenix.version>5.1.3.${odp.release.stack}-${odp.release.number}</phoenix.version>
-    <phoenix.hbase.compat>2.5</phoenix.hbase.compat>
+    <phoenix.hbase.compat>2.2</phoenix.hbase.compat>
     <curator.version>4.2.0</curator.version>
     <commons-lang3.version>3.12.0</commons-lang3.version>
     <hbase.tar>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/${odp.release.stack}-${odp.release.number}/tars/hbase/hbase-${hbase.version}-bin.tar.gz</hbase.tar>
