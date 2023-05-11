@@ -48,7 +48,6 @@ import org.apache.ambari.server.customactions.ActionDefinition;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ComponentInfo;
-import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
@@ -259,7 +258,6 @@ public class AmbariActionExecutionHelper {
   public void addExecutionCommandsToStage(final ActionExecutionContext actionContext, Stage stage,
                                           Map<String, String> requestParams, boolean checkHostIsMemberOfCluster)
       throws AmbariException {
-
     String actionName = actionContext.getActionName();
     String clusterName = actionContext.getClusterName();
     final Cluster cluster;
@@ -268,7 +266,6 @@ public class AmbariActionExecutionHelper {
     } else {
       cluster = null;
     }
-    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     ComponentInfo componentInfo = null;
     List<RequestResourceFilter> resourceFilters = actionContext.getResourceFilters();
     final RequestResourceFilter resourceFilter;
@@ -277,7 +274,6 @@ public class AmbariActionExecutionHelper {
     } else {
       resourceFilter = new RequestResourceFilter();
     }
-
     // List of host to select from
     Set<String> candidateHosts = new HashSet<>();
 
@@ -290,7 +286,6 @@ public class AmbariActionExecutionHelper {
     } else {
       LOG.debug("Resource filter has hosts: {}", StringUtils.join(resourceFilter.getHostNames(), ", "));
     }
-
     if (null != cluster) {
 //      StackId stackId = cluster.getCurrentStackVersion();
 
@@ -302,7 +297,6 @@ public class AmbariActionExecutionHelper {
 
           Map<String, ServiceComponentHost> componentHosts = component.getServiceComponentHosts();
           candidateHosts.addAll(componentHosts.keySet());
-
           try {
             componentInfo = ambariMetaInfo.getComponent(stackId.getStackName(),
                 stackId.getStackVersion(), serviceName, componentName);
@@ -447,7 +441,7 @@ public class AmbariActionExecutionHelper {
       // time - if it's not needed, then don't do it
       Map<String, Map<String, String>> configTags = new TreeMap<>();
       if (!execCmd.getForceRefreshConfigTagsBeforeExecution()) {
-        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName, desiredConfigs);
+        configTags = managementController.findConfigurationTagsWithOverrides(cluster, hostName, null);
       }
 
       execCmd.setConfigurationTags(configTags);
