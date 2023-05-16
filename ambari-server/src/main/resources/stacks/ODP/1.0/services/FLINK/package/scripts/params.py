@@ -106,10 +106,8 @@ toPop = [
   ]
 
 if security_enabled:
-  toPop.append[
-  'security.kerberos.login.principal',
-  'security.kerberos.login.keytab'
-  ]
+  toPop.append('security.kerberos.login.principal')
+  toPop.append('security.kerberos.login.keytab')
   flink_history_kerberos_keytab =  config['configurations']['flink-conf']['security.kerberos.login.keytab']
   flink_history_kerberos_principal =  config['configurations']['flink-conf']['security.kerberos.login.principal']
 
