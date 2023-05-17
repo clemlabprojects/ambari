@@ -277,7 +277,11 @@ def oozie_server_specific(upgrade_type):
     not_if  = format("{no_op_test} || {skip_recreate_sharelib}"),
     sudo = True,
   )
-
+  # update ownership of share extracted files in case its inherits wrongs user/group
+  owner_sharelib = ('chown','-R',format('{oozie_user}:{user_group}'),format('{oozie_home}/share'))
+  Execute( owner_sharelib,
+    sudo = True,
+  )
   configure_cmds = []
   # Default to /usr/share/$TARGETSTACK-oozie/ext-2.2.zip as the first path
   source_ext_zip_paths = get_oozie_ext_zip_source_paths(upgrade_type, params)
