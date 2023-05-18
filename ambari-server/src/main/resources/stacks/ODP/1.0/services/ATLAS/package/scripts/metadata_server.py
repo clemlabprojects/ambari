@@ -82,7 +82,7 @@ class MetadataServer(Script):
     secure_atlas_kafka_setup_command = format("kinit -kt {kafka_keytab} {kafka_principal_name}; ").replace("_HOST", params.hostname) + atlas_kafka_setup_command
 
     ## creating ssl keystore credential file if needed
-    if params.ssl_enabled is not None:
+    if params.ssl_enabled is not None and params.ssl_enabled:
       passwords =  [ {'alias': 'keystore.password', 'value': format('{atlas_tls_ssl_keystore_password}')},
         {'alias': 'truststore.password', 'value': format('{atlas_tls_ssl_truststore_password}')},
         {'alias': 'password', 'value': format('{atlas_tls_ssl_keystore_password}')}
