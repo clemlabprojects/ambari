@@ -268,7 +268,7 @@ class RangeradminV2:
       headers = {
         "Content-Type": "application/json"
       }
-      request = urllib2.Request(login_url, "", headers)
+      request = urllib2.Request(login_url, None, headers)
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
@@ -368,6 +368,7 @@ class RangeradminV2:
     if match is None:
       raise Fail('Invalid password given for Ranger rangerlookup user')
     try:
+      Logger.info('Cheking if rangerlookup user already exists')
       url =  self.url_users + '?name=' + str('rangerlookup')
       request = urllib2.Request(url)
       base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
@@ -399,7 +400,7 @@ class RangeradminV2:
           rangerlookup_user['description'] = 'rangerlookup user needed for repository creation'
           rangerlookup_user['firstName'] = 'rangerlookup'
           data =  json.dumps(rangerlookup_user)
-          base_64_string = base64.encodestring('{0}'.format(ranger_lookup_password)).replace('\n', '')
+          base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
           headers = {
             'Accept': 'application/json',
             "Content-Type": "application/json"
