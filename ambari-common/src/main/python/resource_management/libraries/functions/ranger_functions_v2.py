@@ -127,26 +127,27 @@ class RangeradminV2:
         Logger.error("Connection failed to Ranger Admin !")
         break
 
-    Logger.info("Start Repository rangerlookup User Creation process")
-    ranger_lookup_password = unicode(rangerlookup_password)
-    rangerlookup_username_password_for_ranger = format('rangerlookup:{ranger_lookup_password}')
-    while retryCount <= 30:
-      response_code = self.check_ranger_login_urllib2(self.base_url, rangerlookup_username_password_for_ranger)
-      if response_code is None and response_code != 200:
-        Logger.info("Creating Respository rangerlookup User")
-        user_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
-        retryCount += 1
-        if user_resp_code is not None and user_resp_code == 200:
-          Logger.info("Repository rangerlookup User Created Successfully")
+    if rangerlookup_password != None:
+      Logger.info("Start Repository rangerlookup User Creation process")
+      ranger_lookup_password = unicode(rangerlookup_password)
+      rangerlookup_username_password_for_ranger = format('rangerlookup:{ranger_lookup_password}')
+      while retryCount <= 30:
+        response_code = self.check_ranger_login_urllib2(self.base_url, rangerlookup_username_password_for_ranger)
+        if response_code is None and response_code != 200:
+          Logger.info("Creating Respository rangerlookup User")
+          user_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
+          retryCount += 1
+          if user_resp_code is not None and user_resp_code == 200:
+            Logger.info("Repository rangerlookup User Created Successfully")
+            break
+          else:
+            Logger.error("Repository rangerlookup User Creation Failed")
+        elif response_code is not None and response_code == 200:
+          Logger.info("Repository rangerlookup User Already Exists Skipping...")
           break
-        else:
-          Logger.error("Repository rangerlookup User Creation Failed")
-      elif response_code is not None and response_code == 200:
-        Logger.info("Repository rangerlookup User Already Exists Skipping...")
-        break
-      elif not self.skip_if_rangeradmin_down:
-        Logger.error("Connection failed to Ranger Admin !")
-        break
+        elif not self.skip_if_rangeradmin_down:
+          Logger.error("Connection failed to Ranger Admin !")
+          break
 
     if not is_stack_supports_ranger_kerberos or not is_security_enabled:
       repo_data = json.dumps(repo_properties)
