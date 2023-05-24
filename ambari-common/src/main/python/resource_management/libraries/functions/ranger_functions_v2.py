@@ -112,8 +112,6 @@ class RangeradminV2:
       if response_code is None and response_code != 200:
         Logger.info("Creating Ambari Ranger External User")
         user_resp_code = self.create_ambari_admin_user(ambari_ranger_admin, ambari_ranger_password, format("{admin_uname}:{admin_password}"))
-        if rangerlookup_password != None:
-          ranger_lookup_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
         retryCount += 1
         if user_resp_code is not None and user_resp_code == 200:
           Logger.info("Ambari Ranger External User Created Successfully")
@@ -126,6 +124,8 @@ class RangeradminV2:
       elif not self.skip_if_rangeradmin_down:
         Logger.error("Connection failed to Ranger Admin !")
         break
+      if rangerlookup_password != None:
+        ranger_lookup_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
 
     if not is_stack_supports_ranger_kerberos or not is_security_enabled:
       repo_data = json.dumps(repo_properties)
