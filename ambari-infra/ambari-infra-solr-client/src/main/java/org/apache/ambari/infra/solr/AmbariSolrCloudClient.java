@@ -18,7 +18,11 @@
  */
 package org.apache.ambari.infra.solr;
 
+import java.util.Collection;
+import java.util.List;
+
 import org.apache.ambari.infra.solr.commands.CheckConfigZkCommand;
+import org.apache.ambari.infra.solr.commands.CheckZnodeZkCommand;
 import org.apache.ambari.infra.solr.commands.CreateCollectionCommand;
 import org.apache.ambari.infra.solr.commands.CreateShardCommand;
 import org.apache.ambari.infra.solr.commands.CreateSolrZnodeZkCommand;
@@ -32,11 +36,11 @@ import org.apache.ambari.infra.solr.commands.ListCollectionCommand;
 import org.apache.ambari.infra.solr.commands.RemoveAdminHandlersCommand;
 import org.apache.ambari.infra.solr.commands.SecureSolrZNodeZkCommand;
 import org.apache.ambari.infra.solr.commands.SecureZNodeZkCommand;
+import org.apache.ambari.infra.solr.commands.SetAutoScalingZkCommand;
 import org.apache.ambari.infra.solr.commands.SetClusterPropertyZkCommand;
 import org.apache.ambari.infra.solr.commands.TransferZnodeZkCommand;
 import org.apache.ambari.infra.solr.commands.UnsecureZNodeZkCommand;
 import org.apache.ambari.infra.solr.commands.UploadConfigZkCommand;
-import org.apache.ambari.infra.solr.commands.CheckZnodeZkCommand;
 import org.apache.ambari.infra.solr.util.ShardUtils;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.common.cloud.Slice;
@@ -44,15 +48,12 @@ import org.apache.solr.common.cloud.SolrZkClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
-import java.util.List;
-
 /**
  * Client for communicate with Solr (and Zookeeper)
  */
 public class AmbariSolrCloudClient {
 
-  private static final Logger LOG = LoggerFactory.getLogger(AmbariSolrCloudClient.class);
+  private static final Logger logger = LoggerFactory.getLogger(AmbariSolrCloudClient.class);
 
   private final String zkConnectString;
   private final String collection;
@@ -80,6 +81,7 @@ public class AmbariSolrCloudClient {
   private final String copyDest;
   private final String output;
   private final boolean includeDocNumber;
+  private final String autoScalingJsonLocation;
 
   public AmbariSolrCloudClient(AmbariSolrCloudClientBuilder builder) {
     this.zkConnectString = builder.zkConnectString;
@@ -108,6 +110,7 @@ public class AmbariSolrCloudClient {
     this.copyDest = builder.copyDest;
     this.output = builder.output;
     this.includeDocNumber = builder.includeDocNumber;
+    this.autoScalingJsonLocation = builder.autoScalingJsonLocation;
   }
 
   /**
@@ -124,9 +127,9 @@ public class AmbariSolrCloudClient {
     List<String> collections = listCollections();
     if (!collections.contains(getCollection())) {
       String collection = new CreateCollectionCommand(getRetryTimes(), getInterval()).run(this);
-      LOG.info("Collection '{}' creation request sent.", collection);
+      logger.info("Collection '{}' creation request sent.", collection);
     } else {
-      LOG.info("Collection '{}' already exits.", getCollection());
+      logger.info("Collection '{}' already exits.", getCollection());
       if (this.isImplicitRouting()) {
         createShard(null);
       }
@@ -137,7 +140,7 @@ public class AmbariSolrCloudClient {
   public String outputCollectionData() throws Exception {
     List<String> collections = listCollections();
     String result = new DumpCollectionsCommand(getRetryTimes(), getInterval(), collections).run(this);
-    LOG.info("Dump collections response: {}", result);
+    logger.info("Dump collections response: {}", result);
     return result;
   }
 
@@ -145,9 +148,9 @@ public class AmbariSolrCloudClient {
    * Set cluster property in clusterprops.json.
    */
   public void setClusterProp() throws Exception {
-    LOG.info("Set cluster prop: '{}'", this.getPropName());
+    logger.info("Set cluster prop: '{}'", this.getPropName());
     String newPropValue = new SetClusterPropertyZkCommand(getRetryTimes(), getInterval()).run(this);
-    LOG.info("Set cluster prop '{}' successfully to '{}'", this.getPropName(), newPropValue);
+    logger.info("Set cluster prop '{}' successfully to '{}'", this.getPropName(), newPropValue);
   }
 
   /**
@@ -156,11 +159,11 @@ public class AmbariSolrCloudClient {
   public void createZnode() throws Exception {
     boolean znodeExists = isZnodeExists(this.znode);
     if (znodeExists) {
-      LOG.info("Znode '{}' already exists.", this.znode);
+      logger.info("Znode '{}' already exists.", this.znode);
     } else {
-      LOG.info("Znode '{}' does not exist. Creating...", this.znode);
+      logger.info("Znode '{}' does not exist. Creating...", this.znode);
       String newZnode = new CreateSolrZnodeZkCommand(getRetryTimes(), getInterval()).run(this);
-      LOG.info("Znode '{}' is created successfully.", newZnode);
+      logger.info("Znode '{}' is created successfully.", newZnode);
     }
   }
 
@@ -169,20 +172,20 @@ public class AmbariSolrCloudClient {
    * E.g.: localhost:2181 and znode: /ambari-solr, checks existance of localhost:2181/ambari-solr
    */
   public boolean isZnodeExists(String znode) throws Exception {
-    LOG.info("Check '{}' znode exists or not", znode);
+    logger.info("Check '{}' znode exists or not", znode);
     boolean result = new CheckZnodeZkCommand(getRetryTimes(), getInterval(), znode).run(this);
     if (result) {
-      LOG.info("'{}' znode exists", znode);
+      logger.info("'{}' znode exists", znode);
     } else {
-      LOG.info("'{}' znode does not exist", znode);
+      logger.info("'{}' znode does not exist", znode);
     }
     return result;
   }
 
   public void setupKerberosPlugin() throws Exception {
-    LOG.info("Setup kerberos plugin in security.json");
+    logger.info("Setup kerberos plugin in security.json");
     new EnableKerberosPluginSolrZkCommand(getRetryTimes(), getInterval()).run(this);
-    LOG.info("KerberosPlugin is set in security.json");
+    logger.info("KerberosPlugin is set in security.json");
   }
 
   /**
@@ -203,7 +206,7 @@ public class AmbariSolrCloudClient {
    * Unsecure znode
    */
   public void unsecureZnode() throws Exception {
-    LOG.info("Disable security for znode - ", this.getZnode());
+    logger.info("Disable security for znode - ", this.getZnode());
     new UnsecureZNodeZkCommand(getRetryTimes(), getInterval()).run(this);
   }
 
@@ -212,7 +215,7 @@ public class AmbariSolrCloudClient {
    */
   public String uploadConfiguration() throws Exception {
     String configSet = new UploadConfigZkCommand(getRetryTimes(), getInterval()).run(this);
-    LOG.info("'{}' is uploaded to zookeeper.", configSet);
+    logger.info("'{}' is uploaded to zookeeper.", configSet);
     return configSet;
   }
 
@@ -221,7 +224,7 @@ public class AmbariSolrCloudClient {
    */
   public String downloadConfiguration() throws Exception {
     String configDir = new DownloadConfigZkCommand(getRetryTimes(), getInterval()).run(this);
-    LOG.info("Config set is download from zookeeper. ({})", configDir);
+    logger.info("Config set is download from zookeeper. ({})", configDir);
     return configDir;
   }
 
@@ -231,9 +234,9 @@ public class AmbariSolrCloudClient {
   public boolean configurationExists() throws Exception {
     boolean configExits = new CheckConfigZkCommand(getRetryTimes(), getInterval()).run(this);
     if (configExits) {
-      LOG.info("Config {} exits", configSet);
+      logger.info("Config {} exits", configSet);
     } else {
-      LOG.info("Configuration '{}' does not exist", configSet);
+      logger.info("Configuration '{}' does not exist", configSet);
     }
     return configExits;
   }
@@ -255,7 +258,7 @@ public class AmbariSolrCloudClient {
       for (String shardName : shardList) {
         if (!existingShards.contains(shardName)) {
           new CreateShardCommand(shardName, getRetryTimes(), getInterval()).run(this);
-          LOG.info("Adding new shard to collection request sent ('{}': {})", getCollection(), shardName);
+          logger.info("Adding new shard to collection request sent ('{}': {})", getCollection(), shardName);
           existingShards.add(shardName);
         }
       }
@@ -297,6 +300,10 @@ public class AmbariSolrCloudClient {
    */
   public boolean deleteZnode() throws Exception {
     return new DeleteZnodeZkCommand(getRetryTimes(), getInterval()).run(this);
+  }
+
+  public void setAutoScaling() throws Exception {
+    new SetAutoScalingZkCommand(getRetryTimes(), getInterval(), autoScalingJsonLocation).run(this);
   }
 
   public String getZkConnectString() {

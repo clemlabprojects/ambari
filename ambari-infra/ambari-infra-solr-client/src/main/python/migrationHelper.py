@@ -18,25 +18,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import ConfigParser
-import base64
 import copy
 import glob
-import json
 import logging
-import optparse
 import os
-import socket
-import ssl
 import sys
+import urllib2, ssl
+import json
+import base64
+import optparse
+import socket
 import time
 import traceback
-import urllib2
+import ConfigParser
+import solrDataManager as solr_data_manager
+
 from datetime import datetime, timedelta
 from random import randrange, randint
 from subprocess import Popen, PIPE
-
-import solrDataManager as solr_data_manager
 
 HTTP_PROTOCOL = 'http'
 HTTPS_PROTOCOL = 'https'
@@ -509,6 +508,11 @@ def upgrade_solr_clients(options, accessor, parser, config):
   host = socket.gethostname()
   if host in solr_client_hosts:
     solr_client_hosts.remove(host)
+
+  if not len(solr_client_hosts):
+    print 'The Solr Clients upgrade request has been aborted because no other host can be upgraded.'
+    sys.exit(0)
+
   context = "Upgrade Solr Clients"
   sys.stdout.write("Sending upgrade request: [{0}] ".format(context))
   sys.stdout.flush()

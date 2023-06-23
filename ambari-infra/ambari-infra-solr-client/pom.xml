@@ -28,14 +28,6 @@
 
   <artifactId>ambari-infra-solr-client</artifactId>
 
-  <properties>
-    <lucene6.version>6.6.2</lucene6.version>
-    <lucene6-core-jar.name>lucene-core-${lucene6.version}.jar</lucene6-core-jar.name>
-    <lucene6-core.url>https://repo1.maven.org/maven2/org/apache/lucene/lucene-core/${lucene6.version}/${lucene6-core-jar.name}</lucene6-core.url>
-    <lucene6-backward-codecs-jar.name>lucene-backward-codecs-${lucene6.version}.jar</lucene6-backward-codecs-jar.name>
-    <lucene6-backward-codecs.url>https://repo1.maven.org/maven2/org/apache/lucene/lucene-backward-codecs/${lucene6.version}/${lucene6-backward-codecs-jar.name}</lucene6-backward-codecs.url>
-  </properties>
-
   <dependencies>
     <dependency>
       <groupId>org.apache.solr</groupId>

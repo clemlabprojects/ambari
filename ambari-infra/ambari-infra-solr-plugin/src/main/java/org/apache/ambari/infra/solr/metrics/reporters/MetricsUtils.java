@@ -27,7 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class MetricsUtils {
-  private static final Logger LOG = LoggerFactory.getLogger(MetricsUtils.class);
+  private static final Logger logger = LoggerFactory.getLogger(MetricsUtils.class);
   private static final String APPID = "ambari-infra-solr";
   public static final String NAME_PREFIX = "infra.";
 
@@ -41,15 +41,15 @@ public class MetricsUtils {
       String ipHostName = ip.getHostName();
       String canonicalHostName = ip.getCanonicalHostName();
       if (!canonicalHostName.equalsIgnoreCase(ipAddress)) {
-        LOG.info("Using InetAddress.getCanonicalHostName()={}", canonicalHostName);
+        logger.info("Using InetAddress.getCanonicalHostName()={}", canonicalHostName);
         hostName = canonicalHostName;
       } else {
-        LOG.info("Using InetAddress.getHostName()={}", ipHostName);
+        logger.info("Using InetAddress.getHostName()={}", ipHostName);
         hostName = ipHostName;
       }
-      LOG.info("ipAddress={}, ipHostName={}, canonicalHostName={}, hostName={}", ipAddress, ipHostName, canonicalHostName, hostName);
+      logger.info("ipAddress={}, ipHostName={}, canonicalHostName={}, hostName={}", ipAddress, ipHostName, canonicalHostName, hostName);
     } catch (UnknownHostException e) {
-      LOG.error("Error getting hostname.", e);
+      logger.error("Error getting hostname.", e);
     }
 
     return hostName;

@@ -18,20 +18,19 @@
  */
 package org.apache.ambari.infra.solr.util;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.Slice;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-
 public class ShardUtils {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ShardUtils.class);
+  private static final Logger logger = LoggerFactory.getLogger(ShardUtils.class);
 
   public static String generateShardListStr(int maxShardsPerNode) {
     String shardsListStr = "";
@@ -54,15 +53,13 @@ public class ShardUtils {
   }
 
   public static Collection<String> getShardNamesFromSlices(Collection<Slice> slices, String collection) {
-    Collection<String> result = new HashSet<String>();
-    Iterator<Slice> iter = slices.iterator();
-    while (iter.hasNext()) {
-      Slice slice = iter.next();
+    Collection<String> result = new HashSet<>();
+    for (Slice slice : slices) {
       for (Replica replica : slice.getReplicas()) {
-        LOG.info("collectionName=" + collection + ", slice.name="
-          + slice.getName() + ", slice.state=" + slice.getState()
-          + ", replica.core=" + replica.getStr("core")
-          + ", replica.state=" + replica.getStr("state"));
+        logger.info("collectionName=" + collection + ", slice.name="
+                + slice.getName() + ", slice.state=" + slice.getState()
+                + ", replica.core=" + replica.getStr("core")
+                + ", replica.state=" + replica.getStr("state"));
         result.add(slice.getName());
       }
     }

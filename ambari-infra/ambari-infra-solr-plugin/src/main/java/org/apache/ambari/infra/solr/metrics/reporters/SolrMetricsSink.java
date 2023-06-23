@@ -30,14 +30,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class SolrMetricsSink extends AbstractTimelineMetricsSink {
-  private static final Logger LOG = LoggerFactory.getLogger(SolrMetricsSink.class);
+  private static final Logger logger = LoggerFactory.getLogger(SolrMetricsSink.class);
 
   private final Collection<String> collectorHosts;
   private final int port;
   private final AMSProtocol protocol;
 
   public SolrMetricsSink(String[] collectorHosts, int port, AMSProtocol protocol, SolrMetricsSecurityConfig securityConfig) {
-    LOG.info("Setting up SolrMetricsSink protocol={} hosts={} port={}", protocol.name(), join(collectorHosts, ","), port);
+    logger.info("Setting up SolrMetricsSink protocol={} hosts={} port={}", protocol.name(), join(collectorHosts, ","), port);
     this.collectorHosts = asList(collectorHosts);
     this.port = port;
     this.protocol = protocol;

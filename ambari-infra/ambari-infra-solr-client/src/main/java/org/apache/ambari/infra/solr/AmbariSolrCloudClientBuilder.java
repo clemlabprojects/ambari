@@ -19,6 +19,10 @@
 
 package org.apache.ambari.infra.solr;
 
+import static java.util.Collections.singletonList;
+
+import java.util.Optional;
+
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.Krb5HttpClientBuilder;
 import org.apache.solr.common.cloud.SolrZkClient;
@@ -58,7 +62,8 @@ public class AmbariSolrCloudClientBuilder {
   String copySrc;
   String copyDest;
   String output;
-  public boolean includeDocNumber;
+  boolean includeDocNumber;
+  String autoScalingJsonLocation;
 
   public AmbariSolrCloudClient build() {
     return new AmbariSolrCloudClient(this);
@@ -131,7 +136,7 @@ public class AmbariSolrCloudClientBuilder {
   }
 
   public AmbariSolrCloudClientBuilder withSolrCloudClient() {
-    this.solrCloudClient = new CloudSolrClient.Builder().withZkHost(this.zkConnectString).build();
+    this.solrCloudClient = new CloudSolrClient.Builder(singletonList(this.zkConnectString), Optional.empty()).build();
     return this;
   }
 
@@ -242,5 +247,10 @@ public class AmbariSolrCloudClientBuilder {
       System.setProperty(JAVA_SECURITY_AUTH_LOGIN_CONFIG, jaasFile);
       System.setProperty(SOLR_HTTPCLIENT_BUILDER_FACTORY, Krb5HttpClientBuilder.class.getCanonicalName());
     }
+  }
+
+  public AmbariSolrCloudClientBuilder withAutoScalingJsonLocation(String autoScalingJsonLocation) {
+    this.autoScalingJsonLocation = autoScalingJsonLocation;
+    return this;
   }
 }

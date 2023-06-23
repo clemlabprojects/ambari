@@ -18,6 +18,10 @@
  */
 package org.apache.ambari.infra.solr.commands;
 
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.ambari.infra.solr.AmbariSolrCloudClient;
 import org.apache.ambari.infra.solr.domain.AmbariSolrState;
 import org.apache.solr.common.cloud.SolrZkClient;
@@ -27,13 +31,9 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
-
 public class UpdateStateFileZkCommand extends AbstractStateFileZkCommand {
 
-  private static final Logger LOG = LoggerFactory.getLogger(UpdateStateFileZkCommand.class);
+  private static final Logger logger = LoggerFactory.getLogger(UpdateStateFileZkCommand.class);
 
   private String unsecureZnode;
 
@@ -46,13 +46,13 @@ public class UpdateStateFileZkCommand extends AbstractStateFileZkCommand {
   protected AmbariSolrState executeZkCommand(AmbariSolrCloudClient client, SolrZkClient zkClient, SolrZooKeeper solrZooKeeper) throws Exception {
     boolean secure = client.isSecure();
     String stateFile = String.format("%s/%s", unsecureZnode, AbstractStateFileZkCommand.STATE_FILE);
-    AmbariSolrState result = null;
+    AmbariSolrState result;
     if (secure) {
-      LOG.info("Update state file in secure mode.");
+      logger.info("Update state file in secure mode.");
       updateStateFile(client, zkClient, AmbariSolrState.SECURE, stateFile);
       result = AmbariSolrState.SECURE;
     } else {
-      LOG.info("Update state file in unsecure mode.");
+      logger.info("Update state file in unsecure mode.");
       updateStateFile(client, zkClient, AmbariSolrState.UNSECURE, stateFile);
       result = AmbariSolrState.UNSECURE;
     }
@@ -62,15 +62,15 @@ public class UpdateStateFileZkCommand extends AbstractStateFileZkCommand {
   private void updateStateFile(AmbariSolrCloudClient client, SolrZkClient zkClient, AmbariSolrState stateToUpdate,
                                String stateFile) throws Exception {
     if (!zkClient.exists(stateFile, true)) {
-      LOG.info("State file does not exits. Initializing it as '{}'", stateToUpdate);
+      logger.info("State file does not exits. Initializing it as '{}'", stateToUpdate);
       zkClient.create(stateFile, createStateJson(stateToUpdate).getBytes(StandardCharsets.UTF_8),
         CreateMode.PERSISTENT, true);
     } else {
       AmbariSolrState stateOnSecure = getStateFromJson(client, stateFile);
       if (stateToUpdate.equals(stateOnSecure)) {
-        LOG.info("State file is in '{}' mode. No update.", stateOnSecure);
+        logger.info("State file is in '{}' mode. No update.", stateOnSecure);
       } else {
-        LOG.info("State file is in '{}' mode. Updating it to '{}'", stateOnSecure, stateToUpdate);
+        logger.info("State file is in '{}' mode. Updating it to '{}'", stateOnSecure, stateToUpdate);
         zkClient.setData(stateFile, createStateJson(stateToUpdate).getBytes(StandardCharsets.UTF_8), true);
       }
     }

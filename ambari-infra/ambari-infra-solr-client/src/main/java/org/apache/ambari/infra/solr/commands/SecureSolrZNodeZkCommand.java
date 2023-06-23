@@ -18,6 +18,10 @@
  */
 package org.apache.ambari.infra.solr.commands;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 import org.apache.ambari.infra.solr.AmbariSolrCloudClient;
 import org.apache.ambari.infra.solr.util.AclUtils;
 import org.apache.commons.lang.StringUtils;
@@ -31,13 +35,9 @@ import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
 public class SecureSolrZNodeZkCommand extends AbstractZookeeperRetryCommand<Boolean> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(SecureSolrZNodeZkCommand.class);
+  private static final Logger logger = LoggerFactory.getLogger(SecureSolrZNodeZkCommand.class);
 
   public SecureSolrZNodeZkCommand(int maxRetries, int interval) {
     super(maxRetries, interval);
@@ -46,9 +46,8 @@ public class SecureSolrZNodeZkCommand extends AbstractZookeeperRetryCommand<Bool
   @Override
   protected Boolean executeZkCommand(AmbariSolrCloudClient client, SolrZkClient zkClient, SolrZooKeeper solrZooKeeper) throws Exception {
     String zNode = client.getZnode();
-    List<ACL> newAclList = new ArrayList<>();
     List<ACL> saslUserList = AclUtils.createAclListFromSaslUsers(client.getSaslUsers().split(","));
-    newAclList.addAll(saslUserList);
+    List<ACL> newAclList = new ArrayList<>(saslUserList);
     newAclList.add(new ACL(ZooDefs.Perms.READ, new Id("world", "anyone")));
 
     String configsPath = String.format("%s/%s", zNode, "configs");
@@ -61,16 +60,15 @@ public class SecureSolrZNodeZkCommand extends AbstractZookeeperRetryCommand<Bool
 
     AclUtils.setRecursivelyOn(client.getSolrZkClient().getSolrZooKeeper(), zNode, newAclList, excludePaths);
 
-    List<ACL> commonConfigAcls = new ArrayList<>();
-    commonConfigAcls.addAll(saslUserList);
+    List<ACL> commonConfigAcls = new ArrayList<>(saslUserList);
     commonConfigAcls.add(new ACL(ZooDefs.Perms.READ | ZooDefs.Perms.CREATE, new Id("world", "anyone")));
 
-    LOG.info("Set sasl users for znode '{}' : {}", client.getZnode(), StringUtils.join(saslUserList, ","));
-    LOG.info("Skip {}/configs and {}/collections", client.getZnode(), client.getZnode());
+    logger.info("Set sasl users for znode '{}' : {}", client.getZnode(), StringUtils.join(saslUserList, ","));
+    logger.info("Skip {}/configs and {}/collections", client.getZnode(), client.getZnode());
     solrZooKeeper.setACL(configsPath, AclUtils.mergeAcls(solrZooKeeper.getACL(configsPath, new Stat()), commonConfigAcls), -1);
     solrZooKeeper.setACL(collectionsPath, AclUtils.mergeAcls(solrZooKeeper.getACL(collectionsPath, new Stat()), commonConfigAcls), -1);
 
-    LOG.info("Set world:anyone to 'cr' on  {}/configs and {}/collections", client.getZnode(), client.getZnode());
+    logger.info("Set world:anyone to 'cr' on  {}/configs and {}/collections", client.getZnode(), client.getZnode());
     AclUtils.setRecursivelyOn(solrZooKeeper, configsPath, saslUserList);
     AclUtils.setRecursivelyOn(solrZooKeeper, collectionsPath, saslUserList);
 
@@ -79,7 +77,7 @@ public class SecureSolrZNodeZkCommand extends AbstractZookeeperRetryCommand<Bool
 
   private void createZnodeIfNeeded(String configsPath, SolrZkClient zkClient) throws KeeperException, InterruptedException {
     if (!zkClient.exists(configsPath, true)) {
-      LOG.info("'{}' does not exist. Creating it ...", configsPath);
+      logger.info("'{}' does not exist. Creating it ...", configsPath);
       zkClient.makePath(configsPath, true);
     }
   }

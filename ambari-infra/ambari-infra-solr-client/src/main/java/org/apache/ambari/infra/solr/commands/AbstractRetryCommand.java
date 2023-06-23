@@ -24,7 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public abstract class AbstractRetryCommand<RESPONSE> {
-  private static final Logger LOG = LoggerFactory.getLogger(AbstractRetryCommand.class);
+  private static final Logger logger = LoggerFactory.getLogger(AbstractRetryCommand.class);
 
   private final int interval;
   private final int maxRetries;
@@ -44,9 +44,9 @@ public abstract class AbstractRetryCommand<RESPONSE> {
     try {
       return createAndProcessRequest(solrCloudClient);
     } catch (Exception ex) {
-      LOG.error(ex.getMessage(), ex);
+      logger.error(ex.getMessage(), ex);
       tries++;
-      LOG.info("Command failed, tries again (tries: {})", tries);
+      logger.info("Command failed, tries again (tries: {})", tries);
       if (maxRetries == tries) {
         throw new AmbariSolrCloudClientException(String.format("Maximum retries exceeded: %d", tries), ex);
       } else {

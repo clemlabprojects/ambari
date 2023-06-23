@@ -46,7 +46,7 @@ import com.codahale.metrics.Timer;
 
 public class ScheduledAMSReporter<T> extends ScheduledReporter {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ScheduledAMSReporter.class);
+  private static final Logger logger = LoggerFactory.getLogger(ScheduledAMSReporter.class);
 
   private final SolrMetricsSink amsClient;
   private final String namePrefix;
@@ -92,7 +92,7 @@ public class ScheduledAMSReporter<T> extends ScheduledReporter {
       amsClient.emitMetrics(timelineMetrics);
     }
     catch (Exception ex) {
-      LOG.error("Unable to collect and send metrics", ex);
+      logger.error("Unable to collect and send metrics", ex);
     }
   }
 
@@ -100,7 +100,7 @@ public class ScheduledAMSReporter<T> extends ScheduledReporter {
     try {
       timelineMetricList.addAll(gaugeConverter.convert(metricName, gauge, currentMillis));
     } catch (Exception ex) {
-      LOG.error("Unable to get value of gauge metric " + metricName, ex);
+      logger.error("Unable to get value of gauge metric " + metricName, ex);
     }
   }
 
@@ -111,7 +111,7 @@ public class ScheduledAMSReporter<T> extends ScheduledReporter {
       timelineMetricList.add(toTimelineMetric(metricName + ".avgTimePerRequest", snapshot.getMean(), currentTime));
       timelineMetricList.add(toTimelineMetric(metricName + ".medianRequestTime", snapshot.getMedian(), currentTime));
     } catch (Exception ex) {
-      LOG.error("Unable to get value of timer metric " + metricName, ex);
+      logger.error("Unable to get value of timer metric " + metricName, ex);
     }
   }
 }

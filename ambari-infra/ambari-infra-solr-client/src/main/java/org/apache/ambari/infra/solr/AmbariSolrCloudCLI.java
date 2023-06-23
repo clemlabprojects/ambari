@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
 
 public class AmbariSolrCloudCLI {
 
-  private static final Logger LOG = LoggerFactory.getLogger(AmbariSolrCloudCLI.class);
+  private static final Logger logger = LoggerFactory.getLogger(AmbariSolrCloudCLI.class);
 
   private static final int ZK_CLIENT_TIMEOUT = 60000; // 1 minute
   private static final int ZK_CLIENT_CONNECT_TIMEOUT = 60000; // 1 minute
@@ -56,6 +56,10 @@ public class AmbariSolrCloudCLI {
   private static final String TRANSFER_ZNODE_COMMAND = "transfer-znode";
   private static final String DELETE_ZNODE_COMMAND = "delete-znode";
   private static final String DUMP_COLLECTIONS_DATA_COMMAND = "dump-collections";
+  private static final String SET_AUTO_SCALING_COMMAND = "set-autoscaling";
+  private static final String SET_AUTO_SCALING_COMMAND_SHORT = "as";
+  private static final String AUTO_SCALING_JSON_LOCATION = "autoscaling-json-location";
+  private static final String AUTO_SCALING_JSON_LOCATION_SHORT = "ajl";
   private static final String CMD_LINE_SYNTAX =
     "\n./solrCloudCli.sh --create-collection -z host1:2181,host2:2181/ambari-solr -c collection -cs conf_set"
       + "\n./solrCloudCli.sh --upload-config -z host1:2181,host2:2181/ambari-solr -d /tmp/myconfig_dir -cs config_set"
@@ -72,7 +76,8 @@ public class AmbariSolrCloudCLI {
       + "\n./solrCloudCli.sh --secure-znode -z host1:2181,host2:2181 -zn /ambari-solr -su logsearch,atlas,ranger --jaas-file /etc/myconf/jaas_file"
       + "\n./solrCloudCli.sh --unsecure-znode -z host1:2181,host2:2181 -zn /ambari-solr --jaas-file /etc/myconf/jaas_file"
       + "\n./solrCloudCli.sh --secure-solr-znode -z host1:2181,host2:2181 -zn /ambari-solr -su logsearch,atlas,ranger --jaas-file /etc/myconf/jaas_file"
-      + "\n./solrCloudCli.sh --setup-kerberos-plugin -z host1:2181,host2:2181 -zn /ambari-solr --security-json-location /etc/infra-solr/conf/security.json\n ";
+      + "\n./solrCloudCli.sh --setup-kerberos-plugin -z host1:2181,host2:2181 -zn /ambari-solr --security-json-location /etc/infra-solr/conf/security.json"
+      + "\n./solrCloudCli.sh --" + SET_AUTO_SCALING_COMMAND + " -z host1:2181,host2:2181 -zn /ambari-solr [--" + AUTO_SCALING_JSON_LOCATION + "|--" + AUTO_SCALING_JSON_LOCATION_SHORT + "] /etc/infra-solr/conf/autoscaling.json\n ";
 
   public static void main(String[] args) {
     Options options = new Options();
@@ -379,6 +384,18 @@ public class AmbariSolrCloudCLI {
       .desc("Include the number of docs as well in collection dump")
       .build();
 
+    final Option setAutoScaling = Option.builder(SET_AUTO_SCALING_COMMAND_SHORT)
+            .longOpt(SET_AUTO_SCALING_COMMAND)
+            .desc("Upload and set the specified autoscaling.json to znode")
+            .build();
+
+    final Option autoScalingJsonLocationOption = Option.builder(AUTO_SCALING_JSON_LOCATION_SHORT)
+            .longOpt(AUTO_SCALING_JSON_LOCATION)
+            .desc("Local autoscaling.json path")
+            .numberOfArgs(1)
+            .argName("autoscaling.json location")
+            .build();
+
     options.addOption(helpOption);
     options.addOption(retryOption);
     options.addOption(removeAdminHandlerOption);
@@ -427,6 +444,8 @@ public class AmbariSolrCloudCLI {
     options.addOption(securityJsonLocationOption);
     options.addOption(outputOption);
     options.addOption(includeDocNumberOption);
+    options.addOption(setAutoScaling);
+    options.addOption(autoScalingJsonLocationOption);
 
     AmbariSolrCloudClient solrCloudClient = null;
 
@@ -487,11 +506,14 @@ public class AmbariSolrCloudCLI {
       } else if (cli.hasOption("dcd")) {
         command = DUMP_COLLECTIONS_DATA_COMMAND;
         validateRequiredOptions(cli, command, zkConnectStringOption, outputOption);
+      } else if (cli.hasOption(SET_AUTO_SCALING_COMMAND_SHORT)) {
+        command = SET_AUTO_SCALING_COMMAND;
+        validateRequiredOptions(cli, command, zkConnectStringOption, znodeOption, autoScalingJsonLocationOption);
       } else {
         List<String> commands = Arrays.asList(CREATE_COLLECTION_COMMAND, CREATE_SHARD_COMMAND, UPLOAD_CONFIG_COMMAND,
           DOWNLOAD_CONFIG_COMMAND, CONFIG_CHECK_COMMAND, SET_CLUSTER_PROP, CREATE_ZNODE, SECURE_ZNODE_COMMAND, UNSECURE_ZNODE_COMMAND,
           SECURE_SOLR_ZNODE_COMMAND, CHECK_ZNODE, SETUP_KERBEROS_PLUGIN, REMOVE_ADMIN_HANDLERS, TRANSFER_ZNODE_COMMAND, DELETE_ZNODE_COMMAND,
-          DUMP_COLLECTIONS_DATA_COMMAND);
+          DUMP_COLLECTIONS_DATA_COMMAND, SET_AUTO_SCALING_COMMAND);
         helpFormatter.printHelp(CMD_LINE_SYNTAX, options);
         exit(1, String.format("One of the supported commands is required (%s)", StringUtils.join(commands, "|")));
       }
@@ -527,6 +549,7 @@ public class AmbariSolrCloudCLI {
       String transferMode = cli.hasOption("tm") ? cli.getOptionValue("tm") : "NONE";
       String output = cli.hasOption("o") ? cli.getOptionValue("o") : null;
       boolean includeDocNumber = cli.hasOption("idn");
+      String autoScalingJsonLocation = cli.hasOption(AUTO_SCALING_JSON_LOCATION_SHORT) ? cli.getOptionValue(AUTO_SCALING_JSON_LOCATION_SHORT) : "";
 
       AmbariSolrCloudClientBuilder clientBuilder = new AmbariSolrCloudClientBuilder()
         .withZkConnectString(zkConnectString)
@@ -558,7 +581,8 @@ public class AmbariSolrCloudCLI {
         .withSecurityJsonLocation(securityJsonLocation)
         .withZnode(znode)
         .withSecure(isSecure)
-        .withSaslUsers(saslUsers);
+        .withSaslUsers(saslUsers)
+        .withAutoScalingJsonLocation(autoScalingJsonLocation);
 
       switch (command) {
         case CREATE_COLLECTION_COMMAND:
@@ -640,6 +664,10 @@ public class AmbariSolrCloudCLI {
             .withSolrCloudClient().build();
           solrCloudClient.outputCollectionData();
           break;
+        case SET_AUTO_SCALING_COMMAND:
+          solrCloudClient = clientBuilder.withSolrCloudClient().build();
+          solrCloudClient.setAutoScaling();
+          break;
         default:
           throw new AmbariSolrCloudClientException(String.format("Not found command: '%s'", command));
       }
@@ -672,9 +700,9 @@ public class AmbariSolrCloudCLI {
 
   private static void exit(int exitCode, String message) {
     if (message != null){
-      LOG.error(message);
+      logger.error(message);
     }
-    LOG.info("Return code: {}", exitCode);
+    logger.info("Return code: {}", exitCode);
     System.exit(exitCode);
   }
 }
