@@ -72,7 +72,7 @@ AMBARI_LOCATION=$AMBARI_LOCATION
 ZOOKEEPER_VERSION=3.4.10
 ZOOKEEPER_CONNECTION_STRING=zookeeper:2181
 
-SOLR_VERSION=7.7.0
+SOLR_VERSION=7.6.0
 EOF
 }
 
@@ -101,8 +101,8 @@ function create_collection() {
   pushd $sdir/../
   local AMBARI_SOLR_MANAGER_LOCATION=$(pwd)
   cd $AMBARI_SOLR_MANAGER_LOCATION/docker
-  docker exec docker_solr_1 solr create_collection -force -c hadoop_logs -d /usr/lib/ambari-infra-solr/server/solr/configsets/hadoop_logs/conf -n hadoop_logs_conf
-  docker exec docker_solr_1 solr create_collection -force -c audit_logs -d /usr/lib/ambari-infra-solr/server/solr/configsets/audit_logs/conf -n audit_logs_conf
+  docker exec solr solr create_collection -force -c hadoop_logs -d /usr/lib/ambari-infra-solr/server/solr/configsets/hadoop_logs/conf -n hadoop_logs_conf
+  docker exec solr solr create_collection -force -c audit_logs -d /usr/lib/ambari-infra-solr/server/solr/configsets/audit_logs/conf -n audit_logs_conf
   popd
 }
 
