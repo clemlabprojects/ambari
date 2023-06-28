@@ -20,7 +20,8 @@
   <services>
     <service>
       <name>AMBARI_INFRA_SOLR</name>
-      <extends>common-services/AMBARI_INFRA_SOLR/0.2.0</extends>
+      <extends>common-services/AMBARI_INFRA_SOLR/0.1.0</extends>
+      <version>0.2.0</version>
     </service>
   </services>
 </metainfo>
