@@ -18,28 +18,38 @@
 
 @import '../../modules/shared/variables';
 
-.btn-link {
-  // TODO implement actual colors
-  color: @submit-color;
+:host {
+  .btn-link {
+    // TODO implement actual colors
+    color: @submit-color;
 
-  &:hover {
-    color: @submit-hover-color;
-  }
-}
-
-/deep/ #timezone-map {
-  .Cbox {
-    .quickLink {
-      padding-top: 4px;
+    &:hover {
+      color: @submit-hover-color;
     }
   }
 
-  .hoverZone {
-    display: inline-block;
+  /deep/ #timezone-map {
+    .Cbox {
+      position: sticky;
+      top: 0;
+      .quickLink {
+        padding-top: 4px;
+      }
+    }
 
-    &:after {
-      content: '\007C\00a0\00a0';
-      visibility: hidden;
+    .hoverZone {
+      display: inline-block;
+
+      &:after {
+        content: '\007C\00a0\00a0';
+        visibility: hidden;
+      }
     }
   }
+
+  /deep/ modal-dialog.time-zone-modal .modal-dialog {
+    width: 1024px;
+    max-width: 75vw;
+  }
+
 }

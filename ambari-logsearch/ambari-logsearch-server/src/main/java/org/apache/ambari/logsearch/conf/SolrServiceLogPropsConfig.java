@@ -27,25 +27,15 @@ import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_PR
 @Configuration
 public class SolrServiceLogPropsConfig extends SolrConnectionPropsConfig {
 
-  @Value("${logsearch.solr.collection.service.logs:hadoop_logs}")
+  @Value("${logsearch.solr.service.logs.collection:hadoop_logs}")
   @LogSearchPropertyDescription(
-    name = "logsearch.solr.collection.service.logs",
+    name = "logsearch.solr.service.logs",
     description = "Name of Log Search service log collection.",
     examples = {"hadoop_logs"},
     defaultValue = "hadoop_logs",
     sources = {LOGSEARCH_PROPERTIES_FILE}
   )
   private String collection;
-
-  @Value("${logsearch.service.logs.split.interval.mins:none}")
-  @LogSearchPropertyDescription(
-    name = "logsearch.service.logs.split.interval.mins",
-    description = "Will create multiple collections and use alias. (not supported right now, use implicit routingif the value is not none)",
-    examples = {"none", "15"},
-    defaultValue = "none",
-    sources = {LOGSEARCH_PROPERTIES_FILE}
-  )
-  private String splitInterval;
 
   @Value("${logsearch.solr.service.logs.config.name:hadoop_logs}")
   @LogSearchPropertyDescription(
@@ -57,9 +47,9 @@ public class SolrServiceLogPropsConfig extends SolrConnectionPropsConfig {
   )
   private String configName;
 
-  @Value("${logsearch.collection.service.logs.numshards:1}")
+  @Value("${logsearch.solr.service.logs.numshards:1}")
   @LogSearchPropertyDescription(
-    name = "logsearch.collection.service.logs.numshards",
+    name = "logsearch.solr.service.logs.numshards",
     description = "Number of Solr shards for service log collection (bootstrapping).",
     examples = {"2"},
     defaultValue = "1",
@@ -67,9 +57,9 @@ public class SolrServiceLogPropsConfig extends SolrConnectionPropsConfig {
   )
   private Integer numberOfShards;
 
-  @Value("${logsearch.collection.service.logs.replication.factor:1}")
+  @Value("${logsearch.solr.service.logs.replication.factor:1}")
   @LogSearchPropertyDescription(
-    name = "logsearch.collection.service.logs.replication.factor",
+    name = "logsearch.solr.service.logs.replication.factor",
     description = "Solr replication factor for service log collection (bootstrapping).",
     examples = {"2"},
     defaultValue = "1",
@@ -85,16 +75,6 @@ public class SolrServiceLogPropsConfig extends SolrConnectionPropsConfig {
   @Override
   public void setCollection(String collection) {
     this.collection = collection;
-  }
-
-  @Override
-  public String getSplitInterval() {
-    return splitInterval;
-  }
-
-  @Override
-  public void setSplitInterval(String splitInterval) {
-    this.splitInterval = splitInterval;
   }
 
   @Override

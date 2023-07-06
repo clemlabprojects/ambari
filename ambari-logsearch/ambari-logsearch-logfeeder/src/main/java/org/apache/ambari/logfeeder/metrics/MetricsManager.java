@@ -30,13 +30,14 @@ import org.apache.ambari.logfeeder.plugin.common.MetricData;
 import org.apache.ambari.logfeeder.util.LogFeederUtil;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 
 public class MetricsManager {
-  private static final Logger LOG = Logger.getLogger(MetricsManager.class);
+  private static final Logger logger = LogManager.getLogger(MetricsManager.class);
 
   private boolean isMetricsEnabled = false;
   private String appId = "logfeeder";
@@ -57,7 +58,7 @@ public class MetricsManager {
 
   @PostConstruct
   public void init() {
-    LOG.info("Initializing MetricsManager()");
+    logger.info("Initializing MetricsManager()");
     if (amsClient == null) {
       amsClient = new LogFeederAMSClient(metricsCollectorConfig, logFeederSecurityConfig);
     }
@@ -65,13 +66,13 @@ public class MetricsManager {
     if (amsClient.getCollectorUri(null) != null) {
       if (LogFeederUtil.hostName == null) {
         isMetricsEnabled = false;
-        LOG.error("Failed getting hostname for node. Disabling publishing LogFeeder metrics");
+        logger.error("Failed getting hostname for node. Disabling publishing LogFeeder metrics");
       } else {
         isMetricsEnabled = true;
-        LOG.info("LogFeeder Metrics is enabled. Metrics host=" + amsClient.getCollectorUri(null));
+        logger.info("LogFeeder Metrics is enabled. Metrics host=" + amsClient.getCollectorUri(null));
       }
     } else {
-      LOG.info("LogFeeder Metrics publish is disabled");
+      logger.info("LogFeeder Metrics publish is disabled");
     }
   }
 
@@ -83,7 +84,7 @@ public class MetricsManager {
     if (!isMetricsEnabled) {
       return;
     }
-    LOG.info("useMetrics() metrics.size=" + metricsList.size());
+    logger.info("useMetrics() metrics.size=" + metricsList.size());
     long currMS = System.currentTimeMillis();
     
     gatherMetrics(metricsList, currMS);
@@ -94,21 +95,21 @@ public class MetricsManager {
     Long currMSLong = new Long(currMS);
     for (MetricData metric : metricsList) {
       if (metric.metricsName == null) {
-        LOG.debug("metric.metricsName is null");
+        logger.debug("metric.metricsName is null");
         continue;
       }
       long currCount = metric.value;
       if (!metric.isPointInTime && metric.publishCount > 0 && currCount <= metric.prevPublishValue) {
-        LOG.debug("Nothing changed. " + metric.metricsName + ", currCount=" + currCount + ", prevPublishCount=" +
+        logger.debug("Nothing changed. " + metric.metricsName + ", currCount=" + currCount + ", prevPublishCount=" +
             metric.prevPublishValue);
         continue;
       }
       metric.publishCount++;
 
-      LOG.debug("Ensuring metrics=" + metric.metricsName);
+      logger.debug("Ensuring metrics=" + metric.metricsName);
       TimelineMetric timelineMetric = metricsMap.get(metric.metricsName);
       if (timelineMetric == null) {
-        LOG.debug("Creating new metric obbject for " + metric.metricsName);
+        logger.debug("Creating new metric obbject for " + metric.metricsName);
         timelineMetric = new TimelineMetric();
         timelineMetric.setMetricName(metric.metricsName);
         timelineMetric.setHostName(LogFeederUtil.hostName);
@@ -120,7 +121,7 @@ public class MetricsManager {
         metricsMap.put(metric.metricsName, timelineMetric);
       }
       
-      LOG.debug("Adding metrics=" + metric.metricsName);
+      logger.debug("Adding metrics=" + metric.metricsName);
       if (metric.isPointInTime) {
         timelineMetric.getMetricValues().put(currMSLong, new Double(currCount));
       } else {
@@ -142,20 +143,20 @@ public class MetricsManager {
         timelineMetrics.setMetrics(new ArrayList<TimelineMetric>(metricsMap.values()));
         amsClient.emitMetrics(timelineMetrics);
         
-        LOG.info("Published " + timelineMetrics.getMetrics().size() + " metrics to AMS");
+        logger.info("Published " + timelineMetrics.getMetrics().size() + " metrics to AMS");
         metricsMap.clear();
         lastPublishTimeMS = currMS;
       } catch (Throwable t) {
-        LOG.warn("Error sending metrics to AMS.", t);
+        logger.warn("Error sending metrics to AMS.", t);
         if (currMS - lastFailedPublishTimeMS > maxMetricsBuffer) {
-          LOG.error("AMS was not sent for last " + maxMetricsBuffer / 1000 +
+          logger.error("AMS was not sent for last " + maxMetricsBuffer / 1000 +
               " seconds. Purging it and will start rebuilding it again");
           metricsMap.clear();
           lastFailedPublishTimeMS = currMS;
         }
       }
     } else {
-      LOG.info("Not publishing metrics. metrics.size()=" + metricsMap.size() + ", lastPublished=" +
+      logger.info("Not publishing metrics. metrics.size()=" + metricsMap.size() + ", lastPublished=" +
           (currMS - lastPublishTimeMS) / 1000 + " seconds ago, intervalConfigured=" + publishIntervalMS / 1000);
     }
   }

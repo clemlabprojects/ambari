@@ -1,0 +1,74 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@import '../../variables';
+@selected-color: #496A84;
+:host {
+
+  svg {
+    polygon {
+      fill: @fluid-gray-1;
+      stroke-width: 0;
+      stroke: transparent;
+      &.selected {
+        fill: @selected-color;
+        stroke: @selected-color;
+      }
+      &.selected-abbr:not(.selected) {
+        fill: @fluid-gray-3;
+        stroke: @fluid-gray-3;
+      }
+      &:hover, &.selected-abbr:hover {
+        fill: @fluid-gray-4;
+        stroke: @fluid-gray-4;
+        cursor: pointer;
+      }
+      &.hover-abbr {
+        fill: @fluid-gray-2;
+        stroke: @fluid-gray-2;
+      }
+    }
+  }
+
+  .alternative-selectors {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    select {
+      justify-self: flex-start;
+      margin-right: auto;
+    }
+    button {
+      margin: 0 .2rem;
+      &:focus {
+        outline: none;
+      }
+      &.btn-default {
+        &.selected {
+          background-color: @selected-color;
+          color: @fluid-gray-1;
+        }
+        &.selected-abbr {
+          background-color: @fluid-gray-2;
+          color: @fluid-gray-1;
+        }
+      }
+    }
+  }
+  
+}

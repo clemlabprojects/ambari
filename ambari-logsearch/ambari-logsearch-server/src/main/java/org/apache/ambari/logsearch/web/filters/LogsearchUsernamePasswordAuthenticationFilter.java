@@ -24,13 +24,14 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.RememberMeServices;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 public class LogsearchUsernamePasswordAuthenticationFilter extends UsernamePasswordAuthenticationFilter {
-  private static final Logger logger = Logger.getLogger(LogsearchUsernamePasswordAuthenticationFilter.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchUsernamePasswordAuthenticationFilter.class);
 
   public void setRememberMeServices(RememberMeServices rememberMeServices) {
     super.setRememberMeServices(rememberMeServices);

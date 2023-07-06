@@ -19,7 +19,6 @@
 package org.apache.ambari.logsearch.conf;
 
 import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_PROPERTIES_FILE;
-
 import org.apache.ambari.logsearch.config.api.LogSearchPropertyDescription;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
@@ -48,7 +47,7 @@ public class LogSearchConfigApiConfig {
   public boolean solrFilterStorage;
 
   @LogSearchPropertyDescription(
-    name = "logsearch.config.api.filter.zk-only.enabled",
+    name = "logsearch.config.api.filter.zk.enabled",
     description = "Use zookeeper as a log level filter storage",
     examples = {"true"},
     defaultValue = "false",

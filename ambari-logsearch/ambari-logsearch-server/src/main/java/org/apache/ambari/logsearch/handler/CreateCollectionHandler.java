@@ -23,6 +23,8 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
@@ -32,8 +34,6 @@ import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.Slice;
 import org.apache.solr.common.cloud.ZkStateReader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.core.Response;
 import java.io.IOException;
@@ -46,7 +46,7 @@ import static org.apache.ambari.logsearch.solr.SolrConstants.CommonLogConstants.
 
 public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(CreateCollectionHandler.class);
+  private static final Logger logger = LogManager.getLogger(CreateCollectionHandler.class);
 
   private static final String MODIFY_COLLECTION_QUERY = "/admin/collections?action=MODIFYCOLLECTION&collection=%s&%s=%d";
   private static final String MAX_SHARDS_PER_NODE = "maxShardsPerNode";
@@ -71,7 +71,7 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
 
   private boolean setupCollectionsWithImplicitRouting(CloudSolrClient solrClient, SolrPropsConfig solrPropsConfig, List<String> allCollectionList)
     throws Exception {
-    LOG.info("setupCollectionsWithImplicitRouting(). collectionName=" + solrPropsConfig.getCollection()
+    logger.info("setupCollectionsWithImplicitRouting(). collectionName=" + solrPropsConfig.getCollection()
       + ", numberOfShards=" + solrPropsConfig.getNumberOfShards());
 
     // Default is true, because if the collection and shard is already there, then it will return true
@@ -85,7 +85,7 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
 
     // Check if collection is already in zookeeper
     if (!allCollectionList.contains(solrPropsConfig.getCollection())) {
-      LOG.info("Creating collection " + solrPropsConfig.getCollection() + ", shardsList=" + shardsList);
+      logger.info("Creating collection " + solrPropsConfig.getCollection() + ", shardsList=" + shardsList);
       CollectionAdminRequest.Create collectionCreateRequest = CollectionAdminRequest.createCollection(
           solrPropsConfig.getCollection(), solrPropsConfig.getConfigName(), solrPropsConfig.getNumberOfShards(),
           solrPropsConfig.getReplicationFactor());
@@ -97,13 +97,13 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
       CollectionAdminResponse createResponse = collectionCreateRequest.process(solrClient);
       if (createResponse.getStatus() != 0) {
         returnValue = false;
-        LOG.error("Error creating collection. collectionName=" + solrPropsConfig.getCollection()
+        logger.error("Error creating collection. collectionName=" + solrPropsConfig.getCollection()
           + ", shardsList=" + shardsList +", response=" + createResponse);
       } else {
-        LOG.info("Created collection " + solrPropsConfig.getCollection() + ", shardsList=" + shardsList);
+        logger.info("Created collection " + solrPropsConfig.getCollection() + ", shardsList=" + shardsList);
       }
     } else {
-      LOG.info("Collection " + solrPropsConfig.getCollection() + " is already there. Will check whether it has the required shards");
+      logger.info("Collection " + solrPropsConfig.getCollection() + " is already there. Will check whether it has the required shards");
       Collection<Slice> slices = getSlices(solrClient, solrPropsConfig);
       Collection<String> existingShards = getShards(slices, solrPropsConfig);
       if (existingShards.size() < shardsList.size()) {
@@ -111,25 +111,25 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
           updateMaximumNumberOfShardsPerCore(slices, solrPropsConfig);
         } catch (Throwable t) {
           returnValue = false;
-          LOG.error(String.format("Exception during updating collection (%s)", t));
+          logger.error(String.format("Exception during updating collection (%s)", t));
         }
       }
       for (String shard : shardsList) {
         if (!existingShards.contains(shard)) {
           try {
-            LOG.info("Going to add Shard " + shard + " to collection " + solrPropsConfig.getCollection());
+            logger.info("Going to add Shard " + shard + " to collection " + solrPropsConfig.getCollection());
             CollectionAdminRequest.CreateShard createShardRequest =
                 CollectionAdminRequest.createShard(solrPropsConfig.getCollection(), shard);
             CollectionAdminResponse response = createShardRequest.process(solrClient);
             if (response.getStatus() != 0) {
-              LOG.error("Error creating shard " + shard + " in collection " + solrPropsConfig.getCollection() + ", response=" + response);
+              logger.error("Error creating shard " + shard + " in collection " + solrPropsConfig.getCollection() + ", response=" + response);
               returnValue = false;
               break;
             } else {
-              LOG.info("Successfully created shard " + shard + " in collection " + solrPropsConfig.getCollection());
+              logger.info("Successfully created shard " + shard + " in collection " + solrPropsConfig.getCollection());
             }
           } catch (Throwable t) {
-            LOG.error("Error creating shard " + shard + " in collection " + solrPropsConfig.getCollection(), t);
+            logger.error("Error creating shard " + shard + " in collection " + solrPropsConfig.getCollection(), t);
             returnValue = false;
             break;
           }
@@ -143,11 +143,11 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
       throws SolrServerException, IOException {
 
     if (allCollectionList.contains(solrPropsConfig.getCollection())) {
-      LOG.info("Collection " + solrPropsConfig.getCollection() + " is already there. Won't create it");
+      logger.info("Collection " + solrPropsConfig.getCollection() + " is already there. Won't create it");
       return true;
     }
 
-    LOG.info("Creating collection " + solrPropsConfig.getCollection() + ", numberOfShards=" + solrPropsConfig.getNumberOfShards() +
+    logger.info("Creating collection " + solrPropsConfig.getCollection() + ", numberOfShards=" + solrPropsConfig.getNumberOfShards() +
       ", replicationFactor=" + solrPropsConfig.getReplicationFactor());
 
     CollectionAdminRequest.Create collectionCreateRequest = CollectionAdminRequest.createCollection(
@@ -156,10 +156,10 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
     collectionCreateRequest.setMaxShardsPerNode(calculateMaxShardsPerNode(solrPropsConfig));
     CollectionAdminResponse createResponse = collectionCreateRequest.process(solrClient);
     if (createResponse.getStatus() != 0) {
-      LOG.error("Error creating collection. collectionName=" + solrPropsConfig.getCollection() + ", response=" + createResponse);
+      logger.error("Error creating collection. collectionName=" + solrPropsConfig.getCollection() + ", response=" + createResponse);
       return false;
     } else {
-      LOG.info("Created collection " + solrPropsConfig.getCollection() + ", numberOfShards=" + solrPropsConfig.getNumberOfShards() +
+      logger.info("Created collection " + solrPropsConfig.getCollection() + ", numberOfShards=" + solrPropsConfig.getNumberOfShards() +
         ", replicationFactor=" + solrPropsConfig.getReplicationFactor());
       return true;
     }
@@ -190,7 +190,7 @@ public class CreateCollectionHandler implements SolrZkRequestHandler<Boolean> {
     Collection<String> list = new HashSet<>();
     for (Slice slice : slices) {
       for (Replica replica : slice.getReplicas()) {
-        LOG.info("colName=" + solrPropsConfig.getCollection() + ", slice.name=" + slice.getName() + ", slice.state=" + slice.getState() +
+        logger.info("colName=" + solrPropsConfig.getCollection() + ", slice.name=" + slice.getName() + ", slice.state=" + slice.getState() +
           ", replica.core=" + replica.getStr("core") + ", replica.state=" + replica.getStr("state"));
         list.add(slice.getName());
       }

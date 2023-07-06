@@ -48,6 +48,7 @@ import {DropdownListComponent} from '@modules/shared/components/dropdown-list/dr
 
 import {ServiceLogsTableComponent, ListLayout} from './service-logs-table.component';
 import {ComponentLabelPipe} from "@app/pipes/component-label";
+import {HostNamePipe} from "@app/pipes/host-name.pipe";
 import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
 import {LogsStateService} from '@app/services/storage/logs-state.service';
 import {RoutingUtilsService} from '@app/services/routing-utils.service';
@@ -55,6 +56,12 @@ import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.serv
 import {RouterTestingModule} from '@angular/router/testing';
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
 import {NotificationService} from '@modules/shared/services/notification.service';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { reducer as userSettings } from '@app/store/reducers/user-settings.reducers';
 
 describe('ServiceLogsTableComponent', () => {
   let component: ServiceLogsTableComponent;
@@ -66,7 +73,8 @@ describe('ServiceLogsTableComponent', () => {
         ServiceLogsTableComponent,
         PaginationComponent,
         DropdownListComponent,
-        ComponentLabelPipe
+        ComponentLabelPipe,
+        HostNamePipe
       ],
       imports: [
         RouterTestingModule,
@@ -88,8 +96,12 @@ describe('ServiceLogsTableComponent', () => {
           tabs,
           clusters,
           components,
-          hosts
+          hosts,
+          auth: auth.reducer,
+          userSettings
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects),
         TooltipModule.forRoot()
       ],
       providers: [

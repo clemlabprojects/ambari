@@ -25,13 +25,13 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.ambari.logsearch.conf.AuthPropsConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 
 public class LogsearchAuthenticationEntryPoint extends LoginUrlAuthenticationEntryPoint {
-  private static final Logger logger = LoggerFactory.getLogger(LogsearchAuthenticationEntryPoint.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchAuthenticationEntryPoint.class);
   private final AuthPropsConfig authPropsConfig;
 
   public LogsearchAuthenticationEntryPoint(String loginFormUrl, AuthPropsConfig authPropsConfig) {

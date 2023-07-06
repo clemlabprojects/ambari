@@ -29,7 +29,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 abstract class LogsearchAbstractAuthenticationProvider implements AuthenticationProvider {
 
   protected enum AuthMethod {
-    FILE, EXTERNAL_AUTH, SIMPLE
+    FILE, EXTERNAL_AUTH, SIMPLE, LDAP
   };
 
   @Override
@@ -39,6 +39,7 @@ abstract class LogsearchAbstractAuthenticationProvider implements Authentication
 
   /**
    * GET Default GrantedAuthority
+   * @return list of authorities
    */
   protected List<GrantedAuthority> getAuthorities() {
     List<GrantedAuthority> grantedAuths = new ArrayList<>();

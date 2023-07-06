@@ -21,22 +21,24 @@ package org.apache.ambari.logfeeder.output;
 import org.apache.ambari.logfeeder.common.LogFeederConstants;
 import org.apache.ambari.logfeeder.plugin.input.cache.LRUCache;
 import org.apache.ambari.logfeeder.plugin.input.Input;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
-
 
 /**
  * Filter for outputs based on input configs, which can drop lines if the filter applies.
  */
 public class OutputLineFilter {
 
-  private static final Logger LOG = LoggerFactory.getLogger(OutputLineFilter.class);
+  private static final Logger logger = LogManager.getLogger(OutputLineFilter.class);
 
   /**
    * Applies filter based on input cache (on service log only).
    * Get the message and in-memory timestamp for log line. If both are not empty, evaluate that log line needs to be filtered out or not.
+   * @param lineMap holds output fields and values (as key/value pairs)
+   * @param input holds input object
+   * @return log filtered out or not
    */
   public Boolean apply(Map<String, Object> lineMap, Input input) {
     boolean isLogFilteredOut = false;
@@ -52,14 +54,12 @@ public class OutputLineFilter {
         if (!isLogFilteredOut) {
           inputLruCache.put(logMessage, timestamp);
         } else {
-          LOG.debug("Log line filtered out: {} (file: {}, dedupInterval: {}, lastDedupEnabled: {})",
+          logger.debug("Log line filtered out: {} (file: {}, dedupInterval: {}, lastDedupEnabled: {})",
             logMessage, inputLruCache.getFileName(), inputLruCache.getDedupInterval(), inputLruCache.isLastDedupEnabled());
         }
       }
     }
-    if (lineMap.containsKey(LogFeederConstants.IN_MEMORY_TIMESTAMP)) {
-      lineMap.remove(LogFeederConstants.IN_MEMORY_TIMESTAMP);
-    }
+    lineMap.remove(LogFeederConstants.IN_MEMORY_TIMESTAMP);
     return isLogFilteredOut;
   }
 }

@@ -29,13 +29,14 @@ import org.apache.ambari.logsearch.conf.SolrPropsConfig;
 import org.apache.ambari.logsearch.conf.SolrServiceLogPropsConfig;
 import org.apache.ambari.logsearch.conf.global.SolrCollectionState;
 import org.apache.ambari.logsearch.configurer.SolrCollectionConfigurer;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.data.solr.core.SolrTemplate;
 
 @Named
 public class ServiceLogsSolrDao extends SolrDaoBase {
 
-  private static final Logger LOG = Logger.getLogger(ServiceLogsSolrDao.class);
+  private static final Logger logger = LogManager.getLogger(ServiceLogsSolrDao.class);
 
   @Inject
   private SolrServiceLogPropsConfig solrServiceLogPropsConfig;
@@ -65,11 +66,11 @@ public class ServiceLogsSolrDao extends SolrDaoBase {
 
   @PostConstruct
   public void postConstructor() {
-    LOG.info("postConstructor() called.");
+    logger.info("postConstructor() called.");
     try {
       new SolrCollectionConfigurer(this, true, solrClientsHolder, SolrClientsHolder.CollectionType.HISTORY).start();
     } catch (Exception e) {
-      LOG.error("error while connecting to Solr for service logs : solrUrl=" + solrServiceLogPropsConfig.getSolrUrl()
+      logger.error("error while connecting to Solr for service logs : solrUrl=" + solrServiceLogPropsConfig.getSolrUrl()
         + ", zkConnectString=" + solrServiceLogPropsConfig.getZkConnectString()
         + ", collection=" + solrServiceLogPropsConfig.getCollection(), e);
     }

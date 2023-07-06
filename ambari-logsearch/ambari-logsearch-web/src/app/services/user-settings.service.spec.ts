@@ -16,87 +16,14 @@
  * limitations under the License.
  */
 
-import {TestBed, inject} from '@angular/core/testing';
-import {MockHttpRequestModules, TranslationModules} from "@app/test-config.spec";
-import {StoreModule} from '@ngrx/store';
-import {AuditLogsService, auditLogs} from '@app/services/storage/audit-logs.service';
-import {ServiceLogsService, serviceLogs} from '@app/services/storage/service-logs.service';
-import {AuditLogsFieldsService, auditLogsFields} from '@app/services/storage/audit-logs-fields.service';
-import {AuditLogsGraphDataService, auditLogsGraphData} from '@app/services/storage/audit-logs-graph-data.service';
-import {ServiceLogsFieldsService, serviceLogsFields} from '@app/services/storage/service-logs-fields.service';
-import {
-  ServiceLogsHistogramDataService, serviceLogsHistogramData
-} from '@app/services/storage/service-logs-histogram-data.service';
-import {AppSettingsService, appSettings} from '@app/services/storage/app-settings.service';
-import {AppStateService, appState} from '@app/services/storage/app-state.service';
-import {ClustersService, clusters} from '@app/services/storage/clusters.service';
-import {ComponentsService, components} from '@app/services/storage/components.service';
-import {HostsService, hosts} from '@app/services/storage/hosts.service';
-import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/storage/service-logs-truncated.service';
-import {TabsService, tabs} from '@app/services/storage/tabs.service';
-import {LogsContainerService} from '@app/services/logs-container.service';
-import {UtilsService} from '@app/services/utils.service';
+import { TestBed, inject } from '@angular/core/testing';
 
-import {UserSettingsService} from './user-settings.service';
-import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
-import {RouterTestingModule} from '@angular/router/testing';
-import {RoutingUtilsService} from '@app/services/routing-utils.service';
-import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.service';
-import {LogsStateService} from '@app/services/storage/logs-state.service';
-import {NotificationsService} from 'angular2-notifications/src/notifications.service';
-import {NotificationService} from '@modules/shared/services/notification.service';
-
-import { dataAvailabilityStates, DataAvailabilityStatesStore } from '@app/modules/app-load/stores/data-availability-state.store';
+import { UserSettingsService } from './user-settings.service';
 
 describe('UserSettingsService', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
-      imports: [
-        RouterTestingModule,
-        StoreModule.provideStore({
-          auditLogs,
-          serviceLogs,
-          auditLogsFields,
-          auditLogsGraphData,
-          serviceLogsFields,
-          serviceLogsHistogramData,
-          appSettings,
-          appState,
-          clusters,
-          components,
-          hosts,
-          serviceLogsTruncated,
-          tabs,
-          dataAvailabilityStates
-        }),
-        ...TranslationModules
-      ],
-      providers: [
-        ...MockHttpRequestModules,
-        UserSettingsService,
-        LogsContainerService,
-        UtilsService,
-        AuditLogsService,
-        ServiceLogsService,
-        AuditLogsFieldsService,
-        AuditLogsGraphDataService,
-        ServiceLogsFieldsService,
-        ServiceLogsHistogramDataService,
-        AppSettingsService,
-        AppStateService,
-        ClustersService,
-        ComponentsService,
-        HostsService,
-        ServiceLogsTruncatedService,
-        TabsService,
-        ClusterSelectionService,
-        RoutingUtilsService,
-        LogsFilteringUtilsService,
-        LogsStateService,
-        NotificationsService,
-        NotificationService,
-        DataAvailabilityStatesStore
-      ]
+      providers: [UserSettingsService]
     });
   });
 

@@ -21,8 +21,8 @@ package org.apache.ambari.logfeeder.plugin.common;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.Serializable;
 import java.lang.reflect.Type;
@@ -30,9 +30,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * This class is used to gather json configs for Log Feeder shipper configurations. Get specific properties with specific types (key/values pairs)
+ * @param <PROP_TYPE> Log Feeder configuration holder object
+ */
 public abstract class ConfigItem<PROP_TYPE extends LogFeederProperties> implements Cloneable, Serializable {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ConfigItem.class);
+  private static final Logger logger = LogManager.getLogger("logfeeder.metrics");
 
   private final static String GSON_DATE_FORMAT = "yyyy-MM-dd HH:mm:ss.SSS";
   private static Gson gson = new GsonBuilder().setDateFormat(GSON_DATE_FORMAT).create();
@@ -49,7 +53,8 @@ public abstract class ConfigItem<PROP_TYPE extends LogFeederProperties> implemen
   public abstract void init(PROP_TYPE logFeederProperties) throws Exception;
 
   /**
-   * Used while logging. Keep it short and meaningful
+   * Get description of config item (input / output / filter)
+   * @return String value used while logging. Keep it short and meaningful
    */
   public abstract String getShortDescription();
 
@@ -59,11 +64,6 @@ public abstract class ConfigItem<PROP_TYPE extends LogFeederProperties> implemen
 
   public void loadConfig(Map<String, Object> map) {
     configs = cloneObject(map);
-
-    Map<String, String> nvList = getNVList("add_fields");
-    if (nvList != null) {
-      contextFields.putAll(nvList);
-    }
   }
 
   @SuppressWarnings("unchecked")
@@ -91,12 +91,12 @@ public abstract class ConfigItem<PROP_TYPE extends LogFeederProperties> implemen
     logStatForMetric(statMetric, "Stat");
   }
 
-  public void logStatForMetric(MetricData metric, String prefixStr) {
+  protected void logStatForMetric(MetricData metric, String prefixStr) {
     long currStat = metric.value;
     long currMS = System.currentTimeMillis();
     String postFix = ", key=" + getShortDescription();
     if (currStat > metric.prevLogValue) {
-      LOG.info(prefixStr + ": total_count=" + metric.value + ", duration=" + (currMS - metric.prevLogTime) / 1000 +
+      logger.info(prefixStr + ": total_count=" + metric.value + ", duration=" + (currMS - metric.prevLogTime) / 1000 +
         " secs, count=" + (currStat - metric.prevLogValue) + postFix);
     }
     metric.prevLogValue = currStat;
@@ -192,14 +192,6 @@ public abstract class ConfigItem<PROP_TYPE extends LogFeederProperties> implemen
     String jsonStr = gson.toJson(map);
     Type type = new TypeToken<Map<String, Object>>() {}.getType();
     return gson.fromJson(jsonStr, type);
-  }
-
-  private Object getValue(String property) {
-    return configs.get(property);
-  }
-
-  private Object getValue(String property, Object defaultValue) {
-    return configs.getOrDefault(property, defaultValue);
   }
 
 }

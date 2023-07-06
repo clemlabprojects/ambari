@@ -74,8 +74,8 @@ public class FilterGrokDescriptorImpl extends FilterDescriptorImpl implements Fi
   @ShipperConfigElementDescription(
     path = "/filter/[]/deep_extract",
     type = "boolean",
-    description = "",
-    examples = {""}
+    description = "Keep the full named regex collection for Grok filters.",
+    examples = {"true"}
   )
   @Expose
   @SerializedName("deep_extract")

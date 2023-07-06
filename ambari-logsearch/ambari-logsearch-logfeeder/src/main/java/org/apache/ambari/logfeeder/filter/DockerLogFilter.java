@@ -22,11 +22,19 @@ import org.apache.ambari.logfeeder.util.LogFeederUtil;
 
 import java.util.Map;
 
+/**
+ * Helper class to get docker log line from a json based docker log
+ */
 public class DockerLogFilter {
 
   private DockerLogFilter() {
   }
 
+  /**
+   * Convert json formatted docker log line to a simple log line.
+   * @param jsonInput docker log in json format
+   * @return log line
+   */
   public static String getLogFromDockerJson(String jsonInput) {
     Map<String, Object> jsonMap = LogFeederUtil.toJSONObject(jsonInput);
     return jsonMap.get("log").toString();

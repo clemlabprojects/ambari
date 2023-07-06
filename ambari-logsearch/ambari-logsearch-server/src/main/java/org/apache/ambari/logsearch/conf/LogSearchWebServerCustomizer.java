@@ -18,14 +18,12 @@
  */
 package org.apache.ambari.logsearch.conf;
 
-import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_SESSION_ID;
-
-import java.time.Duration;
-
-import javax.inject.Inject;
-
 import org.apache.ambari.logsearch.configurer.SslConfigurer;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.Configuration;
 import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.NCSARequestLog;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
@@ -33,6 +31,14 @@ import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer;
 import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.stereotype.Component;
+
+import javax.inject.Inject;
+import java.nio.file.Paths;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+
+import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_SESSION_ID;
 
 @Component
 public class LogSearchWebServerCustomizer implements WebServerFactoryCustomizer<JettyServletWebServerFactory> {
@@ -62,6 +68,20 @@ public class LogSearchWebServerCustomizer implements WebServerFactoryCustomizer<
       });
     } else {
       webServerFactory.setPort(logSearchHttpConfig.getHttpPort());
+    }
+    if (logSearchHttpConfig.isUseAccessLogs()) {
+      webServerFactory.addServerCustomizers((JettyServerCustomizer) server -> {
+        LoggerContext context = (LoggerContext) LogManager.getContext(false);
+        Configuration configuration = context.getConfiguration();
+        String logDir = configuration.getStrSubstitutor().getVariableResolver().lookup("log-path");
+        String logFileNameSuffix = "logsearch-jetty-yyyy_mm_dd.request.log";
+        String logFileName = logDir == null ? logFileNameSuffix : Paths.get(logDir, logFileNameSuffix).toString();
+        NCSARequestLog requestLog = new NCSARequestLog(logFileName);
+        requestLog.setAppend(true);
+        requestLog.setExtended(false);
+        requestLog.setLogTimeZone("GMT");
+        server.setRequestLog(requestLog);
+      });
     }
   }
 }

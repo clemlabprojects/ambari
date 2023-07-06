@@ -22,16 +22,23 @@ import {Observable} from 'rxjs/Observable';
 
 import {AuthService} from '@app/services/auth.service';
 
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { isAuthorizedSelector } from '@app/store/selectors/auth.selectors';
+
 /**
  * The goal of this guard service is to prevent to display the login screen when the user is logged in.
  */
 @Injectable()
 export class LoginScreenGuardService implements CanActivate {
 
-  constructor(private authService: AuthService, private router: Router) {}
+  constructor(
+    private router: Router,
+    private store: Store<AppStore>
+  ) {}
 
   canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): Observable<boolean> {
-    return this.authService.isAuthorized().map((isAuthorized: boolean) => {
+    return this.store.select(isAuthorizedSelector).map((isAuthorized: boolean) => {
       if (isAuthorized && state.url === '/login') {
         this.router.navigate(['/']);
       }

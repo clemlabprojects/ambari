@@ -22,11 +22,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import org.apache.ambari.logsearch.config.api.InputConfigMonitor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.ambari.logsearch.config.json.JsonHelper;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputConfigGson;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputConfigImpl;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.io.IOException;
@@ -52,7 +52,7 @@ import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
  */
 public class LogSearchConfigLocalUpdater implements Runnable {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigLocalUpdater.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigLocalUpdater.class);
 
   private final Path path;
   private final WatchService watchService;
@@ -80,7 +80,7 @@ public class LogSearchConfigLocalUpdater implements Runnable {
     try {
       register(this.path, keys, watchService);
     } catch (IOException e) {
-      LOG.error("{}", e);
+      logger.error("{}", e);
       throw new RuntimeException(e);
     }
     while (!Thread.interrupted()) {
@@ -105,13 +105,13 @@ public class LogSearchConfigLocalUpdater implements Runnable {
             String serviceName = m.group(1);
             try {
               if (kind == ENTRY_CREATE) {
-                LOG.info("New input config entry found: {}", absPath);
+                logger.info("New input config entry found: {}", absPath);
                 String inputConfig = new String(Files.readAllBytes(monitoredInput));
                 JsonElement inputConfigJson = JsonHelper.mergeGlobalConfigWithInputConfig(parser, inputConfig, globalConfigNode);
                 inputConfigMonitor.loadInputConfigs(serviceName, InputConfigGson.gson.fromJson(inputConfigJson, InputConfigImpl.class));
                 inputFileContentsMap.put(absPath, inputConfig);
               } else if (kind == ENTRY_MODIFY) {
-                LOG.info("Input config entry modified: {}", absPath);
+                logger.info("Input config entry modified: {}", absPath);
                 if (inputFileContentsMap.containsKey(absPath)) {
                   String oldContent = inputFileContentsMap.get(absPath);
                   String inputConfig = new String(Files.readAllBytes(monitoredInput));
@@ -124,20 +124,20 @@ public class LogSearchConfigLocalUpdater implements Runnable {
                   }
                 }
               } else if (kind == ENTRY_DELETE) {
-                LOG.info("Input config deleted: {}", absPath);
+                logger.info("Input config deleted: {}", absPath);
                 if (inputFileContentsMap.containsKey(absPath)) {
                   inputConfigMonitor.removeInputs(serviceName);
                   inputFileContentsMap.remove(absPath);
                 }
               }
             } catch (Exception e) {
-              LOG.error("{}", e);
+              logger.error("{}", e);
               break;
             }
           }
         }
         if (!key.reset()) {
-          LOG.info("{} is invalid", key);
+          logger.info("{} is invalid", key);
           keys.remove(key);
           if (keys.isEmpty()) {
             break;

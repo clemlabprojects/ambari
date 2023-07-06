@@ -28,12 +28,12 @@ import { HomogeneousObject, LogLevelObject } from '@app/classes/object';
 import { LogIndexFilterComponentConfig } from '@app/classes/settings';
 import { LogLevel } from '@app/classes/string';
 import { LogsContainerService } from '@app/services/logs-container.service';
-import { UserSettingsService } from '@app/services/user-settings.service';
+import { ServerSettingsService } from '@app/services/server-settings.service';
 import { UtilsService } from '@app/services/utils.service';
 import { ClustersService } from '@app/services/storage/clusters.service';
 import { HostsService } from '@app/services/storage/hosts.service';
 import { DataAvailabilityStatesStore } from '@app/modules/app-load/stores/data-availability-state.store';
-import { DataAvailabilityValues, DataAvailability } from '@app/classes/string';
+import { DataAvailabilityValues } from '@app/classes/string';
 
 @Component({
   selector: 'log-index-filter',
@@ -68,7 +68,7 @@ export class LogIndexFilterComponent implements OnInit, OnDestroy, OnChanges, Co
 
   configsAvailabilityState$: Observable<string> = this.dataAvailablilityStore.getParameter('logIndexFilter');
   configsAreLoading$: Observable<boolean> = this.configsAvailabilityState$.distinctUntilChanged().map(
-    (state: DataAvailability) => state === DataAvailabilityValues.LOADING
+    (state: DataAvailabilityValues) => state === DataAvailabilityValues.LOADING
   );
 
   @Input()
@@ -85,7 +85,7 @@ export class LogIndexFilterComponent implements OnInit, OnDestroy, OnChanges, Co
 
   constructor(
     private logsContainer: LogsContainerService,
-    private settingsService: UserSettingsService,
+    private settingsService: ServerSettingsService,
     private utils: UtilsService,
     private clustersStorage: ClustersService,
     private hostsStorage: HostsService,
@@ -143,7 +143,7 @@ export class LogIndexFilterComponent implements OnInit, OnDestroy, OnChanges, Co
   processAllComponentsForLevel(levelName: LogLevel, isChecked: boolean): void {
     this.activeClusterConfigs.forEach((component: LogIndexFilterComponentConfig): void => {
       component[levelName].defaults = isChecked;
-      component[levelName].overrides = isChecked;
+      component[levelName].overrides = component.hasOverrides && isChecked;
     });
     this.updateValue();
   }

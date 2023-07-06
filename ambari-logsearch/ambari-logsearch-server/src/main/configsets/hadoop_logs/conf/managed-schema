@@ -61,6 +61,7 @@
   <fieldType name="lowercase" class="solr.TextField" sortMissingLast="true" omitNorms="true">
       <analyzer>
         <tokenizer class="solr.KeywordTokenizerFactory"/>
+        <filter class="solr.LengthFilterFactory" min="0" max="20000"/>
         <filter class="solr.LowerCaseFilterFactory" />
       </analyzer>
   </fieldType>

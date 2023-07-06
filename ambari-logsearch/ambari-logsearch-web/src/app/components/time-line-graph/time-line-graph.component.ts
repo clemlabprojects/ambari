@@ -16,10 +16,10 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import { Component, Input } from '@angular/core';
 import * as d3 from 'd3';
-import {GraphScaleItem, GraphLinePoint, GraphLineData} from '@app/classes/graph';
-import {TimeGraphComponent} from '@app/classes/components/graph/time-graph.component';
+import { GraphScaleItem, GraphLinePoint, GraphLineData } from '@app/classes/graph';
+import { TimeGraphComponent } from '@app/classes/components/graph/time-graph.component';
 
 @Component({
   selector: 'time-line-graph',
@@ -32,13 +32,16 @@ import {TimeGraphComponent} from '@app/classes/components/graph/time-graph.compo
 export class TimeLineGraphComponent extends TimeGraphComponent {
 
   @Input()
-  pointRadius: number = 3.5;
+  pointRadius = 3.5;
 
   protected populate(): void {
-    const keys = Object.keys(this.colors),
-      data = this.data,
-      timeStamps = Object.keys(data),
-      dataForDomain = timeStamps.map((timeStamp: string): GraphScaleItem => Object.assign({
+    const data = this.data;
+    const keys = Object.keys(data).reduce((currentKeys, timeStamp): string[] => {
+      const dataKeys: string[] = Object.keys(data[timeStamp]).filter((key: string) => currentKeys.indexOf(key) === -1);
+      return [...currentKeys, ...dataKeys];
+    }, []);
+    const timeStamps = Object.keys(data);
+    const dataForDomain = timeStamps.map((timeStamp: string): GraphScaleItem => Object.assign({
         tick: Number(timeStamp)
       }, data[timeStamp])),
       dataForSvg = keys.map((key: string): GraphLineData => {
@@ -51,8 +54,8 @@ export class TimeLineGraphComponent extends TimeGraphComponent {
           }),
           key: key
         };
-      }),
-      line = d3.line<GraphScaleItem>().x(item => this.xScale(item.tick)).y(item => this.yScale(item.y));
+      });
+    const line = d3.line<GraphScaleItem>().x(item => this.xScale(item.tick)).y(item => this.yScale(item.y));
 
     // after we have the data we set the domain values both scales
     this.setXScaleDomain(dataForDomain);

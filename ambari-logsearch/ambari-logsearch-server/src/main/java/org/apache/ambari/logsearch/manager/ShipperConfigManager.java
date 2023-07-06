@@ -30,10 +30,11 @@ import org.apache.ambari.logsearch.configurer.LogSearchConfigConfigurer;
 import org.apache.ambari.logsearch.configurer.LogLevelManagerFilterConfigurer;
 import org.apache.ambari.logsearch.model.common.LSServerInputConfig;
 import org.apache.ambari.logsearch.model.common.LSServerLogLevelFilterMap;
-import org.apache.log4j.Logger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -46,7 +47,7 @@ import javax.ws.rs.core.Response;
 @Named
 public class ShipperConfigManager extends JsonManagerBase {
 
-  private static final Logger logger = Logger.getLogger(ShipperConfigManager.class);
+  private static final Logger logger = LogManager.getLogger(ShipperConfigManager.class);
 
   @Inject
   private LogSearchConfigApiConfig logSearchConfigApiConfig;

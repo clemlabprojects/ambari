@@ -27,7 +27,8 @@ import java.util.Properties;
 public interface LogFeederProperties extends Serializable {
 
   /**
-   * Get all key-value pairs from static application level Log Feeder configuration
+   * Get static application level Log Feeder configuration
+   * @return Log Feeder configuration (key-value pairs)
    */
   Properties getProperties();
 }

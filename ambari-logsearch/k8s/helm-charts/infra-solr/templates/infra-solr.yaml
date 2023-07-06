@@ -1,0 +1,97 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-infra-solr
+  namespace: {{.Values.global.namespace.logging}}
+  labels:
+    app: infra-solr
+spec:
+  ports:
+  - port: 8886
+    name: infra-solr
+  externalIPs:
+    []
+  clusterIP: None
+  selector:
+    app: infra-solr
+    release: {{ .Release.Name }}
+---
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-infra-solr
+  namespace: {{.Values.global.namespace.logging}}
+  labels:
+    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: infra-solr
+  serviceName: {{ .Release.Name }}-infra-solr
+  replicas: {{.Values.global.solr.replicas}}
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: infra-solr
+        release: {{ .Release.Name }}
+    spec:
+{{- if .Values.affinity }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: "app"
+                    operator: In
+                    values:
+                    - infra-solr
+              topologyKey: "kubernetes.io/hostname"
+{{end}}
+      containers:
+      - name: infra-solr
+        image: "{{.Values.infraSolrImage}}"
+        env:
+        - name: ZK_CONNECT_STRING
+          value: "{{.Values.zkRelease}}-zookeeper-cs.{{.Values.global.namespace.logging}}.svc.{{.Values.global.clusterDomain}}:2181"
+        - name: SOLR_PORT
+          value: "8886"
+        - name: CLOUD_MODE
+          value: "true"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8886
+          initialDelaySeconds: 30
+          timeoutSeconds: 15
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8886
+          initialDelaySeconds: 30
+          timeoutSeconds: 15
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/ambari-infra-solr/data
+      securityContext:
+        runAsUser: 8983
+{{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: solr-home
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+{{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+{{- end }}
+{{end}}

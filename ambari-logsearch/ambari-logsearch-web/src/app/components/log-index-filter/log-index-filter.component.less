@@ -21,12 +21,21 @@
 :host {
   div.log-index-filter-content {
     table {
+      td {
+        vertical-align: middle;
+      }
       &.table-header {
         background-color: #fff;
         margin-bottom: 0;
         position: sticky;
         top: -1px;
-        z-index: 10;
+        z-index: 1010;
+        tr {
+          box-shadow: -2px 2px 2px fadeout(@fluid-gray-1, 50%);
+        }
+        th {
+          padding: 8px 0;
+        }
       }
       .component-column {
         width: 25%;

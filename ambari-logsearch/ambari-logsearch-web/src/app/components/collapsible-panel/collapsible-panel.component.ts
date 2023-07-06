@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import { Component, Input } from '@angular/core';
 
 enum Side {
-  LEFT = "left",
-  RIGHT = "right"
+  LEFT = 'left',
+  RIGHT = 'right'
 }
 
 /**
@@ -39,7 +39,7 @@ export class CollapsiblePanelComponent {
    * @type {string}
    */
   @Input()
-  commonTitle: string = '';
+  commonTitle = '';
 
   /**
    * The panel's title for the opened state
@@ -67,7 +67,7 @@ export class CollapsiblePanelComponent {
    * @type {boolean}
    */
   @Input()
-  isCollapsed: boolean = false;
+  isCollapsed = false;
 
   /**
    * The goal is to handle the click event of the collapse link/button. It will simply call the inside logic to toggle

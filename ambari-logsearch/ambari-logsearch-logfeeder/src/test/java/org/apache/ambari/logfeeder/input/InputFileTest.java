@@ -26,12 +26,13 @@ import java.util.List;
 
 import org.apache.ambari.logfeeder.conf.LogEntryCacheConfig;
 import org.apache.ambari.logfeeder.conf.LogFeederProps;
+import org.apache.ambari.logfeeder.input.file.checkpoint.FileCheckpointManager;
 import org.apache.ambari.logfeeder.plugin.filter.Filter;
 import org.apache.ambari.logfeeder.plugin.input.InputMarker;
+import org.apache.ambari.logfeeder.plugin.manager.CheckpointManager;
 import org.apache.ambari.logfeeder.plugin.manager.InputManager;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputFileDescriptorImpl;
 import org.apache.commons.io.FileUtils;
-import org.apache.log4j.Logger;
 import org.easymock.EasyMock;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -44,7 +45,6 @@ import org.junit.rules.ExpectedException;
 import static org.junit.Assert.assertEquals;
 
 public class InputFileTest {
-  private static final Logger LOG = Logger.getLogger(InputFileTest.class);
 
   private static final String TEST_DIR_NAME = "/logfeeder_test_dir/";
   private static final File TEST_DIR = new File(FileUtils.getTempDirectoryPath() + TEST_DIR_NAME);
@@ -77,6 +77,13 @@ public class InputFileTest {
     FileUtils.cleanDirectory(TEST_DIR);
   }
 
+  @AfterClass
+  public static void deleteDir() throws IOException {
+    if (TEST_DIR.exists()) {
+      FileUtils.deleteDirectory(TEST_DIR);
+    }
+  }
+
   @Before
   public void setUp() throws Exception {
     logFeederProps = new LogFeederProps();
@@ -85,6 +92,7 @@ public class InputFileTest {
     logEntryCacheConfig.setCacheLastDedupEnabled(false);
     logEntryCacheConfig.setCacheSize(10);
     logFeederProps.setLogEntryCacheConfig(logEntryCacheConfig);
+    logFeederProps.setCheckpointFolder("process3_checkpoint");
     testInputMarker = new InputFileMarker(inputFile, "", 0);
   }
 
@@ -123,15 +131,13 @@ public class InputFileTest {
 
   @Test
   public void testInputFile_process3Rows() throws Exception {
-    LOG.info("testInputFile_process3Rows()");
-
-    File checkPointDir = createCheckpointDir("process3_checkpoint");
     File testFile = createFile("process3.log");
 
     init(testFile.getAbsolutePath());
 
     InputManager inputManager = EasyMock.createStrictMock(InputManager.class);
-    EasyMock.expect(inputManager.getCheckPointFolderFile()).andReturn(checkPointDir);
+    CheckpointManager checkpointManager = new FileCheckpointManager();
+    EasyMock.expect(inputManager.getCheckpointHandler()).andReturn(checkpointManager);
     EasyMock.replay(inputManager);
     inputFile.setInputManager(inputManager);
 
@@ -147,8 +153,6 @@ public class InputFileTest {
 
   @Test
   public void testInputFile_noLogPath() throws Exception {
-    LOG.info("testInputFile_noLogPath()");
-
     expectedException.expect(NullPointerException.class);
 
     init(null);

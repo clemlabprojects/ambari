@@ -19,6 +19,19 @@
 
 package org.apache.ambari.logsearch.rest;
 
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.EXPORT_USER_TALBE_TO_TEXT_FILE_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_AUDIT_CLUSTERS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_AUDIT_COMPONENTS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_AUDIT_LINE_GRAPH_DATA_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_AUDIT_LOGS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_AUDIT_SCHEMA_FIELD_LIST_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_SERVICE_LOAD_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.GET_TOP_AUDIT_RESOURCES_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.PURGE_AUDIT_LOGS_OD;
+
+import java.util.List;
+import java.util.Map;
+
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -34,11 +47,9 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
-import freemarker.template.TemplateException;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
 import org.apache.ambari.logsearch.common.LogSearchConstants;
 import org.apache.ambari.logsearch.common.StatusMessage;
+import org.apache.ambari.logsearch.manager.AuditLogsManager;
 import org.apache.ambari.logsearch.model.metadata.AuditFieldMetadataResponse;
 import org.apache.ambari.logsearch.model.request.impl.body.AuditBarGraphBodyRequest;
 import org.apache.ambari.logsearch.model.request.impl.body.AuditLogBodyRequest;
@@ -53,15 +64,14 @@ import org.apache.ambari.logsearch.model.request.impl.query.TopFieldAuditLogQuer
 import org.apache.ambari.logsearch.model.request.impl.query.UserExportQueryRequest;
 import org.apache.ambari.logsearch.model.response.AuditLogResponse;
 import org.apache.ambari.logsearch.model.response.BarGraphDataListResponse;
-import org.apache.ambari.logsearch.manager.AuditLogsManager;
 import org.springframework.context.annotation.Scope;
 
-import java.util.List;
-import java.util.Map;
+import freemarker.template.TemplateException;
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.Authorization;
 
-import static org.apache.ambari.logsearch.doc.DocConstants.AuditOperationDescriptions.*;
-
-@Api(value = "audit/logs", description = "Audit log operations")
+@Api(value = "audit/logs", description = "Audit log operations", authorizations = {@Authorization(value = "basicAuth")})
 @Path("audit/logs")
 @Named
 @Scope("request")

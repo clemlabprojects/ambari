@@ -47,10 +47,6 @@ public interface SolrPropsConfig {
 
   void setReplicationFactor(Integer replicationFactor);
 
-  String getSplitInterval();
-
-  void setSplitInterval(String splitInterval);
-
   List<ACL> getZkAcls();
 
   void setZkAcls(List<ACL> zkAcls);

@@ -18,6 +18,11 @@
 <div class="panel panel-default">
   <div [ngClass]="{'panel-body': true, 'layout-flex': layout==='FLEX', 'layout-table': layout==='TABLE'}">
     <div class="service-logs-table-controls">
+      <div class="total-event-info">
+        <ng-container *ngIf="!totalEventsFoundMessageParams.totalCount">{{'logs.noEventFound' | translate}}</ng-container>
+        <ng-container *ngIf="totalEventsFoundMessageParams.totalCount === 1">{{'logs.oneEventFound' | translate}}</ng-container>
+        <ng-container *ngIf="totalEventsFoundMessageParams.totalCount > 1">{{'logs.totalEventFound' | translate: totalEventsFoundMessageParams}}</ng-container>
+      </div>
       <div *ngIf="tooManyColumnsSelected" class="list-layout-warning">
         <i class="fa fa-warning"></i>
         {{'logs.brokenListLayoutMessage' | translate}}
@@ -54,6 +59,7 @@
           <col *ngIf="isColumnDisplayed('logtime')" class="log-time">
           <col *ngIf="isColumnDisplayed('level')" class="log-level">
           <col *ngIf="isColumnDisplayed('type')" class="log-type">
+          <col *ngIf="isColumnDisplayed('host')" class="col-default-fixed log-host">
           <ng-container *ngFor="let column of displayedColumns">
             <col *ngIf="customStyledColumns.indexOf(column.value) === -1" [ngClass]="'col-default-fixed log-' + column.value">
           </ng-container>
@@ -66,6 +72,7 @@
             <th *ngIf="isColumnDisplayed('logtime')">{{getLabelForField('logtime') | translate}}</th>
             <th *ngIf="isColumnDisplayed('level')">{{getLabelForField('level') | translate}}</th>
             <th *ngIf="isColumnDisplayed('type')">{{getLabelForField('type') | translate}}</th>
+            <th *ngIf="isColumnDisplayed('host')">{{getLabelForField('host') | translate}}</th>
             <ng-container *ngFor="let column of displayedColumns">
               <th *ngIf="customStyledColumns.indexOf(column.value) === -1">{{getLabelForField(column.value) | translate}}</th>
             </ng-container>
@@ -83,18 +90,21 @@
             <tr class="log-item-row">
               <td class="log-action">
                 <dropdown-button iconClass="fa fa-ellipsis-v action" [hideCaret]="true" [options]="logActions"
-                                 [listItemArguments]="[log]" [showSelectedValue]="false"></dropdown-button>
+                  [listItemArguments]="[log]" [showSelectedValue]="false"></dropdown-button>
               </td>
               <td *ngIf="isColumnDisplayed('logtime')" class="log-time">
                 <time>
                   {{log.logtime | amTz: timeZone | amDateFormat: timeFormat}}
                 </time>
               </td>
-              <td *ngIf="isColumnDisplayed('level')" [ngClass]="'log-level ' + log.level.toLowerCase()">
+              <td *ngIf="isColumnDisplayed('level')" [ngClass]="'log-level ' + (log.level ? log.level.toLowerCase() : '')">
                 <log-level [logEntry]="log"></log-level>
               </td>
               <td *ngIf="isColumnDisplayed('type')" [ngClass]="'log-type'">
                 {{log.type | componentLabel | async}}
+              </td>
+              <td *ngIf="isColumnDisplayed('host')" [ngClass]="'log-host'">
+                {{log.host | hostName | async}}
               </td>
               <ng-container *ngFor="let column of displayedColumns">
                 <td *ngIf="customStyledColumns.indexOf(column.value) === -1"
@@ -103,9 +113,9 @@
               <td *ngIf="isColumnDisplayed('path')" [ngClass]="'log-path'">
                 {{log.path}}
               </td>
-              <td *ngIf="isColumnDisplayed('log_message')" [ngClass]="'log-message'" width="*"
+              <td *ngIf="isColumnDisplayed('log_message')" class="log-message" width="*"
                   (contextmenu)="openMessageContextMenu($event)">
-                <log-message [listenChangesOn]="displayedColumns" [message]="log.log_message"></log-message>
+                <log-message [refreshOn$]="tableRefresh$" [message]="log.log_message"></log-message>
               </td>
             </tr>
           </ng-container>
@@ -113,9 +123,9 @@
         <tfoot>
           <tr>
             <td attr.colspan="{{displayedColumns.length + 1}}">
-              <pagination class="col-md-12" *ngIf="logs && logs.length" [totalCount]="totalCount"
-                          [filtersForm]="filtersForm" [filterInstance]="filters.pageSize"
-                          [currentCount]="logs.length"></pagination>
+              <pagination *ngIf="logs && logs.length" [totalCount]="totalCount"
+                [filtersForm]="filtersForm" [filterInstance]="filters.pageSize"
+                [currentCount]="logs.length"></pagination>
             </td>
           </tr>
         </tfoot>
@@ -133,7 +143,7 @@
                 <dropdown-button iconClass="fa fa-ellipsis-v action" [hideCaret]="true" [options]="logActions"
                                  [listItemArguments]="[log]" [showSelectedValue]="false"></dropdown-button>
               </div>
-              <div *ngIf="isColumnDisplayed('level')" [ngClass]="'log-level ' + log.level.toLowerCase()">
+              <div *ngIf="isColumnDisplayed('level')" [ngClass]="'log-level ' + (log.level ? log.level.toLowerCase() : '')">
                 <log-level [logEntry]="log"></log-level>
               </div>
               <div *ngIf="isColumnDisplayed('type')" [ngClass]="'log-type'" [title]="log.type">
@@ -143,6 +153,10 @@
               <div *ngIf="isColumnDisplayed('path')" [ngClass]="'log-path'" [title]="log.path">
                 <label *ngIf="showLabels">{{getLabelForField('path') | translate}}</label>
                 {{log.path}}
+              </div>
+              <div *ngIf="isColumnDisplayed('host')" [ngClass]="'log-host'" [title]="log.host">
+                <label *ngIf="showLabels">{{getLabelForField('host') | translate}}</label>
+                {{log.host | hostName | async}}
               </div>
               <ng-container *ngFor="let column of displayedColumns">
                 <div *ngIf="customStyledColumns.indexOf(column.value) === -1" [ngClass]="'log-' + (column.value | lowercase)"
@@ -158,7 +172,7 @@
               </div>
             </div>
             <div *ngIf="isColumnDisplayed('log_message')" class="log-message" (contextmenu)="openMessageContextMenu($event)">
-              <log-message [listenChangesOn]="displayedColumns" [message]="log.log_message"></log-message>
+              <log-message [refreshOn$]="tableRefresh$" [message]="log.log_message"></log-message>
             </div>
           </div>
         </ng-container>

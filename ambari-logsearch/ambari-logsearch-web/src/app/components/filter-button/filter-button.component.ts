@@ -51,7 +51,7 @@ export class FilterButtonComponent extends MenuButtonComponent implements Contro
   }
 
   writeValue(items: ListItem[]) {
-    this.selection = items;
+    this.selection = items ? (Array.isArray(items) ? items : [items] ) : [];
   }
 
   registerOnChange(callback: any): void {

@@ -70,7 +70,7 @@ export class NotificationService {
     }
     const icon = notificationIcons[method] || notificationIcons['info'];
     const htmlMsg = messageTemplate
-      .replace(/{{title}}/gi, this.translateService.instant(title))
+      .replace(/{{title}}/gi, title ? this.translateService.instant(title) : '')
       .replace(/{{message}}/gi, this.translateService.instant(message))
       .replace(/{{icon}}/gi, icon);
     return this.notificationService.html(htmlMsg, method, {icon, ...config});

@@ -16,20 +16,23 @@
 -->
 <ng-template #listItem let-item let-isMultipleChoice="isMultipleChoice">
   <li [class.divider]="item.isDivider" [class.filtered]="isFiltered(item)"
-      [attr.role]="item.isDivider ? 'separator' : null" [class]="(item.cssClass || '')">
+    [attr.role]="item.isDivider ? 'separator' : null" [ngClass]="(item.cssClass || '')" (click)="onItemClick($event)"
+    [class.disabled]="item.disabled">
     <ng-container *ngIf="!item.isDivider">
-      <label class="list-item-label" *ngIf="isMultipleChoice">
-        <input type="checkbox" [attr.id]="item.id || item.value" [(ngModel)]="item.isChecked"
+      <span class="list-item-label" *ngIf="isMultipleChoice">
+        <input type="checkbox" [attr.id]="(instanceId) + '-' + (item.id || item.value)" [ngModel]="item.isChecked"
                (change)="changeSelectedItem({value: item.value, isChecked: $event.currentTarget.checked}, $event)">
-        <label [attr.for]="item.id || item.value" class="label-container">
+        <label [attr.for]="(instanceId) + '-' + (item.id || item.value)" class="label-container">
           <span *ngIf="item.iconClass" [ngClass]="item.iconClass"></span>
           <span class="item-label-text">{{item.label | translate}}</span>
+          <span *ngIf="item.secondaryLabel" class="item-secondary-label-text">{{item.secondaryLabel | translate}}</span>
           <span #additionalComponent></span>
         </label>
-      </label>
+      </span>
       <span class="list-item-label label-container" *ngIf="!isMultipleChoice" (click)="changeSelectedItem(item, $event)">
         <span *ngIf="item.iconClass" [ngClass]="item.iconClass"></span>
         <span class="item-label-text">{{item.label | translate}}</span>
+        <span *ngIf="item.secondaryLabel" class="item-secondary-label-text">{{item.secondaryLabel | translate}}</span>
         <span #additionalComponent></span>
       </span>
     </ng-container>

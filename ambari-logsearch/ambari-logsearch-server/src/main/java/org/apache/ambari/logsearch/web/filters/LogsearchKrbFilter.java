@@ -27,8 +27,8 @@ import org.apache.hadoop.security.authentication.server.AuthenticationToken;
 import org.apache.hadoop.security.authentication.server.KerberosAuthenticationHandler;
 import org.apache.hadoop.security.authentication.server.PseudoAuthenticationHandler;
 import org.apache.hadoop.security.authentication.util.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -51,7 +51,7 @@ import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_SE
 
 public class LogsearchKrbFilter implements Filter {
 
-  private static Logger logger = LoggerFactory.getLogger(LogsearchKrbFilter.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchKrbFilter.class);
 
   /**
    * Constant for the property that specifies the configuration prefix.
@@ -522,10 +522,6 @@ public class LogsearchKrbFilter implements Filter {
     }
   }
 
-  /**
-   * Delegates call to the servlet filter chain. Sub-classes my override this
-   * method to perform pre and post tasks.
-   */
   protected void doFilter(FilterChain filterChain, HttpServletRequest request,
       HttpServletResponse response) throws IOException, ServletException {
     filterChain.doFilter(request, response);

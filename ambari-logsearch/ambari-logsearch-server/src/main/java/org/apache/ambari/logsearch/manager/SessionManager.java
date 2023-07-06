@@ -20,7 +20,8 @@ package org.apache.ambari.logsearch.manager;
 
 import org.apache.ambari.logsearch.common.LogSearchContext;
 import org.apache.ambari.logsearch.web.model.User;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetails;
@@ -30,7 +31,7 @@ import javax.inject.Named;
 @Named
 public class SessionManager {
 
-  private static final Logger logger = Logger.getLogger(SessionManager.class);
+  private static final Logger logger = LogManager.getLogger(SessionManager.class);
 
   public SessionManager() {
     logger.debug("SessionManager created");

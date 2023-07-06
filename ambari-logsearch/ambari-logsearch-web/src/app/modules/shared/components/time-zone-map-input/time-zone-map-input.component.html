@@ -1,0 +1,46 @@
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<div class="alternative-selectors">
+  <select [value]="value" (change)="handleDropDownSelection($event)">
+    <option *ngFor="let timezone of timezonesData" value="{{timezone.timezone}}">{{timezone.timezone}}</option> 
+  </select>
+  <button 
+    *ngFor="let quickLink of quickLinks" 
+    (click)="handleQuickLinkClick(quickLink, $event)"
+    [class.selected]="quickLink.timezone === value"
+    [class.selected-abbr]="quickLink.zonename === (selectedTimezone | async).zonename"
+    class="btn-default btn-xs"
+  >
+    {{quickLink.label || quickLink.timezone || quickLink.zonename}}
+  </button>
+</div>
+<svg viewBox="0 0 500 250" xmlns="http://www.w3.org/2000/svg">
+  <polygon *ngFor="let timezone of timezonesData"
+    attr.points="{{timezone.points}}"
+    attr.data-timezone="{{timezone.timezone}}"
+    attr.data-country="{{timezone.country}}"
+    attr.data-pin="{{timezone.pin}}"
+    attr.data-offset="{{timezone.offset}}"
+    attr.data-zonename="{{timezone.zonename}}"
+    (click)="handleClickOnCountry(timezone, $event)"
+    (mouseenter)="handleMouseEnterOnCountry(timezone, $event)"
+    (mouseleave)="handleMouseLeaveOnCountry(timezone, $event)"
+    [class.selected]="timezone.timezone === value"
+    [class.selected-abbr]="timezone.zonename === (selectedTimezone | async).zonename"
+    [class.hover-abbr]="(_hoverTimezoneAbbr$ | async) === timezone.zonename"
+  ></polygon>
+</svg>

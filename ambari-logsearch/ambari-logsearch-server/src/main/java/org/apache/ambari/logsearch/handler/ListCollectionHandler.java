@@ -19,19 +19,19 @@
 package org.apache.ambari.logsearch.handler;
 
 import org.apache.ambari.logsearch.conf.SolrPropsConfig;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.response.CollectionAdminResponse;
 import org.apache.solr.common.SolrException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class ListCollectionHandler implements SolrZkRequestHandler<List<String>> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ListCollectionHandler.class);
+  private static final Logger logger = LogManager.getLogger(ListCollectionHandler.class);
 
   @SuppressWarnings("unchecked")
   @Override
@@ -40,12 +40,12 @@ public class ListCollectionHandler implements SolrZkRequestHandler<List<String>>
       CollectionAdminRequest.List colListReq = new CollectionAdminRequest.List();
       CollectionAdminResponse response = colListReq.process(solrClient);
       if (response.getStatus() != 0) {
-        LOG.error("Error getting collection list from solr.  response=" + response);
+        logger.error("Error getting collection list from solr.  response=" + response);
         return null;
       }
       return (List<String>) response.getResponse().get("collections");
     } catch (SolrException e) {
-      LOG.error("getCollections() operation failed", e);
+      logger.error("getCollections() operation failed", e);
       return new ArrayList<>();
     }
   }

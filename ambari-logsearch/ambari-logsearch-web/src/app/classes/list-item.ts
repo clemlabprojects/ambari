@@ -19,10 +19,12 @@
 export interface ListItem {
   id?: string | number;
   label?: string;
+  secondaryLabel?: string;
   value: any;
   iconClass?: string;
   cssClass?: string;
   isChecked?: boolean;
   onSelect?: Function;
   isDivider?: boolean;
+  disabled?: boolean;
 }

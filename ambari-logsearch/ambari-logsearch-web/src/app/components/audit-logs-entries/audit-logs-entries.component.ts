@@ -15,23 +15,25 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
-import {FormGroup} from '@angular/forms';
-import {GraphEmittedEvent} from '@app/classes/graph';
-import {ListItem} from '@app/classes/list-item';
-import {HomogeneousObject} from '@app/classes/object';
-import {AuditLog} from '@app/classes/models/audit-log';
-import {LogTypeTab} from '@app/classes/models/log-type-tab';
-import {LogsContainerService} from '@app/services/logs-container.service';
+import { Component, Input } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { GraphEmittedEvent } from '@app/classes/graph';
+import { ListItem } from '@app/classes/list-item';
+import { HomogeneousObject, AuditLogsFieldSet, LogField, AuditLogsFieldsSetRootKeys } from '@app/classes/object';
+import { AuditLog } from '@app/classes/models/audit-log';
+import { LogTypeTab } from '@app/classes/models/log-type-tab';
+import { LogsContainerService } from '@app/services/logs-container.service';
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { selectAuditLogsFieldState } from '@app/store/selectors/audit-logs-fields.selectors';
+import { Observable } from 'rxjs/Observable';
 
 @Component({
   selector: 'audit-logs-entries',
-  templateUrl: './audit-logs-entries.component.html'
+  templateUrl: './audit-logs-entries.component.html',
+  styleUrls: ['./audit-logs-entries.component.less']
 })
 export class AuditLogsEntriesComponent {
-
-  constructor(private logsContainer: LogsContainerService) {
-  }
 
   @Input()
   logs: AuditLog[] = [];
@@ -43,15 +45,20 @@ export class AuditLogsEntriesComponent {
   filtersForm: FormGroup;
 
   @Input()
-  totalCount: number = 0;
+  totalCount = 0;
+
+  @Input()
+  commonFieldNames: string[] = [];
+
+  @Input()
+  timeZone: string;
 
   tabs: LogTypeTab[] = [
     {
       id: 'summary',
       isActive: true,
       label: 'common.summary'
-    },
-    {
+    }, {
       id: 'logs',
       isActive: false,
       label: 'common.logs'
@@ -62,19 +69,19 @@ export class AuditLogsEntriesComponent {
    * Id of currently active tab (Summary or Logs)
    * @type {string}
    */
-  activeTab: string = 'summary';
+  activeTab = 'summary';
 
   /**
    * 'left' CSS property value for context menu dropdown
    * @type {number}
    */
-  contextMenuLeft: number = 0;
+  contextMenuLeft = 0;
 
   /**
    * 'top' CSS property value for context menu dropdown
    * @type {number}
    */
-  contextMenuTop: number = 0;
+  contextMenuTop = 0;
 
   readonly usersGraphTitleParams = {
     number: this.logsContainer.topUsersCount
@@ -84,13 +91,39 @@ export class AuditLogsEntriesComponent {
     number: this.logsContainer.topResourcesCount
   };
 
-  private readonly resourceFilterParameterName: string = 'resource';
+  private readonly resourceFilterParameterName = 'resource';
 
   /**
    * Text for filtering be resource type (set from Y axis tick of Resources chart)
    * @type {string}
    */
-  private selectedResource: string = '';
+  private selectedResource = '';
+
+  fields$: Observable<AuditLogsFieldSet> = this.store.select(selectAuditLogsFieldState);
+
+  columns$: Observable<ListItem[]> = this.fields$.map((fieldSet: AuditLogsFieldSet): ListItem[] => {
+    let columns: {[key: string]: string} = {// flattening the audit logs field set to field-name: field-label map
+      ...this.getNameLabelMapFromLogFieldList(fieldSet[AuditLogsFieldsSetRootKeys.DEFAULTS]),
+      ...(Object.keys(fieldSet[AuditLogsFieldsSetRootKeys.OVERRIDES]).reduce(
+        (currentColumns: {[key: string]: string}, componentName: string) => ({
+          ...currentColumns,
+          ...this.getNameLabelMapFromLogFieldList(fieldSet[AuditLogsFieldsSetRootKeys.OVERRIDES][componentName])
+        }), {}
+      ))
+    };
+    return Object.keys(columns).reduce((listItems: ListItem[], fieldName: string): ListItem[] => ([ // creating ListItem too feed the dropdown
+      ...listItems,
+      {
+        value: fieldName,
+        label: columns[fieldName]
+      }
+    ]), []);
+  });
+
+  constructor(
+    private logsContainer: LogsContainerService,
+    private store: Store<AppStore>
+  ) {}
 
   get topResourcesGraphData(): HomogeneousObject<HomogeneousObject<number>> {
     return this.logsContainer.topResourcesGraphData;
@@ -106,6 +139,15 @@ export class AuditLogsEntriesComponent {
 
   get contextMenuItems(): ListItem[] {
     return this.logsContainer.queryContextMenuItems;
+  }
+
+  getNameLabelMapFromLogFieldList(logFieldList: LogField[]): {[key: string]: string} {
+    return logFieldList.reduce(
+      (map: {[key: string]: string}, field: LogField) => ({
+        ...map,
+        [field.name]: field.label || field.name
+      }), {}
+    );
   }
 
   setActiveTab(tab: LogTypeTab): void {

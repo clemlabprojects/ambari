@@ -16,18 +16,25 @@
 -->
 
 <div class="login-form well col-md-4 col-md-offset-4 col-sm-offset-4">
-  <div class="alert alert-danger" *ngIf="isLoginAlertDisplayed">{{errorMessage}}</div>
+  <div class="alert alert-danger" *ngIf="authorizationMessage$ | async">{{ (authorizationMessage$ | async) | translate}}</div>
   <form #loginForm="ngForm" (ngSubmit)="login()">
     <div class="form-group">
       <label for="username">{{'authorization.name' | translate}}</label>
-      <input class="form-control" type="text" id="username" name="username" required [(ngModel)]="username">
+      <input class="form-control" type="text" id="username" name="username"
+        [disabled]="isInputDisabled$ | async" required [(ngModel)]="username">
     </div>
     <div class="form-group">
       <label for="password">{{'authorization.password' | translate}}</label>
-      <input class="form-control" type="password" id="password" name="password" required [(ngModel)]="password">
+      <input class="form-control" type="password" id="password" name="password"
+        [disabled]="isInputDisabled$ | async" required [(ngModel)]="password">
     </div>
-    <button class="btn btn-success" [disabled]="!loginForm.form.valid || (isLoginInProgress$ | async)">
-      {{'authorization.signIn' | translate}}
-    </button>
+    <footer>
+      <button class="btn btn-success" [disabled]="!loginForm.form.valid || (isInputDisabled$ | async)">
+        {{'authorization.signIn' | translate}}
+      </button>
+      <span *ngIf="isCheckingAuthStatusInProgress$ | async" class="checking-auth-in-progress">
+        <i class="fa fa-spinner fa-spin"></i> {{'authorization.checkingAuthorization' | translate}}
+      </span>
+    </footer>
   </form>
 </div>

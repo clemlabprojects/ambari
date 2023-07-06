@@ -15,37 +15,47 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA} from '@angular/core';
-import {async, ComponentFixture, TestBed} from '@angular/core/testing';
-import {MockHttpRequestModules, TranslationModules} from '@app/test-config.spec';
-import {StoreModule} from '@ngrx/store';
-import {AppSettingsService, appSettings} from '@app/services/storage/app-settings.service';
-import {AppStateService, appState} from '@app/services/storage/app-state.service';
-import {AuditLogsService, auditLogs} from '@app/services/storage/audit-logs.service';
-import {AuditLogsFieldsService, auditLogsFields} from '@app/services/storage/audit-logs-fields.service';
-import {AuditLogsGraphDataService, auditLogsGraphData} from '@app/services/storage/audit-logs-graph-data.service';
-import {ServiceLogsService, serviceLogs} from '@app/services/storage/service-logs.service';
-import {ServiceLogsFieldsService, serviceLogsFields} from '@app/services/storage/service-logs-fields.service';
+import { NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { async, ComponentFixture, TestBed } from '@angular/core/testing';
+import { MockHttpRequestModules, TranslationModules } from '@app/test-config.spec';
+import { StoreModule } from '@ngrx/store';
+import { AppSettingsService, appSettings } from '@app/services/storage/app-settings.service';
+import { AppStateService, appState } from '@app/services/storage/app-state.service';
+import { AuditLogsService, auditLogs } from '@app/services/storage/audit-logs.service';
+import { AuditLogsFieldsService, auditLogsFields } from '@app/services/storage/audit-logs-fields.service';
+import { AuditLogsGraphDataService, auditLogsGraphData } from '@app/services/storage/audit-logs-graph-data.service';
+import { ServiceLogsService, serviceLogs } from '@app/services/storage/service-logs.service';
+import { ServiceLogsFieldsService, serviceLogsFields } from '@app/services/storage/service-logs-fields.service';
 import {
-  ServiceLogsHistogramDataService, serviceLogsHistogramData
+  ServiceLogsHistogramDataService,
+  serviceLogsHistogramData
 } from '@app/services/storage/service-logs-histogram-data.service';
-import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/storage/service-logs-truncated.service';
-import {TabsService, tabs} from '@app/services/storage/tabs.service';
-import {ClustersService, clusters} from '@app/services/storage/clusters.service';
-import {ComponentsService, components} from '@app/services/storage/components.service';
-import {HostsService, hosts} from '@app/services/storage/hosts.service';
-import {UtilsService} from '@app/services/utils.service';
-import {LogsContainerService} from '@app/services/logs-container.service';
-import {AuthService} from '@app/services/auth.service';
+import {
+  ServiceLogsTruncatedService,
+  serviceLogsTruncated
+} from '@app/services/storage/service-logs-truncated.service';
+import { TabsService, tabs } from '@app/services/storage/tabs.service';
+import { ClustersService, clusters } from '@app/services/storage/clusters.service';
+import { ComponentsService, components } from '@app/services/storage/components.service';
+import { HostsService, hosts } from '@app/services/storage/hosts.service';
+import { UtilsService } from '@app/services/utils.service';
+import { LogsContainerService } from '@app/services/logs-container.service';
+import { AuthService } from '@app/services/auth.service';
 
-import {FilterDropdownComponent} from './filter-dropdown.component';
-import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
-import {LogsStateService} from '@app/services/storage/logs-state.service';
-import {RoutingUtilsService} from '@app/services/routing-utils.service';
-import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.service';
-import {RouterTestingModule} from '@angular/router/testing';
-import {NotificationService} from '@modules/shared/services/notification.service';
-import {NotificationsService} from 'angular2-notifications/src/notifications.service';
+import { FilterDropdownComponent } from './filter-dropdown.component';
+import { ClusterSelectionService } from '@app/services/storage/cluster-selection.service';
+import { LogsStateService } from '@app/services/storage/logs-state.service';
+import { RoutingUtilsService } from '@app/services/routing-utils.service';
+import { LogsFilteringUtilsService } from '@app/services/logs-filtering-utils.service';
+import { RouterTestingModule } from '@angular/router/testing';
+import { NotificationService } from '@modules/shared/services/notification.service';
+import { NotificationsService } from 'angular2-notifications/src/notifications.service';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
 
 describe('FilterDropdownComponent', () => {
   let component: FilterDropdownComponent;
@@ -71,8 +81,7 @@ describe('FilterDropdownComponent', () => {
     const httpClient = {
       get: () => {
         return {
-          subscribe: () => {
-          }
+          subscribe: () => {}
         };
       }
     };
@@ -93,8 +102,12 @@ describe('FilterDropdownComponent', () => {
           tabs,
           clusters,
           components,
-          hosts
+          hosts,
+          auth: auth.reducer,
+          userSettings: userSettings.reducer
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects),
         ...TranslationModules
       ],
       providers: [
@@ -126,9 +139,8 @@ describe('FilterDropdownComponent', () => {
         NotificationsService,
         NotificationService
       ],
-      schemas: [NO_ERRORS_SCHEMA]
-    })
-    .compileComponents();
+      schemas: [CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA]
+    }).compileComponents();
   }));
 
   beforeEach(() => {
@@ -140,5 +152,4 @@ describe('FilterDropdownComponent', () => {
   it('should create component', () => {
     expect(component).toBeTruthy();
   });
-
 });

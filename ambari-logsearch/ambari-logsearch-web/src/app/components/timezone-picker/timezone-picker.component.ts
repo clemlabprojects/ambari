@@ -16,65 +16,81 @@
  * limitations under the License.
  */
 
-import {Component, OnInit} from '@angular/core';
-import * as $ from 'jquery';
-import '@vendor/js/WorldMapGenerator.min';
-import {AppSettingsService} from '@app/services/storage/app-settings.service';
-import {UserSettingsService} from '@app/services/user-settings.service';
+import { Component, Input, OnDestroy } from '@angular/core';
+import { Router, ActivatedRoute } from '@angular/router';
+
+import * as moment from 'moment-timezone';
+import { Observable } from 'rxjs/Observable';
+import { Subject } from 'rxjs/Subject';
+
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { selectTimeZone } from '@app/store/selectors/user-settings.selectors';
+import { SetUserSettingsAction } from '@app/store/actions/user-settings.actions';
 
 @Component({
   selector: 'timezone-picker',
   templateUrl: './timezone-picker.component.html',
   styleUrls: ['./timezone-picker.component.less']
 })
-export class TimeZonePickerComponent implements OnInit {
+export class TimeZonePickerComponent implements OnDestroy {
 
-  constructor(private appSettings: AppSettingsService, private settingsService: UserSettingsService) {
+  @Input()
+  visibilityQueryParamName = 'timeZoneSettings';
+  
+  timeZone$: Observable<string> = this.store.select(selectTimeZone).startWith(moment.tz.guess());
+
+  selectedTimeZone: string;
+
+  visible$: Observable<boolean> = this.route.queryParams
+    .map(params => params)
+    .map((params): boolean => /^(show|yes|true|1)$/.test(params[this.visibilityQueryParamName]))
+    .distinctUntilChanged();
+
+  destroyed$: Subject<boolean> = new Subject();
+
+  constructor(
+    private store: Store<AppStore>,
+    private route: ActivatedRoute,
+    private router: Router
+  ) {
   }
 
-  ngOnInit() {
-    this.appSettings.getParameter('timeZone').subscribe((value: string) => this.timeZone = value);
+  ngOnDestroy() {
+    this.destroyed$.next(true);
+    this.destroyed$.complete();
   }
 
-  readonly mapElementId = 'timezone-map';
+  onCloseRequest = (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    this.close();
+  }
 
-  private readonly mapOptions = {
-    quickLink: [
-      {
-        PST: 'PST',
-        MST: 'MST',
-        CST: 'CST',
-        EST: 'EST',
-        GMT: 'GMT',
-        LONDON: 'Europe/London',
-        IST: 'IST'
+  onSaveRequest = (clickEvent) => {
+    this.timeZone$.take(1).subscribe((originalTimeZone) => {
+      if (this.selectedTimeZone && originalTimeZone !== this.selectedTimeZone) {
+        this.store.dispatch(new SetUserSettingsAction({
+          timeZone: this.selectedTimeZone
+        }));
       }
-    ]
-  };
+      this.onCloseRequest(clickEvent);
+    });
+  } 
 
-  private mapElement: any;
-
-  private timeZoneSelect: JQuery;
-
-  isTimeZonePickerDisplayed: boolean = false;
-
-  timeZone: string;
-
-  setTimeZonePickerDisplay(isDisplayed: boolean): void {
-    this.isTimeZonePickerDisplayed = isDisplayed;
+  onTimeZoneSelect(timeZone) {
+    this.selectedTimeZone = timeZone;
   }
 
-  initMap(): void {
-    this.mapElement = $(`#${this.mapElementId}`);
-    this.mapElement.WorldMapGenerator(this.mapOptions);
-    this.timeZoneSelect = this.mapElement.find('select');
-    this.timeZoneSelect.removeClass('btn btn-default').addClass('form-control').val(this.timeZone);
-  }
-
-  setTimeZone(): void {
-    const timeZone = this.timeZoneSelect.val();
-    this.settingsService.setTimeZone(timeZone);
-    this.setTimeZonePickerDisplay(false);
+  close() {
+    this.route.queryParams.take(1).subscribe((queryParams) => {
+      const params = { ...queryParams };
+      delete params[this.visibilityQueryParamName];
+      this.router.navigate(['.'], {
+        queryParams: params,
+        relativeTo: this.route.root.firstChild
+      });
+    });
   }
 
 }

@@ -16,14 +16,15 @@
  * limitations under the License.
  */
 
-import {NgModule} from '@angular/core';
-import {RouterModule, Routes} from '@angular/router';
-import {LogsContainerComponent} from '@app/components/logs-container/logs-container.component';
-import {LoginFormComponent} from '@app/components/login-form/login-form.component';
-import {AuthGuardService} from '@app/services/auth-guard.service';
-import {TabGuard} from '@app/services/tab.guard';
-import {LogsBreadcrumbsResolverService} from '@app/services/logs-breadcrumbs-resolver.service';
-import {LoginScreenGuardService} from '@app/services/login-screen-guard.service';
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { LogsContainerComponent } from '@app/components/logs-container/logs-container.component';
+import { LoginFormComponent } from '@app/components/login-form/login-form.component';
+import { AuthGuardService } from '@app/services/auth-guard.service';
+import { TabGuard } from '@app/services/tab.guard';
+import { FilterHistoryIndexGuard } from '@app/services/filter-history.guard';
+import { LogsBreadcrumbsResolverService } from '@app/services/logs-breadcrumbs-resolver.service';
+import { LoginScreenGuardService } from '@app/services/login-screen-guard.service';
 
 const appRoutes: Routes = [{
     path: 'login',
@@ -43,7 +44,7 @@ const appRoutes: Routes = [{
     resolve: {
       breadcrumbs: LogsBreadcrumbsResolverService
     },
-    canActivate: [AuthGuardService, TabGuard]
+    canActivate: [AuthGuardService, TabGuard, FilterHistoryIndexGuard]
   }, {
     path: 'logs',
     redirectTo: '/logs/serviceLogs',

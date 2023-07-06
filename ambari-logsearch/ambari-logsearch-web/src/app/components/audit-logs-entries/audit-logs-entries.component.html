@@ -18,7 +18,7 @@
 <tabs [items]="tabs" (tabSwitched)="setActiveTab($event)"></tabs>
 <ng-container [ngSwitch]="activeTab">
   <audit-logs-table *ngSwitchCase="'logs'" [totalCount]="totalCount" [logs]="logs" [columns]="columns"
-                    [filtersForm]="filtersForm"></audit-logs-table>
+    [filtersForm]="filtersForm" [commonFieldNames]="commonFieldNames" [timeZone]="timeZone" ></audit-logs-table>
   <div *ngSwitchCase="'summary'" class="row">
     <collapsible-panel commonTitle="{{'logs.topUsers' | translate: usersGraphTitleParams}}" class="col-md-6">
       <horizontal-histogram [data]="topUsersGraphData" [allowFractionalXTicks]="false"

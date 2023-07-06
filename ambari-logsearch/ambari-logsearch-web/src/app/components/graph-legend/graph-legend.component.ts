@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import { Component, Input } from '@angular/core';
 
 @Component({
   selector: 'graph-legend',
@@ -27,6 +27,6 @@ export class GraphLegendComponent {
   items = [];
 
   @Input()
-  labelClass: string = 'initial-color';
+  labelClass = 'initial-color';
 
 }

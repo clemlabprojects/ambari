@@ -18,25 +18,28 @@
  */
 package org.apache.ambari.logsearch.rest;
 
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
-import org.apache.ambari.logsearch.conf.global.SolrCollectionState;
-import org.springframework.context.annotation.Scope;
+import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.AUDIT_LOGS_STATUS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.METADATA_STATUS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.SERVICE_LOGS_STATUS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.STATUS_OD;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
-import java.util.HashMap;
-import java.util.Map;
 
-import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.AUDIT_LOGS_STATUS_OD;
-import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.SERVICE_LOGS_STATUS_OD;
-import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.STATUS_OD;
-import static org.apache.ambari.logsearch.doc.DocConstants.StatusOperationDescriptions.EVENT_HISTORY_STATUS_OD;
+import org.apache.ambari.logsearch.conf.global.SolrCollectionState;
+import org.springframework.context.annotation.Scope;
 
-@Api(value = "status", description = "Status Operations")
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.Authorization;
+
+@Api(value = "status", description = "Status Operations", authorizations = {@Authorization(value = "basicAuth")})
 @Path("status")
 @Named
 @Scope("request")
@@ -51,7 +54,7 @@ public class StatusResource {
   private SolrCollectionState solrAuditLogsState;
 
   @Inject
-  @Named("solrEventHistoryState")
+  @Named("solrMetadataState")
   private SolrCollectionState solrEventHistoryState;
 
   @GET
@@ -61,7 +64,7 @@ public class StatusResource {
     Map<String, SolrCollectionState> response = new HashMap<>();
     response.put("serviceLogs", solrServiceLogsState);
     response.put("auditLogs", solrAuditLogsState);
-    response.put("eventHistory", solrEventHistoryState);
+    response.put("metadata", solrEventHistoryState);
     return response;
   }
 
@@ -82,9 +85,9 @@ public class StatusResource {
   }
 
   @GET
-  @Path("/history")
+  @Path("/metadata")
   @Produces({"application/json"})
-  @ApiOperation(EVENT_HISTORY_STATUS_OD)
+  @ApiOperation(METADATA_STATUS_OD)
   public SolrCollectionState getSolrEventHistoryStatus() {
     return solrEventHistoryState;
   }

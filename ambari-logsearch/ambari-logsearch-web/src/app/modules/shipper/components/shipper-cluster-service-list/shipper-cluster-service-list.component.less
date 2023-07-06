@@ -16,24 +16,39 @@
  * limitations under the License.
  */
 
-.navigation-bar-container, .navigation-bar-container ul.nav.side-nav-header,
-.navigation-bar-container ul.nav.side-nav-menu {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-}
+ @import "../../../shared/variables";
 
-.navigation-header {
-  color: #fff;
-  font-size: 2rem;
-}
+ :host {
 
-ul.nav.side-nav-menu li.active:not(.has-sub-menu) {
-  background-color: #fff;
-  a {
-    color: darken(#1491C1, 25%);
-    &:hover {
-      background-color: transparent;
+  .navigation-bar-container, .navigation-bar-container ul.nav.side-nav-header,
+  .navigation-bar-container ul.nav.side-nav-menu {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+  }
+
+  .navigation-header {
+    color: #fff;
+    font-size: 2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  ul.nav.side-nav-menu li {
+    color: @fluid-gray-2;
+    background: @navbar-background-color;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    &.active, &:hover {
+      background: @navbar-active-background-color;
+      color: @white;
+      a {
+        color: @white;
+      }
+    }
+    a {
+      color: @fluid-gray-2;
     }
   }
+
 }

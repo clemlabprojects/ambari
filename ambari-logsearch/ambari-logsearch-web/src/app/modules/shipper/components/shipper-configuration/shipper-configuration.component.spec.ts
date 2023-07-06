@@ -16,39 +16,45 @@
  * limitations under the License.
  */
 import { async, ComponentFixture, TestBed } from '@angular/core/testing';
-
-import {ShipperConfigurationComponent} from './shipper-configuration.component';
-import {StoreModule} from '@ngrx/store';
-import {auditLogs, AuditLogsService} from '@app/services/storage/audit-logs.service';
-import {serviceLogsTruncated, ServiceLogsTruncatedService} from '@app/services/storage/service-logs-truncated.service';
-import {components, ComponentsService} from '@app/services/storage/components.service';
-import {UtilsService} from '@app/services/utils.service';
-import {tabs, TabsService} from '@app/services/storage/tabs.service';
-import {serviceLogs, ServiceLogsService} from '@app/services/storage/service-logs.service';
-import {hosts, HostsService} from '@app/services/storage/hosts.service';
-import {MockHttpRequestModules, TranslationModules} from '@app/test-config.spec';
-import {ComponentGeneratorService} from '@app/services/component-generator.service';
-import {auditLogsGraphData, AuditLogsGraphDataService} from '@app/services/storage/audit-logs-graph-data.service';
-import {serviceLogsHistogramData, ServiceLogsHistogramDataService} from '@app/services/storage/service-logs-histogram-data.service';
-import {clusters, ClustersService} from '@app/services/storage/clusters.service';
-import {AuditLogsFieldsService, auditLogsFields} from '@app/services/storage/audit-logs-fields.service';
-import {appSettings, AppSettingsService} from '@app/services/storage/app-settings.service';
-import {appState, AppStateService} from '@app/services/storage/app-state.service';
-import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
-import {serviceLogsFields, ServiceLogsFieldsService} from '@app/services/storage/service-logs-fields.service';
-import {LogsContainerService} from '@app/services/logs-container.service';
-import {ShipperRoutingModule} from '@modules/shipper/shipper-routing.module';
-import {ShipperClusterServiceListComponent} from '@modules/shipper/components/shipper-cluster-service-list/shipper-cluster-service-list.component';
-import {ShipperServiceConfigurationFormComponent} from '@modules/shipper/components/shipper-service-configuration-form/shipper-service-configuration-form.component';
-import {FormsModule, ReactiveFormsModule} from '@angular/forms';
-import {TypeaheadModule} from 'ngx-bootstrap';
-import {DisableControlDirective} from '@modules/shared/directives/disable-control.directive';
-import {ModalComponent} from '@modules/shared/components/modal/modal.component';
-import {RouterTestingModule} from '@angular/router/testing';
-import {ShipperClusterServiceListService} from '@modules/shipper/services/shipper-cluster-service-list.service';
-import {ShipperConfigurationService} from '@modules/shipper/services/shipper-configuration.service';
-import {NotificationService} from '@modules/shared/services/notification.service';
-import {NotificationsService} from 'angular2-notifications/src/notifications.service';
+import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { ShipperConfigurationComponent } from './shipper-configuration.component';
+import { StoreModule } from '@ngrx/store';
+import { auditLogs, AuditLogsService } from '@app/services/storage/audit-logs.service';
+import {
+  serviceLogsTruncated,
+  ServiceLogsTruncatedService
+} from '@app/services/storage/service-logs-truncated.service';
+import { components, ComponentsService } from '@app/services/storage/components.service';
+import { UtilsService } from '@app/services/utils.service';
+import { tabs, TabsService } from '@app/services/storage/tabs.service';
+import { serviceLogs, ServiceLogsService } from '@app/services/storage/service-logs.service';
+import { hosts, HostsService } from '@app/services/storage/hosts.service';
+import { MockHttpRequestModules, TranslationModules } from '@app/test-config.spec';
+import { ComponentGeneratorService } from '@app/services/component-generator.service';
+import { auditLogsGraphData, AuditLogsGraphDataService } from '@app/services/storage/audit-logs-graph-data.service';
+import {
+  serviceLogsHistogramData,
+  ServiceLogsHistogramDataService
+} from '@app/services/storage/service-logs-histogram-data.service';
+import { clusters, ClustersService } from '@app/services/storage/clusters.service';
+import { AuditLogsFieldsService, auditLogsFields } from '@app/services/storage/audit-logs-fields.service';
+import { appSettings, AppSettingsService } from '@app/services/storage/app-settings.service';
+import { appState, AppStateService } from '@app/services/storage/app-state.service';
+import { ClusterSelectionService } from '@app/services/storage/cluster-selection.service';
+import { serviceLogsFields, ServiceLogsFieldsService } from '@app/services/storage/service-logs-fields.service';
+import { LogsContainerService } from '@app/services/logs-container.service';
+import { ShipperRoutingModule } from '@modules/shipper/shipper-routing.module';
+import { ShipperClusterServiceListComponent } from '@modules/shipper/components/shipper-cluster-service-list/shipper-cluster-service-list.component';
+import { ShipperServiceConfigurationFormComponent } from '@modules/shipper/components/shipper-service-configuration-form/shipper-service-configuration-form.component';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { TypeaheadModule } from 'ngx-bootstrap';
+import { DisableControlDirective } from '@modules/shared/directives/disable-control.directive';
+import { ModalComponent } from '@modules/shared/components/modal/modal.component';
+import { RouterTestingModule } from '@angular/router/testing';
+import { ShipperClusterServiceListService } from '@modules/shipper/services/shipper-cluster-service-list.service';
+import { ShipperConfigurationService } from '@modules/shipper/services/shipper-configuration.service';
+import { NotificationService } from '@modules/shared/services/notification.service';
+import { NotificationsService } from 'angular2-notifications/src/notifications.service';
 
 describe('ShipperConfigurationComponent', () => {
   let component: ShipperConfigurationComponent;
@@ -110,9 +116,9 @@ describe('ShipperConfigurationComponent', () => {
         ShipperServiceConfigurationFormComponent,
         DisableControlDirective,
         ModalComponent
-      ]
-    })
-    .compileComponents();
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA]
+    }).compileComponents();
   }));
 
   beforeEach(() => {

@@ -18,6 +18,28 @@
  */
 package org.apache.ambari.logsearch.rest;
 
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.EXPORT_TO_TEXT_FILE_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_AFTER_BEFORE_LOGS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_AGGREGATED_INFO_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_ANY_GRAPH_COUNT_DATA_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_COMPONENTS_COUNT_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_COMPONENTS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_COMPONENT_LIST_WITH_LEVEL_COUNT_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_HISTOGRAM_DATA_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_HOSTS_COUNT_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_HOSTS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_HOST_LIST_BY_COMPONENT_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_HOST_LOGFILES_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_LOG_LEVELS_COUNT_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_SERVICE_CLUSTERS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_SERVICE_LOGS_SCHEMA_FIELD_NAME_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.GET_TREE_EXTENSION_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.PURGE_LOGS_OD;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.REQUEST_CANCEL;
+import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.SEARCH_LOGS_OD;
+
+import java.util.List;
+
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -34,11 +56,9 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
-
 import org.apache.ambari.logsearch.common.LogSearchConstants;
 import org.apache.ambari.logsearch.common.StatusMessage;
+import org.apache.ambari.logsearch.manager.ServiceLogsManager;
 import org.apache.ambari.logsearch.model.metadata.FieldMetadata;
 import org.apache.ambari.logsearch.model.metadata.ServiceComponentMetadataWrapper;
 import org.apache.ambari.logsearch.model.request.impl.body.ClusterBodyRequest;
@@ -72,14 +92,13 @@ import org.apache.ambari.logsearch.model.response.HostLogFilesResponse;
 import org.apache.ambari.logsearch.model.response.NameValueDataListResponse;
 import org.apache.ambari.logsearch.model.response.NodeListResponse;
 import org.apache.ambari.logsearch.model.response.ServiceLogResponse;
-import org.apache.ambari.logsearch.manager.ServiceLogsManager;
 import org.springframework.context.annotation.Scope;
 
-import java.util.List;
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.Authorization;
 
-import static org.apache.ambari.logsearch.doc.DocConstants.ServiceOperationDescriptions.*;
-
-@Api(value = "service/logs", description = "Service log operations")
+@Api(value = "service/logs", description = "Service log operations", authorizations = {@Authorization(value = "basicAuth")})
 @Path("service/logs")
 @Named
 @Scope("request")
@@ -132,7 +151,7 @@ public class ServiceLogsResource {
   @Path("/components")
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_COMPONENTS_OD)
-  public ServiceComponentMetadataWrapper getComponents(@QueryParam(LogSearchConstants.REQUEST_PARAM_CLUSTER_NAMES) @Nullable String clusters) {
+  public ServiceComponentMetadataWrapper getComponentsByGet(@QueryParam(LogSearchConstants.REQUEST_PARAM_CLUSTER_NAMES) @Nullable String clusters) {
     return serviceLogsManager.getComponentMetadata(clusters);
   }
 
@@ -141,7 +160,7 @@ public class ServiceLogsResource {
   @Consumes({MediaType.APPLICATION_JSON})
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_COMPONENTS_OD)
-  public ServiceComponentMetadataWrapper getComponents(@Nullable ClusterBodyRequest clusterBodyRequest) {
+  public ServiceComponentMetadataWrapper getComponentsByPost(@Nullable ClusterBodyRequest clusterBodyRequest) {
     return serviceLogsManager.getComponentMetadata(clusterBodyRequest != null ? clusterBodyRequest.getClusters() : null);
   }
 
@@ -337,7 +356,7 @@ public class ServiceLogsResource {
   @Path("/truncated")
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_AFTER_BEFORE_LOGS_OD)
-  public ServiceLogResponse getAfterBeforeLogs(@BeanParam ServiceLogTruncatedQueryRequest request) {
+  public ServiceLogResponse getAfterBeforeLogsByGet(@BeanParam ServiceLogTruncatedQueryRequest request) {
     return serviceLogsManager.getAfterBeforeLogs(request);
   }
 
@@ -346,7 +365,7 @@ public class ServiceLogsResource {
   @Consumes({MediaType.APPLICATION_JSON})
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_AFTER_BEFORE_LOGS_OD)
-  public ServiceLogResponse getAfterBeforeLogs(ServiceLogTruncatedBodyRequest request) {
+  public ServiceLogResponse getAfterBeforeLogsByPost(ServiceLogTruncatedBodyRequest request) {
     return serviceLogsManager.getAfterBeforeLogs(request);
   }
 
@@ -374,7 +393,7 @@ public class ServiceLogsResource {
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_HOST_LOGFILES_OD)
   @ValidateOnExecution
-  public HostLogFilesResponse getHostLogFiles(@Valid @BeanParam HostLogFilesQueryRequest request) {
+  public HostLogFilesResponse getHostLogFilesByGet(@Valid @BeanParam HostLogFilesQueryRequest request) {
     return serviceLogsManager.getHostLogFileData(request);
   }
 
@@ -384,7 +403,7 @@ public class ServiceLogsResource {
   @Produces({MediaType.APPLICATION_JSON})
   @ApiOperation(GET_HOST_LOGFILES_OD)
   @ValidateOnExecution
-  public HostLogFilesResponse getHostLogFiles(@Valid @BeanParam HostLogFilesBodyRequest request) {
+  public HostLogFilesResponse getHostLogFilesByPost(@Valid @BeanParam HostLogFilesBodyRequest request) {
     return serviceLogsManager.getHostLogFileData(request);
   }
 

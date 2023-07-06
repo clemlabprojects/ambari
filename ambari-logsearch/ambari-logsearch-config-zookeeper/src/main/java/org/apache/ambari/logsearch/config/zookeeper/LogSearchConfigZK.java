@@ -24,14 +24,17 @@ import java.util.Map;
 import org.apache.ambari.logsearch.config.api.LogLevelFilterManager;
 import org.apache.ambari.logsearch.config.api.LogSearchConfig;
 import org.apache.curator.framework.CuratorFramework;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.KeeperException.NodeExistsException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
 
+/**
+ * Common ZooKeeper related shipper configuration operations that can be used by both Log Feeder and Log Search server.
+ */
 public class LogSearchConfigZK implements LogSearchConfig {
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigZK.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigZK.class);
 
   protected Map<String, String> properties;
   protected CuratorFramework client;
@@ -50,9 +53,9 @@ public class LogSearchConfigZK implements LogSearchConfig {
     String nodePath = String.format("/%s/input/%s", clusterName, serviceName);
     try {
       client.create().creatingParentContainersIfNeeded().withACL(LogSearchConfigZKHelper.getAcls(properties)).forPath(nodePath, inputConfig.getBytes());
-      LOG.info("Uploaded input config for the service " + serviceName + " for cluster " + clusterName);
+      logger.info("Uploaded input config for the service " + serviceName + " for cluster " + clusterName);
     } catch (NodeExistsException e) {
-      LOG.debug("Did not upload input config for service " + serviceName + " as it was already uploaded by another Log Feeder");
+      logger.debug("Did not upload input config for service " + serviceName + " as it was already uploaded by another Log Feeder");
     }
   }
 
@@ -68,7 +71,7 @@ public class LogSearchConfigZK implements LogSearchConfig {
 
   @Override
   public void close() {
-    LOG.info("Closing ZooKeeper Connection");
+    logger.info("Closing ZooKeeper Connection");
     client.close();
   }
 }

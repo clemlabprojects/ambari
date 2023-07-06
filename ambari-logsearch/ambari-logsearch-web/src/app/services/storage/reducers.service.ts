@@ -36,6 +36,12 @@ import {clusterSelections} from '@app/services/storage/cluster-selection.service
 import {logsState} from '@app/services/storage/logs-state.service';
 import {dataAvailabilityStates} from '@app/modules/app-load/stores/data-availability-state.store';
 
+import * as auth from '@app/store/reducers/auth.reducers';
+import * as filterHistory from '@app/store/reducers/filter-history.reducers';
+import * as auditLogRepos from '@app/store/reducers/audit-log-repos.reducers';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+import * as apiFeatures from '@app/store/reducers/api-features.reducers';
+
 export const reducers = {
   appSettings,
   appState,
@@ -54,7 +60,12 @@ export const reducers = {
   tabs,
   clusterSelections,
   logsState,
-  dataAvailabilityStates
+  dataAvailabilityStates,
+  auth: auth.reducer,
+  filterHistory: filterHistory.reducer,
+  auditLogRepos: auditLogRepos.reducer,
+  userSettings: userSettings.reducer,
+  apiFeatures: apiFeatures.reducer
 };
 
 export function reducer(state: any, action: any) {

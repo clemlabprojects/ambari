@@ -62,6 +62,7 @@ public class LogSearchConstants {
   public static final String SORT = "sort";
 
   // info features constants
+  public static final String LOG_LEVEL_FILTERS_KEY = "log_level_filters";
   public static final String SHIPPER_CONFIG_API_KEY = "metadata_patterns";
   public static final String AUTH_FEATURE_KEY = "auth";
 
@@ -79,7 +80,7 @@ public class LogSearchConstants {
   public static final String AUDIT_COMPONENT_LABELS_DEFAULTS = "ambari:Ambari,hdfs:Hdfs,RangerAudit:Ranger";
   public static final String AUDIT_FIELD_LABELS_DEFAULTS = "";
   public static final String AUDIT_FIELD_COMMON_LABELS_DEFAULTS = "enforcer:Access Enforcer,access:Access Type,cliIP:Client Ip,cliType:Client Type," +
-    "dst:DST,evtTime:Event Time,ip:IP,logtime:Log Time,sess:Session,ugi:UGI,reqUser:User";
+    "dst:DST,evtTime:Event Time,ip:IP,logtime:Log Time,sess:Session,ugi:UGI,reqUser:User,repo:Audit Source";
   public static final String AUDIT_FIELD_VISIBLE_DEFAULTS = "";
   public static final String AUDIT_FIELD_VISIBLE_COMMON_DEFAULTS = "access,cliIP,evtTime,repo,resource,result,reqUser";
   public static final String AUDIT_FIELD_EXCLUDES_DEFAULTS = "";
@@ -132,8 +133,9 @@ public class LogSearchConstants {
   public static final String REQUEST_PARAM_SOURCE_LOG_ID = "sourceLogId";
   public static final String REQUEST_PARAM_KEYWORD_TYPE = "keywordType";
   public static final String REQUEST_PARAM_TOKEN = "token";
-  public static final String REQUEST_PARAM_FILTER_NAME = "filterName";
-  public static final String REQUEST_PARAM_ROW_TYPE = "rowType";
+  public static final String REQUEST_PARAM_METADATA_NAME = "name";
+  public static final String REQUEST_PARAM_METADATA_TYPE = "type";
+  public static final String REQUEST_PARAM_METADATA_USER_NAME = "userName";
   public static final String REQUEST_PARAM_UTC_OFFSET = "utcOffset";
   public static final String REQUEST_PARAM_HOSTS = "hostList";
   public static final String REQUEST_PARAM_USERS = "userList";

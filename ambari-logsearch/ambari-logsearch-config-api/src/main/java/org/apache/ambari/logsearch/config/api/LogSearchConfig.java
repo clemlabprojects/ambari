@@ -33,17 +33,19 @@ public interface LogSearchConfig extends Closeable {
    * @param clusterName The name of the cluster where the service is.
    * @param serviceName The name of the service of which's input configuration is uploaded.
    * @param inputConfig The input configuration of the service.
-   * @throws Exception
+   * @throws Exception error during input creation
    */
   void createInputConfig(String clusterName, String serviceName, String inputConfig) throws Exception;
 
   /**
    * Get log level filter handler / manager
+   * @return object that manages log level filter
    */
   LogLevelFilterManager getLogLevelFilterManager();
 
   /**
    * Set log level filter handler / manager
+   * @param logLevelFilterManager log level filter manager object
    */
   void setLogLevelFilterManager(LogLevelFilterManager logLevelFilterManager);
 }

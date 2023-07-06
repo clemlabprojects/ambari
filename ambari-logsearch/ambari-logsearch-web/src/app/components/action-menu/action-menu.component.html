@@ -14,28 +14,18 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-
-<!-- TODO use listClass="history-dropdown" for custom styling -->
-<menu-button label="{{'topMenu.undo' | translate}}" [subItems]="undoItems" iconClass="fa fa-arrow-left"
-             class="history-menu" [class.disabled]="!undoItems.length" [isDisabled]="!undoItems.length"
-             listClass="history-dropdown" (buttonClick)="undoLatest()" (selectItem)="undo($event)">
-</menu-button>
-<menu-button label="{{'topMenu.redo' | translate}}" [subItems]="redoItems" iconClass="fa fa-arrow-right"
-             class="history-menu" [class.disabled]="!redoItems.length" [isDisabled]="!redoItems.length"
-             listClass="history-dropdown" (buttonClick)="redoLatest()" (selectItem)="redo($event)">
-</menu-button>
-<menu-button label="{{'topMenu.history' | translate}}" [subItems]="historyItems" iconClass="fa fa-history"
-             class="history-menu" [class.disabled]="!historyItems.length" [isDisabled]="!historyItems.length"
-             listClass="history-dropdown" [isRightAlign]="true"></menu-button>
+<filter-history-manager></filter-history-manager>
 <menu-button label="{{'topMenu.filter' | translate}}" iconClass="fa fa-filter"
-             (buttonClick)="openLogIndexFilter()"></menu-button>
+  (buttonClick)="openLogIndexFilter()" 
+  [disabled]="!(logLevelFiltersFeatureState$ | async)" [class.disabled]="!(logLevelFiltersFeatureState$ | async)"
+  [tooltip]="(logLevelFiltersFeatureTooltip$ | async) | translate"></menu-button>
 <menu-button *ngIf="!captureSeconds" label="{{'filter.capture' | translate}}" iconClass="fa fa-caret-right"
-             (buttonClick)="startCapture()"></menu-button>
+  (buttonClick)="startCapture()"></menu-button>
 <menu-button *ngIf="captureSeconds" label="{{captureSeconds | timerSeconds}}" iconClass="fa fa-stop stop-icon"
-             (buttonClick)="stopCapture()"></menu-button>
+  (buttonClick)="stopCapture()"></menu-button>
 <menu-button label="{{'topMenu.refresh' | translate}}" iconClass="fa fa-refresh"
-             (buttonClick)="refresh()"></menu-button>
-<modal-dialog
+  (buttonClick)="refresh()"></menu-button>
+<modal-dialog *ngIf="isLogIndexFilterDisplayed$ | async"
   class="log-index-filter"
   [visible]="isLogIndexFilterDisplayed$ | async"
   [showCloseBtn]="false"
@@ -43,7 +33,7 @@
   title="{{'logIndexFilter.title' | translate}}">
   <header>
       <dropdown-button [options]="clustersListItems$ | async" (selectItem)="onSelectCluster($event)"
-      label="{{'logIndexFilter.selectCluster' | translate}}" buttonClass="btn-link"></dropdown-button>
+      label="{{'logIndexFilter.selectCluster' | translate}}" buttonClass="btn-link" (selectItem)="onSelectCluster($event)"></dropdown-button>
   </header>
   <section>
     <p>{{'logIndexFilter.caption' | translate}}</p>
@@ -53,7 +43,7 @@
   </section>
   <footer>
     <button class="btn btn-secondary" (click)="closeLogIndexFilter()">{{'modal.cancel' | translate}}</button>
-    <button class="btn btn-primary" (click)="saveLogIndexFilter()" [disabled]="isModalSubmitDisabled">
+    <button class="btn btn-primary" (click)="saveLogIndexFilter()" [disabled]="isModalSubmitDisabled$ | async">
       {{'modal.save' | translate}}
     </button>
   </footer>

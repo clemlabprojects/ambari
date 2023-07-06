@@ -16,23 +16,51 @@
  * limitations under the License.
  */
 
-import {Component} from '@angular/core';
-import {FormGroup} from '@angular/forms';
-import {FilterCondition, TimeUnitListItem} from '@app/classes/filtering';
-import {ListItem} from '@app/classes/list-item';
-import {HomogeneousObject} from '@app/classes/object';
-import {AuthService} from '@app/services/auth.service';
-import {LogsContainerService} from '@app/services/logs-container.service';
-import {Router} from '@angular/router';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { FilterCondition, TimeUnitListItem } from '@app/classes/filtering';
+import { ListItem } from '@app/classes/list-item';
+import { HomogeneousObject } from '@app/classes/object';
+import { LogsContainerService } from '@app/services/logs-container.service';
+import { Router, ActivatedRoute } from '@angular/router';
+
+import { Store } from '@ngrx/store';
+import { Subject } from 'rxjs/Subject';
+import { Observable } from 'rxjs/Observable';
+
+import { AppStore } from '@app/classes/models/store';
+import { LogOutAction } from '@app/store/actions/auth.actions';
+
+import { selectMetadataPatternsFeatureState } from '@app/store/selectors/api-features.selectors';
 
 @Component({
   selector: 'top-menu',
   templateUrl: './top-menu.component.html',
   styleUrls: ['./top-menu.component.less']
 })
-export class TopMenuComponent {
+export class TopMenuComponent implements OnInit, OnDestroy {
 
-  constructor(private authService: AuthService, private logsContainer: LogsContainerService, private router: Router) {}
+  private items;
+  
+  metadataPatternsFeatureState$ = this.store.select(selectMetadataPatternsFeatureState).startWith(true);
+  
+  destroyed$: Subject<boolean> = new Subject();
+
+  constructor(
+    private logsContainer: LogsContainerService,
+    private router: Router,
+    private route: ActivatedRoute,
+    private store: Store<AppStore>
+  ) {}
+
+  ngOnInit() {
+    this.metadataPatternsFeatureState$.takeUntil(this.destroyed$).subscribe(this.onMetadataFeatureStateChange);
+  }
+
+  ngOnDestroy() {
+    this.destroyed$.next(true);
+    this.destroyed$.complete();
+  }
 
   get filtersForm(): FormGroup {
     return this.logsContainer.filtersForm;
@@ -42,35 +70,32 @@ export class TopMenuComponent {
     return this.logsContainer.filters;
   };
 
-  openSettings = (): void => {};
-
-  /**
-   * Request a logout action from AuthService
-   */
-  logout = (): void => {
-    this.authService.logout();
+  openUserSettingsModal = (): void => {
+    this.router.navigate(['.'], {
+      queryParamsHandling: 'merge',
+      queryParams: {showUserSettings: 'show'},
+      relativeTo: this.route.root.firstChild
+    });
   }
 
-  navigateToShipperConfig = (): void => {
-    this.router.navigate(['/shipper']);
-  }
-
-  readonly items = [
-    {
+  onMetadataFeatureStateChange = (state: boolean) => {
+    this.items = [{
       iconClass: 'fa fa-user grey',
       hideCaret: true,
       isRightAlign: true,
       subItems: [
         {
           label: 'common.settings',
-          onSelect: this.openSettings,
+          onSelect: this.openUserSettingsModal,
           iconClass: 'fa fa-cog'
         },
 
         {
           label: 'topMenu.shipperConfiguration',
+          secondaryLabel: state ? '' : 'apiFeatures.disabled',
           onSelect: this.navigateToShipperConfig,
-          iconClass: 'fa fa-file-code-o'
+          iconClass: 'fa fa-file-code-o',
+          disabled: !state
         },
         {
           isDivider: true
@@ -81,8 +106,21 @@ export class TopMenuComponent {
           iconClass: 'fa fa-sign-out'
         }
       ]
-    }
-  ];
+    }];
+  }
+
+  openSettings = (): void => {};
+
+  /**
+   * Dispatch the LogOutAction.
+   */
+  logout = (): void => {
+    this.store.dispatch(new LogOutAction());
+  }
+
+  navigateToShipperConfig = (): void => {
+    this.router.navigate(['/shipper']);
+  }
 
   get clusters(): (ListItem | TimeUnitListItem[])[] {
     return this.filters.clusters.options;

@@ -28,13 +28,13 @@ import org.apache.ambari.logsearch.handler.ListCollectionHandler;
 import org.apache.ambari.logsearch.handler.ReloadCollectionHandler;
 import org.apache.ambari.logsearch.handler.UploadConfigurationHandler;
 import org.apache.commons.lang.StringUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooKeeper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.solr.core.SolrTemplate;
 
 import java.io.File;
@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SolrCollectionConfigurer implements Configurer {
 
-  private Logger LOG = LoggerFactory.getLogger(SolrCollectionConfigurer.class);
+  private Logger logger = LogManager.getLogger(SolrCollectionConfigurer.class);
 
   private static final int SETUP_RETRY_SECOND = 10;
   private static final int SESSION_TIMEOUT = 15000;
@@ -82,7 +82,7 @@ public class SolrCollectionConfigurer implements Configurer {
     Thread setupThread = new Thread("setup_collection_" + solrPropsConfig.getCollection()) {
       @Override
       public void run() {
-        LOG.info("Started monitoring thread to check availability of Solr server. collection=" + solrPropsConfig.getCollection());
+        logger.info("Started monitoring thread to check availability of Solr server. collection=" + solrPropsConfig.getCollection());
         while (!stopSetupCondition(state)) {
           int retryCount = 0;
           try {
@@ -98,7 +98,7 @@ public class SolrCollectionConfigurer implements Configurer {
             createCollectionsIfNeeded(cloudSolrClient, state, solrPropsConfig, reloadCollectionNeeded);
           } catch (Exception e) {
             retryCount++;
-            LOG.error("Error setting collection. collection=" + solrPropsConfig.getCollection() + ", retryCount=" + retryCount, e);
+            logger.error("Error setting collection. collection=" + solrPropsConfig.getCollection() + ", retryCount=" + retryCount, e);
           }
         }
       }
@@ -145,7 +145,7 @@ public class SolrCollectionConfigurer implements Configurer {
     if (securityEnabled) {
       String javaSecurityConfig = System.getProperty(JAVA_SECURITY_AUTH_LOGIN_CONFIG);
       String solrHttpBuilderFactory = System.getProperty(SOLR_HTTPCLIENT_BUILDER_FACTORY);
-      LOG.info("setupSecurity() called for kerberos configuration, jaas file: {}, solr http client factory: {}",
+      logger.info("setupSecurity() called for kerberos configuration, jaas file: {}, solr http client factory: {}",
         javaSecurityConfig, solrHttpBuilderFactory);
     }
   }
@@ -153,14 +153,14 @@ public class SolrCollectionConfigurer implements Configurer {
   private void openZkConnectionAndUpdateStatus(final SolrCollectionState state, final SolrPropsConfig solrPropsConfig) throws Exception {
     ZooKeeper zkClient = null;
     try {
-      LOG.info("Checking that Znode ('{}') is ready or not... ", solrPropsConfig.getZkConnectString());
+      logger.info("Checking that Znode ('{}') is ready or not... ", solrPropsConfig.getZkConnectString());
       zkClient = openZookeeperConnection(solrPropsConfig);
       if (!state.isZnodeReady()) {
-        LOG.info("State change: Zookeeper ZNode is available for {}", solrPropsConfig.getZkConnectString());
+        logger.info("State change: Zookeeper ZNode is available for {}", solrPropsConfig.getZkConnectString());
         state.setZnodeReady(true);
       }
     } catch (Exception e) {
-      LOG.error("Error occurred during the creation of zk client (connection string: {})", solrPropsConfig.getZkConnectString());
+      logger.error("Error occurred during the creation of zk client (connection string: {})", solrPropsConfig.getZkConnectString());
       throw e;
     } finally {
       try {
@@ -168,7 +168,7 @@ public class SolrCollectionConfigurer implements Configurer {
           zkClient.close();
         }
       } catch (Exception e) {
-        LOG.error("Could not close zk connection properly.", e);
+        logger.error("Could not close zk connection properly.", e);
       }
     }
   }
@@ -198,26 +198,26 @@ public class SolrCollectionConfigurer implements Configurer {
         try {
           List<String> collectionList = new ListCollectionHandler().handle(cloudSolrClient, null);
           if (collectionList != null) {
-            LOG.info("checkSolrStatus(): Solr getCollections() is success. collectionList=" + collectionList);
+            logger.info("checkSolrStatus(): Solr getCollections() is success. collectionList=" + collectionList);
             status = true;
             break;
           }
         } catch (Exception ex) {
-          LOG.error("Error while doing Solr check", ex);
+          logger.error("Error while doing Solr check", ex);
         }
         if (System.currentTimeMillis() - beginTimeMS > waitDurationMS) {
-          LOG.error("Solr is not reachable even after " + (System.currentTimeMillis() - beginTimeMS) + " ms. " +
+          logger.error("Solr is not reachable even after " + (System.currentTimeMillis() - beginTimeMS) + " ms. " +
             "If you are using alias, then you might have to restart LogSearch after Solr is up and running.");
           break;
         } else {
-          LOG.warn("Solr is not not reachable yet. getCollections() attempt count=" + pingCount + ". " +
+          logger.warn("Solr is not not reachable yet. getCollections() attempt count=" + pingCount + ". " +
             "Will sleep for " + waitIntervalMS + " ms and try again.");
         }
         Thread.sleep(waitIntervalMS);
 
       }
     } catch (Throwable t) {
-      LOG.error("Seems Solr is not up.");
+      logger.error("Seems Solr is not up.");
     }
     return status;
   }
@@ -238,7 +238,7 @@ public class SolrCollectionConfigurer implements Configurer {
         state.setSolrCollectionReady(true);
       }
     } catch (Exception ex) {
-      LOG.error("Error during creating/updating collection. collectionName=" + solrPropsConfig.getCollection(), ex);
+      logger.error("Error during creating/updating collection. collectionName=" + solrPropsConfig.getCollection(), ex);
     }
   }
 }

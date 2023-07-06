@@ -22,16 +22,24 @@ import {Observable} from 'rxjs/Observable';
 
 import {AuthService} from '@app/services/auth.service';
 
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { isAuthorizedSelector } from '@app/store/selectors/auth.selectors';
+
 /**
  * This guard goal is to prevent to display screens where authorization needs.
  */
 @Injectable()
 export class AuthGuardService implements CanActivate {
 
-  constructor(private authService: AuthService, private router: Router) {}
+  constructor(
+    private authService: AuthService,
+    private router: Router,
+    private store: Store<AppStore>
+  ) {}
 
   canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): Observable<boolean> {
-    return this.authService.isAuthorized().map((isAuthorized: boolean) => {
+    return this.store.select(isAuthorizedSelector).map((isAuthorized: boolean) => {
       this.authService.redirectUrl = state.url;
       if (!isAuthorized) {
         this.router.navigate(['/login']);

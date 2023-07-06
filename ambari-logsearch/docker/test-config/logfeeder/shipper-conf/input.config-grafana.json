@@ -1,0 +1,67 @@
+{
+  "input": [
+    {
+      "type": "ams_grafana",
+      "rowtype": "service",
+      "path": "/root/test-logs/grafana/grafana.log"
+    }
+  ],
+  "filter": [
+    {
+      "filter": "grok",
+      "conditions": {
+        "fields": {
+          "type": [
+            "ams_grafana"
+          ]
+        }
+      },
+      "skipOnError": false,
+      "deepExtract": false,
+      "post_map_values": {
+        "level": [
+          {
+            "map_field_value": {
+              "pre_value": "I",
+              "post_value": "INFO"
+            }
+          },
+          {
+            "map_field_value": {
+              "pre_value": "W",
+              "post_value": "WARN"
+            }
+          },
+          {
+            "map_field_value": {
+              "pre_value": "D",
+              "post_value": "DEBUG"
+            }
+          },
+          {
+            "map_field_value": {
+              "pre_value": "E",
+              "post_value": "ERROR"
+            }
+          },
+          {
+            "map_field_value": {
+              "pre_value": "F",
+              "post_value": "FATAL"
+            }
+          }
+        ],
+        "logtime": [
+          {
+            "map_date": {
+              "target_date_pattern": "yyyy/MM/dd HH:mm:ss"
+            }
+          }
+        ]
+      },
+      "log4j_format": "%d{ISO8601} %-5p [%t] %c{2}: %m%n",
+      "multiline_pattern": "^(%{DATESTAMP:logtime})",
+      "message_pattern": "(?m)^%{DATESTAMP:logtime}%{SPACE}(?:%{DATA:method})%{SPACE}\\[%{WORD:level}\\]%{SPACE}%{GREEDYDATA:log_message}"
+    }
+  ]
+}

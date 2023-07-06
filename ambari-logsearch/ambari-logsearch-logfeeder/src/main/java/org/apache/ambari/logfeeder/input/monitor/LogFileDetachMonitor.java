@@ -20,8 +20,8 @@ package org.apache.ambari.logfeeder.input.monitor;
 
 import org.apache.ambari.logfeeder.input.InputFile;
 import org.apache.ambari.logfeeder.util.FileUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.util.HashMap;
@@ -33,7 +33,7 @@ import java.util.Map;
  */
 public class LogFileDetachMonitor extends AbstractLogFileMonitor {
 
-  private Logger LOG = LoggerFactory.getLogger(LogFileDetachMonitor.class);
+  private static final Logger logger = LogManager.getLogger(LogFileDetachMonitor.class);
 
   public LogFileDetachMonitor(InputFile inputFile, int interval, int detachTime) {
     super(inputFile, interval, detachTime);
@@ -60,13 +60,13 @@ public class LogFileDetachMonitor extends AbstractLogFileMonitor {
             File monitoredFile = entry.getValue().get(0);
             boolean isFileTooOld = FileUtil.isFileTooOld(monitoredFile, getDetachTime());
             if (isFileTooOld) {
-              LOG.info("File ('{}') in folder ('{}') is too old (reached {} minutes), detach input thread.", entry.getKey(), getDetachTime());
+              logger.info("File ('{}') in folder ('{}') is too old (reached {} minutes), detach input thread.", entry.getKey(), getDetachTime());
               getInputFile().stopChildInputFileThread(entry.getKey());
             }
           }
         }
       } else {
-        LOG.info("Folder not exists. ({}) Stop thread.", entry.getKey());
+        logger.info("Folder not exists. ({}) Stop thread.", entry.getKey());
         for (Map.Entry<String, InputFile> inputFileEntry : copiedInputFileMap.entrySet()) {
           if (inputFileEntry.getKey().startsWith(entry.getKey())) {
             getInputFile().stopChildInputFileThread(entry.getKey());

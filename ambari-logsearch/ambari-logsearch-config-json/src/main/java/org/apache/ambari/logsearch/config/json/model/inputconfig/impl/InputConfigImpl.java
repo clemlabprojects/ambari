@@ -39,7 +39,8 @@ public class InputConfigImpl implements InputConfig {
   @ShipperConfigElementDescription(
     path = "/input",
     type = "list of json objects",
-    description = "A list of input descriptions"
+    description = "A list of input descriptions",
+    examples = {"{\"input\" : [ {\"type\": \"myinput_service_type\"}] }"}
   )
   @Expose
   private List<InputDescriptorImpl> input;
@@ -47,7 +48,8 @@ public class InputConfigImpl implements InputConfig {
   @ShipperConfigElementDescription(
     path = "/filter",
     type = "list of json objects",
-    description = "A list of filter descriptions"
+    description = "A list of filter descriptions",
+    examples = {"{\"filter\" : [ {\"filter\": \"json\", \"conditions\": {\"fields\": { \"type\": [\"logsearch_app\", \"logsearch_perf\"]} } } ]}"}
   )
   @Expose
   private List<FilterDescriptorImpl> filter;

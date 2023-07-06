@@ -29,12 +29,12 @@ import org.apache.ambari.logsearch.conf.global.LogSearchConfigState;
 import org.apache.ambari.logsearch.config.api.LogSearchConfigFactory;
 import org.apache.ambari.logsearch.config.api.LogSearchConfigServer;
 import org.apache.ambari.logsearch.config.zookeeper.LogSearchConfigServerZK;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 @Named
 public class LogSearchConfigConfigurer implements Configurer {
-  private static final Logger logger = LoggerFactory.getLogger(LogSearchConfigConfigurer.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigConfigurer.class);
   
   private static final int RETRY_INTERVAL_SECONDS = 10;
   

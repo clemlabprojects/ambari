@@ -40,14 +40,16 @@ describe('LogsTableComponent', () => {
     ];
 
     beforeEach(() => {
-      component.displayedColumns = [
+      component.columns = [
         {
           label: 'l0',
-          value: 'v0'
+          value: 'v0',
+          isChecked: true
         },
         {
           label: 'l1',
-          value: 'v1'
+          value: 'v1',
+          isChecked: true
         }
       ];
     });

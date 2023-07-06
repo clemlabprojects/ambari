@@ -1,0 +1,18 @@
+enabled: true
+image: apache/ambari-logsearch-portal:latest
+configMountPath: /logsearch-conf
+
+global:
+  clusterDomain: "cluster.local"
+  namespace:
+    logging: "default"
+    kubernetesApi: "default"
+  solr:
+    replicas: 3
+
+username: admin
+password: admin
+configApiEnabled: true
+
+rbac:
+  enabled: false

@@ -19,6 +19,7 @@
 package org.apache.ambari.logsearch.web.security;
 
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -68,7 +69,8 @@ public class LogsearchAuthenticationProviderTest {
     simpleProviderField.setAccessible(true);
     simpleProviderField.set(provider, mockSimpleProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testFileAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -81,7 +83,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testExternalAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -95,7 +98,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testSimpleAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -110,7 +114,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testNoOneAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -125,7 +130,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testOneExceptionAndAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -138,7 +144,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testOneExceptionNoOneAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");
@@ -157,7 +164,8 @@ public class LogsearchAuthenticationProviderTest {
     
     verify(mockFileProvider, mockSimpleProvider, mockExternalServerProvider);
   }
-  
+
+  @Ignore("Until EasyMock 3.7 upgrade - waiting for release")
   @Test
   public void testTwoExceptionNoOneAuthenticates() {
     Authentication authentication = new TestingAuthenticationToken("principal", "credentials");

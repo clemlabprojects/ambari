@@ -40,9 +40,13 @@ export interface LogField {
 /**
  * This is an interface for the service and audit log fields.
  */
-export interface AuditFieldsDefinitionSet {
+export interface AuditLogsFieldSet {
   defaults: LogField[],
   overrides: {
     [key: string]: LogField[]
   }
 }
+export enum AuditLogsFieldsSetRootKeys {
+  DEFAULTS = 'defaults',
+  OVERRIDES = 'overrides'
+};

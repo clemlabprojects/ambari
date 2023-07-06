@@ -96,6 +96,7 @@ function print_usage() {
      start                         Start Log Feeder
      stop                          Stop Log Feeder
      status                        Check Log Feeder status (pid file)
+     checkpoints                   Checkpoint operations
      test                          Test Log Feeder shipper configs
      help                          Print usage
 
@@ -110,6 +111,14 @@ function print_usage() {
      -tsc, --test-shipper-config   Shipper configuration file for testing if log entry is parseable (required)
      -tgc, --test-global-config    Global configuration files (comma separated list) for testing if log entry is parseable
      -tli, --test-log-id           The id of the log to test
+
+   checkpoints command arguments:
+     -l, --list                    Print checkpoints
+     -cf, --checkpoints-folder     Checkpoints folder location
+     -c, --clean                   Remove a checkpoint file (by key/log type or use on all)
+     -k, --file-key                Filter on file key (for list and clean)
+     -lt, --log-type               Filter on log type (for list and clean)
+     -a, --all                     Flag all checkpoints to be deleted by clean command
 
 EOF
 }
@@ -273,6 +282,11 @@ function test() {
   $JVM -cp "$LOGFEEDER_CONF_DIR:$LOGFEEDER_LIBS_DIR/*" $LOGFEEDER_JAVA_OPTS org.apache.ambari.logfeeder.LogFeederCommandLine --test ${@}
 }
 
+function checkpoints() {
+  echo "Running command: $JVM -cp "$LOGFEEDER_CONF_DIR:$LOGFEEDER_LIBS_DIR/*" org.apache.ambari.logfeeder.LogFeederCommandLine --checkpoints ${@}"
+  $JVM -cp "$LOGFEEDER_CONF_DIR:$LOGFEEDER_LIBS_DIR/*" $LOGFEEDER_JAVA_OPTS org.apache.ambari.logfeeder.LogFeederCommandLine --checkpoints ${@}
+}
+
 if [ $# -gt 0 ]; then
     SCRIPT_CMD="$1"
     shift
@@ -293,6 +307,9 @@ case $SCRIPT_CMD in
   ;;
   test)
     test ${1+"$@"}
+  ;;
+  checkpoints)
+    checkpoints ${1+"$@"}
   ;;
   help)
     print_usage

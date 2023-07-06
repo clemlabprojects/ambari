@@ -18,4 +18,10 @@ LOGSEARCH_SCRIPT_LINK_NAME="/usr/bin/logsearch"
 LOGSEARCH_CONF_DIR_LINK="/etc/ambari-logsearch-portal/conf"
 
 rm -f $LOGSEARCH_SCRIPT_LINK_NAME
-rm -f $LOGSEARCH_CONF_DIR_LINK
+if [ -d "$LOGSEARCH_CONF_DIR_LINK" ]; then
+  rm -rf $LOGSEARCH_CONF_DIR_LINK
+fi
+
+if [ -f  "$LOGSEARCH_CONF_DIR_LINK" ]; then
+  rm -f $LOGSEARCH_CONF_DIR_LINK
+fi

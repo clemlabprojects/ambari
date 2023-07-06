@@ -32,27 +32,27 @@ import java.lang.annotation.Target;
 public @interface ShipperConfigElementDescription {
 
   /**
-   * The path of the json element.
+   * @return The path of the json element.
    */
   String path();
 
   /**
-   * The type of the json element.
+   * @return The type of the json element.
    */
   String type();
 
   /**
-   * Describe what the json element is used for.
+   * @return Describe what the json element is used for.
    */
   String description();
 
   /**
-   * An example value for the element, if applicable.
+   * @return Example values for the element, if applicable.
    */
   String[] examples() default {};
 
   /**
-   * Default value of the json element, if applicable.
+   * @return Default value of the json element, if applicable.
    */
   String defaultValue() default "";
 

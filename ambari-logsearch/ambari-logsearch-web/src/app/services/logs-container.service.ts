@@ -16,11 +16,11 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
-import {FormGroup, FormControl} from '@angular/forms';
-import {Response} from '@angular/http';
-import {Subject} from 'rxjs/Subject';
-import {Observable} from 'rxjs/Observable';
+import { Injectable } from '@angular/core';
+import { FormGroup, FormControl } from '@angular/forms';
+import { Response } from '@angular/http';
+import { Subject } from 'rxjs/Subject';
+import { Observable } from 'rxjs/Observable';
 import 'rxjs/add/observable/timer';
 import 'rxjs/add/observable/combineLatest';
 import 'rxjs/add/operator/distinctUntilChanged';
@@ -28,43 +28,51 @@ import 'rxjs/add/operator/first';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/takeUntil';
 import * as moment from 'moment-timezone';
-import {HttpClientService} from '@app/services/http-client.service';
-import {UtilsService} from '@app/services/utils.service';
-import {AuditLogsService} from '@app/services/storage/audit-logs.service';
-import {AuditLogsFieldsService, ResponseRootProperties} from '@app/services/storage/audit-logs-fields.service';
-import {AuditLogsGraphDataService} from '@app/services/storage/audit-logs-graph-data.service';
-import {ServiceLogsService} from '@app/services/storage/service-logs.service';
-import {ServiceLogsFieldsService} from '@app/services/storage/service-logs-fields.service';
-import {ServiceLogsHistogramDataService} from '@app/services/storage/service-logs-histogram-data.service';
-import {ServiceLogsTruncatedService} from '@app/services/storage/service-logs-truncated.service';
-import {AppStateService} from '@app/services/storage/app-state.service';
-import {AppSettingsService} from '@app/services/storage/app-settings.service';
-import {TabsService} from '@app/services/storage/tabs.service';
-import {ClustersService} from '@app/services/storage/clusters.service';
-import {ComponentsService} from '@app/services/storage/components.service';
-import {HostsService} from '@app/services/storage/hosts.service';
-import {ActiveServiceLogEntry} from '@app/classes/active-service-log-entry';
+import { HttpClientService } from '@app/services/http-client.service';
+import { UtilsService } from '@app/services/utils.service';
+import { AuditLogsService } from '@app/services/storage/audit-logs.service';
+import { AuditLogsFieldsService, ResponseRootProperties } from '@app/services/storage/audit-logs-fields.service';
+import { AuditLogsGraphDataService } from '@app/services/storage/audit-logs-graph-data.service';
+import { ServiceLogsService } from '@app/services/storage/service-logs.service';
+import { ServiceLogsFieldsService } from '@app/services/storage/service-logs-fields.service';
+import { ServiceLogsHistogramDataService } from '@app/services/storage/service-logs-histogram-data.service';
+import { ServiceLogsTruncatedService } from '@app/services/storage/service-logs-truncated.service';
+import { AppStateService } from '@app/services/storage/app-state.service';
+import { AppSettingsService } from '@app/services/storage/app-settings.service';
+import { TabsService } from '@app/services/storage/tabs.service';
+import { ClustersService } from '@app/services/storage/clusters.service';
+import { ComponentsService } from '@app/services/storage/components.service';
+import { HostsService } from '@app/services/storage/hosts.service';
+import { ActiveServiceLogEntry } from '@app/classes/active-service-log-entry';
 import {
   FilterCondition, TimeUnitListItem, SearchBoxParameter, SearchBoxParameterTriggered
 } from '@app/classes/filtering';
-import {ListItem} from '@app/classes/list-item';
-import {HomogeneousObject, LogLevelObject} from '@app/classes/object';
-import {DataAvailability, DataAvailabilityValues, LogsType, ScrollType} from '@app/classes/string';
-import {LogTypeTab} from '@app/classes/models/log-type-tab';
-import {AuditFieldsDefinitionSet} from '@app/classes/object';
-import {AuditLog} from '@app/classes/models/audit-log';
-import {ServiceLog} from '@app/classes/models/service-log';
-import {BarGraph} from '@app/classes/models/bar-graph';
-import {NodeItem} from '@app/classes/models/node-item';
-import {CommonEntry} from '@app/classes/models/common-entry';
-import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
-import {ActivatedRoute, Router} from '@angular/router';
-import {RoutingUtilsService} from '@app/services/routing-utils.service';
-import {LogsFilteringUtilsService, timeRangeFilterOptions} from '@app/services/logs-filtering-utils.service';
-import {BehaviorSubject} from 'rxjs/BehaviorSubject';
-import {LogsStateService} from '@app/services/storage/logs-state.service';
-import {LogLevelComponent} from '@app/components/log-level/log-level.component';
-import {NotificationService, NotificationType} from '@modules/shared/services/notification.service';
+import { ListItem } from '@app/classes/list-item';
+import { HomogeneousObject, LogLevelObject } from '@app/classes/object';
+import { DataAvailabilityValues, LogsType, ScrollType  } from '@app/classes/string';
+import { LogTypeTab } from '@app/classes/models/log-type-tab';
+import { AuditLogsFieldSet } from '@app/classes/object';
+import { AuditLog } from '@app/classes/models/audit-log';
+import { ServiceLog } from '@app/classes/models/service-log';
+import { BarGraph } from '@app/classes/models/bar-graph';
+import { NodeItem } from '@app/classes/models/node-item';
+import { CommonEntry } from '@app/classes/models/common-entry';
+import { ClusterSelectionService } from '@app/services/storage/cluster-selection.service';
+import { Router } from '@angular/router';
+import { LogsFilteringUtilsService, defaultFilterSelections } from '@app/services/logs-filtering-utils.service';
+import { BehaviorSubject } from 'rxjs/BehaviorSubject';
+import { LogsStateService } from '@app/services/storage/logs-state.service';
+import { LogLevelComponent } from '@app/components/log-level/log-level.component';
+import { NotificationService, NotificationType } from '@modules/shared/services/notification.service';
+
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { isAuthorizedSelector } from '@app/store/selectors/auth.selectors';
+
+import { Subscription } from 'rxjs/Subscription';
+import { AuditLogRepo } from '@app/store/reducers/audit-log-repos.reducers';
+import { selectAuditLogReposState } from '@app/store/selectors/audit-log-repos.selectors';
+import { selectDisplayShortHostNames } from '@app/store/selectors/user-settings.selectors';
 
 @Injectable()
 export class LogsContainerService {
@@ -115,20 +123,27 @@ export class LogsContainerService {
     clusters: {
       label: 'filter.clusters',
       options: [],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.clusters,
+      defaultSelection: defaultFilterSelections.clusters,
       fieldName: 'cluster'
     },
     timeRange: { // @ToDo remove duplication, this options are in the LogsFilteringUtilsService too
       label: 'logs.duration',
       options: this.logsFilteringUtilsService.getTimeRandeOptionsByGroup(),
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.timeRange
+      defaultSelection: defaultFilterSelections.timeRange
     },
     components: {
       label: 'filter.components',
       iconClass: 'fa fa-cubes',
       options: [],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.components,
+      defaultSelection: defaultFilterSelections.components,
       fieldName: 'type'
+    },
+    repos: {
+      label: 'filter.repos',
+      iconClass: 'fa fa-cubes',
+      options: [],
+      defaultSelection: defaultFilterSelections.repos,
+      fieldName: 'repos'
     },
     levels: {
       label: 'filter.levels',
@@ -142,14 +157,14 @@ export class LogsContainerService {
           iconClass: `fa ${LogLevelComponent.classMap[cssClass]}`
         };
       }),
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.levels,
+      defaultSelection: defaultFilterSelections.levels,
       fieldName: 'level'
     },
     hosts: {
       label: 'filter.hosts',
       iconClass: 'fa fa-server',
       options: [],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.hosts,
+      defaultSelection: defaultFilterSelections.hosts,
       fieldName: 'host'
     },
     auditLogsSorting: {
@@ -170,7 +185,7 @@ export class LogsContainerService {
           }
         }
       ],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.auditLogsSorting
+      defaultSelection: defaultFilterSelections.auditLogsSorting
     },
     serviceLogsSorting: {
       label: 'sorting.title',
@@ -190,7 +205,7 @@ export class LogsContainerService {
           }
         }
       ],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.serviceLogsSorting
+      defaultSelection: defaultFilterSelections.serviceLogsSorting
     },
     pageSize: {
       label: 'pagination.title',
@@ -200,23 +215,20 @@ export class LogsContainerService {
           value: option
         };
       }),
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.pageSize
+      defaultSelection: defaultFilterSelections.pageSize
     },
     page: {
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.page
+      defaultSelection: defaultFilterSelections.page
     },
     query: {
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.query
+      defaultSelection: defaultFilterSelections.query
     },
     users: {
       label: 'filter.users',
       iconClass: 'fa fa-server',
       options: [],
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.users,
+      defaultSelection: defaultFilterSelections.users,
       fieldName: 'reqUser'
-    },
-    isUndoOrRedo: {
-      defaultSelection: this.logsFilteringUtilsService.defaultFilterSelections.isUndoOrRedo
     }
   };
 
@@ -224,6 +236,7 @@ export class LogsContainerService {
     clusters: ['clusters'],
     timeRange: ['to', 'from'],
     components: ['mustBe'],
+    repos: ['mustBe'],
     levels: ['level'],
     hosts: ['hostList'],
     auditLogsSorting: ['sortType', 'sortBy'],
@@ -244,17 +257,17 @@ export class LogsContainerService {
     users: ['userList']
   };
 
-  readonly customTimeRangeKey: string = 'filter.timeRange.custom';
+  readonly customTimeRangeKey = 'filter.timeRange.custom';
 
-  readonly topResourcesCount: string = '10';
+  readonly topResourcesCount = '10';
 
-  readonly topUsersCount: string = '6';
+  readonly topUsersCount = '6';
 
   readonly logsTypeMap = {
     auditLogs: {
       logsModel: this.auditLogsStorage,
       fieldsModel: this.auditLogsFieldsStorage,
-      listFilters: ['clusters', 'timeRange', 'auditLogsSorting', 'pageSize', 'page', 'query', 'users'],
+      listFilters: ['clusters', 'timeRange', 'repos', 'auditLogsSorting', 'pageSize', 'page', 'query', 'users'],
       topResourcesFilters: ['clusters', 'timeRange', 'query'],
       graphFilters: ['clusters', 'timeRange', 'query'],
       graphRequestName: 'auditLogsGraph',
@@ -289,16 +302,16 @@ export class LogsContainerService {
 
   timeZone: string = this.defaultTimeZone;
 
-  totalCount: number = 0;
+  totalCount = 0;
 
   /**
    * A configurable property to indicate the maximum capture time in milliseconds.
    * @type {number}
    * @default 600000 (10 minutes)
    */
-  private readonly maximumCaptureTimeLimit: number = 600000;
+  readonly maximumCaptureTimeLimit = 600000;
 
-  isServiceLogsFileView: boolean = false;
+  isServiceLogsFileView = false;
 
   filtersForm: FormGroup;
 
@@ -336,15 +349,17 @@ export class LogsContainerService {
 
   private stopAutoRefreshCountdown: Subject<void> = new Subject();
 
-  captureSeconds: number = 0;
+  captureSeconds = 0;
 
-  private readonly autoRefreshInterval: number = 30000;
+  readonly autoRefreshInterval = 30000;
 
-  autoRefreshRemainingSeconds: number = 0;
+  autoRefreshRemainingSeconds = 0;
 
   private startCaptureTime: number;
 
   private stopCaptureTime: number;
+
+  captureTimeRangeCache: ListItem;
 
   topUsersGraphData: HomogeneousObject<HomogeneousObject<number>> = {};
 
@@ -364,7 +379,11 @@ export class LogsContainerService {
     excludeQuery: this.logsFilteringUtilsService.getQuery(true)
   };
 
-  filtersFormSyncInProgress: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
+  filtersFormSyncInProgress$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
+
+  private pendingLogRequests: {[key: string]: Subscription[]} = {};
+  isLogsRequestInProgress$: BehaviorSubject<boolean> = new BehaviorSubject(false);
+  isGraphRequestInProgress$: BehaviorSubject<boolean> = new BehaviorSubject(false);
 
   constructor(
     private httpClient: HttpClientService, private utils: UtilsService,
@@ -376,18 +395,18 @@ export class LogsContainerService {
     private serviceLogsTruncatedStorage: ServiceLogsTruncatedService, private appSettings: AppSettingsService,
     private clusterSelectionStoreService: ClusterSelectionService,
     private router: Router,
-    private activatedRoute: ActivatedRoute,
     private logsFilteringUtilsService: LogsFilteringUtilsService,
     private logsStateService: LogsStateService,
     private notificationService: NotificationService,
-    private componentsService: ComponentsService
+    private componentsService: ComponentsService,
+    private store: Store<AppStore>
   ) {
     const formItems = Object.keys(this.filters).reduce((currentObject: any, key: string): HomogeneousObject<FormControl> => {
       const formControl = new FormControl();
       const item = {
         [key]: formControl
       };
-      formControl.setValue(this.logsFilteringUtilsService.defaultFilterSelections[key]);
+      formControl.setValue(defaultFilterSelections[key]);
       return Object.assign(currentObject, item);
     }, {});
     this.filtersForm = new FormGroup(formItems);
@@ -396,14 +415,22 @@ export class LogsContainerService {
     this.clustersStorage.getAll().subscribe(this.setClustersFilters);
     this.hostsStorage.getAll().subscribe(this.setHostsFilters);
 
-    appState.getParameter('activeLog').subscribe((value: ActiveServiceLogEntry | null) => this.activeLog = value);
-    appState.getParameter('isServiceLogsFileView').subscribe((value: boolean) => this.isServiceLogsFileView = value);
-    appState.getParameter('activeLogsType').subscribe((value: LogsType) => {
+    appState.getParameter('activeLog').distinctUntilChanged().subscribe((value: ActiveServiceLogEntry | null) => this.activeLog = value);
+    appState.getParameter('isServiceLogsFileView').distinctUntilChanged().subscribe((value: boolean) => this.isServiceLogsFileView = value);
+    appState.getParameter('activeLogsType').distinctUntilChanged().subscribe((value: LogsType) => {
       if (this.isLogsTypeSupported(value)) {
         this.activeLogsType = value;
-        this.loadLogs(this.activeLogsType);
       }
     });
+
+    Observable.combineLatest(
+      this.store.select(isAuthorizedSelector),
+      this.appState.getParameter('baseDataSetState')
+        .map((dataSetState: DataAvailabilityValues) => dataSetState === DataAvailabilityValues.AVAILABLE),
+      appState.getParameter('activeLogsType')
+    ).filter(([isAuthorized, dataAvailable, activeLogsType]) => isAuthorized && dataAvailable)
+      .map(([isAuthorized, dataAvailable, activeLogsType]) => activeLogsType)
+      .subscribe(this.loadLogs);
 
     appSettings.getParameter('timeZone').subscribe((value: string) => this.timeZone = value || this.defaultTimeZone);
     tabsStorage.mapCollection((tab: LogTypeTab): LogTypeTab => {
@@ -412,7 +439,7 @@ export class LogsContainerService {
       });
     });
 
-    this.filtersForm.valueChanges.filter(() => !this.filtersFormSyncInProgress.getValue()).subscribe(this.onFiltersFormValueChange);
+    this.filtersForm.valueChanges.filter(() => !this.filtersFormSyncInProgress$.getValue()).subscribe(this.onFiltersFormValueChange);
 
     this.auditLogsSource.subscribe((logs: AuditLog[]): void => {
       const userNames = logs.map((log: AuditLog): string => log.reqUser);
@@ -423,6 +450,11 @@ export class LogsContainerService {
     });
     this.clusterSelectionStoreService.getParameter(LogsContainerService.clusterSelectionStoreKey)
       .filter(selection => !!selection).subscribe(this.onClusterSelectionChanged);
+
+    this.store.select(selectAuditLogReposState).subscribe(this.setAuditLogReposFilters);
+
+    this.store.select(selectDisplayShortHostNames).subscribe(this.setHostFilterOptionsLabelsByUserSetting);
+    
   }
 
   //
@@ -444,15 +476,15 @@ export class LogsContainerService {
   resetFiltersForms(filters): void {
     this.appState.getParameter('baseDataSetState')
     // do it only when the base data set is available so that the dropdowns can set the selections
-      .filter((dataSetState: DataAvailability) => dataSetState === DataAvailabilityValues.AVAILABLE)
+      .filter((dataSetState: DataAvailabilityValues) => dataSetState === DataAvailabilityValues.AVAILABLE)
       .first()
       .subscribe(() => {
-        this.filtersFormSyncInProgress.next(true);
+        this.filtersFormSyncInProgress$.next(true);
         this.filtersForm.reset(
-          {...this.logsFilteringUtilsService.defaultFilterSelections, ...filters},
+          {...defaultFilterSelections, ...filters},
           {emitEvent: false}
         );
-        this.filtersFormSyncInProgress.next(false);
+        this.filtersFormSyncInProgress$.next(false);
         this.onFiltersFormValueChange();
       });
   }
@@ -509,7 +541,7 @@ export class LogsContainerService {
    */
   setActiveTabById(tabId: string): void {
     this.tabsStorage.findInCollection((tab: LogTypeTab) => tab.id === tabId).first().subscribe((tab: LogTypeTab | null) => {
-      if (tab) {
+      if (tab && !tab.isActive) {
         this.switchTab(tab);
         this.logsStateService.setParameter('activeTabId', tabId);
       }
@@ -576,59 +608,76 @@ export class LogsContainerService {
 
   loadLogs = (logsType: LogsType = this.activeLogsType): void => {
     if (this.isLogsTypeSupported(logsType)) {
-      this.httpClient.get(logsType, this.getParams('listFilters', {}, logsType)).subscribe((response: Response): void => {
-        const jsonResponse = response.json(),
-          model = this.logsTypeMap[logsType].logsModel;
-        model.clear();
-        if (jsonResponse) {
-          const logs = jsonResponse.logList,
-            count = jsonResponse.totalCount || 0;
-          if (logs) {
-            model.addInstances(logs);
-          }
-          this.totalCount = count;
-        }
-      });
-      this.httpClient.get(this.logsTypeMap[logsType].graphRequestName, this.getParams('graphFilters', {}, logsType))
-        .subscribe((response: Response): void => {
+      let pendingLogRequests = this.pendingLogRequests[logsType] || [];
+      pendingLogRequests.forEach((subscription: Subscription) => subscription.unsubscribe());
+      pendingLogRequests = [];
+
+      this.isLogsRequestInProgress$.next(true);
+      pendingLogRequests.push(
+        this.httpClient.get(logsType, this.getParams('listFilters', {}, logsType)).subscribe((response: Response): void => {
           const jsonResponse = response.json(),
-            model = this.logsTypeMap[logsType].graphModel;
+            model = this.logsTypeMap[logsType].logsModel;
           model.clear();
           if (jsonResponse) {
-            const graphData = jsonResponse.graphData;
-            if (graphData) {
-              model.addInstances(graphData);
+            const logs = jsonResponse.logList,
+              count = jsonResponse.totalCount || 0;
+            if (logs) {
+              model.addInstances(logs);
             }
+            this.totalCount = count;
           }
-        });
+          this.isLogsRequestInProgress$.next(false);
+        })
+      );
+      this.isGraphRequestInProgress$.next(true);
+      pendingLogRequests.push(
+        this.httpClient.get(this.logsTypeMap[logsType].graphRequestName, this.getParams('graphFilters', {}, logsType))
+          .subscribe((response: Response): void => {
+            const jsonResponse = response.json(),
+              model = this.logsTypeMap[logsType].graphModel;
+            model.clear();
+            if (jsonResponse) {
+              const graphData = jsonResponse.graphData;
+              if (graphData) {
+                model.addInstances(graphData);
+              }
+            }
+            this.isGraphRequestInProgress$.next(false);
+          })
+      );
       if (logsType === 'auditLogs') {
-        this.httpClient.get('topAuditLogsResources', this.getParams('topResourcesFilters', {
-          field: 'resource'
-        }, logsType), {
-          number: this.topResourcesCount
-        }).subscribe((response: Response): void => {
-          const jsonResponse = response.json();
-          if (jsonResponse) {
-            const data = jsonResponse.graphData;
-            if (data) {
-              this.topResourcesGraphData = this.parseAuditLogsTopData(data);
+        pendingLogRequests.push(
+          this.httpClient.get('topAuditLogsResources', this.getParams('topResourcesFilters', {
+            field: 'resource'
+          }, logsType), {
+            number: this.topResourcesCount
+          }).subscribe((response: Response): void => {
+            const jsonResponse = response.json();
+            if (jsonResponse) {
+              const data = jsonResponse.graphData;
+              if (data) {
+                this.topResourcesGraphData = this.parseAuditLogsTopData(data);
+              }
             }
-          }
-        });
-        this.httpClient.get('topAuditLogsResources', this.getParams('topResourcesFilters', {
-          field: 'reqUser'
-        }, logsType), {
-          number: this.topUsersCount
-        }).subscribe((response: Response): void => {
-          const jsonResponse = response.json();
-          if (jsonResponse) {
-            const data = jsonResponse.graphData;
-            if (data) {
-              this.topUsersGraphData = this.parseAuditLogsTopData(data);
+          })
+        );
+        pendingLogRequests.push(
+          this.httpClient.get('topAuditLogsResources', this.getParams('topResourcesFilters', {
+            field: 'reqUser'
+          }, logsType), {
+            number: this.topUsersCount
+          }).subscribe((response: Response): void => {
+            const jsonResponse = response.json();
+            if (jsonResponse) {
+              const data = jsonResponse.graphData;
+              if (data) {
+                this.topUsersGraphData = this.parseAuditLogsTopData(data);
+              }
             }
-          }
-        });
+          })
+        );
       }
+      this.pendingLogRequests[logsType] = pendingLogRequests;
     } else {
       console.error(`Logs Type does not supported: ${logsType}`);
     }
@@ -726,21 +775,6 @@ export class LogsContainerService {
     return graphData;
   }
 
-  loadColumnsNames(): void {
-    this.httpClient.get('serviceLogsFields').subscribe((response: Response): void => {
-      const jsonResponse = response.json();
-      if (jsonResponse) {
-        this.serviceLogsFieldsStorage.addInstances(jsonResponse);
-      }
-    });
-    this.httpClient.get('auditLogsFields').subscribe((response: Response): void => {
-      const jsonResponse: AuditFieldsDefinitionSet = response.json();
-      if (jsonResponse) {
-        this.auditLogsFieldsStorage.setParameters(jsonResponse);
-      }
-    });
-  }
-
   startCaptureTimer(): void {
     this.startCaptureTime = new Date().valueOf();
     const maxCaptureTimeInSeconds = this.maximumCaptureTimeLimit / 1000;
@@ -757,46 +791,21 @@ export class LogsContainerService {
     this.stopCaptureTime = new Date().valueOf();
     this.captureSeconds = 0;
     this.stopTimer.next();
-    this.setCustomTimeRange(this.startCaptureTime, this.stopCaptureTime);
     Observable.timer(0, 1000).takeUntil(this.stopAutoRefreshCountdown).subscribe((seconds: number): void => {
       this.autoRefreshRemainingSeconds = autoRefreshIntervalSeconds - seconds;
       if (!this.autoRefreshRemainingSeconds) {
         this.stopAutoRefreshCountdown.next();
+        this.captureTimeRangeCache = this.filtersForm.controls.timeRange.value;
         this.setCustomTimeRange(this.startCaptureTime, this.stopCaptureTime);
       }
     });
   }
 
-  loadClusters(): void {
-
-  }
-
-  loadComponents(): Observable<Response[]> {
-    const requestComponentsData: Observable<Response> = this.httpClient.get('components');
-    const requestComponentsName: Observable<Response> = this.httpClient.get('serviceComponentsName');
-    const requests = Observable.combineLatest(requestComponentsName, requestComponentsData);
-    requests.subscribe(([componentsNamesResponse, componentsDataResponse]: Response[]) => {
-      const componentsNames = componentsNamesResponse.json();
-      const componentsData = componentsDataResponse.json();
-      const components = componentsData && componentsData.vNodeList.map((item): NodeItem => {
-        const component = componentsNames.metadata.find(componentItem => componentItem.name === item.name);
-        return Object.assign(item, {
-          label: component && (component.label || item.name),
-          group: component && component.group && {
-            name: component.group,
-            label: componentsNames.groups[component.group]
-          },
-          value: item.logLevelCount.reduce((currentValue: number, currentItem): number => {
-            return currentValue + Number(currentItem.value);
-          }, 0)
-        });
-      });
-      if (components) {
-        this.utils.pushUniqueValues(this.filters.components.options, components.map(node => this.utils.getListItemFromNode(node, true) ));
-        this.componentsStorage.addInstances(components);
-      }
-    });
-    return requests;
+  cancelCapture(): void {
+    this.stopTimer.next();
+    this.stopAutoRefreshCountdown.next();
+    this.autoRefreshRemainingSeconds = 0;
+    this.captureSeconds = 0;
   }
 
   setComponentsFilters = (components): void => {
@@ -805,6 +814,19 @@ export class LogsContainerService {
       this.utils.pushUniqueValues(
         this.filters.components.options,
         components.map(node => this.utils.getListItemFromNode(node, true))
+      );
+    }
+  }
+
+  setAuditLogReposFilters = (items: AuditLogRepo[]): void => {
+    this.filters.repos.options = [];
+    if (items) {
+      this.utils.pushUniqueValues(
+        this.filters.repos.options,
+        items.map(item => ({
+          label: item.label,
+          value: item.name
+        }))
       );
     }
   }
@@ -836,6 +858,17 @@ export class LogsContainerService {
     return request;
   }
 
+  getHostLabelByUserSetting(host: string, isShortDisplay: boolean): string {
+    return isShortDisplay ? host.split('.')[0] : host;
+  }
+
+  setHostFilterOptionsLabelsByUserSetting = (isShortDisplay: boolean): void => {
+    this.filters.hosts.options = this.filters.hosts.options.map((hostListItem: ListItem): ListItem => ({
+      ...hostListItem,
+      label: this.getHostLabelByUserSetting(hostListItem.value, isShortDisplay)
+    }))
+  }
+
   setCustomTimeRange(startTime: number, endTime: number): void {
     const startTimeMoment = moment(startTime);
     const endTimeMoment = moment(endTime);
@@ -863,7 +896,7 @@ export class LogsContainerService {
     const keys = Object.keys(this.filters).filter((key: string): boolean => itemsList.indexOf(key) > -1);
     return keys.reduce((currentObject: object, key: string): object => {
       return Object.assign(currentObject, {
-        [key]: this.logsFilteringUtilsService.defaultFilterSelections[key]
+        [key]: defaultFilterSelections[key]
       });
     }, {});
   }
@@ -883,15 +916,19 @@ export class LogsContainerService {
   }
 
   openServiceLog(log: ServiceLog): void {
-    this.componentsService.findInCollection(component => (component.name || component.label) === log.type)
-      .map(component => component ? component.label || component.name : name)
-      .first()
-      .subscribe((componentName) => {
+    Observable.combineLatest(
+      this.componentsService.findInCollection(component => (component.name || component.label) === log.type)
+        .map(component => component ? component.label || component.name : name),
+        this.store.select(selectDisplayShortHostNames)
+    )
+      .take(1)
+      .subscribe(([componentName, displayShortHostNames]) => {
         const tab = {
           id: log.id || `${log.host}-${log.type}`,
+          logsType: <LogsType>'serviceLogs',
           isCloseable: true,
           isActive: false,
-          label: `${log.host} >> ${componentName || log.type}`,
+          label: `${this.getHostLabelByUserSetting(log.host, displayShortHostNames)} >> ${componentName || log.type}`,
           activeFilters: Object.assign({}, JSON.parse(JSON.stringify(this.filtersForm.value)), {
             components: this.filters.components.options.filter((option: ListItem): boolean => {
               return option.value === log.type;

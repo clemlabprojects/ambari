@@ -211,3 +211,32 @@
 .caret-mixin(@caret-width; @direction: down; @color: @base-font-color; @position: before) {
   .caret-style(@caret-width, @direction, @color);
 }
+
+.hexagon(@size: 2em, @color: @green) {
+	width: @size;
+	height: @size*0.55;
+	background: @color;
+	position: relative;
+	&:before {
+		content: "";
+		position: absolute;
+		top: -@size*0.25;
+		left: 0;
+		width: 0;
+		height: 0;
+		border-left: @size/2 solid transparent;
+		border-right: @size/2 solid transparent;
+		border-bottom: @size/4 solid @color;
+	}
+	&:after {
+		content: "";
+		position: absolute;
+		bottom: -@size/4;
+		left: 0;
+		width: 0;
+		height: 0;
+		border-left: @size/2 solid transparent;
+		border-right: @size/2 solid transparent;
+		border-top: @size/4 solid @color;
+	}
+}

@@ -26,11 +26,12 @@ import java.io.OutputStream;
 import org.apache.commons.compress.compressors.CompressorOutputStream;
 import org.apache.commons.compress.compressors.CompressorStreamFactory;
 import org.apache.commons.compress.utils.IOUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class CompressionUtil {
 
-  private static final Logger LOG = Logger.getLogger(CompressionUtil.class);
+  private static final Logger logger = LogManager.getLogger(CompressionUtil.class);
 
   public static File compressFile(File inputFile, File outputFile, String algoName) {
     CompressorOutputStream cos = null;
@@ -54,20 +55,20 @@ public class CompressionUtil {
       ios = new FileInputStream(inputFile);
       IOUtils.copy(ios, cos);
     } catch (Exception e) {
-      LOG.error(e);
+      logger.error(e);
     } finally {
       if (cos != null) {
         try {
           cos.close();
         } catch (IOException e) {
-          LOG.error(e);
+          logger.error(e);
         }
       }
       if (ios != null) {
         try {
           ios.close();
         } catch (IOException e) {
-          LOG.error(e);
+          logger.error(e);
         }
       }
     }

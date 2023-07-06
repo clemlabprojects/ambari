@@ -47,9 +47,10 @@ function create_logfeeder_configs() {
 
 function create_logsearch_configs() {
   mkdir -p /root/config/logsearch
-  cp /root/test-config/logsearch/log4j.xml /root/config/logsearch/
+  cp /root/test-config/logsearch/log4j2.yml /root/config/logsearch/
   cp /root/test-config/logsearch/logsearch-env.sh /root/config/logsearch/
   cp $LOGSEARCH_SERVER_PATH/conf/user_pass.json /root/config/logsearch/user_pass.json
+  cp $LOGSEARCH_SERVER_PATH/conf/roles.json /root/config/logsearch/roles.json
   if [ "$LOGSEARCH_HTTPS_ENABLED" == "true" ]
   then
     cp /root/test-config/logsearch/logsearch-https.properties /root/config/logsearch/logsearch.properties

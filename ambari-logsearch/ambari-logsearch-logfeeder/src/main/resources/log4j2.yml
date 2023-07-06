@@ -1,0 +1,106 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+Configutation:
+  name: LogFeederConfig
+  packages: org.apache.ambari.logsearch.layout
+
+  Properties:
+    Property:
+      name: log-path
+      value: "target/logs"
+
+  Appenders:
+
+    Console:
+      name: Console_Appender
+      target: SYSTEM_OUT
+      PatternLayout:
+        pattern: "%d [%t] %-5p %C{6} (%F:%L) - %m%n"
+
+    RollingFile:
+    - name: RollingFile_Appender
+      fileName: ${log-path}/logfeeder.log
+      filePattern: "logfeeder.log.%d{yyyy-MM-dd-hh-mm}.gz"
+      PatternLayout:
+        pattern: "%d [%t] %-5p %C{6} (%F:%L) - %m%n"
+      Policies:
+        SizeBasedTriggeringPolicy:
+          size: 10 MB
+      DefaultRollOverStrategy:
+        max: 10
+    - name: RollingFileJson_Appender
+      fileName: ${log-path}/logfeeder.json
+      filePattern: "logfeeder.json.%d{yyyy-MM-dd-hh-mm}.gz"
+      ignoreExceptions: false
+      LogSearchJsonLayout:
+        charset: UTF-8
+      Policies:
+        SizeBasedTriggeringPolicy:
+          size: 10 MB
+      DefaultRollOverStrategy:
+        max: 10
+    - name: MetricsFile_Appender
+      fileName: ${log-path}/logfeeder-metrics.log
+      filePattern: "logfeeder-metrics.log.%d{yyyy-MM-dd-hh-mm}.gz"
+      PatternLayout:
+        pattern: "%d [%t] %-5p %C{6} (%F:%L) - %m%n"
+      Policies:
+        SizeBasedTriggeringPolicy:
+          size: 10 MB
+      DefaultRollOverStrategy:
+        max: 10
+    - name: FileMonitor_Appender
+      fileName: ${log-path}/logfeeder-file-monitor.log
+      filePattern: "logfeeder-file-monitor.log.%d{yyyy-MM-dd-hh-mm}.gz"
+      PatternLayout:
+        pattern: "%d [%t] %-5p %C{6} (%F:%L) - %m%n"
+      Policies:
+        SizeBasedTriggeringPolicy:
+          size: 10 MB
+      DefaultRollOverStrategy:
+        max: 3
+
+  Loggers:
+
+    Root:
+      level: info
+      AppenderRef:
+      - ref: Console_Appender
+      - ref: RollingFile_Appender
+      - ref: RollingFileJson_Appender
+
+    Logger:
+    - name: org.apache.solr.common.cloud.ZkStateReader
+      additivity: false
+      level: error
+      AppenderRef:
+      - ref: Console_Appender
+    - name: org.apache.solr.client.solrj.impl.CloudSolrClient
+      additivity: false
+      level: info
+      AppenderRef:
+      - ref: Console_Appender
+    - name: logfeeder.metrics
+      additivity: false
+      level: info
+      AppenderRef:
+      - ref: MetricsFile_Appender
+      - ref: Console_Appender
+    - name: logfeeder.file.monitor
+      additivity: false
+      level: info
+      AppenderRef:
+      - ref: FileMonitor_Appender
+      - ref: Console_Appender

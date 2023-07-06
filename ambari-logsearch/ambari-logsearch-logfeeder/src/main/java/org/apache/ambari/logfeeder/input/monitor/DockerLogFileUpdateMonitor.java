@@ -18,11 +18,11 @@
  */
 package org.apache.ambari.logfeeder.input.monitor;
 
-import org.apache.ambari.logfeeder.docker.DockerContainerRegistry;
-import org.apache.ambari.logfeeder.docker.DockerMetadata;
+import org.apache.ambari.logfeeder.container.docker.DockerContainerRegistry;
+import org.apache.ambari.logfeeder.container.docker.DockerMetadata;
 import org.apache.ambari.logfeeder.input.InputFile;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -31,18 +31,19 @@ import java.util.Map;
 /**
  * Periodically check docker containers metadata registry, stop monitoring container log files if those do not exist or stopped too long time ago.
  * If it finds a new container log for the specific type, it will start to monitoring it.
- * <br/>
- * Use cases:<br/>
- * - input has not monitored yet - found new container -> start monitoring it <br/>
- * - input has not monitored yet - found new stopped container -> start monitoring it <br/>
- * - input has not monitored yet - found new stopped container but log is too old -> do not monitoring it <br/>
- * - input has monitored already - container stopped - if it's stopped for too long time -> remove it from the monitoed list<br/>
- * - input has monitored already - container stopped - log is not too old -> keep in the monitored list <br/>
- * - input has monitored already - container does not exist - remove it from the monitoed list (and all other input with the same log type) <br/>
+ * <pre>
+ * Use cases:
+ * - input has not monitored yet - found new container: start monitoring it
+ * - input has not monitored yet - found new stopped container: start monitoring it
+ * - input has not monitored yet - found new stopped container but log is too old: do not monitoring it
+ * - input has monitored already - container stopped - if it's stopped for too long time : remove it from the monitored list
+ * - input has monitored already - container stopped - log is not too old: keep in the monitored list
+ * - input has monitored already - container does not exist - remove it from the monitored list (and all other input with the same log type)
+ * </pre>
  */
 public class DockerLogFileUpdateMonitor extends AbstractLogFileMonitor {
 
-  private Logger LOG = LoggerFactory.getLogger(DockerLogFileUpdateMonitor.class);
+  private static final Logger logger = LogManager.getLogger(DockerLogFileUpdateMonitor.class);
 
   public DockerLogFileUpdateMonitor(InputFile inputFile, int waitInterval, int detachTime) {
     super(inputFile, waitInterval, detachTime);
@@ -67,26 +68,26 @@ public class DockerLogFileUpdateMonitor extends AbstractLogFileMonitor {
         String containerId = containerEntry.getValue().getId();
         long timestamp = containerEntry.getValue().getTimestamp();
         boolean running = containerEntry.getValue().isRunning();
-        LOG.debug("Found log path: {} (container id: {})", logPath, containerId);
+        logger.debug("Found log path: {} (container id: {})", logPath, containerId);
         if (!copiedChildMap.containsKey(logPath)) {
           if (!running && isItTooOld(timestamp, new Date().getTime(), getDetachTime())) {
-            LOG.debug("Container with id {} is stopped, won't monitor as it stopped for long time.", containerId);
+            logger.debug("Container with id {} is stopped, won't monitor as it stopped for long time.", containerId);
           } else {
-            LOG.info("Found new container (id: {}) with new log path: {}", logPath, containerId);
+            logger.info("Found new container (id: {}) with new log path: {}", logPath, containerId);
             getInputFile().startNewChildDockerInputFileThread(containerEntry.getValue());
           }
         } else {
           if (!running && isItTooOld(timestamp, new Date().getTime(), getDetachTime())) {
-            LOG.info("Removing: {}", logPath);
+            logger.info("Removing: {}", logPath);
             getInputFile().stopChildDockerInputFileThread(containerEntry.getKey());
           }
         }
       }
     } else {
       if (!copiedChildMap.isEmpty()) {
-        LOG.info("Removing all inputs with type: {}", logType);
+        logger.info("Removing all inputs with type: {}", logType);
         for (Map.Entry<String, InputFile> inputFileEntry : copiedChildMap.entrySet()) {
-          LOG.info("Removing: {}", inputFileEntry.getKey());
+          logger.info("Removing: {}", inputFileEntry.getKey());
           getInputFile().stopChildDockerInputFileThread(inputFileEntry.getKey());
         }
       }

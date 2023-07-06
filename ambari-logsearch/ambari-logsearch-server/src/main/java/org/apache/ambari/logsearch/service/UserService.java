@@ -18,19 +18,19 @@
  */
 package org.apache.ambari.logsearch.service;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.apache.ambari.logsearch.dao.UserDao;
 import org.apache.ambari.logsearch.web.model.User;
-import org.apache.log4j.Logger;
 
 import javax.inject.Inject;
 
-
 @Service
 public class UserService implements UserDetailsService {
-  private static final Logger logger = Logger.getLogger(UserService.class);
+  private static final Logger logger = LogManager.getLogger(UserService.class);
 
   @Inject
   private UserDao userDao;

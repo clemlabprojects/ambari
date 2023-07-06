@@ -21,21 +21,32 @@ package org.apache.ambari.logfeeder.input.file;
 import org.apache.ambari.logfeeder.input.InputFile;
 import org.apache.ambari.logfeeder.input.InputFileMarker;
 import org.apache.ambari.logfeeder.util.LogFeederUtil;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.BufferedReader;
 import java.io.File;
 
+/**
+ * Helper for input file processing (open files, read line and pass them to filters and output(s))
+ */
 public class ProcessFileHelper {
 
-  private static final Logger LOG = Logger.getLogger(ProcessFileHelper.class);
+  private static final Logger logger = LogManager.getLogger(ProcessFileHelper.class);
 
   private ProcessFileHelper() {
   }
 
+  /**
+   * Process input (apply on filters then send to an output) log file(s) until EOF - stop processing onlu
+   * @param inputFile input file descriptor
+   * @param logPathFile input file object
+   * @param follow if is is set the processing won't stop at EOF
+   * @throws Exception error during file processing
+   */
   public static void processFile(InputFile inputFile, File logPathFile, boolean follow) throws Exception {
-    LOG.info("Monitoring logPath=" + inputFile.getLogPath() + ", logPathFile=" + logPathFile);
+    logger.info("Monitoring logPath=" + inputFile.getLogPath() + ", logPathFile=" + logPathFile);
     BufferedReader br = null;
 
     int lineCount = 0;
@@ -47,7 +58,7 @@ public class ProcessFileHelper {
       boolean resume = true;
       int resumeFromLineNumber = inputFile.getResumeFromLineNumber();
       if (resumeFromLineNumber > 0) {
-        LOG.info("Resuming log file " + logPathFile.getAbsolutePath() + " from line number " + resumeFromLineNumber);
+        logger.info("Resuming log file " + logPathFile.getAbsolutePath() + " from line number " + resumeFromLineNumber);
         resume = false;
       }
 
@@ -69,36 +80,36 @@ public class ProcessFileHelper {
             if (sleepIteration == 2) {
               inputFile.flush();
               if (!follow) {
-                LOG.info("End of file. Done with filePath=" + logPathFile.getAbsolutePath() + ", lineCount=" + lineCount);
+                logger.info("End of file. Done with filePath=" + logPathFile.getAbsolutePath() + ", lineCount=" + lineCount);
                 break;
               }
             } else if (sleepIteration > 4) {
               Object newFileKey = inputFile.getFileKeyFromLogFile(logPathFile);
               if (newFileKey != null && (inputFile.getFileKey() == null || !newFileKey.equals(inputFile.getFileKey()))) {
-                LOG.info("File key is different. Marking this input file for rollover. oldKey=" + inputFile.getFileKey() + ", newKey=" +
+                logger.info("File key is different. Marking this input file for rollover. oldKey=" + inputFile.getFileKey() + ", newKey=" +
                   newFileKey + ". " + inputFile.getShortDescription());
 
                 try {
-                  LOG.info("File is rolled over. Closing current open file." + inputFile.getShortDescription() + ", lineCount=" +
+                  logger.info("File is rolled over. Closing current open file." + inputFile.getShortDescription() + ", lineCount=" +
                     lineCount);
                   br.close();
                 } catch (Exception ex) {
-                  LOG.error("Error closing file" + inputFile.getShortDescription(), ex);
+                  logger.error("Error closing file" + inputFile.getShortDescription(), ex);
                   break;
                 }
 
                 try {
-                  LOG.info("Opening new rolled over file." + inputFile.getShortDescription());
+                  logger.info("Opening new rolled over file." + inputFile.getShortDescription());
                   br = inputFile.openLogFile(logPathFile);
                   lineCount = 0;
                 } catch (Exception ex) {
-                  LOG.error("Error opening rolled over file. " + inputFile.getShortDescription(), ex);
-                  LOG.info("Added input to not ready list." + inputFile.getShortDescription());
+                  logger.error("Error opening rolled over file. " + inputFile.getShortDescription(), ex);
+                  logger.info("Added input to not ready list." + inputFile.getShortDescription());
                   inputFile.setReady(false);
                   inputFile.getInputManager().addToNotReady(inputFile);
                   break;
                 }
-                LOG.info("File is successfully rolled over. " + inputFile.getShortDescription());
+                logger.info("File is successfully rolled over. " + inputFile.getShortDescription());
                 continue;
               }
             }
@@ -106,7 +117,7 @@ public class ProcessFileHelper {
               Thread.sleep(sleepStep * 1000);
               sleepStep = Math.min(sleepStep * 2, 10);
             } catch (InterruptedException e) {
-              LOG.info("Thread interrupted." + inputFile.getShortDescription());
+              logger.info("Thread interrupted." + inputFile.getShortDescription());
             }
           } else {
             lineCount++;
@@ -114,7 +125,7 @@ public class ProcessFileHelper {
             sleepIteration = 0;
 
             if (!resume && lineCount > resumeFromLineNumber) {
-              LOG.info("Resuming to read from last line. lineCount=" + lineCount + ", input=" + inputFile.getShortDescription());
+              logger.info("Resuming to read from last line. lineCount=" + lineCount + ", input=" + inputFile.getShortDescription());
               resume = true;
             }
             if (resume) {
@@ -125,12 +136,12 @@ public class ProcessFileHelper {
         } catch (Throwable t) {
           String logMessageKey = inputFile.getClass().getSimpleName() + "_READ_LOOP_EXCEPTION";
           LogFeederUtil.logErrorMessageByInterval(logMessageKey, "Caught exception in read loop. lineNumber=" + lineCount +
-            ", input=" + inputFile.getShortDescription(), t, LOG, Level.ERROR);
+            ", input=" + inputFile.getShortDescription(), t, logger, Level.ERROR);
         }
       }
     } finally {
       if (br != null) {
-        LOG.info("Closing reader." + inputFile.getShortDescription() + ", lineCount=" + lineCount);
+        logger.info("Closing reader." + inputFile.getShortDescription() + ", lineCount=" + lineCount);
         try {
           br.close();
         } catch (Throwable t) {

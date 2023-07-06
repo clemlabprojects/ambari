@@ -39,7 +39,6 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
 public class OutputKafkaTest {
-  private static final Logger LOG = Logger.getLogger(OutputKafkaTest.class);
 
   private static final String TEST_TOPIC = "test topic";
 
@@ -63,7 +62,6 @@ public class OutputKafkaTest {
 
   @Test
   public void testOutputKafka_uploadData() throws Exception {
-    LOG.info("testOutputKafka_uploadData()");
 
     Map<String, Object> config = new HashMap<String, Object>();
     config.put("broker_list", "some broker list");
@@ -95,7 +93,6 @@ public class OutputKafkaTest {
 
   @Test
   public void testOutputKafka_noBrokerList() throws Exception {
-    LOG.info("testOutputKafka_noBrokerList()");
 
     expectedException.expect(Exception.class);
     expectedException.expectMessage("For kafka output, bootstrap broker_list is needed");
@@ -109,7 +106,6 @@ public class OutputKafkaTest {
 
   @Test
   public void testOutputKafka_noTopic() throws Exception {
-    LOG.info("testOutputKafka_noBrokerList()");
 
     expectedException.expect(Exception.class);
     expectedException.expectMessage("For kafka output, topic is needed");

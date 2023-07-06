@@ -16,17 +16,16 @@
  * limitations under the License.
  */
 
-import {Component, Input, Output, EventEmitter} from '@angular/core';
-import {ListItem} from '@app/classes/list-item';
-import {UtilsService} from '@app/services/utils.service';
+import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
+import { ListItem } from '@app/classes/list-item';
+import { UtilsService } from '@app/services/utils.service';
 
 @Component({
   selector: 'dropdown-button',
   templateUrl: './dropdown-button.component.html',
   styleUrls: ['./dropdown-button.component.less']
 })
-export class DropdownButtonComponent {
-
+export class DropdownButtonComponent implements OnChanges {
   @Input()
   label?: string;
 
@@ -55,18 +54,8 @@ export class DropdownButtonComponent {
   selectItem: EventEmitter<any> = new EventEmitter();
 
   // PROXY PROPERTIES TO DROPDOWN LIST COMPONENT
-  private _options: ListItem[] = [];
-  private originalOptions: ListItem[] = [];
-
   @Input()
-  set options(options: ListItem[]) {
-    this._options = options;
-    this.originalOptions = options.map(option => Object.assign({}, option));
-  }
-
-  get options(): ListItem[] {
-    return this._options;
-  }
+  options: ListItem[] = [];
 
   @Input()
   listItemArguments: any[] = [];
@@ -77,14 +66,47 @@ export class DropdownButtonComponent {
   @Input()
   useClearToDefaultSelection = false;
 
-  protected selectedItems?: ListItem[] = [];
+  @Input()
+  showTotalSelection = false;
+
+  @Input()
+  useDropDownLocalFilter = false;
+
+  @Input()
+  closeOnSelection = true;
+
+  @Input()
+  disabled = false;
+
+  protected selectedItems: ListItem[] = [];
 
   get selection(): ListItem[] {
     return this.selectedItems;
   }
 
   set selection(items: ListItem[]) {
-    this.selectedItems = items;
+    this.selectedItems = <ListItem[]>(Array.isArray(items) ? items : items || []);
+    if (this.selectedItems.length > 1 && !this.isMultipleChoice) {
+      this.selectedItems = this.selectedItems.slice(0, 1);
+    }
+    if (this.isMultipleChoice && this.options) {
+      this.options.forEach(
+        (option: ListItem): void => {
+          const selectionItem = this.selectedItems.find(
+            (item: ListItem): boolean => this.utils.isEqual(item.value, option.value)
+          );
+          option.isChecked = !!selectionItem;
+        }
+      );
+    }
+  }
+
+  get hasSelection(): boolean {
+    return this.selectedItems.length > 0;
+  }
+
+  get totalSelection(): number {
+    return this.selectedItems.length;
   }
 
   // TODO handle case of selections with multiple items
@@ -94,10 +116,25 @@ export class DropdownButtonComponent {
    * @returns {boolean}
    */
   get isSelectionDisplayable(): boolean {
-    return this.showSelectedValue && !this.isMultipleChoice && this.selection.length > 0;
+    return this.showSelectedValue && !this.isMultipleChoice && this.hasSelection;
+  }
+
+  get value(): any {
+    const values = this.selectedItems && this.selectedItems.length && this.selectedItems.map(item => item.value);
+    return this.isMultipleChoice ? values : values[0];
   }
 
   constructor(protected utils: UtilsService) {}
+
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes.options) {
+      this.hanldeOptionsChange();
+    }
+  }
+
+  hanldeOptionsChange() {
+    this.filterAndSetSelection();
+  }
 
   clearSelection(silent: boolean = false) {
     let hasChange = false;
@@ -110,14 +147,16 @@ export class DropdownButtonComponent {
     }
   }
 
-  updateSelection(updates: ListItem | ListItem[], callOnChange: boolean = true): boolean {
+  updateSelection(updates: ListItem | ListItem[]): boolean {
     let hasChange = false;
     if (updates && (!Array.isArray(updates) || updates.length)) {
       const items: ListItem[] = Array.isArray(updates) ? updates : [updates];
       if (this.isMultipleChoice) {
         items.forEach((item: ListItem) => {
-          if (this.originalOptions && this.originalOptions.length) {
-            const itemToUpdate: ListItem = this.originalOptions.find((option: ListItem) => this.utils.isEqual(option.value, item.value));
+          if (this.options && this.options.length) {
+            const itemToUpdate: ListItem = this.options.find((option: ListItem) =>
+              this.utils.isEqual(option.value, item.value)
+            );
             if (itemToUpdate) {
               hasChange = hasChange || itemToUpdate.isChecked !== item.isChecked;
               itemToUpdate.isChecked = item.isChecked;
@@ -133,15 +172,18 @@ export class DropdownButtonComponent {
         });
       }
     } else {
-      this.options.forEach((item: ListItem) => item.isChecked = false);
+      this.options.forEach((item: ListItem) => (item.isChecked = false));
     }
-    const checkedItems = this.options.filter((option: ListItem): boolean => option.isChecked);
-    this.selection = checkedItems;
+    this.filterAndSetSelection();
     if (hasChange) {
-      const selectedValues = checkedItems.map((option: ListItem): any => option.value);
+      const selectedValues = this.selection.map((option: ListItem): any => option.value);
       this.selectItem.emit(this.isMultipleChoice ? selectedValues : selectedValues.shift());
     }
     return hasChange;
   }
 
+  protected filterAndSetSelection() {
+    const checkedItems = this.options.filter((option: ListItem): boolean => option.isChecked);
+    this.selection = checkedItems;
+  }
 }

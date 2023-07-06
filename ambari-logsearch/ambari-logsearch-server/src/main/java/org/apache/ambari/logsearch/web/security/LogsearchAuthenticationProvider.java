@@ -20,21 +20,23 @@ package org.apache.ambari.logsearch.web.security;
 
 import java.util.HashMap;
 
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Named;
+
 import org.apache.ambari.logsearch.util.JSONUtil;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.WebAuthenticationDetails;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 @Named
 public class LogsearchAuthenticationProvider extends LogsearchAbstractAuthenticationProvider {
-  private static final Logger logger = Logger .getLogger(LogsearchAuthenticationProvider.class);
-  private static final Logger auditLogger = Logger.getLogger("org.apache.ambari.logsearch.audit");
+  private static final Logger logger = LogManager.getLogger(LogsearchAuthenticationProvider.class);
+  private static final Logger auditLogger = LogManager.getLogger("org.apache.ambari.logsearch.audit");
 
   @Inject
   private LogsearchFileAuthenticationProvider fileAuthenticationProvider;
@@ -45,12 +47,16 @@ public class LogsearchAuthenticationProvider extends LogsearchAbstractAuthentica
   @Inject
   private LogsearchSimpleAuthenticationProvider simpleAuthenticationProvider;
 
+  @Inject
+  @Nullable
+  private LogsearchLdapAuthenticationProvider ldapAuthenticationProvider;
+
   @Override
   public Authentication authenticate(Authentication inAuthentication) throws AuthenticationException {
     logger.info("Authenticating user:" + inAuthentication.getName() + ", userDetail=" + inAuthentication.toString());
     logger.info("authentication.class=" + inAuthentication.getClass().getName());
 
-    HashMap<String, Object> auditRecord = new HashMap<String, Object>();
+    HashMap<String, Object> auditRecord = new HashMap<>();
     auditRecord.put("user", inAuthentication.getName());
     auditRecord.put("principal", inAuthentication.getPrincipal().toString());
     auditRecord.put("auth_class", inAuthentication.getClass().getName());
@@ -96,14 +102,20 @@ public class LogsearchAuthenticationProvider extends LogsearchAbstractAuthentica
       }
       return authentication;
     } finally {
-      String jsonStr = JSONUtil.mapToJSON(auditRecord);
-      auditLogger.log(isSuccess ? Level.INFO : Level.WARN, jsonStr);
+      try {
+        String jsonStr = JSONUtil.toJson(auditRecord);
+        auditLogger.log(isSuccess ? Level.INFO : Level.WARN, jsonStr);
+      }
+      catch (Exception e) {
+        logger.error("Unable to add audit log entry", e);
+      }
     }
   }
 
   private Authentication doAuth(Authentication authentication, AuthMethod authMethod) {
     switch (authMethod) {
       case FILE: return fileAuthenticationProvider.authenticate(authentication);
+      case LDAP: return ldapAuthenticationProvider.authenticate(authentication);
       case EXTERNAL_AUTH: return externalServerAuthenticationProvider.authenticate(authentication);
       case SIMPLE: return simpleAuthenticationProvider.authenticate(authentication);
       default: logger.error("Invalid authentication method :" + authMethod.name());

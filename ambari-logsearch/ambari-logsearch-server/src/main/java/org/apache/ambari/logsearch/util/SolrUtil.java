@@ -45,6 +45,8 @@ public class SolrUtil {
 
   /**
    * Copied from Solr ClientUtils.escapeQueryChars and removed escaping *
+   * @param s input string that will be escaped
+   * @return string result after escaping
    */
   public static String escapeQueryChars(String s) {
     StringBuilder sb = new StringBuilder();
@@ -204,8 +206,6 @@ public class SolrUtil {
     }
     return fieldTypeMap;
   }
-  
-  //=============================================================================================================
 
   public static void setFacetField(SolrQuery solrQuery, String facetField) {
     solrQuery.setFacet(true);

@@ -29,6 +29,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.bouncycastle.asn1.ASN1InputStream;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
@@ -45,8 +47,6 @@ import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.crypto.params.RSAKeyParameters;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -76,7 +76,7 @@ import static org.apache.ambari.logsearch.conf.LogSearchSslConfig.LOGSEARCH_CERT
 
 @Named
 public class SslConfigurer {
-  private static final Logger LOG = LoggerFactory.getLogger(SslConfigurer.class);
+  private static final Logger logger = LogManager.getLogger(SslConfigurer.class);
   
   private static final String KEYSTORE_LOCATION_ARG = "javax.net.ssl.keyStore";
   private static final String KEYSTORE_PASSWORD_ARG = "javax.net.ssl.keyStorePassword";
@@ -154,13 +154,13 @@ public class SslConfigurer {
       sslContextFactory.start();
       return sslContextFactory.getSslContext();
     } catch (Exception e) {
-      LOG.error("Could not create SSL Context", e);
+      logger.error("Could not create SSL Context", e);
       return null;
     } finally {
       try {
         sslContextFactory.stop();
       } catch (Exception e) {
-        LOG.error("Could not stop sslContextFactory", e);
+        logger.error("Could not stop sslContextFactory", e);
       }
     }
   }
@@ -175,7 +175,7 @@ public class SslConfigurer {
         return FileUtils.readFileToString(pwdFile);
       }
     } catch (Exception e) {
-      LOG.warn("Exception occurred during read/write password file for keystore/truststore.", e);
+      logger.warn("Exception occurred during read/write password file for keystore/truststore.", e);
       return null;
     }
   }
@@ -192,7 +192,7 @@ public class SslConfigurer {
       char[] passwordChars = config.getPassword(propertyName);
       return (ArrayUtils.isNotEmpty(passwordChars)) ? new String(passwordChars) : null;
     } catch (Exception e) {
-      LOG.warn(String.format("Could not load password %s from credential store, using default password", propertyName), e);
+      logger.warn(String.format("Could not load password %s from credential store, using default password", propertyName), e);
       return null;
     }
   }
@@ -222,7 +222,7 @@ public class SslConfigurer {
       keyStore.setKeyEntry("logsearch.alias", keyPair.getPrivate(), password, certChain);
       keyStore.store(fos, password);
     } catch (Exception e) {
-      LOG.error("Could not write certificate to Keystore", e);
+      logger.error("Could not write certificate to Keystore", e);
       throw e;
     }
   }
@@ -244,7 +244,7 @@ public class SslConfigurer {
     try {
       File certFile = new File(certificateLocation);
       if (certFile.exists()) {
-        LOG.info("Certificate file exists ({}), skip the generation.", certificateLocation);
+        logger.info("Certificate file exists ({}), skip the generation.", certificateLocation);
         return getCertFile(certificateLocation);
       } else {
         Security.addProvider(new BouncyCastleProvider());
@@ -253,7 +253,7 @@ public class SslConfigurer {
         return cert;
       }
     } catch (Exception e) {
-      LOG.error("Could not create certificate.", e);
+      logger.error("Could not create certificate.", e);
       throw e;
     }
   }
@@ -275,7 +275,7 @@ public class SslConfigurer {
       CertificateFactory factory = CertificateFactory.getInstance("X.509");
       return (X509Certificate) factory.generateCertificate(fos);
     } catch (Exception e) {
-      LOG.error("Cannot read cert file. ('" + location + "')", e);
+      logger.error("Cannot read cert file. ('" + location + "')", e);
       throw e;
     }
   }
@@ -333,12 +333,12 @@ public class SslConfigurer {
       boolean keyStoreFileExists = new File(keyStoreLocation).exists();
       if (!keyStoreFileExists) {
         FileUtil.createDirectory(certFolder);
-        LOG.warn("Keystore file ('{}') does not exist, creating new one. " +
+        logger.warn("Keystore file ('{}') does not exist, creating new one. " +
           "If the file exists, make sure you have proper permissions on that.", keyStoreLocation);
         if (isKeyStoreSpecified() && !"JKS".equalsIgnoreCase(getKeyStoreType())) {
           throw new RuntimeException(String.format("Keystore does not exist. Only JKS keystore can be auto generated. (%s)", keyStoreLocation));
         }
-        LOG.info("SSL keystore is not specified. Generating it with certificate ... (using default format: JKS)");
+        logger.info("SSL keystore is not specified. Generating it with certificate ... (using default format: JKS)");
         Security.addProvider(new BouncyCastleProvider());
         KeyPair keyPair = createKeyPair("RSA", 2048);
         File privateKeyFile = new File(String.format("%s/%s", certFolder, LOGSEARCH_KEYSTORE_PRIVATE_KEY));

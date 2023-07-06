@@ -34,7 +34,8 @@ import javax.servlet.http.HttpSession;
 import org.apache.ambari.logsearch.common.LogSearchContext;
 import org.apache.ambari.logsearch.manager.SessionManager;
 import org.apache.ambari.logsearch.web.model.User;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -42,7 +43,7 @@ import org.springframework.web.filter.GenericFilterBean;
 
 public class LogsearchSecurityContextFormationFilter extends GenericFilterBean {
 
-  static Logger logger = Logger.getLogger(LogsearchSecurityContextFormationFilter.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchSecurityContextFormationFilter.class);
 
   public static final String LOGSEARCH_SC_SESSION_KEY = "LOGSEARCH_SECURITY_CONTEXT";
   public static final String USER_AGENT = "User-Agent";

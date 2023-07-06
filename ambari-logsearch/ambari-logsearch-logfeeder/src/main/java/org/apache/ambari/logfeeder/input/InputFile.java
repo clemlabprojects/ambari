@@ -18,37 +18,44 @@
  */
 package org.apache.ambari.logfeeder.input;
 
+import org.apache.ambari.logfeeder.common.LogFeederConstants;
 import org.apache.ambari.logfeeder.conf.LogEntryCacheConfig;
 import org.apache.ambari.logfeeder.conf.LogFeederProps;
-import org.apache.ambari.logfeeder.docker.DockerContainerRegistry;
-import org.apache.ambari.logfeeder.docker.DockerMetadata;
+import org.apache.ambari.logfeeder.container.docker.DockerContainerRegistry;
+import org.apache.ambari.logfeeder.container.docker.DockerMetadata;
 import org.apache.ambari.logfeeder.input.monitor.DockerLogFileUpdateMonitor;
 import org.apache.ambari.logfeeder.input.monitor.LogFileDetachMonitor;
 import org.apache.ambari.logfeeder.input.monitor.LogFilePathUpdateMonitor;
 import org.apache.ambari.logfeeder.input.reader.LogsearchReaderFactory;
-import org.apache.ambari.logfeeder.input.file.FileCheckInHelper;
 import org.apache.ambari.logfeeder.input.file.ProcessFileHelper;
-import org.apache.ambari.logfeeder.input.file.ResumeLineNumberHelper;
 import org.apache.ambari.logfeeder.plugin.filter.Filter;
 import org.apache.ambari.logfeeder.plugin.input.Input;
 import org.apache.ambari.logfeeder.util.FileUtil;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.InputFileBaseDescriptor;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.InputFileDescriptor;
-import org.apache.commons.lang.BooleanUtils;
-import org.apache.commons.lang.ObjectUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.common.util.Base64;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-public class InputFile extends Input<LogFeederProps, InputFileMarker> {
+/**
+ * Input file object holds input shipper configurations, and can be used to start threads to monitor specific input file.
+ * If used with wildcards path or in docker mode, it can start multiple threads. (docker: using multiple files based on docker labels,
+ * as it is possible to use the same label types on different containers on 1 host, wildcard: if a pattern can be matched on multiple files/folder,
+ * it will be needed to start multiple input threads)
+ */
+public class InputFile extends Input<LogFeederProps, InputFileMarker, InputFileBaseDescriptor> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(InputFile.class);
+  private static final Logger logger = LogManager.getLogger(InputFile.class);
 
   private static final boolean DEFAULT_TAIL = true;
   private static final boolean DEFAULT_USE_EVENT_MD5 = false;
@@ -100,11 +107,11 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
         if (dockerContainerRegistry != null) {
           Map<String, Map<String, DockerMetadata>> metadataMap = dockerContainerRegistry.getContainerMetadataMap();
           String logType = getLogType();
-          if (metadataMap.containsKey(logType)) {
+          if (metadataMap.containsKey(StringUtils.removeStart(logType, LogFeederConstants.CLOUD_PREFIX))) {
             isReady = true;
           }
         } else {
-          LOG.warn("Docker registry is not set, probably docker registry usage is not enabled.");
+          logger.warn("Docker registry is not set, probably docker registry usage is not enabled.");
         }
       } else {
         logFiles = getActualInputLogFiles();
@@ -112,13 +119,13 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
         setFolderMap(foldersMap);
         if (!ArrayUtils.isEmpty(logFiles) && logFiles[0].isFile()) {
           if (tail && logFiles.length > 1) {
-            LOG.warn("Found multiple files (" + logFiles.length + ") for the file filter " + filePath +
+            logger.warn("Found multiple files (" + logFiles.length + ") for the file filter " + filePath +
               ". Will follow only the first one. Using " + logFiles[0].getAbsolutePath());
           }
-          LOG.info("File filter " + filePath + " expanded to " + logFiles[0].getAbsolutePath());
+          logger.info("File filter " + filePath + " expanded to " + logFiles[0].getAbsolutePath());
           isReady = true;
         } else {
-          LOG.debug(logPath + " file doesn't exist. Ignoring for now");
+          logger.debug(logPath + " file doesn't exist. Ignoring for now");
         }
       }
     }
@@ -134,17 +141,17 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
   public String getNameForThread() {
     if (filePath != null) {
       try {
-        return (getType() + "=" + (new File(filePath)).getName());
+        return (getType() + "=" + (new File(filePath)).getName() + ";" + getCloudModeSuffix());
       } catch (Throwable ex) {
-        LOG.warn("Couldn't get basename for filePath=" + filePath, ex);
+        logger.warn("Couldn't get basename for filePath=" + filePath, ex);
       }
     }
-    return super.getNameForThread() + ":" + getType();
+    return super.getNameForThread() + ":" + getType() + ";" + getCloudModeSuffix();
   }
 
   @Override
   public synchronized void checkIn(InputFileMarker inputMarker) {
-    FileCheckInHelper.checkIn(this, inputMarker);
+    getInputManager().getCheckpointHandler().checkIn(this, inputMarker);
   }
 
   @Override
@@ -171,8 +178,9 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
         Map<String, Map<String, DockerMetadata>> metadataMap = dockerContainerRegistry.getContainerMetadataMap();
         String logType = getLogType();
         threadGroup = new ThreadGroup("docker-parent-" + logType);
-        if (metadataMap.containsKey(logType)) {
-          Map<String, DockerMetadata> dockerMetadataMap = metadataMap.get(logType);
+        String replacedLogType = StringUtils.removeStart(logType, LogFeederConstants.CLOUD_PREFIX);
+        if (metadataMap.containsKey(replacedLogType)) {
+          Map<String, DockerMetadata> dockerMetadataMap = metadataMap.get(replacedLogType);
           for (Map.Entry<String, DockerMetadata> dockerMetadataEntry : dockerMetadataMap.entrySet()) {
             try {
               startNewChildDockerInputFileThread(dockerMetadataEntry.getValue());
@@ -180,7 +188,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
               throw new RuntimeException(e);
             }
           }
-          dockerLogFileUpdateMonitorThread = new Thread(new DockerLogFileUpdateMonitor((InputFile) this, pathUpdateIntervalMin, detachTimeMin), "docker_logfiles_updater=" + logType);
+          dockerLogFileUpdateMonitorThread = new Thread(new DockerLogFileUpdateMonitor(this, pathUpdateIntervalMin, detachTimeMin), "docker_logfiles_updater=" + logType);
           dockerLogFileUpdateMonitorThread.setDaemon(true);
           dockerLogFileUpdateMonitorThread.start();
         }
@@ -192,9 +200,9 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
             for (Map.Entry<String, List<File>> folderFileEntry : getFolderMap().entrySet()) {
               startNewChildInputFileThread(folderFileEntry);
             }
-            logFilePathUpdaterThread = new Thread(new LogFilePathUpdateMonitor((InputFile) this, pathUpdateIntervalMin, detachTimeMin), "logfile_path_updater=" + filePath);
+            logFilePathUpdaterThread = new Thread(new LogFilePathUpdateMonitor((InputFile) this, pathUpdateIntervalMin, detachTimeMin), String.format("logfile_path_updater=%s;%s", filePath, getCloudModeSuffix()));
             logFilePathUpdaterThread.setDaemon(true);
-            logFileDetacherThread = new Thread(new LogFileDetachMonitor((InputFile) this, detachIntervalMin, detachTimeMin), "logfile_detacher=" + filePath);
+            logFileDetacherThread = new Thread(new LogFileDetachMonitor((InputFile) this, detachIntervalMin, detachTimeMin), String.format("logfile_detacher=%s;%s", filePath, getCloudModeSuffix()));
             logFileDetacherThread.setDaemon(true);
 
             logFilePathUpdaterThread.start();
@@ -204,7 +212,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
           throw new RuntimeException(e);
         }
       } else {
-        LOG.info("Starting thread. " + getShortDescription());
+        logger.info("Starting thread. " + getShortDescription());
         thread = new Thread(this, getNameForThread());
         thread.start();
       }
@@ -223,31 +231,32 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
   @Override
   public void init(LogFeederProps logFeederProps) throws Exception {
     super.init(logFeederProps);
-    LOG.info("init() called");
+    logger.info("init() called");
 
+    InputFileDescriptor inputFileDescriptor = (InputFileDescriptor) getInputDescriptor(); // cast as InputS3 uses InputFileBaseDescriptor
     checkPointExtension = logFeederProps.getCheckPointExtension();
-    checkPointIntervalMS = (int) ObjectUtils.defaultIfNull(((InputFileBaseDescriptor)getInputDescriptor()).getCheckpointIntervalMs(), DEFAULT_CHECKPOINT_INTERVAL_MS);
-    detachIntervalMin = (int) ObjectUtils.defaultIfNull(((InputFileDescriptor)getInputDescriptor()).getDetachIntervalMin(), DEFAULT_DETACH_INTERVAL_MIN * 60);
-    detachTimeMin = (int) ObjectUtils.defaultIfNull(((InputFileDescriptor)getInputDescriptor()).getDetachTimeMin(), DEFAULT_DETACH_TIME_MIN * 60);
-    pathUpdateIntervalMin = (int) ObjectUtils.defaultIfNull(((InputFileDescriptor)getInputDescriptor()).getPathUpdateIntervalMin(), DEFAULT_LOG_PATH_UPDATE_INTERVAL_MIN * 60);
-    maxAgeMin = (int) ObjectUtils.defaultIfNull(((InputFileDescriptor)getInputDescriptor()).getMaxAgeMin(), 0);
-    boolean initDefaultFields = BooleanUtils.toBooleanDefaultIfNull(getInputDescriptor().isInitDefaultFields(), false);
+    checkPointIntervalMS = (int) ObjectUtils.defaultIfNull(inputFileDescriptor.getCheckpointIntervalMs(), DEFAULT_CHECKPOINT_INTERVAL_MS);
+    detachIntervalMin = (int) ObjectUtils.defaultIfNull(inputFileDescriptor.getDetachIntervalMin(), DEFAULT_DETACH_INTERVAL_MIN * 60);
+    detachTimeMin = (int) ObjectUtils.defaultIfNull(inputFileDescriptor.getDetachTimeMin(), DEFAULT_DETACH_TIME_MIN * 60);
+    pathUpdateIntervalMin = (int) ObjectUtils.defaultIfNull(inputFileDescriptor.getPathUpdateIntervalMin(), DEFAULT_LOG_PATH_UPDATE_INTERVAL_MIN * 60);
+    maxAgeMin = (int) ObjectUtils.defaultIfNull(inputFileDescriptor.getMaxAgeMin(), 0);
+    boolean initDefaultFields = BooleanUtils.toBooleanDefaultIfNull(inputFileDescriptor.isInitDefaultFields(), false);
     setInitDefaultFields(initDefaultFields);
 
     // Let's close the file and set it to true after we start monitoring it
     setClosed(true);
-    dockerLog = BooleanUtils.toBooleanDefaultIfNull(((InputFileDescriptor)getInputDescriptor()).getDockerEnabled(), false);
+    dockerLog = BooleanUtils.toBooleanDefaultIfNull(inputFileDescriptor.getDockerEnabled(), false);
     if (dockerLog) {
       if (logFeederProps.isDockerContainerRegistryEnabled()) {
         boolean isFileReady = isReady();
-        LOG.info("Container type to monitor " + getType() + ", tail=" + tail + ", isReady=" + isFileReady);
+        logger.info("Container type to monitor " + getType() + ", tail=" + tail + ", isReady=" + isFileReady);
       } else {
-        LOG.warn("Using docker input, but docker registry usage is not enabled.");
+        logger.warn("Using docker input, but docker registry usage is not enabled.");
       }
     } else {
       logPath = getInputDescriptor().getPath();
       if (StringUtils.isEmpty(logPath)) {
-        LOG.error("path is empty for file input. " + getShortDescription());
+        logger.error("path is empty for file input. " + getShortDescription());
         return;
       }
 
@@ -257,12 +266,12 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
         int lastIndexOfSlash = getFilePath().lastIndexOf("/");
         String folderBeforeLogName = getFilePath().substring(0, lastIndexOfSlash);
         if (folderBeforeLogName.contains("*")) {
-          LOG.info("Found regex in folder path ('" + getFilePath() + "'), will check against multiple folders.");
+          logger.info("Found regex in folder path ('" + getFilePath() + "'), will check against multiple folders.");
           setMultiFolder(true);
         }
       }
       boolean isFileReady = isReady();
-      LOG.info("File to monitor " + logPath + ", tail=" + tail + ", isReady=" + isFileReady);
+      logger.info("File to monitor " + logPath + ", tail=" + tail + ", isReady=" + isFileReady);
     }
 
     LogEntryCacheConfig cacheConfig = logFeederProps.getLogEntryCacheConfig();
@@ -281,7 +290,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
 
   @Override
   public void start() throws Exception {
-    boolean isProcessFile = BooleanUtils.toBooleanDefaultIfNull(((InputFileDescriptor)getInputDescriptor()).getProcessFile(), true);
+    boolean isProcessFile = BooleanUtils.toBooleanDefaultIfNull(getInputDescriptor().getProcessFile(), true);
     if (isProcessFile) {
       for (int i = logFiles.length - 1; i >= 0; i--) {
         File file = logFiles[i];
@@ -289,11 +298,11 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
           try {
             processFile(file, i == 0);
             if (isClosed() || isDrain()) {
-              LOG.info("isClosed or isDrain. Now breaking loop.");
+              logger.info("isClosed or isDrain. Now breaking loop.");
               break;
             }
           } catch (Throwable t) {
-            LOG.error("Error processing file=" + file.getAbsolutePath(), t);
+            logger.error("Error processing file=" + file.getAbsolutePath(), t);
           }
         }
       }
@@ -304,7 +313,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
   }
 
   public int getResumeFromLineNumber() {
-    return ResumeLineNumberHelper.getResumeFromLineNumber(this);
+    return this.getInputManager().getCheckpointHandler().resumeLineNumber(this);
   }
 
   public void processFile(File logPathFile, boolean follow) throws Exception {
@@ -315,7 +324,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
     BufferedReader br = new BufferedReader(LogsearchReaderFactory.INSTANCE.getReader(logFile));
     fileKey = getFileKeyFromLogFile(logFile);
     base64FileKey = Base64.byteArrayToBase64(fileKey.toString().getBytes());
-    LOG.info("fileKey=" + fileKey + ", base64=" + base64FileKey + ". " + getShortDescription());
+    logger.info("fileKey=" + fileKey + ", base64=" + base64FileKey + ". " + getShortDescription());
     return br;
   }
 
@@ -324,25 +333,30 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
   }
 
   private void copyFiles(File[] files) {
-    boolean isCopyFile = BooleanUtils.toBooleanDefaultIfNull(((InputFileDescriptor)getInputDescriptor()).getCopyFile(), false);
+    boolean isCopyFile = BooleanUtils.toBooleanDefaultIfNull(getInputDescriptor().getCopyFile(), false);
     if (isCopyFile && files != null) {
       for (File file : files) {
         try {
           InputFileMarker marker = new InputFileMarker(this, null, 0);
           getOutputManager().copyFile(file, marker);
           if (isClosed() || isDrain()) {
-            LOG.info("isClosed or isDrain. Now breaking loop.");
+            logger.info("isClosed or isDrain. Now breaking loop.");
             break;
           }
         } catch (Throwable t) {
-          LOG.error("Error processing file=" + file.getAbsolutePath(), t);
+          logger.error("Error processing file=" + file.getAbsolutePath(), t);
         }
       }
     }
   }
 
+  /**
+   * Start docker input file thread - by copying the input object and its filters (and set the log file to a specific json path)
+   * @param dockerMetadata holds docker metadata that was gathered by docker commands
+   * @throws CloneNotSupportedException error if input object could not be cloned
+   */
   public void startNewChildDockerInputFileThread(DockerMetadata dockerMetadata) throws CloneNotSupportedException {
-    LOG.info("Start docker child input thread - " + dockerMetadata.getLogPath());
+    logger.info("Start docker child input thread - " + dockerMetadata.getLogPath());
     InputFile clonedObject = (InputFile) this.clone();
     clonedObject.setDockerLogParent(false);
     clonedObject.logPath = dockerMetadata.getLogPath();
@@ -357,8 +371,12 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
     thread.start();
   }
 
+  /**
+   * Stop docker input file thread
+   * @param logPathKey file key for docker log (json)
+   */
   public void stopChildDockerInputFileThread(String logPathKey) {
-    LOG.info("Stop child input thread - " + logPathKey);
+    logger.info("Stop child input thread - " + logPathKey);
     String filePath = new File(logPathKey).getName();
     if (inputChildMap.containsKey(logPathKey)) {
       InputFile inputFile = inputChildMap.get(logPathKey);
@@ -368,18 +386,23 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
       }
       inputChildMap.remove(logPathKey);
     } else {
-      LOG.warn(logPathKey + " not found as an input child.");
+      logger.warn(logPathKey + " not found as an input child.");
     }
   }
 
+  /**
+   * Start a new child input - if more files can be defined by an input (using wildcards) - clone this input object and start threads one-by-one
+   * @param folderFileEntry folder that holds the file that needs to be monitored.
+   * @throws CloneNotSupportedException error if input object could not be cloned
+   */
   public void startNewChildInputFileThread(Map.Entry<String, List<File>> folderFileEntry) throws CloneNotSupportedException {
-    LOG.info("Start child input thread - " + folderFileEntry.getKey());
+    logger.info("Start child input thread - " + folderFileEntry.getKey());
     InputFile clonedObject = (InputFile) this.clone();
     String folderPath = folderFileEntry.getKey();
     String filePath = new File(getFilePath()).getName();
     String fullPathWithWildCard = String.format("%s/%s", folderPath, filePath);
     if (clonedObject.getMaxAgeMin() != 0 && FileUtil.isFileTooOld(new File(fullPathWithWildCard), clonedObject.getMaxAgeMin().longValue())) {
-      LOG.info(String.format("File ('%s') is too old (max age min: %d), monitor thread not starting...", getFilePath(), clonedObject.getMaxAgeMin()));
+      logger.info(String.format("File ('%s') is too old (max age min: %d), monitor thread not starting...", getFilePath(), clonedObject.getMaxAgeMin()));
     } else {
       clonedObject.setMultiFolder(false);
       clonedObject.logFiles = folderFileEntry.getValue().toArray(new File[0]); // TODO: works only with tail
@@ -398,7 +421,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
   private void copyFilters(InputFile clonedInput, Filter firstFilter) {
     if (firstFilter != null) {
       try {
-        LOG.info("Cloning filters for input=" + clonedInput.logPath);
+        logger.info("Cloning filters for input=" + clonedInput.logPath);
         Filter newFilter = (Filter) firstFilter.clone();
         newFilter.setInput(clonedInput);
         clonedInput.setFirstFilter(newFilter);
@@ -416,15 +439,19 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
             actFilter = null;
           }
         }
-        LOG.info("Cloning filters has finished for input=" + clonedInput.logPath);
+        logger.info("Cloning filters has finished for input=" + clonedInput.logPath);
       } catch (Exception e) {
-        LOG.error("Could not clone filters for input=" + clonedInput.logPath);
+        logger.error("Could not clone filters for input=" + clonedInput.logPath);
       }
     }
   }
 
+  /**
+   * Stop file input thread that was monitored by this class
+   * @param folderPathKey folder that contains input file that is monitored
+   */
   public void stopChildInputFileThread(String folderPathKey) {
-    LOG.info("Stop child input thread - " + folderPathKey);
+    logger.info("Stop child input thread - " + folderPathKey);
     String filePath = new File(getFilePath()).getName();
     String fullPathWithWildCard = String.format("%s/%s", folderPathKey, filePath);
     if (inputChildMap.containsKey(fullPathWithWildCard)) {
@@ -435,7 +462,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
       }
       inputChildMap.remove(fullPathWithWildCard);
     } else {
-      LOG.warn(fullPathWithWildCard + " not found as an input child.");
+      logger.warn(fullPathWithWildCard + " not found as an input child.");
     }
   }
 
@@ -452,15 +479,15 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
 
   @Override
   public boolean logConfigs() {
-    LOG.info("Printing Input=" + getShortDescription());
-    LOG.info("description=" + getInputDescriptor().getPath());
+    logger.info("Printing Input=" + getShortDescription());
+    logger.info("description=" + getInputDescriptor().getPath());
     return true;
   }
 
   @Override
   public void close() {
     super.close();
-    LOG.info("close() calling checkPoint checkIn(). " + getShortDescription());
+    logger.info("close() calling checkPoint checkIn(). " + getShortDescription());
     lastCheckIn();
     setClosed(true);
   }
@@ -485,7 +512,7 @@ public class InputFile extends Input<LogFeederProps, InputFileMarker> {
     return fileKey;
   }
 
-  public String getBase64FileKey() throws Exception {
+  public String getBase64FileKey() {
     return base64FileKey;
   }
 

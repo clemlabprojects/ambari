@@ -22,26 +22,26 @@ package org.apache.ambari.logsearch.config.zookeeper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 import org.apache.ambari.logsearch.config.api.LogLevelFilterManager;
 import org.apache.ambari.logsearch.config.api.LogSearchConfigServer;
-import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilter;
-import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilterMap;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.InputConfig;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputAdapter;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputConfigGson;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.InputConfigImpl;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.TreeCache;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
+/**
+ * ZooKeeper related shipper configuration operations for Log Search Server.
+ */
 public class LogSearchConfigServerZK extends LogSearchConfigZK implements LogSearchConfigServer {
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigServerZK.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigServerZK.class);
 
   private TreeCache serverCache;
 
@@ -68,7 +68,7 @@ public class LogSearchConfigServerZK extends LogSearchConfigZK implements LogSea
   public void setInputConfig(String clusterName, String serviceName, String inputConfig) throws Exception {
     String nodePath = String.format("/%s/input/%s", clusterName, serviceName);
     client.setData().forPath(nodePath, inputConfig.getBytes());
-    LOG.info("Set input config for the service " + serviceName + " for cluster " + clusterName);
+    logger.info("Set input config for the service " + serviceName + " for cluster " + clusterName);
   }
 
   @Override

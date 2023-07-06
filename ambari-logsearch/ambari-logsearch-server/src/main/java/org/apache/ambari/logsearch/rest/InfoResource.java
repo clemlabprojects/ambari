@@ -22,24 +22,17 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.apache.ambari.logsearch.manager.InfoManager;
-import org.apache.ambari.logsearch.model.response.PropertyDescriptionData;
-import org.apache.ambari.logsearch.model.response.ShipperConfigDescriptionData;
 import org.springframework.context.annotation.Scope;
 
-import java.util.List;
 import java.util.Map;
 
-import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_ALL_PROPERTIES_INFO_OD;
-import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_ALL_SHIPPER_CONFIG_INFO_OD;
 import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_APP_DETAILS_OD;
 import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_FEATURES_LIST;
-import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_LOGSEARCH_PROPERTIES_INFO_OD;
 import static org.apache.ambari.logsearch.doc.DocConstants.PublicOperationDescriptions.GET_AUTH_DETAILS_OD;
 
 @Api(value = "info", description = "General configuration information")
@@ -59,22 +52,6 @@ public class InfoResource {
   }
 
   @GET
-  @Path("/properties")
-  @Produces({"application/json"})
-  @ApiOperation(GET_ALL_PROPERTIES_INFO_OD)
-  public Map<String, List<PropertyDescriptionData>> getPropertyDescriptions() {
-    return infoManager.getPropertyDescriptions();
-  }
-
-  @GET
-  @Path("/properties/{propertyFile}")
-  @Produces({"application/json"})
-  @ApiOperation(GET_LOGSEARCH_PROPERTIES_INFO_OD)
-  public List<PropertyDescriptionData> getPropertyFileDescription(@PathParam("propertyFile") String propertyFile) {
-    return infoManager.getLogSearchPropertyDescriptions(propertyFile);
-  }
-
-  @GET
   @Path("/features")
   @Produces({"application/json"})
   @ApiOperation(GET_FEATURES_LIST)
@@ -88,13 +65,5 @@ public class InfoResource {
   @ApiOperation(GET_AUTH_DETAILS_OD)
   public Map<String, Boolean> getAuthInfo() {
     return infoManager.getAuthMap();
-  }
-
-  @GET
-  @Path("/shipperconfig")
-  @Produces({"application/json"})
-  @ApiOperation(GET_ALL_SHIPPER_CONFIG_INFO_OD)
-  public List<ShipperConfigDescriptionData> getShipperConfigDescription() {
-    return infoManager.getLogSearchShipperConfigDescription();
   }
 }

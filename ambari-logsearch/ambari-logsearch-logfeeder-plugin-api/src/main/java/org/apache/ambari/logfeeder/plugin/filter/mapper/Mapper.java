@@ -23,10 +23,11 @@ import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldDescript
 
 import java.util.Map;
 
+/**
+ * Mapper is used do mapping on specific fields which can be generated / gathered by Log Feeder filters
+ * @param <PROP_TYPE> Log Feeder configuration holder object
+ */
 public abstract class Mapper<PROP_TYPE extends LogFeederProperties> {
-
-  private MapFieldDescriptor mapFieldDescriptor;
-  private PROP_TYPE logFeederProperties;
 
   private String inputDesc;
   private String fieldName;
@@ -38,33 +39,27 @@ public abstract class Mapper<PROP_TYPE extends LogFeederProperties> {
     this.mapClassCode = mapClassCode;
   }
 
-  public void loadConfigs(MapFieldDescriptor mapFieldDescriptor, PROP_TYPE logFeederProperties) {
-    this.mapFieldDescriptor = mapFieldDescriptor;
-    this.logFeederProperties = logFeederProperties;
-  }
+  /**
+   * Initialize the mapper
+   * @param logFeederProperties holds global logfeeder properties
+   * @param inputDesc input description
+   * @param fieldName field name
+   * @param mapClassCode mapper type - to identify a mapper
+   * @param mapFieldDescriptor mapper field descriptor
+   * @return true if initialization is successful
+   */
+  public abstract boolean init(PROP_TYPE logFeederProperties, String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor);
 
-  public MapFieldDescriptor getMapFieldDescriptor() {
-    return mapFieldDescriptor;
-  }
-
-  public PROP_TYPE getLogFeederProperties() {
-    return logFeederProperties;
-  }
-
-  public abstract boolean init(String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor);
-
+  /**
+   * Apply mapper using fields (key / value pairs)
+   * @param jsonObj key/value pairs - holds fields an their values
+   * @param value object that is applied on the field
+   * @return result after the apply
+   */
   public abstract Object apply(Map<String, Object> jsonObj, Object value);
-
-  public String getInputDesc() {
-    return inputDesc;
-  }
 
   public String getFieldName() {
     return fieldName;
-  }
-
-  public String getMapClassCode() {
-    return mapClassCode;
   }
 
   @Override

@@ -19,6 +19,9 @@
 package org.apache.ambari.logfeeder.conf;
 
 import org.apache.ambari.logfeeder.common.LogFeederConstants;
+import org.apache.ambari.logfeeder.conf.output.HdfsOutputConfig;
+import org.apache.ambari.logfeeder.conf.output.RolloverConfig;
+import org.apache.ambari.logfeeder.conf.output.S3OutputConfig;
 import org.apache.ambari.logfeeder.plugin.common.LogFeederProperties;
 import org.apache.ambari.logsearch.config.api.LogSearchPropertyDescription;
 import org.apache.commons.lang.StringUtils;
@@ -42,6 +45,15 @@ public class LogFeederProps implements LogFeederProperties {
 
   @Inject
   private Environment env;
+
+  @Inject
+  private RolloverConfig rolloverConfig;
+
+  @Inject
+  private S3OutputConfig s3OutputConfig;
+
+  @Inject
+  private HdfsOutputConfig hdfsOutputConfig;
 
   private Properties properties;
 
@@ -79,7 +91,7 @@ public class LogFeederProps implements LogFeederProperties {
     description = "Use implicit routing for Solr Collections.",
     examples = {"true"},
     defaultValue = "false",
-    sources = {LogFeederConstants.SOLR_IMPLICIT_ROUTING_PROPERTY}
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
   )
   @Value("${"+ LogFeederConstants.SOLR_IMPLICIT_ROUTING_PROPERTY + ":false}")
   private boolean solrImplicitRouting;
@@ -182,6 +194,16 @@ public class LogFeederProps implements LogFeederProperties {
   public boolean solrFilterMonitor;
 
   @LogSearchPropertyDescription(
+    name = LogFeederConstants.MONITOR_SOLR_FILTER_INTERVAL_PROPERTY,
+    description = "Time interval (in seconds) between monitoring input config filter definitions from Solr.",
+    examples = {"60"},
+    defaultValue = "30",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.MONITOR_SOLR_FILTER_INTERVAL_PROPERTY + ":30}")
+  public Integer solrFilterMonitorInterval;
+
+  @LogSearchPropertyDescription(
     name = LogFeederConstants.SOLR_ZK_CONNECTION_STRING,
     description = "Zookeeper connection string for Solr.",
     examples = {"localhost1:2181,localhost2:2181/mysolr_znode"},
@@ -198,6 +220,114 @@ public class LogFeederProps implements LogFeederProperties {
   )
   @Value("${" + LogFeederConstants.SOLR_URLS + ":}")
   private String solrUrlsStr;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.SOLR_CLOUD_DISCOVER,
+    description = "On startup, with a Solr Cloud client, the Solr nodes will be discovered, then LBHttpClient will be built from that.",
+    examples = {"true"},
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE},
+    defaultValue = "false"
+  )
+  @Value("${" + LogFeederConstants.SOLR_CLOUD_DISCOVER + ":false}")
+  private boolean solrCloudDiscover;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.SOLR_METADATA_COLLECTION,
+    description = "Metadata collection name that could contain log level filters or input configurations.",
+    examples = {"logsearch_metadata"},
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.SOLR_METADATA_COLLECTION + ":logsearch_metadata}")
+  private String solrMetadataCollection;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_MODE,
+    description = "Option to support sending logs to cloud storage. You can choose between supporting only cloud storage, non-cloud storage or both",
+    examples = {"default", "cloud", "hybrid"},
+    defaultValue = "default",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_MODE + ":default}")
+  public LogFeederMode cloudStorageMode;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_DESTINATION,
+    description = "Type of storage that is the destination for cloud output logs.",
+    examples = {"hdfs", "s3"},
+    defaultValue = "none",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_DESTINATION + ":none}")
+  private CloudStorageDestination cloudStorageDestination;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_UPLOAD_ON_SHUTDOWN,
+    description = "Try to upload archived files on shutdown",
+    examples = {"true"},
+    defaultValue = "false",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_UPLOAD_ON_SHUTDOWN + ":false}")
+  private boolean cloudStorageUploadOnShutdown;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_UPLOADER_INTERVAL_SECONDS,
+    description = "Second interval, that is used to check against there are any files to upload to cloud storage or not.",
+    examples = {"10"},
+    defaultValue = "60",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_UPLOADER_INTERVAL_SECONDS + ":60}")
+  private Integer cloudStorageUploaderIntervalSeconds;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_UPLOADER_TIMEOUT_MINUTUES,
+    description = "Timeout value for uploading task to cloud storage in minutes.",
+    examples = {"10"},
+    defaultValue = "60",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_UPLOADER_TIMEOUT_MINUTUES + ":60}")
+  private Integer cloudStorageUploaderTimeoutMinutes;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_USE_HDFS_CLIENT,
+    description = "Use hdfs client with cloud connectors instead of the core clients for shipping data to cloud storage",
+    examples = {"true"},
+    defaultValue = "false",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_USE_HDFS_CLIENT + ":true}")
+  private boolean useCloudHdfsClient;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_CUSTOM_FS,
+    description = "If it is not empty, override fs.defaultFS for HDFS client. Can be useful to write data to a different bucket (from other services) if the bucket address is read from core-site.xml",
+    examples = {"s3a://anotherbucket"},
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_CUSTOM_FS + ":}")
+  private String customFs;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_BASE_PATH,
+    description = "Base path prefix for storing logs (cloud storage / hdfs), could be an absolute path or URI. (if URI used, that will override the default.FS with HDFS client)",
+    examples = {"/user/logsearch/mypath", "s3a:///user/logsearch"},
+    defaultValue = "/apps/logsearch",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_BASE_PATH + ":/apps/logsearch}")
+  private String cloudBasePath;
+
+  @LogSearchPropertyDescription(
+    name = LogFeederConstants.CLOUD_STORAGE_USE_FILTERS,
+    description = "Use filters for inputs (with filters the output format will be JSON)",
+    examples = {"true"},
+    defaultValue = "false",
+    sources = {LogFeederConstants.LOGFEEDER_PROPERTIES_FILE}
+  )
+  @Value("${" + LogFeederConstants.CLOUD_STORAGE_USE_FILTERS + ":false}")
+  private boolean cloudStorageUseFilters;
 
   @Inject
   private LogEntryCacheConfig logEntryCacheConfig;
@@ -336,6 +466,14 @@ public class LogFeederProps implements LogFeederProperties {
     this.solrFilterMonitor = solrFilterMonitor;
   }
 
+  public Integer getSolrFilterMonitorInterval() {
+    return solrFilterMonitorInterval;
+  }
+
+  public void setSolrFilterMonitorInterval(Integer solrFilterMonitorInterval) {
+    this.solrFilterMonitorInterval = solrFilterMonitorInterval;
+  }
+
   public String getSolrUrlsStr() {
     return this.solrUrlsStr;
   }
@@ -350,6 +488,118 @@ public class LogFeederProps implements LogFeederProperties {
 
   public void setZkFilterStorage(boolean zkFilterStorage) {
     this.zkFilterStorage = zkFilterStorage;
+  }
+
+  public LogFeederMode getCloudStorageMode() {
+    return cloudStorageMode;
+  }
+
+  public void setCloudStorageMode(LogFeederMode cloudStorageMode) {
+    this.cloudStorageMode = cloudStorageMode;
+  }
+
+  public HdfsOutputConfig getHdfsOutputConfig() {
+    return hdfsOutputConfig;
+  }
+
+  public S3OutputConfig getS3OutputConfig() {
+    return s3OutputConfig;
+  }
+
+  public void setS3OutputConfig(S3OutputConfig s3OutputConfig) {
+    this.s3OutputConfig = s3OutputConfig;
+  }
+
+  public RolloverConfig getRolloverConfig() {
+    return rolloverConfig;
+  }
+
+  public void setRolloverConfig(RolloverConfig rolloverConfig) {
+    this.rolloverConfig = rolloverConfig;
+  }
+
+  public void setHdfsOutputConfig(HdfsOutputConfig hdfsOutputConfig) {
+    this.hdfsOutputConfig = hdfsOutputConfig;
+  }
+
+  public CloudStorageDestination getCloudStorageDestination() {
+    return cloudStorageDestination;
+  }
+
+  public void setCloudStorageDestination(CloudStorageDestination cloudStorageDestination) {
+    this.cloudStorageDestination = cloudStorageDestination;
+  }
+
+  public boolean isCloudStorageUploadOnShutdown() {
+    return cloudStorageUploadOnShutdown;
+  }
+
+  public void setCloudStorageUploadOnShutdown(boolean cloudStorageUploadOnShutdown) {
+    this.cloudStorageUploadOnShutdown = cloudStorageUploadOnShutdown;
+  }
+
+  public Integer getCloudStorageUploaderIntervalSeconds() {
+    return cloudStorageUploaderIntervalSeconds;
+  }
+
+  public void setCloudStorageUploaderIntervalSeconds(Integer cloudStorageUploaderIntervalSeconds) {
+    this.cloudStorageUploaderIntervalSeconds = cloudStorageUploaderIntervalSeconds;
+  }
+
+  public Integer getCloudStorageUploaderTimeoutMinutes() {
+    return cloudStorageUploaderTimeoutMinutes;
+  }
+
+  public void setCloudStorageUploaderTimeoutMinutes(Integer cloudStorageUploaderTimeoutMinutes) {
+    this.cloudStorageUploaderTimeoutMinutes = cloudStorageUploaderTimeoutMinutes;
+  }
+
+  public boolean isUseCloudHdfsClient() {
+    return useCloudHdfsClient;
+  }
+
+  public void setUseCloudHdfsClient(boolean useCloudHdfsClient) {
+    this.useCloudHdfsClient = useCloudHdfsClient;
+  }
+
+  public String getCustomFs() {
+    return customFs;
+  }
+
+  public void setCustomFs(String customFs) {
+    this.customFs = customFs;
+  }
+
+  public boolean isCloudStorageUseFilters() {
+    return cloudStorageUseFilters;
+  }
+
+  public void setCloudStorageUseFilters(boolean cloudStorageUseFilters) {
+    this.cloudStorageUseFilters = cloudStorageUseFilters;
+  }
+
+  public String getCloudBasePath() {
+    return cloudBasePath;
+  }
+
+  public void setCloudBasePath(String cloudBasePath) {
+    this.cloudBasePath = cloudBasePath;
+  }
+
+  public String getSolrMetadataCollection() {
+    return solrMetadataCollection;
+  }
+
+  public void setSolrMetadataCollection(String solrMetadataCollection) {
+    this.solrMetadataCollection = solrMetadataCollection;
+  }
+
+  public boolean isSolrCloudDiscover() {
+    return solrCloudDiscover;
+  }
+
+  public void setSolrCloudDiscover(boolean solrCloudDiscover) {
+    this.solrCloudDiscover = solrCloudDiscover;
   }
 
   public String[] getSolrUrls() {
@@ -374,5 +624,4 @@ public class LogFeederProps implements LogFeederProperties {
       throw new IllegalArgumentException("Cannot find logfeeder.properties on the classpath");
     }
   }
-
 }

@@ -29,15 +29,15 @@ import java.util.Arrays;
 import org.apache.ambari.logsearch.conf.SolrPropsConfig;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkConfigManager;
 import org.apache.zookeeper.CreateMode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class UploadConfigurationHandler extends AbstractSolrConfigHandler {
 
-  private static final Logger LOG = LoggerFactory.getLogger(UploadConfigurationHandler.class);
+  private static final Logger logger = LogManager.getLogger(UploadConfigurationHandler.class);
 
   private static final String SOLR_CONFIG_FILE = "solrconfig.xml";
   private static final String[] configFiles = {
@@ -57,7 +57,7 @@ public class UploadConfigurationHandler extends AbstractSolrConfigHandler {
     if (Arrays.equals(FileUtils.readFileToByteArray(file), content))
       return false;
 
-    LOG.info("Solr config file differs ('{}'), upload config set to zookeeper", file.getName());
+    logger.info("Solr config file differs ('{}'), upload config set to zookeeper", file.getName());
     ZkConfigManager zkConfigManager = new ZkConfigManager(zkClient);
     zkConfigManager.uploadConfigDir(getConfigSetFolder().toPath(), solrPropsConfig.getConfigName());
     String filePath = String.format("%s%s%s", getConfigSetFolder(), separator, getConfigFileName());
@@ -68,7 +68,7 @@ public class UploadConfigurationHandler extends AbstractSolrConfigHandler {
 
   @Override
   public void doIfConfigNotExist(SolrPropsConfig solrPropsConfig, ZkConfigManager zkConfigManager) throws IOException {
-    LOG.info("Config set does not exist for '{}' collection. Uploading it to zookeeper...", solrPropsConfig.getCollection());
+    logger.info("Config set does not exist for '{}' collection. Uploading it to zookeeper...", solrPropsConfig.getCollection());
     File[] listOfFiles = getConfigSetFolder().listFiles();
     if (listOfFiles != null) {
       zkConfigManager.uploadConfigDir(getConfigSetFolder().toPath(), solrPropsConfig.getConfigName());
@@ -82,17 +82,17 @@ public class UploadConfigurationHandler extends AbstractSolrConfigHandler {
 
   @Override
   public void uploadMissingConfigFiles(SolrZkClient zkClient, ZkConfigManager zkConfigManager, String configName) throws IOException {
-    LOG.info("Check any of the configs files are missing for config ({})", configName);
+    logger.info("Check any of the configs files are missing for config ({})", configName);
     for (String configFile : configFiles) {
       if ("enumsConfig.xml".equals(configFile) && !hasEnumConfig) {
-        LOG.info("Config file ({}) is not needed for {}", configFile, configName);
+        logger.info("Config file ({}) is not needed for {}", configFile, configName);
         continue;
       }
       String zkPath = String.format("%s/%s", configName, configFile);
       if (zkConfigManager.configExists(zkPath)) {
-        LOG.info("Config file ({}) has already uploaded properly.", configFile);
+        logger.info("Config file ({}) has already uploaded properly.", configFile);
       } else {
-        LOG.info("Config file ({}) is missing. Reupload...", configFile);
+        logger.info("Config file ({}) is missing. Reupload...", configFile);
         FileSystems.getDefault().getSeparator();
         uploadFileToZk(zkClient,
           String.format("%s%s%s", getConfigSetFolder(), FileSystems.getDefault().getSeparator(), configFile),

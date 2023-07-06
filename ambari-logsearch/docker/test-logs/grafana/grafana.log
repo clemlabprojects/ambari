@@ -1,0 +1,8 @@
+2018/11/22 10:45:09 [I] Migrator: exec migration id: create index UQE_quota_org_id_user_id_target - v1
+2018/11/22 10:45:09 [I] Created default admin user: admin
+2018/11/22 10:45:09 [I] Listen: http://0.0.0.0:3000
+Thu Nov 22 10:45:10 UTC 2018 pid_file has been written to
+OK
+2018/11/22 10:45:20 [frontendsettings.go:47 getFrontendSettingsMap()] [E] Could not find plugin definition for data source 1: ambari-metrics
+2018/11/22 10:46:20 [frontendsettings.go:47 getFrontendSettingsMap()] [E] Could not find plugin definition for data source 2: ambari-metrics
+2018/11/22 10:46:20 [frontendsettings.go:47 getFrontendSettingsMap()] [E] Could not find plugin definition for data source 3: ambari-metrics

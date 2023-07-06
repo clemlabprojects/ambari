@@ -1,0 +1,65 @@
+{{ if .Values.enabled }}
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-logsearch
+  namespace: {{.Values.global.namespace.logging}}
+spec:
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logsearch
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: logsearch
+        release: {{ .Release.Name }}
+    spec:
+{{- if .Values.rbac.enabled}}
+      serviceAccountName: {{ .Release.Name }}-logsearch-service-account
+{{end}}
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: logsearch
+          image: {{ .Values.image }}
+          imagePullPolicy: Always
+          env:
+          - name: ZK_CONNECT_STRING
+            value: "{{.Values.zkRelease}}-zookeeper-cs.{{.Values.global.namespace.logging}}.svc.{{.Values.global.clusterDomain}}:2181/infra-solr"
+          ports:
+            - containerPort: 61888
+              name: logsearchweb
+          volumeMounts:
+            - name: logsearch-configmap
+              mountPath: {{ .Values.configMountPath }}
+              readOnly: false
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 61888
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: logsearch-configmap
+          configMap:
+            name: {{ .Release.Name }}-logsearch-configmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-logsearch
+  namespace: {{.Values.global.namespace.logging}}
+spec:
+  ports:
+    - port: 61888
+      name: logsearchweb
+  selector:
+    app: logsearch
+    release: {{ .Release.Name }}
+{{- end }}

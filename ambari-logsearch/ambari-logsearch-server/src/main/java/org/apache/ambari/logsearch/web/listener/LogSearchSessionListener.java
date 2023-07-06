@@ -18,15 +18,15 @@
  */
 package org.apache.ambari.logsearch.web.listener;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.servlet.http.HttpSessionEvent;
 import javax.servlet.http.HttpSessionListener;
 
 public class LogSearchSessionListener implements HttpSessionListener {
 
-  private Logger LOG = LoggerFactory.getLogger(LogSearchSessionListener.class);
+  private Logger logger = LogManager.getLogger(LogSearchSessionListener.class);
 
   private int numberOfSessions = 0;
 
@@ -35,7 +35,7 @@ public class LogSearchSessionListener implements HttpSessionListener {
     synchronized (this) {
       numberOfSessions++;
     }
-    LOG.info(String.format("New session is created (Id: %s). Number of sessions: %d", event.getSession().getId(), numberOfSessions));
+    logger.info(String.format("New session is created (Id: %s). Number of sessions: %d", event.getSession().getId(), numberOfSessions));
   }
 
   @Override
@@ -43,6 +43,6 @@ public class LogSearchSessionListener implements HttpSessionListener {
     synchronized (this) {
       numberOfSessions--;
     }
-    LOG.info(String.format("Session destroyed (Id: %s). Number of sessions: %d", event.getSession().getId(), numberOfSessions));
+    logger.info(String.format("Session destroyed (Id: %s). Number of sessions: %d", event.getSession().getId(), numberOfSessions));
   }
 }

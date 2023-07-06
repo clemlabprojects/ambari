@@ -19,13 +19,18 @@
 @import '../../modules/shared/mixins';
 
 :host {
-  display: block;
-  padding: @filters-panel-padding;
   background-color: @filters-panel-background-color;
+  box-shadow: 0 2px 2px rgba(0,0,0,.1);
+  display: block;
+  opacity: .95;
+  padding: @filters-panel-padding;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
 
   .filter-input-container {
-    display: flex;
     align-items: flex-start;
+    display: flex;
     justify-content: flex-start;
 
     .search-button {
@@ -61,10 +66,9 @@
       margin-right: -1 * (@input-border-width);
     }
 
-    time-range-picker {
-      /deep/ .dropdown-menu {
-        left: @col-padding;
-      }
+    .time-zone-picker-btn {
+      border: @input-border;
+      height: 100%;
     }
   }
 

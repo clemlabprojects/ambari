@@ -42,6 +42,7 @@ import {LogsContainerService} from '@app/services/logs-container.service';
 import {UtilsService} from '@app/services/utils.service';
 import {PaginationComponent} from '@app/components/pagination/pagination.component';
 import {DropdownListComponent} from '@modules/shared/components/dropdown-list/dropdown-list.component';
+import {HostNamePipe} from "@app/pipes/host-name.pipe";
 
 import {AuditLogsTableComponent} from './audit-logs-table.component';
 import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
@@ -52,6 +53,18 @@ import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.serv
 import {NotificationService} from '@modules/shared/services/notification.service';
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
 
+import { AuthService } from '@app/services/auth.service';
+import * as auth from '@app/store/reducers/auth.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { reducer as userSettings } from '@app/store/reducers/user-settings.reducers';
+
+import {ComponentLabelPipe} from '@app/pipes/component-label';
+import { RepoLabelPipe } from '@app/pipes/repo-label';
+import { AuditLogFieldLabelPipe } from '@app/pipes/audit-log-field-label.pipe';
+
+
 describe('AuditLogsTableComponent', () => {
   let component: AuditLogsTableComponent;
   let fixture: ComponentFixture<AuditLogsTableComponent>;
@@ -59,9 +72,13 @@ describe('AuditLogsTableComponent', () => {
   beforeEach(async(() => {
     TestBed.configureTestingModule({
       declarations: [
+        ComponentLabelPipe,
+        RepoLabelPipe,
+        AuditLogFieldLabelPipe,
         AuditLogsTableComponent,
         PaginationComponent,
-        DropdownListComponent
+        DropdownListComponent,
+        HostNamePipe
       ],
       imports: [
         RouterTestingModule,
@@ -83,8 +100,12 @@ describe('AuditLogsTableComponent', () => {
           tabs,
           clusters,
           components,
-          hosts
-        })
+          hosts,
+          auth: auth.reducer,
+          userSettings
+        }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects)
       ],
       providers: [
         ...MockHttpRequestModules,
@@ -108,7 +129,8 @@ describe('AuditLogsTableComponent', () => {
         LogsFilteringUtilsService,
         LogsStateService,
         NotificationsService,
-        NotificationService
+        NotificationService,
+        AuthService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

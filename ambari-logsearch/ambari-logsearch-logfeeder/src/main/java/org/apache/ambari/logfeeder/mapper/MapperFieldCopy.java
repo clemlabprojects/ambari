@@ -24,24 +24,35 @@ import org.apache.ambari.logfeeder.plugin.filter.mapper.Mapper;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldCopyDescriptor;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldDescriptor;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
 /**
- * Overrides the value for the field
+ * Copy field to an another field
+ * <pre>
+ *   "post_map_values": {
+ *         "Status": [
+ *           {
+ *             "map_field_copy": {
+ *               "copy_name": "ws_status_copied"
+ *             }
+ *           }
+ *       }
+ * </pre>
  */
 public class MapperFieldCopy extends Mapper<LogFeederProps> {
-  private static final Logger LOG = Logger.getLogger(MapperFieldCopy.class);
+  private static final Logger logger = LogManager.getLogger(MapperFieldCopy.class);
   
   private String copyName = null;
 
   @Override
-  public boolean init(String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
+  public boolean init(LogFeederProps logFeederProps, String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
     init(inputDesc, fieldName, mapClassCode);
     copyName = ((MapFieldCopyDescriptor)mapFieldDescriptor).getCopyName();
     if (StringUtils.isEmpty(copyName)) {
-      LOG.fatal("Map copy name is empty.");
+      logger.fatal("Map copy name is empty.");
       return false;
     }
     return true;

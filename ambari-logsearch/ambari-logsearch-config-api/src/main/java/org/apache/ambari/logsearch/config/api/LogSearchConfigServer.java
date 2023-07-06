@@ -33,7 +33,7 @@ public interface LogSearchConfigServer extends LogSearchConfig {
    * Initialization of the configuration.
    * 
    * @param properties The properties of that component.
-   * @throws Exception
+   * @throws Exception error during Log Search configuration initialization
    */
   void init(Map<String, String> properties) throws Exception;
 
@@ -51,7 +51,7 @@ public interface LogSearchConfigServer extends LogSearchConfig {
    * @param clusterName The name of the cluster where the service is looked for.
    * @param serviceName The name of the service looked for.
    * @return If input configuration exists for the service.
-   * @throws Exception
+   * @throws Exception error during input configuration check
    */
   boolean inputConfigExists(String clusterName, String serviceName) throws Exception;
 
@@ -69,7 +69,7 @@ public interface LogSearchConfigServer extends LogSearchConfig {
    * @param clusterName The name of the cluster where the service is.
    * @param serviceName The name of the service of which's input configuration is uploaded.
    * @param inputConfig The input configuration of the service.
-   * @throws Exception
+   * @throws Exception error during setting input configuration
    */
   void setInputConfig(String clusterName, String serviceName, String inputConfig) throws Exception;
 

@@ -27,7 +27,6 @@ import java.util.Map;
 import org.apache.ambari.logfeeder.common.LogFeederConstants;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.MapDateDescriptorImpl;
 import org.apache.commons.lang3.time.DateUtils;
-import org.apache.log4j.Logger;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -35,17 +34,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MapperDateTest {
-  private static final Logger LOG = Logger.getLogger(MapperDateTest.class);
 
   @Test
   public void testMapperDate_epoch() {
-    LOG.info("testMapperDate_epoch()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
     mapDateDescriptor.setTargetDatePattern("epoch");
 
     MapperDate mapperDate = new MapperDate();
-    assertTrue("Could not initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertTrue("Could not initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
 
@@ -60,13 +57,12 @@ public class MapperDateTest {
 
   @Test
   public void testMapperDate_pattern() throws Exception {
-    LOG.info("testMapperDate_pattern()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
     mapDateDescriptor.setTargetDatePattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     MapperDate mapperDate = new MapperDate();
-    assertTrue("Could not initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertTrue("Could not initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
     String dateString = "2016-04-08 15:55:23.548";
@@ -82,34 +78,31 @@ public class MapperDateTest {
 
   @Test
   public void testMapperDate_noDatePattern() {
-    LOG.info("testMapperDate_noDatePattern()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
 
     MapperDate mapperDate = new MapperDate();
-    assertFalse("Was not able to initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertFalse("Was not able to initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
   }
 
   @Test
   public void testMapperDate_notParsableDatePattern() {
-    LOG.info("testMapperDate_notParsableDatePattern()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
     mapDateDescriptor.setTargetDatePattern("not_parsable_content");
 
     MapperDate mapperDate = new MapperDate();
-    assertFalse("Was not able to initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertFalse("Was not able to initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
   }
 
   @Test
   public void testMapperDate_invalidEpochValue() {
-    LOG.info("testMapperDate_invalidEpochValue()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
     mapDateDescriptor.setTargetDatePattern("epoch");
 
     MapperDate mapperDate = new MapperDate();
-    assertTrue("Could not initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertTrue("Could not initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
     String invalidValue = "abc";
@@ -121,13 +114,12 @@ public class MapperDateTest {
 
   @Test
   public void testMapperDate_invalidDateStringValue() {
-    LOG.info("testMapperDate_invalidDateStringValue()");
 
     MapDateDescriptorImpl mapDateDescriptor = new MapDateDescriptorImpl();
     mapDateDescriptor.setTargetDatePattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     MapperDate mapperDate = new MapperDate();
-    assertTrue("Could not initialize!", mapperDate.init(null, "someField", null, mapDateDescriptor));
+    assertTrue("Could not initialize!", mapperDate.init(null, null, "someField", null, mapDateDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
     String invalidValue = "abc";

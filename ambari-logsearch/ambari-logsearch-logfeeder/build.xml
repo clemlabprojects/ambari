@@ -36,7 +36,7 @@
     </copy>
     <copy todir="target/package/conf" includeEmptyDirs="no">
       <fileset file="target/classes/grok-patterns"/>
-      <fileset file="target/classes/log4j.xml"/>
+      <fileset file="target/classes/log4j2.yml"/>
       <fileset file="target/classes/logfeeder.properties"/>
       <fileset file="target/classes/alias_config.json"/>
       <fileset file="src/main/scripts/logfeeder-env.sh"/>
@@ -51,5 +51,11 @@
         <exclude name="**/*.sh"/>
       </tarfileset>
     </tar>
+    <copy todir="target" >
+      <fileset dir="../jenkins/containers" includes="**"/>
+    </copy>
+    <copy todir="target/docker-logsearch-logfeeder/logfeeder" >
+      <fileset dir="target/package" includes="**"/>
+    </copy>
   </target>
 </project>

@@ -25,7 +25,6 @@ import org.apache.ambari.logfeeder.input.InputFileMarker;
 import org.apache.ambari.logfeeder.plugin.manager.OutputManager;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.FilterKeyValueDescriptor;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.FilterKeyValueDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.easymock.Capture;
 import org.easymock.CaptureType;
 import org.easymock.EasyMock;
@@ -37,7 +36,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class FilterKeyValueTest {
-  private static final Logger LOG = Logger.getLogger(FilterKeyValueTest.class);
 
   private FilterKeyValue filterKeyValue;
   private OutputManager mockOutputManager;
@@ -55,8 +53,6 @@ public class FilterKeyValueTest {
 
   @Test
   public void testFilterKeyValue_extraction() throws Exception {
-    LOG.info("testFilterKeyValue_extraction()");
-
     FilterKeyValueDescriptorImpl filterKeyValueDescriptor = new FilterKeyValueDescriptorImpl();
     filterKeyValueDescriptor.setSourceField("keyValueField");
     filterKeyValueDescriptor.setFieldSplit("&");
@@ -79,8 +75,6 @@ public class FilterKeyValueTest {
 
   @Test
   public void testFilterKeyValue_extractionWithBorders() throws Exception {
-    LOG.info("testFilterKeyValue_extractionWithBorders()");
-
     FilterKeyValueDescriptorImpl filterKeyValueDescriptor = new FilterKeyValueDescriptorImpl();
     filterKeyValueDescriptor.setSourceField("keyValueField");
     filterKeyValueDescriptor.setFieldSplit("&");
@@ -104,8 +98,6 @@ public class FilterKeyValueTest {
 
   @Test
   public void testFilterKeyValue_missingSourceField() throws Exception {
-    LOG.info("testFilterKeyValue_missingSourceField()");
-
     FilterKeyValueDescriptorImpl filterKeyValueDescriptor = new FilterKeyValueDescriptorImpl();
     filterKeyValueDescriptor.setFieldSplit("&");
     init(filterKeyValueDescriptor);
@@ -122,7 +114,6 @@ public class FilterKeyValueTest {
 
   @Test
   public void testFilterKeyValue_noSourceFieldPresent() throws Exception {
-    LOG.info("testFilterKeyValue_noSourceFieldPresent()");
 
     FilterKeyValueDescriptorImpl filterKeyValueDescriptor = new FilterKeyValueDescriptorImpl();
     filterKeyValueDescriptor.setSourceField("keyValueField");

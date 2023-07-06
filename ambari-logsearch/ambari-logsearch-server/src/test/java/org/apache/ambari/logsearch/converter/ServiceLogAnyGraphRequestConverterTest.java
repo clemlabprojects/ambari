@@ -18,14 +18,14 @@
  */
 package org.apache.ambari.logsearch.converter;
 
-import static org.junit.Assert.assertEquals;
-
 import org.apache.ambari.logsearch.model.request.impl.ServiceAnyGraphRequest;
 import org.apache.ambari.logsearch.model.request.impl.query.ServiceAnyGraphQueryRequest;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.data.solr.core.DefaultQueryParser;
+
+import static org.junit.Assert.assertEquals;
 
 public class ServiceLogAnyGraphRequestConverterTest extends AbstractRequestConverterTest {
 

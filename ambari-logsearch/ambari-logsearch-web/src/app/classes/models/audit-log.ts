@@ -18,6 +18,8 @@
 
 import {Log} from '@app/classes/models/log';
 
+export const commonFieldNames: string[] = ['evtTime', 'repo', 'reqUser', 'action'];
+
 export interface AuditLog extends Log {
   policy?: string;
   reason?: string;

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  labels:
+    app: localstack
+spec:
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      hostname: localstack
+      containers:
+      - name: localstack
+        image: localstack/localstack
+        env:
+        - name: SERVICES
+          value: "s3:4569"
+        - name: POD_IP
+          valueFrom: { fieldRef: { fieldPath: status.podIP } }
+        ports:
+        - name: http
+          containerPort: 4569
+---
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: localstack
+  labels:
+spec:
+  policyTypes:
+  - Ingress
+  - Egress
+  podSelector:
+    matchLabels:
+      app: localstack
+  ingress:
+  - ports:
+    - port: 4569
+  egress:
+  - {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  labels:
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 4569
+    nodePort: 31000
+    targetPort: http
+  externalIPs:
+    []
+  selector:
+    app: localstack

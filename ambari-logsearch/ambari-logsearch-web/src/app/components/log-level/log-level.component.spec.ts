@@ -14,11 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {DebugElement} from '@angular/core';
-import {async, ComponentFixture, TestBed} from '@angular/core/testing';
+import { DebugElement } from '@angular/core';
+import { async, ComponentFixture, TestBed } from '@angular/core/testing';
 
-import {LogLevelComponent} from './log-level.component';
-import {By} from '@angular/platform-browser';
+import { LogLevelComponent } from './log-level.component';
+import { By } from '@angular/platform-browser';
+
+import { TranslationModules } from '@app/test-config.spec';
 
 describe('LogLevelComponent', () => {
   let component: LogLevelComponent;
@@ -37,6 +39,9 @@ describe('LogLevelComponent', () => {
 
   beforeEach(async(() => {
     TestBed.configureTestingModule({
+      imports: [
+        ...TranslationModules
+      ],
       declarations: [ LogLevelComponent ]
     })
     .compileComponents();

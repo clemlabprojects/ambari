@@ -1,0 +1,18 @@
+enabled: true
+infraSolrImage: "apache/ambari-infra-solr:latest"
+heapSize: "512m"
+global:
+  clusterDomain: "cluster.local"
+  namespace:
+    logging: "default"
+  solr:
+    replicas: 3
+
+loglevel: INFO
+affinity: true
+
+persistence:
+  enabled: false
+  size: 100G
+
+zkRelease: test-zk

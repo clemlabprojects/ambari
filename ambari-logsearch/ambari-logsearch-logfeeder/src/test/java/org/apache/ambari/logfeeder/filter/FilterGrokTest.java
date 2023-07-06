@@ -26,7 +26,6 @@ import org.apache.ambari.logfeeder.plugin.input.Input;
 import org.apache.ambari.logfeeder.plugin.manager.OutputManager;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.FilterGrokDescriptor;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.FilterGrokDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.easymock.Capture;
 import org.easymock.CaptureType;
 import org.easymock.EasyMock;
@@ -39,7 +38,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class FilterGrokTest {
-  private static final Logger LOG = Logger.getLogger(FilterGrokTest.class);
 
   private FilterGrok filterGrok;
   private OutputManager mockOutputManager;
@@ -58,8 +56,6 @@ public class FilterGrokTest {
 
   @Test
   public void testFilterGrok_parseMessage() throws Exception {
-    LOG.info("testFilterGrok_parseMessage()");
-
     FilterGrokDescriptorImpl filterGrokDescriptor = new FilterGrokDescriptorImpl();
     filterGrokDescriptor.setMessagePattern("(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{GREEDYDATA:log_message}");
     filterGrokDescriptor.setMultilinePattern("^(%{TIMESTAMP_ISO8601:logtime})");
@@ -84,8 +80,6 @@ public class FilterGrokTest {
 
   @Test
   public void testFilterGrok_parseMultiLineMessage() throws Exception {
-    LOG.info("testFilterGrok_parseMultiLineMessage()");
-
     FilterGrokDescriptorImpl filterGrokDescriptor = new FilterGrokDescriptorImpl();
     filterGrokDescriptor.setMessagePattern("(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{GREEDYDATA:log_message}");
     filterGrokDescriptor.setMultilinePattern("^(%{TIMESTAMP_ISO8601:logtime})");
@@ -114,8 +108,6 @@ public class FilterGrokTest {
 
   @Test
   public void testFilterGrok_notMatchingMesagePattern() throws Exception {
-    LOG.info("testFilterGrok_notMatchingMesagePattern()");
-
     FilterGrokDescriptorImpl filterGrokDescriptor = new FilterGrokDescriptorImpl();
     filterGrokDescriptor.setMessagePattern("(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{GREEDYDATA:log_message}");
     filterGrokDescriptor.setMultilinePattern("^(%{TIMESTAMP_ISO8601:logtime})");
@@ -134,8 +126,6 @@ public class FilterGrokTest {
 
   @Test
   public void testFilterGrok_noMesagePattern() throws Exception {
-    LOG.info("testFilterGrok_noMesagePattern()");
-
     FilterGrokDescriptorImpl filterGrokDescriptor = new FilterGrokDescriptorImpl();
     filterGrokDescriptor.setMultilinePattern("^(%{TIMESTAMP_ISO8601:logtime})");
     init(filterGrokDescriptor);

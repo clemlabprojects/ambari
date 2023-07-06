@@ -30,8 +30,9 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.util.Properties;
@@ -40,7 +41,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedTransferQueue;
 
 public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
-  private static final Logger LOG = Logger.getLogger(OutputKafka.class);
+  private static final Logger logger = LogManager.getLogger(OutputKafka.class);
 
   private static final int FAILED_RETRY_INTERVAL = 30;
   private static final int CATCHUP_RETRY_INTERVAL = 5;
@@ -110,7 +111,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
           continue;
         }
         String kafkaKey = key.substring("kafka.".length());
-        LOG.info("Adding custom Kafka property. " + kafkaKey + "=" + value);
+        logger.info("Adding custom Kafka property. " + kafkaKey + "=" + value);
         props.put(kafkaKey, value);
       }
     }
@@ -127,7 +128,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
       @Override
       public void run() {
         KafkaCallBack kafkaCallBack = null;
-        LOG.info("Started thread to monitor failed messsages. " + getShortDescription());
+        logger.info("Started thread to monitor failed messsages. " + getShortDescription());
         while (true) {
           try {
             if (kafkaCallBack == null) {
@@ -136,7 +137,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
             if (publishMessage(kafkaCallBack.message, kafkaCallBack.inputMarker)) {
               kafkaCallBack = null;
             } else {
-              LOG.error("Kafka is down. messageNumber=" + kafkaCallBack.thisMessageNumber + ". Going to sleep for " +
+              logger.error("Kafka is down. messageNumber=" + kafkaCallBack.thisMessageNumber + ". Going to sleep for " +
                   FAILED_RETRY_INTERVAL + " seconds");
               Thread.sleep(FAILED_RETRY_INTERVAL * 1000);
             }
@@ -144,7 +145,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
           } catch (Throwable t) {
             String logMessageKey = this.getClass().getSimpleName() + "_KAFKA_RETRY_WRITE_ERROR";
             LogFeederUtil.logErrorMessageByInterval(logMessageKey, "Error sending message to Kafka during retry. message=" +
-                (kafkaCallBack == null ? null : kafkaCallBack.message), t, LOG, Level.ERROR);
+                (kafkaCallBack == null ? null : kafkaCallBack.message), t, logger, Level.ERROR);
           }
         }
 
@@ -167,10 +168,10 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
           break;
         }
         if (!isKafkaBrokerUp) {
-          LOG.error("Kafka is down. Going to sleep for " + FAILED_RETRY_INTERVAL + " seconds");
+          logger.error("Kafka is down. Going to sleep for " + FAILED_RETRY_INTERVAL + " seconds");
           Thread.sleep(FAILED_RETRY_INTERVAL * 1000);
         } else {
-          LOG.warn("Kafka is still catching up from previous failed messages. outstanding messages=" + failedMessages.size() +
+          logger.warn("Kafka is still catching up from previous failed messages. outstanding messages=" + failedMessages.size() +
               " Going to sleep for " + CATCHUP_RETRY_INTERVAL + " seconds");
           Thread.sleep(CATCHUP_RETRY_INTERVAL * 1000);
         }
@@ -187,22 +188,22 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
   }
 
   public void flush() {
-    LOG.info("Flush called...");
+    logger.info("Flush called...");
     setDrain(true);
   }
 
   @Override
   public void close() {
-    LOG.info("Closing Kafka client...");
+    logger.info("Closing Kafka client...");
     flush();
     if (producer != null) {
       try {
         producer.close();
       } catch (Throwable t) {
-        LOG.error("Error closing Kafka topic. topic=" + topic);
+        logger.error("Error closing Kafka topic. topic=" + topic);
       }
     }
-    LOG.info("Closed Kafka client");
+    logger.info("Closed Kafka client");
     super.close();
   }
 
@@ -219,24 +220,24 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
           writeBytesMetric.value += block.length();
         }
         if (!isKafkaBrokerUp) {
-          LOG.info("Started writing to kafka. " + getShortDescription());
+          logger.info("Started writing to kafka. " + getShortDescription());
           isKafkaBrokerUp = true;
         }
         return true;
       } catch (InterruptedException e) {
         isKafkaBrokerUp = false;
         String logKeyMessage = this.getClass().getSimpleName() + "_KAFKA_INTERRUPT";
-        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "InterruptedException-Error sending message to Kafka", e, LOG,
+        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "InterruptedException-Error sending message to Kafka", e, logger,
             Level.ERROR);
       } catch (ExecutionException e) {
         isKafkaBrokerUp = false;
         String logKeyMessage = this.getClass().getSimpleName() + "_KAFKA_EXECUTION";
-        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "ExecutionException-Error sending message to Kafka", e, LOG,
+        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "ExecutionException-Error sending message to Kafka", e, logger,
             Level.ERROR);
       } catch (Throwable t) {
         isKafkaBrokerUp = false;
         String logKeyMessage = this.getClass().getSimpleName() + "_KAFKA_WRITE_ERROR";
-        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "GenericException-Error sending message to Kafka", t, LOG,
+        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "GenericException-Error sending message to Kafka", t, logger,
             Level.ERROR);
       }
     }
@@ -265,7 +266,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
     public void onCompletion(RecordMetadata metadata, Exception exception) {
       if (metadata != null) {
         if (!output.isKafkaBrokerUp) {
-          LOG.info("Started writing to kafka. " + output.getShortDescription());
+          logger.info("Started writing to kafka. " + output.getShortDescription());
           output.isKafkaBrokerUp = true;
         }
         output.incrementStat(1);
@@ -273,7 +274,7 @@ public class OutputKafka extends Output<LogFeederProps, InputFileMarker> {
       } else {
         output.isKafkaBrokerUp = false;
         String logKeyMessage = this.getClass().getSimpleName() + "_KAFKA_ASYNC_ERROR";
-        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "Error sending message to Kafka. Async Callback", exception, LOG,
+        LogFeederUtil.logErrorMessageByInterval(logKeyMessage, "Error sending message to Kafka. Async Callback", exception, logger,
             Level.ERROR);
 
         output.failedMessages.add(this);

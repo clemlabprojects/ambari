@@ -25,7 +25,7 @@ import org.apache.log4j.RollingFileAppender;
 import org.apache.log4j.spi.LoggingEvent;
 
 public class LogsearchRollingFileAppender extends RollingFileAppender {
-  private static Logger logger = Logger.getLogger(LogsearchRollingFileAppender.class);
+  private static final Logger logger = Logger.getLogger(LogsearchRollingFileAppender.class);
 
   public LogsearchRollingFileAppender() {
     logger.trace("Initializing LogsearchRollingFileAppender........... ");

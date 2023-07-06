@@ -18,7 +18,8 @@
  */
 package org.apache.ambari.logfeeder.input.reader;
 
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -27,13 +28,16 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.zip.GZIPInputStream;
 
+/**
+ * Reader class that can read gzip input streams.
+ */
 class GZIPReader extends InputStreamReader {
 
-  private static final Logger LOG = Logger.getLogger(GZIPReader.class);
+  private static final Logger logger = LogManager.getLogger(GZIPReader.class);
 
   GZIPReader(String fileName) throws FileNotFoundException {
     super(getStream(fileName));
-    LOG.info("Created GZIPReader for file : " + fileName);
+    logger.info("Created GZIPReader for file : " + fileName);
   }
 
   private static InputStream getStream(String fileName) {
@@ -43,7 +47,7 @@ class GZIPReader extends InputStreamReader {
       fileStream = new FileInputStream(fileName);
       gzipStream = new GZIPInputStream(fileStream);
     } catch (Exception e) {
-      LOG.error(e, e.getCause());
+      logger.error(e, e.getCause());
     }
     return gzipStream;
   }

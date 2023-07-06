@@ -18,22 +18,25 @@
  */
 package org.apache.ambari.logsearch.common;
 
-import io.swagger.jaxrs.config.BeanConfig;
-import io.swagger.models.Swagger;
-import io.swagger.util.Yaml;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 import javax.inject.Named;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import io.swagger.jaxrs.config.BeanConfig;
+import io.swagger.models.Swagger;
+import io.swagger.models.auth.BasicAuthDefinition;
+import io.swagger.util.Yaml;
 
 @Named
 public class ApiDocStorage {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ApiDocStorage.class);
+  private static final Logger logger = LogManager.getLogger(ApiDocStorage.class);
 
   private final Map<String, Object> swaggerMap = new ConcurrentHashMap<>();
 
@@ -45,26 +48,25 @@ public class ApiDocStorage {
     Thread loadApiDocThread = new Thread("load_swagger_api_doc") {
       @Override
       public void run() {
-        LOG.info("Start thread to scan REST API doc from endpoints.");
+        logger.info("Start thread to scan REST API doc from endpoints.");
         Swagger swagger = beanConfig.getSwagger();
+        swagger.addSecurityDefinition("basicAuth", new BasicAuthDefinition());
         beanConfig.configure(swagger);
         beanConfig.scanAndRead();
         setSwagger(swagger);
         try {
-          if (swagger != null) {
-            String yaml = Yaml.mapper().writeValueAsString(swagger);
-            StringBuilder b = new StringBuilder();
-            String[] parts = yaml.split("\n");
-            for (String part : parts) {
-              b.append(part);
-              b.append("\n");
-            }
-            setSwaggerYaml(b.toString());
+          String yaml = Yaml.mapper().writeValueAsString(swagger);
+          StringBuilder b = new StringBuilder();
+          String[] parts = yaml.split("\n");
+          for (String part : parts) {
+            b.append(part);
+            b.append("\n");
           }
+          setSwaggerYaml(b.toString());
         } catch (Exception e) {
           e.printStackTrace();
         }
-        LOG.info("Scanning REST API endpoints and generating docs has been successful.");
+        logger.info("Scanning REST API endpoints and generating docs has been successful.");
       }
     };
     loadApiDocThread.setDaemon(true);

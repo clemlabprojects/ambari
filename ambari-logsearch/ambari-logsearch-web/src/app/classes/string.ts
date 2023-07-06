@@ -26,7 +26,6 @@ export type ScrollType = 'before' | 'after' | '';
 
 export type LogLevel = 'FATAL' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE' | 'UNKNOWN';
 
-export type DataAvailability = 'NOT_AVAILABLE' | 'LOADING' | 'AVAILABLE' | 'ERROR';
 export enum DataAvailabilityValues {
   NOT_AVAILABLE = 'NOT_AVAILABLE',
   LOADING = 'LOADING',

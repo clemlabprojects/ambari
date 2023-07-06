@@ -31,13 +31,14 @@ import org.apache.ambari.logsearch.conf.global.SolrCollectionState;
 import org.apache.ambari.logsearch.configurer.SolrAuditAliasConfigurer;
 import org.apache.ambari.logsearch.configurer.SolrCollectionConfigurer;
 import org.apache.commons.lang.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.data.solr.core.SolrTemplate;
 
 @Named
 public class AuditSolrDao extends SolrDaoBase {
 
-  private static final Logger LOG = Logger.getLogger(AuditSolrDao.class);
+  private static final Logger logger = LogManager.getLogger(AuditSolrDao.class);
 
   @Inject
   private SolrAuditLogPropsConfig solrAuditLogPropsConfig;
@@ -77,7 +78,7 @@ public class AuditSolrDao extends SolrDaoBase {
         new SolrAuditAliasConfigurer(this).start();
       }
     } catch (Exception e) {
-      LOG.error("Error while connecting to Solr for audit logs : solrUrl=" + solrAuditLogPropsConfig.getSolrUrl() + ", zkConnectString=" +
+      logger.error("Error while connecting to Solr for audit logs : solrUrl=" + solrAuditLogPropsConfig.getSolrUrl() + ", zkConnectString=" +
         solrAuditLogPropsConfig.getZkConnectString() + ", collection=" + solrAuditLogPropsConfig.getCollection(), e);
     }
   }

@@ -20,13 +20,12 @@ package org.apache.ambari.logsearch.web.security;
 
 import java.util.Collection;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.ambari.logsearch.conf.AuthPropsConfig;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -36,12 +35,13 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import com.google.common.annotations.VisibleForTesting;
+import javax.inject.Inject;
+import javax.inject.Named;
 
 @Named
 public class LogsearchFileAuthenticationProvider extends LogsearchAbstractAuthenticationProvider {
 
-  private static final Logger logger = Logger.getLogger(LogsearchFileAuthenticationProvider.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchFileAuthenticationProvider.class);
 
   @Inject
   private AuthPropsConfig authPropsConfig;

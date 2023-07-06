@@ -22,14 +22,31 @@ import org.apache.ambari.logfeeder.plugin.common.MetricData;
 
 import java.util.List;
 
+/**
+ * Stores common operations for input and output managers
+ */
 public interface BlockManager {
 
+  /**
+   * Init input or output configuration block
+   * @throws Exception Error during initialization
+   */
   void init() throws Exception;
 
+  /**
+   * Close input or output manager
+   */
   void close();
 
+  /**
+   * Log Statistics - needs to be implemented
+   */
   void logStats();
 
+  /**
+   * Adding a list of metrics to input or output manager, which can be processed (if implemented)
+   * @param metricsList List of metrics
+   */
   void addMetricsContainers(List<MetricData> metricsList);
 
 }

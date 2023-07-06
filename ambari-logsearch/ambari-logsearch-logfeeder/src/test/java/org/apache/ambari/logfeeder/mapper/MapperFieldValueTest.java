@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.MapFieldValueDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -30,18 +29,16 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MapperFieldValueTest {
-  private static final Logger LOG = Logger.getLogger(MapperFieldValueTest.class);
 
   @Test
   public void testMapperFieldValue_replaceValue() {
-    LOG.info("testMapperFieldValue_replaceValue()");
 
     MapFieldValueDescriptorImpl mapFieldValueDescriptor = new MapFieldValueDescriptorImpl();
     mapFieldValueDescriptor.setPreValue("someValue");
     mapFieldValueDescriptor.setPostValue("someOtherValue");
 
     MapperFieldValue mapperFieldValue = new MapperFieldValue();
-    assertTrue("Could not initialize!", mapperFieldValue.init(null, "someField", null, mapFieldValueDescriptor));
+    assertTrue("Could not initialize!", mapperFieldValue.init(null,null, "someField", null, mapFieldValueDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
 
@@ -54,24 +51,22 @@ public class MapperFieldValueTest {
 
   @Test
   public void testMapperFieldValue_noPostValue() {
-    LOG.info("testMapperFieldValue_noPostValue()");
 
     MapFieldValueDescriptorImpl mapFieldValueDescriptor = new MapFieldValueDescriptorImpl();
 
     MapperFieldValue mapperFieldValue = new MapperFieldValue();
-    assertFalse("Was not able to initialize!", mapperFieldValue.init(null, "someField", null, mapFieldValueDescriptor));
+    assertFalse("Was not able to initialize!", mapperFieldValue.init(null, null, "someField", null, mapFieldValueDescriptor));
   }
 
   @Test
   public void testMapperFieldValue_noPreValueFound() {
-    LOG.info("testMapperFieldValue_noPreValueFound()");
 
     MapFieldValueDescriptorImpl mapFieldValueDescriptor = new MapFieldValueDescriptorImpl();
     mapFieldValueDescriptor.setPreValue("someValue");
     mapFieldValueDescriptor.setPostValue("someOtherValue");
 
     MapperFieldValue mapperFieldValue = new MapperFieldValue();
-    assertTrue("Could not initialize!", mapperFieldValue.init(null, "someField", null, mapFieldValueDescriptor));
+    assertTrue("Could not initialize!", mapperFieldValue.init(null, null, "someField", null, mapFieldValueDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
 

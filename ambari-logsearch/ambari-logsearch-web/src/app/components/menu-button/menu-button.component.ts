@@ -67,6 +67,9 @@ export class MenuButtonComponent {
   @Input()
   useDropDownLocalFilter = false;
 
+  @Input()
+  showTotalSelection = true;
+
   /**
    * The minimum time to handle a mousedown as a longclick. Default is 500 ms (0.5sec)
    * @default 500
@@ -84,7 +87,7 @@ export class MenuButtonComponent {
   maxLongClickDelay = 0;
 
   @Input()
-  isDisabled = false;
+  disabled = false;
 
   @Input()
   listClass = '';
@@ -127,6 +130,14 @@ export class MenuButtonComponent {
     return this.subItems && this.subItems.filter((option: ListItem): boolean => option.isChecked);
   }
 
+  get hasSelection(): boolean {
+    return this.subItems && this.subItems.filter((option: ListItem): boolean => option.isChecked).length > 0;
+  }
+
+  get totalSelection(): number {
+    return this.subItems ? this.subItems.filter((option: ListItem): boolean => option.isChecked).length : 0;
+  }
+
   constructor(private utils: UtilsService) {}
 
   findItemIndexInList(item: ListItem, itemList: ListItem[] = this.subItems): number {
@@ -144,7 +155,7 @@ export class MenuButtonComponent {
    * @param {MouseEvent} event
    */
   onMouseClick(event: MouseEvent): void {
-    if (!this.isDisabled) {
+    if (!this.disabled) {
       const el = <HTMLElement>event.target;
       const now = Date.now();
       const mdt = this.mouseDownTimestamp; // mousedown time

@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-import {Component, forwardRef} from '@angular/core';
-import {ControlValueAccessor, NG_VALUE_ACCESSOR} from '@angular/forms';
-import {DropdownButtonComponent} from '@modules/shared/components/dropdown-button/dropdown-button.component';
-import {ListItem} from '@app/classes/list-item';
+import { Component, forwardRef, Input } from '@angular/core';
+import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
+import { DropdownButtonComponent } from '@modules/shared/components/dropdown-button/dropdown-button.component';
+import { ListItem } from '@app/classes/list-item';
 
 @Component({
   selector: 'filter-dropdown',
@@ -33,28 +33,16 @@ import {ListItem} from '@app/classes/list-item';
   ]
 })
 export class FilterDropdownComponent extends DropdownButtonComponent implements ControlValueAccessor {
-
   private onChange;
-
-  get selection(): ListItem[] {
-    return this.selectedItems;
-  }
-
-  set selection(items: ListItem[]) {
-    this.selectedItems = Array.isArray(items) ? items : [items];
-    if (this.isMultipleChoice && this.options) {
-      this.options.forEach((option: ListItem): void => {
-        const selectionItem = this.selectedItems.find((item: ListItem): boolean => this.utils.isEqual(item.value, option.value));
-        option.isChecked = Boolean(selectionItem);
-      });
-    }
-  }
 
   private _onChange(value) {
     if (this.onChange) {
       this.onChange(value);
     }
   }
+
+  @Input()
+  options: ListItem[] = [];
 
   updateSelection(updates: ListItem | ListItem[], callOnChange: boolean = true): boolean {
     const hasChange = super.updateSelection(updates);
@@ -64,15 +52,18 @@ export class FilterDropdownComponent extends DropdownButtonComponent implements 
     return hasChange;
   }
 
+  hanldeOptionsChange() {
+    super.hanldeOptionsChange();
+    this._onChange(this.selection);
+  }
+
   writeValue(items: ListItem[]) {
-    this.selection = items || [];
+    this.selection = items ? (Array.isArray(items) ? items : [items]) : [];
   }
 
   registerOnChange(callback: any): void {
     this.onChange = callback;
   }
 
-  registerOnTouched() {
-  }
-
+  registerOnTouched() {}
 }

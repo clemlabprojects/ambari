@@ -39,6 +39,9 @@ export class TimeGraphComponent extends GraphComponent implements OnInit {
     label: 'filter.timeRange.1hr'
   };
 
+  @Input()
+  timeZone: string = moment.tz.guess();
+
   @Output()
   selectArea: EventEmitter<number[]> = new EventEmitter();
 
@@ -55,8 +58,6 @@ export class TimeGraphComponent extends GraphComponent implements OnInit {
   protected minDragX: number;
 
   protected maxDragX: number;
-
-  protected timeZone: string;
 
   /**
    * This property holds the data structure describing the gaps between the xAxis ticks.
@@ -79,13 +80,8 @@ export class TimeGraphComponent extends GraphComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.subscriptions.push(
-      this.appSettings.getParameter('timeZone').subscribe((value: string): void => {
-        this.timeZone = value;
-        this.createGraph();
-      })
-    );
     super.ngOnInit();
+    this.createGraph();
   }
 
   /**

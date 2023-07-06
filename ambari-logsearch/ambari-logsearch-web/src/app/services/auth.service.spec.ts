@@ -23,12 +23,19 @@ import 'rxjs/add/operator/first';
 import 'rxjs/add/operator/last';
 import 'rxjs/add/operator/take';
 import {StoreModule} from '@ngrx/store';
+import {Store} from '@ngrx/store';
+import {AppStore} from '@app/classes/models/store';
 import {AppStateService, appState} from '@app/services/storage/app-state.service';
 import {AuthService} from '@app/services/auth.service';
 import {HttpClientService} from '@app/services/http-client.service';
 import {RouterTestingModule} from '@angular/router/testing';
 import {Routes} from '@angular/router';
 import {Component} from '@angular/core';
+
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { isAuthorizedSelector } from '@app/store/selectors/auth.selectors';
+import { LogInAction, LogOutAction, AuthorizedAction } from '@app/store/actions/auth.actions';
 
 describe('AuthService', () => {
 
@@ -41,8 +48,8 @@ describe('AuthService', () => {
       bytesLoaded: 100,
       totalBytes: 100,
       headers: null
-    },
-    errorResponse = {
+    };
+  const errorResponse = {
       type: 'error',
       ok: false,
       url: '/',
@@ -54,11 +61,20 @@ describe('AuthService', () => {
     };
 
   // Note: We add delay to help the isLoginInProgress test case.
-  let httpServiceStub = {
+  const httpServiceStub = {
     isError: false,
-    postFormData: function () {
+    request: function () {
       const isError = this.isError;
       return Observable.create(observer => observer.next(isError ? errorResponse : successResponse)).delay(1);
+    },
+    postFormData: function () {
+      return this.request();
+    },
+    post: function () {
+      return this.request();
+    },
+    get: function () {
+      return this.request();
     }
   };
 
@@ -74,7 +90,8 @@ describe('AuthService', () => {
       imports: [
         HttpModule,
         StoreModule.provideStore({
-          appState
+          appState,
+          auth: auth.reducer
         }),
         RouterTestingModule.withRoutes(testRoutes)
       ],
@@ -90,54 +107,27 @@ describe('AuthService', () => {
     expect(service).toBeTruthy();
   }));
 
-  it('should set the isAuthorized state to true in appState when the login is success', async(inject(
-    [AuthService, AppStateService, HttpClientService],
-    (authService: AuthService, appStateService: AppStateService, httpClientService) => {
-      httpClientService.isError = false;
-      authService.login('test', 'test')
-        .subscribe(() => {
-          appStateService.getParameter('isAuthorized').subscribe((value: Boolean): void => {
-            expect(value).toBe(true);
-          });
-        }, value => {
-          throw value;
-        });
+  it('should return with Observable<Response> when login called', async(inject(
+    [AuthService, Store],
+    (authService: AuthService) => {
+      const response = authService.login('test', 'test');
+      expect(response instanceof Observable).toBe(true);
     }
   )));
 
-
-  it('should set the isAuthorized state to false in appState when the login is failed', async(inject(
-    [AuthService, AppStateService, HttpClientService],
-    (authService: AuthService, appStateService: AppStateService, httpClientService) => {
-      httpClientService.isError = true;
-      authService.login('test', 'test')
-        .subscribe(() => {
-          appStateService.getParameter('isAuthorized').subscribe((value: Boolean): void => {
-            expect(value).toBe(false);
-          });
-        });
+  it('should return with Observable<Response> when logout called', async(inject(
+    [AuthService, Store],
+    (authService: AuthService) => {
+      const response = authService.logout();
+      expect(response instanceof Observable).toBe(true);
     }
   )));
 
-  it('should set the isLoginInProgress state to true when the login started', async(inject(
-    [AuthService, AppStateService, HttpClientService],
-    (authService: AuthService, appStateService: AppStateService, httpClientService) => {
-      httpClientService.isError = false;
-      authService.login('test', 'test');
-      appStateService.getParameter('isLoginInProgress').first().subscribe((value: Boolean): void => {
-        expect(value).toBe(true);
-      });
-    }
-  )));
-
-  it('should set the isLoginInProgress state to true after the login is success', async(inject(
-    [AuthService, AppStateService, HttpClientService],
-    (authService: AuthService, appStateService: AppStateService, httpClientService) => {
-      httpClientService.isError = false;
-      authService.login('test', 'test');
-      appStateService.getParameter('isLoginInProgress').take(2).last().subscribe((value: Boolean): void => {
-        expect(value).toBe(false);
-      });
+  it('should return with Observable<Response> when checkAuthorizationState called', async(inject(
+    [AuthService, Store],
+    (authService: AuthService) => {
+      const response = authService.checkAuthorizationState();
+      expect(response instanceof Observable).toBe(true);
     }
   )));
 

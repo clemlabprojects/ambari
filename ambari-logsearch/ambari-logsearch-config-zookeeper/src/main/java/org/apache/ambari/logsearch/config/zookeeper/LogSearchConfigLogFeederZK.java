@@ -35,16 +35,20 @@ import org.apache.curator.framework.recipes.cache.TreeCacheEvent;
 import org.apache.curator.framework.recipes.cache.TreeCacheEvent.Type;
 import org.apache.curator.framework.recipes.cache.TreeCacheListener;
 import org.apache.curator.utils.ZKPaths;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.zookeeper.KeeperException;
 
+/**
+ * ZooKeeper related shipper configuration manager/listener for Log Feeder. On input changes, operations are passed to a monitor interface.
+ */
 public class LogSearchConfigLogFeederZK extends LogSearchConfigZK implements LogSearchConfigLogFeeder {
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigLogFeederZK.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigLogFeederZK.class);
 
   private TreeCache logFeederClusterCache;
 
@@ -99,16 +103,16 @@ public class LogSearchConfigLogFeederZK extends LogSearchConfigZK implements Log
       private void handleInputConfigChange(Type eventType, String nodeName, String nodeData) {
         switch (eventType) {
           case NODE_ADDED:
-            LOG.info("Node added under input ZK node: " + nodeName);
+            logger.info("Node added under input ZK node: " + nodeName);
             addInputs(nodeName, nodeData);
             break;
           case NODE_UPDATED:
-            LOG.info("Node updated under input ZK node: " + nodeName);
+            logger.info("Node updated under input ZK node: " + nodeName);
             removeInputs(nodeName);
             addInputs(nodeName, nodeData);
             break;
           case NODE_REMOVED:
-            LOG.info("Node removed from input ZK node: " + nodeName);
+            logger.info("Node removed from input ZK node: " + nodeName);
             removeInputs(nodeName);
             break;
           default:
@@ -133,7 +137,7 @@ public class LogSearchConfigLogFeederZK extends LogSearchConfigZK implements Log
           
           inputConfigMonitor.loadInputConfigs(serviceName, InputConfigGson.gson.fromJson(inputConfigJson, InputConfigImpl.class));
         } catch (Exception e) {
-          LOG.error("Could not load input configuration for service " + serviceName + ":\n" + inputConfig, e);
+          logger.error("Could not load input configuration for service " + serviceName + ":\n" + inputConfig, e);
         }
       }
     };
@@ -152,7 +156,11 @@ public class LogSearchConfigLogFeederZK extends LogSearchConfigZK implements Log
         client.create().creatingParentContainersIfNeeded().withACL(LogSearchConfigZKHelper.getAcls(properties)).forPath(globalConfigNodePath, data.getBytes());
       }
     } catch (Exception e) {
-      LOG.warn("Exception during global config node creation/update", e);
+      if (e instanceof KeeperException.NodeExistsException) {
+        logger.info("Node '{}' already exists. It won't be re-created.", globalConfigNodePath);
+      } else {
+        logger.warn("Exception during global config node creation/update", e);
+      }
     }
   }
 }

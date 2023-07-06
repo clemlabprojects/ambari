@@ -16,39 +16,51 @@
  * limitations under the License.
  */
 
-@import "../../../shared/forms";
-
-textarea {
-  @extend input.form-control
-  min-height: 5em;
-  resize: vertical;
-  width: 100%;
-  &.validation-result,
-  &.configuration {
-    min-height: 30em;
+@import '../../../shared/forms';
+:host {
+  textarea {
+    &:extend(input.form-control);
+    min-height: 5em;
+    resize: vertical;
+    width: 100%;
+    &.validation-result,
+    &.configuration {
+      min-height: 30em;
+    }
+    &.sample-data {
+      min-height: 8em;
+    }
   }
-  &.sample-data {
-    min-height: 8em;
+  label {
+    width: 100%;
   }
-}
-label {
-  width: 100%;
-}
-.help-block.validation-block {
-  display: none;
-  font-size: .9em;
-  margin: 0;
-  opacity: 0;
-  transition: all 1s ease-in;
-}
-.has-error, .has-warning {
   .help-block.validation-block {
-    display: inline-block;
-    opacity: 1;
+    display: none;
+    font-size: 0.9em;
+    margin: 0;
+    opacity: 0;
+    transition: all 1s ease-in;
   }
-}
+  .has-error,
+  .has-warning {
+    .help-block.validation-block {
+      display: inline-block;
+      opacity: 1;
+    }
+  }
 
-.shipper-form-configuration {
-  background-color: @main-background-color;
-  padding-bottom: 4em;
+  .shipper-form-configuration {
+    background-color: @main-background-color;
+    padding-bottom: 4em;
+  }
+
+  /deep/ filter-dropdown {
+    button,
+    button:focus {
+      padding: 0;
+      .label-before-selection {
+        font-weight: bold;
+      }
+    }
+  }
 }

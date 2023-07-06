@@ -16,6 +16,86 @@
  * limitations under the License.
  */
 
-th {
-  text-transform: uppercase;
+@import '../../modules/shared/variables';
+@import '../../modules/shared/mixins';
+
+@repos: 'ambari', 'hdfs', 'yarn', 'default';
+@repoColors: {
+  ambari: #CB932A;
+  hdfs: #21A2C2;
+  yarn: #269C1E;
+  default: @fluid-gray-2;
+};
+
+@initial-ambari-color: #C19544;
+@initial-hdfs-color: #48A4BB;
+@initial-yarn-color: #479D2F;
+@initial-default-color: @fluid-gray-2;
+@initial-size: 3em;
+
+:host {
+  display: block;
+  padding: 0 2rem;
+
+  .audit-logs-list-controls {
+    justify-content: flex-end;
+    display: flex;
+    width: 100%;
+    /deep/ button {
+      padding-bottom: 0;
+    }
+  }
+
+  .dashrow-initial {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    text-transform: uppercase;
+  }
+
+  .dashrow-column {
+    padding: 0 1rem;
+    &.evtTime {
+      max-width: 22rem;
+      min-width: 22rem;
+    }
+    &.repo {
+      max-width: 15rem;
+      min-width: 15rem;
+    }
+    &.action {
+      max-width: 23rem;
+      min-width: 23rem;
+    }
+    &.reqUser {
+      max-width: 10rem;
+      min-width: 10rem;
+    }
+    .dashrow-value {
+      span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+    &.data-not-available {
+      .dashrow-value {
+        color: @fluid-gray-2;
+      }
+    }
+  }
+
+  each(@repoColors, {
+    .@{key} .dashrow-initial {
+      background-color: @value;
+      &:before {
+        border-bottom-color: @value;
+      }
+      &:after {
+        border-top-color: @value;
+      }
+    }
+  });
+
 }

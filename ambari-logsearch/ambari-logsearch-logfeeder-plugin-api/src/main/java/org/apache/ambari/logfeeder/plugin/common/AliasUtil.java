@@ -22,18 +22,21 @@ import org.apache.ambari.logfeeder.plugin.filter.Filter;
 import org.apache.ambari.logfeeder.plugin.filter.mapper.Mapper;
 import org.apache.ambari.logfeeder.plugin.input.Input;
 import org.apache.ambari.logfeeder.plugin.output.Output;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.type.TypeReference;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 
+/**
+ * Helper class to map input/filter/outputs java classes to names,  which can be used in input configurations.
+ */
 public class AliasUtil {
 
-  private static final Logger LOG = LoggerFactory.getLogger(AliasUtil.class);
+  private static final Logger logger = LogManager.getLogger(AliasUtil.class);
 
   private static final String ALIAS_CONFIG_JSON = "alias_config.json";
   private static HashMap<String, Object> aliasMap = null;
@@ -57,7 +60,7 @@ public class AliasUtil {
     try {
       instance = Class.forName(classFullName).getConstructor().newInstance();
     } catch (Exception exception) {
-      LOG.error("Unsupported class = " + classFullName, exception.getCause());
+      logger.error("Unsupported class = " + classFullName, exception.getCause());
     }
 
     if (instance != null) {
@@ -76,11 +79,11 @@ public class AliasUtil {
           isValid = Mapper.class.isAssignableFrom(instance.getClass());
           break;
         default:
-          LOG.warn("Unhandled aliasType: " + aliasType);
+          logger.warn("Unhandled aliasType: " + aliasType);
           isValid = true;
       }
       if (!isValid) {
-        LOG.error("Not a valid class :" + classFullName + " AliasType :" + aliasType.name());
+        logger.error("Not a valid class :" + classFullName + " AliasType :" + aliasType.name());
       }
     }
     return instance;
@@ -93,9 +96,9 @@ public class AliasUtil {
     String value = aliasInfo.get("klass");
     if (value != null && !value.isEmpty()) {
       className = value;
-      LOG.debug("Class name found for key :" + key + ", class name :" + className + " aliastype:" + aliastype.name());
+      logger.debug("Class name found for key :" + key + ", class name :" + className + " aliastype:" + aliastype.name());
     } else {
-      LOG.debug("Class name not found for key :" + key + " aliastype:" + aliastype.name());
+      logger.debug("Class name not found for key :" + key + " aliastype:" + aliastype.name());
     }
 
     return className;
@@ -116,12 +119,12 @@ public class AliasUtil {
     return aliasInfo;
   }
 
-  public static HashMap<String, Object> getJsonFileContentFromClassPath(String fileName) {
+  private static HashMap<String, Object> getJsonFileContentFromClassPath(String fileName) {
     ObjectMapper mapper = new ObjectMapper();
     try (InputStream inputStream = AliasUtil.class.getClassLoader().getResourceAsStream(fileName)) {
       return mapper.readValue(inputStream, new TypeReference<HashMap<String, Object>>() {});
     } catch (IOException e) {
-      LOG.error("Error occurred during loading alias json file: {}", e);
+      logger.error("Error occurred during loading alias json file: {}", e);
     }
     return new HashMap<String, Object>();
   }

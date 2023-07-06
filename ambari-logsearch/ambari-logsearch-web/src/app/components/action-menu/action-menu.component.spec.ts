@@ -38,7 +38,7 @@ import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/s
 import {TabsService, tabs} from '@app/services/storage/tabs.service';
 import {HistoryManagerService} from '@app/services/history-manager.service';
 import {LogsContainerService} from '@app/services/logs-container.service';
-import {UserSettingsService} from '@app/services/user-settings.service';
+import {ServerSettingsService} from '@app/services/server-settings.service';
 import {UtilsService} from '@app/services/utils.service';
 import {ModalDialogComponent} from '@app/modules/shared/components/modal-dialog/modal-dialog.component';
 import {TimerSecondsPipe} from '@app/pipes/timer-seconds.pipe';
@@ -55,6 +55,14 @@ import {NotificationsService} from 'angular2-notifications/src/notifications.ser
 import {NotificationService} from '@modules/shared/services/notification.service';
 
 import { DataAvailabilityStatesStore, dataAvailabilityStates } from '@app/modules/app-load/stores/data-availability-state.store';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import * as apiFeatures from '@app/store/reducers/api-features.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { reducer as userSettings } from '@app/store/reducers/user-settings.reducers';
 
 describe('ActionMenuComponent', () => {
   let component: ActionMenuComponent;
@@ -81,8 +89,13 @@ describe('ActionMenuComponent', () => {
           hosts,
           serviceLogsTruncated,
           tabs,
-          dataAvailabilityStates
-        })
+          dataAvailabilityStates,
+          auth: auth.reducer,
+          userSettings,
+          apiFeatures: apiFeatures.reducer
+        }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects)
       ],
       declarations: [
         LogIndexFilterComponent,
@@ -95,7 +108,7 @@ describe('ActionMenuComponent', () => {
         ...MockHttpRequestModules,
         HistoryManagerService,
         LogsContainerService,
-        UserSettingsService,
+        ServerSettingsService,
         UtilsService,
         AuditLogsService,
         ServiceLogsService,
@@ -116,7 +129,8 @@ describe('ActionMenuComponent', () => {
         LogsStateService,
         NotificationsService,
         NotificationService,
-        DataAvailabilityStatesStore
+        DataAvailabilityStatesStore,
+        AuthService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

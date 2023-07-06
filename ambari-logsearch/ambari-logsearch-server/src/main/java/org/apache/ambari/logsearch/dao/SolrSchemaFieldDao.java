@@ -21,10 +21,12 @@ package org.apache.ambari.logsearch.dao;
 import org.apache.ambari.logsearch.common.LogSearchConstants;
 import org.apache.ambari.logsearch.common.LogType;
 import org.apache.ambari.logsearch.common.MessageEnums;
-import org.apache.ambari.logsearch.conf.SolrEventHistoryPropsConfig;
+import org.apache.ambari.logsearch.conf.SolrMetadataPropsConfig;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
@@ -41,8 +43,6 @@ import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.util.JavaBinCodec;
 import org.apache.solr.common.util.NamedList;
 import org.codehaus.jettison.json.JSONObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.io.IOException;
@@ -57,7 +57,7 @@ import javax.inject.Inject;
 
 public class SolrSchemaFieldDao {
 
-  private static final Logger LOG = LoggerFactory.getLogger(SolrSchemaFieldDao.class);
+  private static final Logger logger = LogManager.getLogger(SolrSchemaFieldDao.class);
 
   private static final int RETRY_SECOND = 30;
 
@@ -68,7 +68,7 @@ public class SolrSchemaFieldDao {
   private AuditSolrDao auditSolrDao;
   
   @Inject
-  private SolrEventHistoryPropsConfig solrEventHistoryPropsConfig;
+  private SolrMetadataPropsConfig solrMetadataPropsConfig;
   
   private int retryCount;
   private int skipCount;
@@ -97,7 +97,7 @@ public class SolrSchemaFieldDao {
   private void populateSchemaFields(CloudSolrClient solrClient, Map<String, String> schemaFieldNameMap,
       Map<String, String> schemaFieldTypeMap) {
     if (solrClient != null) {
-      LOG.debug("Started thread to get fields for collection=" + solrClient.getDefaultCollection());
+      logger.debug("Started thread to get fields for collection=" + solrClient.getDefaultCollection());
       List<LukeResponse> lukeResponses = null;
       SchemaResponse schemaResponse = null;
       try {
@@ -108,22 +108,22 @@ public class SolrSchemaFieldDao {
         schemaRequest.setPath("/schema");
         schemaResponse = schemaRequest.process(solrClient);
         
-        LOG.debug("populateSchemaFields() collection=" + solrClient.getDefaultCollection() + ", luke=" + lukeResponses +
+        logger.debug("populateSchemaFields() collection=" + solrClient.getDefaultCollection() + ", luke=" + lukeResponses +
             ", schema= " + schemaResponse);
       } catch (SolrException | SolrServerException | IOException e) {
-        LOG.error("Error occured while popuplating field. collection=" + solrClient.getDefaultCollection(), e);
+        logger.error("Error occured while popuplating field. collection=" + solrClient.getDefaultCollection(), e);
       }
 
       if (schemaResponse != null) {
         extractSchemaFieldsName(lukeResponses, schemaResponse, schemaFieldNameMap, schemaFieldTypeMap);
-        LOG.debug("Populate fields for collection " + solrClient.getDefaultCollection()+ " was successful, next update it after " +
-            solrEventHistoryPropsConfig.getPopulateIntervalMins() + " minutes");
+        logger.debug("Populate fields for collection " + solrClient.getDefaultCollection()+ " was successful, next update it after " +
+            solrMetadataPropsConfig.getPopulateIntervalMins() + " minutes");
         retryCount = 0;
-        skipCount = (solrEventHistoryPropsConfig.getPopulateIntervalMins() * 60) / RETRY_SECOND - 1;
+        skipCount = (solrMetadataPropsConfig.getPopulateIntervalMins() * 60) / RETRY_SECOND - 1;
       }
       else {
         retryCount++;
-        LOG.error("Error while populating fields for collection " + solrClient.getDefaultCollection() + ", retryCount=" + retryCount);
+        logger.error("Error while populating fields for collection " + solrClient.getDefaultCollection() + ", retryCount=" + retryCount);
       }
     }
   }
@@ -147,7 +147,7 @@ public class SolrSchemaFieldDao {
           lukeResponse.setResponse(lukeData);
           lukeResponses.add(lukeResponse);
         } catch (IOException e) {
-          LOG.error("Exception during getting luke responses", e);
+          logger.error("Exception during getting luke responses", e);
         }
       }
     }
@@ -200,7 +200,7 @@ public class SolrSchemaFieldDao {
         schemaFieldTypeMap.putAll(_schemaFieldTypeMap);
       }
     } catch (Exception e) {
-      LOG.error(e + "Credentials not specified in logsearch.properties " + MessageEnums.ERROR_SYSTEM);
+      logger.error(e + "Credentials not specified in logsearch.properties " + MessageEnums.ERROR_SYSTEM);
     }
   }
 

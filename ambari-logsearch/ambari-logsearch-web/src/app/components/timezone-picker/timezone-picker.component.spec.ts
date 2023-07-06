@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {async, ComponentFixture, TestBed} from '@angular/core/testing';
 import {StoreModule} from '@ngrx/store';
 import {AppSettingsService, appSettings} from '@app/services/storage/app-settings.service';
@@ -35,7 +36,7 @@ import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/s
 import {TabsService, tabs} from '@app/services/storage/tabs.service';
 import {HttpClientService} from '@app/services/http-client.service';
 import {LogsContainerService} from '@app/services/logs-container.service';
-import {UserSettingsService} from '@app/services/user-settings.service';
+import {ServerSettingsService} from '@app/services/server-settings.service';
 import {UtilsService} from '@app/services/utils.service';
 import {AuthService} from '@app/services/auth.service';
 import {TimeZoneAbbrPipe} from '@app/pipes/timezone-abbr.pipe';
@@ -53,6 +54,14 @@ import {NotificationsService} from 'angular2-notifications/src/notifications.ser
 import {NotificationService} from '@modules/shared/services/notification.service';
 
 import { dataAvailabilityStates, DataAvailabilityStatesStore } from '@app/modules/app-load/stores/data-availability-state.store';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { UserSettingsEffects } from '@app/store/effects/user-settings.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { UserSettingsService } from '@app/services/user-settings.service';
 
 describe('TimeZonePickerComponent', () => {
   let component: TimeZonePickerComponent;
@@ -81,8 +90,13 @@ describe('TimeZonePickerComponent', () => {
           serviceLogsHistogramData,
           serviceLogsTruncated,
           tabs,
-          dataAvailabilityStates
+          dataAvailabilityStates,
+          auth: auth.reducer,
+          userSettings: userSettings.reducer
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(UserSettingsEffects),
+        EffectsModule.run(NotificationEffects),
         ...TranslationModules
       ],
       providers: [
@@ -102,7 +116,7 @@ describe('TimeZonePickerComponent', () => {
         TabsService,
         LogsContainerService,
         AuthService,
-        UserSettingsService,
+        ServerSettingsService,
         UtilsService,
         ClusterSelectionService,
         RoutingUtilsService,
@@ -110,8 +124,10 @@ describe('TimeZonePickerComponent', () => {
         LogsStateService,
         NotificationsService,
         NotificationService,
-        DataAvailabilityStatesStore
+        DataAvailabilityStatesStore,
+        UserSettingsService
       ],
+      schemas: [ CUSTOM_ELEMENTS_SCHEMA ]
     })
     .compileComponents();
   }));

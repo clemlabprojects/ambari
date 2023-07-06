@@ -29,7 +29,8 @@ import org.apache.ambari.logsearch.conf.AuthPropsConfig;
 import org.apache.ambari.logsearch.util.JSONUtil;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -43,7 +44,7 @@ import org.springframework.security.core.AuthenticationException;
 @Named
 public class LogsearchExternalServerAuthenticationProvider extends LogsearchAbstractAuthenticationProvider {
 
-  private static Logger LOG = Logger.getLogger(LogsearchExternalServerAuthenticationProvider.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchExternalServerAuthenticationProvider.class);
 
   private static enum PrivilegeInfo {
     PERMISSION_LABEL("permission_label"),
@@ -81,7 +82,7 @@ public class LogsearchExternalServerAuthenticationProvider extends LogsearchAbst
   @Override
   public Authentication authenticate(Authentication authentication) throws AuthenticationException {
     if (!authPropsConfig.isAuthExternalEnabled()) {
-      LOG.debug("external server auth is disabled.");
+      logger.debug("external server auth is disabled.");
       return authentication;
     }
     
@@ -100,11 +101,11 @@ public class LogsearchExternalServerAuthenticationProvider extends LogsearchAbst
       String finalLoginUrl = authPropsConfig.getExternalAuthLoginUrl().replace("$USERNAME", username);
       String responseObj = (String) externalServerClient.sendGETRequest(finalLoginUrl, String.class, username, password);
       if (!isAllowedRole(responseObj)) {
-        LOG.error(username + " doesn't have permission");
+        logger.error(username + " doesn't have permission");
         throw new BadCredentialsException("Invalid User");
       }
     } catch (Exception e) {
-      LOG.error("Login failed for username :" + username + " Error :" + e.getLocalizedMessage());
+      logger.error("Login failed for username :" + username + " Error :" + e.getLocalizedMessage());
       throw new BadCredentialsException("Bad credentials");
     }
     authentication = new UsernamePasswordAuthenticationToken(username, password, getAuthorities());

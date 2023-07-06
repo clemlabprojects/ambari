@@ -20,6 +20,9 @@
 package org.apache.ambari.logsearch.config.api.model.inputconfig;
 
 public interface InputS3FileDescriptor extends InputFileBaseDescriptor {
+
+  String getS3Endpoint();
+
   String getS3AccessKey();
 
   String getS3SecretKey();

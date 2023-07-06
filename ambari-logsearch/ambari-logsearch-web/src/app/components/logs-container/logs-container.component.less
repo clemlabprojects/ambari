@@ -17,6 +17,8 @@
  */
 
 @import '../../modules/shared/mixins';
+@import '../../modules/shared/variables';
+@import '../../modules/shared/animations';
 
 :host {
   display: block;
@@ -38,21 +40,74 @@
     }
   }
 
-  .fixed-filterbar {
-    filters-panel {
-      background-color: fadeout(@filters-panel-background-color, 10%);
-      box-shadow: 0 2px 2px rgba(0,0,0,.1);
-      left: 0;
-      margin: 0;
-      position: fixed;
-      top: 0;
-      width: 100%;
-      z-index: 1;
+  .events-count {
+    margin-top: @block-margin-top;
+  }
+
+  /deep/ collapsible-panel.service-logs-histogram {
+    .panel-heading {
+      header {
+        margin-left: auto;
+      }
     }
   }
 
-  .events-count {
-    margin-top: @block-margin-top;
+  /deep/ modal-dialog.capture-dialog {
+    .modal-dialog {
+      max-width: 350px;
+    }
+    .modal-body {
+      display: flex;
+      flex-direction: column;
+      /deep/ circle-progress-bar {
+        display: inline-block;
+        align-self: center;
+        label {
+          font-size: 3rem;
+          font-weight: normal;
+          .unit {
+            color: @fluid-gray-2;
+            font-size: 1.2rem;
+          }
+        }
+      }
+    }
+  }
+
+  .panel-capture-view {
+    padding: 1rem;
+    i {
+      color: @fluid-gray-1;
+      &.fa-play {
+        padding-right: 1rem;
+      }
+    }
+  }
+
+  /deep/ time-histogram,
+  /deep/ time-line-graph,
+  /deep/ service-logs-table {
+    display: block;
+    &.loading {
+      opacity: .8;
+      position: relative;
+      &:before {
+        .line-progress(1px);
+        content: ' ';
+        display: block;
+        opacity: .8;
+      }
+    }
+  }
+  /deep/ audit-logs-entries.loading > *:not(tabs) {
+    opacity: .8;
+    position: relative;
+    &:before {
+      .line-progress(1px);
+      content: ' ';
+      display: block;
+      opacity: .8;
+    }
   }
 
 }

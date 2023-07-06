@@ -18,20 +18,23 @@
  */
 package org.apache.ambari.logfeeder.input.monitor;
 
-import org.apache.ambari.logfeeder.plugin.manager.InputManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.ambari.logfeeder.plugin.manager.CheckpointManager;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
+/**
+ * Periodically execute a cleanup on checkpoints. (E.g.: it can delete a checkpoint file if it is too old)
+ */
 public class CheckpointCleanupMonitor implements Runnable {
 
-  private static final Logger LOG = LoggerFactory.getLogger(CheckpointCleanupMonitor.class);
+  private static final Logger logger = LogManager.getLogger(CheckpointCleanupMonitor.class);
 
   private long waitIntervalMin;
-  private InputManager inputManager;
+  private CheckpointManager checkpointHandler;
 
-  public CheckpointCleanupMonitor(InputManager inputManager, long waitIntervalMin) {
+  public CheckpointCleanupMonitor(CheckpointManager checkpointHandler, long waitIntervalMin) {
     this.waitIntervalMin = waitIntervalMin;
-    this.inputManager = inputManager;
+    this.checkpointHandler = checkpointHandler;
   }
 
   @Override
@@ -39,9 +42,9 @@ public class CheckpointCleanupMonitor implements Runnable {
     while (!Thread.currentThread().isInterrupted()) {
       try {
         Thread.sleep(1000 * 60 * waitIntervalMin);
-        inputManager.cleanCheckPointFiles();
+        checkpointHandler.cleanupCheckpoints();
       } catch (Exception e) {
-        LOG.error("Cleanup checkpoint files thread interrupted.", e);
+        logger.error("Cleanup checkpoint files thread interrupted.", e);
       }
     }
   }

@@ -32,12 +32,12 @@ import java.lang.annotation.Target;
 public @interface ShipperConfigTypeDescription {
 
   /**
-   * The name of the element type.
+   * @return The name of the element type.
    */
   String name();
 
   /**
-   * The description of the json element.
+   * @return The description of the json element.
    */
   String description();
 

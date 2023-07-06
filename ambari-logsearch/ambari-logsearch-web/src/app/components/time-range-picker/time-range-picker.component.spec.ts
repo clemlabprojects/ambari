@@ -35,7 +35,7 @@ import {
 } from '@app/services/storage/service-logs-histogram-data.service';
 import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/storage/service-logs-truncated.service';
 import {TabsService, tabs} from '@app/services/storage/tabs.service';
-import {HttpClientService} from '@app/services/http-client.service';
+// import {HttpClientService} from '@app/services/http-client.service';
 import {LogsContainerService} from '@app/services/logs-container.service';
 import {UtilsService} from '@app/services/utils.service';
 
@@ -47,6 +47,13 @@ import {RoutingUtilsService} from '@app/services/routing-utils.service';
 import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.service';
 import {NotificationService} from '@modules/shared/services/notification.service';
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
 
 describe('TimeRangePickerComponent', () => {
   let component: TimeRangePickerComponent;
@@ -70,8 +77,12 @@ describe('TimeRangePickerComponent', () => {
           serviceLogsFields,
           serviceLogsHistogramData,
           serviceLogsTruncated,
-          tabs
+          tabs,
+          auth: auth.reducer,
+          userSettings: userSettings.reducer
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects),
         ...TranslationModules
       ],
       providers: [
@@ -96,7 +107,8 @@ describe('TimeRangePickerComponent', () => {
         LogsFilteringUtilsService,
         LogsStateService,
         NotificationsService,
-        NotificationService
+        NotificationService,
+        AuthService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

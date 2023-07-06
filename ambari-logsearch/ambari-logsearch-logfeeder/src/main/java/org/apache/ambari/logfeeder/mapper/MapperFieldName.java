@@ -25,26 +25,37 @@ import org.apache.ambari.logfeeder.util.LogFeederUtil;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldDescriptor;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldNameDescriptor;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
 /**
- * Overrides the value for the field
+ * Overrides the name of a field
+ * <pre>
+ *   "post_map_values": {
+ *         "Status": [
+ *           {
+ *             "map_field_name": {
+ *               "new_field_name": "ws_status"
+ *             }
+ *           }
+ *       }
+ * </pre>
  */
 public class MapperFieldName extends Mapper<LogFeederProps> {
-  private static final Logger LOG = Logger.getLogger(MapperFieldName.class);
+  private static final Logger logger = LogManager.getLogger(MapperFieldName.class);
 
   private String newValue = null;
 
   @Override
-  public boolean init(String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
+  public boolean init(LogFeederProps logFeederProps, String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
     init(inputDesc, fieldName, mapClassCode);
 
     newValue = ((MapFieldNameDescriptor)mapFieldDescriptor).getNewFieldName();
     if (StringUtils.isEmpty(newValue)) {
-      LOG.fatal("Map field value is empty.");
+      logger.fatal("Map field value is empty.");
       return false;
     }
     return true;
@@ -57,7 +68,7 @@ public class MapperFieldName extends Mapper<LogFeederProps> {
       jsonObj.put(newValue, value);
     } else {
       LogFeederUtil.logErrorMessageByInterval(this.getClass().getSimpleName() + ":apply",
-          "New fieldName is null, so transformation is not applied. " + this.toString(), null, LOG, Level.ERROR);
+          "New fieldName is null, so transformation is not applied. " + this.toString(), null, logger, Level.ERROR);
     }
     return value;
   }

@@ -25,7 +25,7 @@
       </h1>
       <div class="container-fluid">
         <div class="row">
-          <div class="col-md-2">
+          <div class="col-md-2 service-list">
             <shipper-cluster-service-list *ngIf="clusterName$ | async"
               [clusterName]="clusterName$ | async"
               [serviceNamesList]="serviceNamesList$ | async"

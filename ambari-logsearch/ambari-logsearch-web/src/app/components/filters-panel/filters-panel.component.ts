@@ -16,20 +16,26 @@
  * limitations under the License.
  */
 
-import {Component, OnDestroy, Input, ViewContainerRef, OnInit} from '@angular/core';
-import {FormGroup} from '@angular/forms';
-import {Observable} from 'rxjs/Observable';
-import {Subject} from 'rxjs/Subject';
+import { Component, OnDestroy, Input, ViewContainerRef, OnInit, Output, EventEmitter } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { Observable } from 'rxjs/Observable';
+import { Subject } from 'rxjs/Subject';
 import 'rxjs/add/observable/from';
 import 'rxjs/add/operator/defaultIfEmpty';
-import {FilterCondition, SearchBoxParameter, SearchBoxParameterTriggered} from '@app/classes/filtering';
-import {ListItem} from '@app/classes/list-item';
-import {HomogeneousObject} from '@app/classes/object';
-import {LogsType} from '@app/classes/string';
-import {LogsContainerService} from '@app/services/logs-container.service';
-import {UtilsService} from '@app/services/utils.service';
-import {AppStateService} from '@app/services/storage/app-state.service';
-import {Subscription} from 'rxjs/Subscription';
+import { FilterCondition, SearchBoxParameter, SearchBoxParameterTriggered } from '@app/classes/filtering';
+import { ListItem } from '@app/classes/list-item';
+import { HomogeneousObject } from '@app/classes/object';
+import { LogsType } from '@app/classes/string';
+import { LogsContainerService } from '@app/services/logs-container.service';
+import { UtilsService } from '@app/services/utils.service';
+import { AppStateService } from '@app/services/storage/app-state.service';
+import { Subscription } from 'rxjs/Subscription';
+import { Router, ActivatedRoute } from '@angular/router';
+
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { selectTimeZone } from '@app/store/selectors/user-settings.selectors';
+import * as moment from 'moment-timezone';
 
 @Component({
   selector: 'filters-panel',
@@ -41,11 +47,20 @@ export class FiltersPanelComponent implements OnDestroy, OnInit {
   @Input()
   filtersForm: FormGroup;
 
+  @Output()
+  submit = new EventEmitter();
+
+  @Output()
+  clear = new EventEmitter();
+
   private subscriptions: Subscription[] = [];
 
   searchBoxItems$: Observable<ListItem[]>;
 
   searchBoxValueUpdate: Subject<void> = new Subject();
+
+  timeZone$: Observable<string> = this.store.select(selectTimeZone).startWith(moment.tz.guess());
+
 
   private isServiceLogsFileView$: Observable<boolean> = this.appState.getParameter('isServiceLogsFileView');
 
@@ -81,8 +96,15 @@ export class FiltersPanelComponent implements OnDestroy, OnInit {
     return this.logsContainerService.queryParameterAdd;
   }
 
-  constructor(private logsContainerService: LogsContainerService, public viewContainerRef: ViewContainerRef,
-              private utils: UtilsService, private appState: AppStateService) {
+  constructor(
+    private logsContainerService: LogsContainerService,
+    public viewContainerRef: ViewContainerRef,
+    private utils: UtilsService,
+    private appState: AppStateService,
+    private router: Router,
+    private route: ActivatedRoute,
+    private store: Store<AppStore>
+  ) {
   }
 
   ngOnInit() {
@@ -97,23 +119,29 @@ export class FiltersPanelComponent implements OnDestroy, OnInit {
     const logsType = this.logsContainerService.logsTypeMap[currentLogsType];
     const fieldsModel: any = logsType && logsType.fieldsModel;
     let subType: string;
-    let fields: Observable<any>;
+    let fields$: Observable<any>;
     switch (currentLogsType) {
       case 'auditLogs':
-        fields = fieldsModel.getParameter(subType ? 'overrides' : 'defaults');
+        fields$ = fieldsModel.getParameter(subType ? 'overrides' : 'defaults');
         if (subType) {
-          fields = fields.map(items => items && items[subType]);
+          fields$ = fields$.map(items => items && items[subType]);
         }
         break;
       case 'serviceLogs':
-        fields = fieldsModel.getAll();
+        fields$ = fieldsModel.getAll();
         break;
       default:
-        fields = Observable.from([]);
+        fields$ = Observable.from([]);
         break;
     }
-    this.searchBoxItems$ = fields.defaultIfEmpty([]).map(items => items ? items.filter(field => field.filterable) : [])
-      .map(this.utils.logFieldToListItemMapper);
+    this.searchBoxItems$ = fields$.defaultIfEmpty([]).map(items => items ? items.filter(field => field.filterable) : [])
+      .map(this.utils.logFieldToListItemMapper)
+      .map((fields: ListItem[]): ListItem[] => fields.map(
+        (field: ListItem): ListItem => ({
+          ...field,
+          isChecked: false
+        })
+      ));
   }
 
   isFilterConditionDisplayed(key: string): boolean {
@@ -133,12 +161,26 @@ export class FiltersPanelComponent implements OnDestroy, OnInit {
     });
   }
 
-  private onClearBtnClick = (): void => {
+  onClearBtnClick = (): void => {
     const defaults = this.logsContainerService.isServiceLogsFileView ? {
-      components: this.logsContainerService.filtersForm.controls['components'].value,
-      hosts: this.logsContainerService.filtersForm.controls['hosts'].value
+      components: this.filtersForm.controls['components'].value,
+      hosts: this.filtersForm.controls['hosts'].value
     } : {};
     this.logsContainerService.resetFiltersForms(defaults);
+    this.clear.emit();
+  }
+
+  onSearchBtnClick(): void {
+    this.updateSearchBoxValue();
+    this.submit.emit(this.filtersForm.getRawValue());
+  }
+
+  openTimeZonePicker() {
+    this.router.navigate(['.'], {
+      queryParamsHandling: 'merge',
+      queryParams: {timeZoneSettings: 'show'},
+      relativeTo: this.route.root.firstChild
+    });
   }
 
 }

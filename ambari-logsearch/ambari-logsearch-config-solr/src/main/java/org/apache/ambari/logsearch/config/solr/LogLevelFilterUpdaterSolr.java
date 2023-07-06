@@ -23,8 +23,8 @@ import org.apache.ambari.logsearch.config.api.LogLevelFilterMonitor;
 import org.apache.ambari.logsearch.config.api.LogLevelFilterUpdater;
 import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilter;
 import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilterMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class LogLevelFilterUpdaterSolr extends LogLevelFilterUpdater {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogLevelFilterUpdaterSolr.class);
+  private static final Logger logger = LogManager.getLogger(LogLevelFilterUpdaterSolr.class);
 
   private final LogLevelFilterManagerSolr logLevelFilterManagerSolr;
   private final String cluster;
@@ -49,7 +49,7 @@ public class LogLevelFilterUpdaterSolr extends LogLevelFilterUpdater {
   @Override
   protected void checkFilters(LogLevelFilterMonitor logLevelFilterMonitor) {
     try {
-      LOG.debug("Start checking log level filters in Solr ...");
+      logger.debug("Start checking log level filters in Solr ...");
       LogLevelFilterMap logLevelFilterMap = logLevelFilterManagerSolr.getLogLevelFilters(cluster);
       Map<String, LogLevelFilter> filters = logLevelFilterMap.getFilter();
       Map<String, LogLevelFilter> copiedStoredFilters = new ConcurrentHashMap<>(logLevelFilterMonitor.getLogLevelFilters());
@@ -59,22 +59,22 @@ public class LogLevelFilterUpdaterSolr extends LogLevelFilterUpdater {
           String remoteValue = gson.toJson(logFilterEntry.getValue());
           String storedValue = gson.toJson(copiedStoredFilters.get(logFilterEntry.getKey()));
           if (!storedValue.equals(remoteValue)) {
-            LOG.info("Log level filter updated for {}", logFilterEntry.getKey());
+            logger.info("Log level filter updated for {}", logFilterEntry.getKey());
             logLevelFilterMonitor.setLogLevelFilter(logFilterEntry.getKey(), logFilterEntry.getValue());
           }
         } else {
-          LOG.info("New log level filter registered: {}", logFilterEntry.getKey());
+          logger.info("New log level filter registered: {}", logFilterEntry.getKey());
           logLevelFilterMonitor.setLogLevelFilter(logFilterEntry.getKey(), logFilterEntry.getValue());
         }
       }
       for (Map.Entry<String, LogLevelFilter> storedLogFilterEntry : copiedStoredFilters.entrySet()) {
         if (!filters.containsKey(storedLogFilterEntry.getKey())) {
-          LOG.info("Removing log level filter: {}", storedLogFilterEntry.getKey());
+          logger.info("Removing log level filter: {}", storedLogFilterEntry.getKey());
           logLevelFilterMonitor.removeLogLevelFilter(storedLogFilterEntry.getKey());
         }
       }
     } catch (Exception e) {
-      LOG.error("Error during filter Solr check: {}",e);
+      logger.error("Error during filter Solr check: {}",e);
     }
   }
 }

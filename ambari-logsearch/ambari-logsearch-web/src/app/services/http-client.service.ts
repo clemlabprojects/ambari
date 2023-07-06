@@ -32,6 +32,14 @@ import {ServiceLogsHistogramQueryParams} from '@app/classes/queries/service-logs
 import {ServiceLogsTruncatedQueryParams} from '@app/classes/queries/service-logs-truncated-query-params';
 import {AppStateService} from '@app/services/storage/app-state.service';
 
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { HttpAuthorizationErrorResponseAction } from '@app/store/actions/auth.actions';
+import { isAuthorizedSelector } from '@app/store/selectors/auth.selectors';
+import { selectLogLevelFiltersFeatureState } from '@app/store/selectors/api-features.selectors';
+
+import { BehaviorSubject } from 'rxjs/BehaviorSubject';
+
 @Injectable()
 export class HttpClientService extends Http {
 
@@ -44,6 +52,9 @@ export class HttpClientService extends Http {
     auditLogs: {
       url: 'audit/logs',
       params: opts => new AuditLogsListQueryParams(opts)
+    },
+    auditLogsComponents: {
+      url: 'audit/logs/components'
     },
     auditLogsGraph: {
       url: 'audit/logs/bargraph',
@@ -95,12 +106,28 @@ export class HttpClientService extends Http {
     },
     shipperClusterServiceConfigurationTest: {
       url: variables => `shipper/input/${variables.cluster}/test`
+    },
+
+    userSettings: {
+      url: 'metadata/list',
+      params: () => ({type: 'user_settings'})
+    },
+    apiFeatures: {
+      url: 'info/features'
     }
   };
 
   private readonly unauthorizedStatuses = [401, 403, 419];
 
-  constructor(backend: XHRBackend, defaultOptions: RequestOptions, private appState: AppStateService) {
+  requestsPending: BehaviorSubject<number> = new BehaviorSubject(0);
+  requestInProgress: Observable<boolean> = this.requestsPending.map((totalRequest: number) => totalRequest > 0);
+
+  constructor(
+    backend: XHRBackend,
+    defaultOptions: RequestOptions,
+    private appState: AppStateService,
+    private store: Store<AppStore>
+  ) {
     super(backend, defaultOptions);
   }
 
@@ -166,16 +193,24 @@ export class HttpClientService extends Http {
     const handleResponseError = (error) => {
       let handled = false;
       if (this.unauthorizedStatuses.indexOf(error.status) > -1) {
-        this.appState.setParameter('isAuthorized', false);
+        this.store.select(isAuthorizedSelector).first().subscribe((isAuthorized: boolean) => {
+          if (isAuthorized) {
+            this.store.dispatch(new HttpAuthorizationErrorResponseAction({response: error}));
+          }
+        });
         handled = true;
       }
       return handled;
     };
-    return super.request(this.generateUrl(url), options).first().share()
+    const req = super.request(this.generateUrl(url), options).first().share()
       .map(response => response)
       .catch((error: any) => {
+        this.requestsPending.next(this.requestsPending.getValue() - 1);
         return handleResponseError(error) ? Observable.of(error) : Observable.throw(error);
       });
+    req.subscribe(() => this.requestsPending.next(this.requestsPending.getValue() - 1));
+    this.requestsPending.next(this.requestsPending.getValue() + 1);
+    return req;
   }
 
   get(url: string, params?: HomogeneousObject<string>, urlVariables?: HomogeneousObject<string>): Observable<Response> {

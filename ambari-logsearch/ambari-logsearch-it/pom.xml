@@ -37,7 +37,7 @@
     <jackson-jaxrs.version>2.9.4</jackson-jaxrs.version>
     <failsafe-plugin.version>2.20</failsafe-plugin.version>
     <forkCount>1</forkCount>
-    <docker.host>localhost</docker.host>
+    <logsearch.docker.host>localhost</logsearch.docker.host>
     <backend.stories.location>NONE</backend.stories.location>
     <ui.stories.location>NONE</ui.stories.location>
   </properties>
@@ -292,7 +292,7 @@
                   </includes>
                   <systemPropertyVariables>
                     <log4j.configuration>file:${project.build.testOutputDirectory}/log4j.properties</log4j.configuration>
-                    <docker.host>${docker.host}</docker.host>
+                    <docker.host>${logsearch.docker.host}</docker.host>
                     <backend.stories.location>${backend.stories.location}</backend.stories.location>
                   </systemPropertyVariables>
                 </configuration>

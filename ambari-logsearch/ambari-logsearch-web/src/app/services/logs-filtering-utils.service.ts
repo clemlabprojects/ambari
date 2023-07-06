@@ -4,27 +4,98 @@
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
+ * 'License'); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an 'AS IS' BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {Injectable} from '@angular/core';
-import {ListItem} from '@app/classes/list-item';
-import {CustomTimeRange, SearchBoxParameter, SortingListItem, TimeUnit, TimeUnitListItem} from '@app/classes/filtering';
+import { Injectable } from '@angular/core';
+import { ListItem } from '@app/classes/list-item';
+import { CustomTimeRange, SearchBoxParameter, SortingListItem, TimeUnit, TimeUnitListItem } from '@app/classes/filtering';
 import * as moment from 'moment-timezone';
-import {HomogeneousObject} from '@app/classes/object';
-import {LogsType, SortingType} from '@app/classes/string';
-import {UtilsService} from '@app/services/utils.service';
+import { HomogeneousObject } from '@app/classes/object';
+import { LogsType, SortingType } from '@app/classes/string';
+import { UtilsService } from '@app/services/utils.service';
 import { LogTypeTab } from '@app/classes/models/log-type-tab';
 
-// @ToDo remove duplication, this options are in the LogsContainerService
+export enum UrlParamsDifferenceType {
+  ADD = 'add',
+  REMOVE = 'remove',
+  CHANGE = 'change',
+  CLEAR = 'clear'
+};
+
+export interface UrlParamDifferences {
+  name: string;
+  type: UrlParamsDifferenceType;
+  from: any;
+  to: any;
+};
+
+export const defaultFilterSelections = {
+  clusters: [],
+  timeRange: {
+    value: {
+      type: 'LAST',
+      unit: 'h',
+      interval: 1
+    },
+    label: 'filter.timeRange.1hr'
+  },
+  components: [],
+  repos: [],
+  levels: [],
+  hosts: [],
+  auditLogsSorting: {
+    label: 'sorting.time.desc',
+    value: {
+      key: 'evtTime',
+      type: 'desc'
+    }
+  },
+  serviceLogsSorting: {
+    label: 'sorting.time.desc',
+    value: {
+      key: 'logtime',
+      type: 'desc'
+    }
+  },
+  pageSize: [{
+    label: '100',
+    value: '100'
+  }],
+  page: 0,
+  query: [],
+  users: []
+};
+
+export const defaultUrlParamsForFiltersByLogsType = {
+  serviceLogs: {
+    timeRangeType: 'LAST',
+    timeRangeUnit: 'h',
+    timeRangeInterval: 1,
+    sortingKey: 'logtime',
+    sortingType: 'desc',
+    pageSize: '100',
+    page: '0'
+  },
+  auditLogs: {
+    timeRangeType: 'LAST',
+    timeRangeUnit: 'h',
+    timeRangeInterval: 1,
+    sortingKey: 'evtTime',
+    sortingType: 'desc',
+    pageSize: '100',
+    page: '0'
+  }
+};
+
 export const timeRangeFilterOptions = [{
     label: 'filter.timeRange.7d',
     value: {
@@ -237,46 +308,9 @@ export const timeRangeFilterOptions = [{
 @Injectable()
 export class LogsFilteringUtilsService {
 
-  readonly defaultFilterSelections = {
-    clusters: [],
-    timeRange: {
-      value: {
-        type: 'LAST',
-        unit: 'h',
-        interval: 1
-      },
-      label: 'filter.timeRange.1hr'
-    },
-    components: [],
-    levels: [],
-    hosts: [],
-    auditLogsSorting: {
-      label: 'sorting.time.desc',
-      value: {
-        key: 'evtTime',
-        type: 'desc'
-      }
-    },
-    serviceLogsSorting: {
-      label: 'sorting.time.desc',
-      value: {
-        key: 'logtime',
-        type: 'desc'
-      }
-    },
-    pageSize: [{
-      label: '100',
-      value: '100'
-    }],
-    page: 0,
-    query: [],
-    users: [],
-    isUndoOrRedo: false
-  };
-
   constructor(
     private utilsService: UtilsService
-  ) { }
+  ) {}
 
   getTimeRandeOptionsByGroup() {
     return timeRangeFilterOptions.reduce((groups: any, item: any) => {
@@ -395,7 +429,6 @@ export class LogsFilteringUtilsService {
 
   getParamsFromActiveFilter(activeFilter: any, activeLogsType: LogsType): {[key: string]: string} {
     const {...filters} = activeFilter;
-    delete filters.isUndoOrRedo;
     return Object.keys(filters).reduce((currentParams, key) => {
       const newParams = {
         ...currentParams
@@ -552,6 +585,36 @@ export class LogsFilteringUtilsService {
   getNavigationForTab(tab: LogTypeTab): any[] {
     const logsType = tab.appState && tab.appState.activeLogsType;
     return [tab.id, this.getParamsFromActiveFilter(tab.activeFilters || {}, logsType)];
+  }
+
+  getUrlParamsDifferences(previousParams, currentParams): UrlParamDifferences[] {
+    const allKeys = [
+      ...Object.keys(previousParams),
+      ...Object.keys(currentParams)
+    ].reduce((uniques: string[], key: string) => {
+      return uniques.indexOf(key) === -1 ? [...uniques, key] : uniques;
+    }, []);
+    return allKeys.reduce((changes: UrlParamDifferences[], key: string) => {
+      const change: {[key: string]: any} = {};
+      if (previousParams[key] === undefined && currentParams[key] !== undefined) {
+        change.type = 'add';
+      } else if (previousParams[key] !== undefined && currentParams[key] === undefined) {
+        change.type = 'remove';
+      } else if (previousParams[key].toString() !== currentParams[key].toString()) {
+        change.type = 'change';
+      }
+      if (change.type) {
+        change.name = key;
+        change.from = previousParams[key];
+        change.to = currentParams[key];
+        return [...changes, <UrlParamDifferences>change];
+      }
+      return [...changes];
+    }, []);
+  }
+
+  private _getUrlParamValue(name: string, value: string): any[] | undefined {
+    return value !== undefined ? (name === 'query' ? JSON.parse(value) : value.split(',')) : undefined;
   }
 
 }

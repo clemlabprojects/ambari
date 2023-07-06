@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.MapFieldCopyDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -30,17 +29,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MapperFieldCopyTest {
-  private static final Logger LOG = Logger.getLogger(MapperFieldCopyTest.class);
 
   @Test
   public void testMapperFieldCopy_copyField() {
-    LOG.info("testMapperFieldCopy_copyField()");
 
     MapFieldCopyDescriptorImpl mapFieldCopyDescriptor = new MapFieldCopyDescriptorImpl();
     mapFieldCopyDescriptor.setCopyName("someOtherField");
 
     MapperFieldCopy mapperFieldCopy = new MapperFieldCopy();
-    assertTrue("Could not initialize!", mapperFieldCopy.init(null, "someField", null, mapFieldCopyDescriptor));
+    assertTrue("Could not initialize!", mapperFieldCopy.init(null, null, "someField", null, mapFieldCopyDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
     jsonObj.put("someField", "someValue");
@@ -54,11 +51,10 @@ public class MapperFieldCopyTest {
 
   @Test
   public void testMapperFieldCopy_noNewFieldName() {
-    LOG.info("testMapperFieldCopy_noNewFieldName()");
 
     MapFieldCopyDescriptorImpl mapFieldCopyDescriptor = new MapFieldCopyDescriptorImpl();
 
     MapperFieldCopy mapperFieldCopy = new MapperFieldCopy();
-    assertFalse("Was not able to initialize!", mapperFieldCopy.init(null, "someField", null, mapFieldCopyDescriptor));
+    assertFalse("Was not able to initialize!", mapperFieldCopy.init(null, null, "someField", null, mapFieldCopyDescriptor));
   }
 }

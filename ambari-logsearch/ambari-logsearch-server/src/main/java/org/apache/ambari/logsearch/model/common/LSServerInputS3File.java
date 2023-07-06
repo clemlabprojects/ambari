@@ -37,6 +37,9 @@ public class LSServerInputS3File extends LSServerInputFileBase {
   @NotNull
   @JsonProperty("s3_secret_key")
   private String s3SecretKey;
+
+  @JsonProperty("s3_endpoint")
+  private String s3Endpoint;
   
   public LSServerInputS3File() {}
   
@@ -45,6 +48,7 @@ public class LSServerInputS3File extends LSServerInputFileBase {
     InputS3FileDescriptor inputS3FileDescriptor = (InputS3FileDescriptor)inputDescriptor;
     this.s3AccessKey = inputS3FileDescriptor.getS3AccessKey();
     this.s3SecretKey = inputS3FileDescriptor.getS3SecretKey();
+    this.s3Endpoint = inputS3FileDescriptor.getS3Endpoint();
   }
 
   public String getS3AccessKey() {
@@ -61,5 +65,13 @@ public class LSServerInputS3File extends LSServerInputFileBase {
 
   public void setS3SecretKey(String s3SecretKey) {
     this.s3SecretKey = s3SecretKey;
+  }
+
+  public String getS3Endpoint() {
+    return s3Endpoint;
+  }
+
+  public void setS3Endpoint(String s3Endpoint) {
+    this.s3Endpoint = s3Endpoint;
   }
 }

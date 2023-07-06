@@ -206,6 +206,7 @@
           <plugin>
             <groupId>org.vafer</groupId>
             <artifactId>jdeb</artifactId>
+            <version>1.4</version>
             <executions>
               <execution>
                 <id>jdeb-portal</id>

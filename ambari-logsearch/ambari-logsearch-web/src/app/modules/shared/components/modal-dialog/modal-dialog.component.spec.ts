@@ -16,13 +16,23 @@
  */
 
 import { async, ComponentFixture, TestBed } from '@angular/core/testing';
-
+import {StoreModule} from '@ngrx/store';
+import {AppStateService, appState} from '@app/services/storage/app-state.service';
 import {
   getCommonTestingBedConfiguration, MockHttpRequestModules,
   TranslationModules
 } from '@app/test-config.spec';
 
+import {NotificationsService} from 'angular2-notifications/src/notifications.service';
+import {NotificationService} from '@modules/shared/services/notification.service';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+
 import { ModalDialogComponent } from './modal-dialog.component';
+import { RouterTestingModule } from '@angular/router/testing';
 
 describe('ModalDialogComponent', () => {
   let component: ModalDialogComponent;
@@ -31,8 +41,16 @@ describe('ModalDialogComponent', () => {
   beforeEach(async(() => {
     TestBed.configureTestingModule(getCommonTestingBedConfiguration({
       imports: [
-        ...TranslationModules
+        ...TranslationModules,
+        RouterTestingModule,
+        StoreModule.provideStore({
+          appState,
+          auth: auth.reducer
+        }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects)
       ],
+      providers: [AppStateService, NotificationsService, NotificationService],
       declarations: [ ModalDialogComponent ]
     }))
     .compileComponents();

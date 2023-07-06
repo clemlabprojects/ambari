@@ -84,19 +84,19 @@ export class BreadcrumbsComponent implements OnInit, OnDestroy {
     return breadcrumbs;
   }
 
-  setPageTite(pageTitle) {
+  setPageTitle(pageTitle) {
     Observable.combineLatest(
       this.translateService.get('common.title'),
       pageTitle ? this.translateService.get(pageTitle) : Observable.of('')
-    ).first().subscribe(([commonTitle, pageTite]) => {
-      this.titleService.setTitle(pageTitle ? `${commonTitle} - ${pageTite}` : commonTitle);
+    ).take(1).subscribe(([commonTitle, pageTitle]) => {
+      this.titleService.setTitle(pageTitle ? `${commonTitle} - ${pageTitle}` : commonTitle);
     });
   }
 
   onNavigationEnd = (): void => {
     this.crumbs = this.getCrumbsFromRouterStateSnapshot(this.router.routerState.snapshot.root);
     if (this.crumbs.length) {
-      this.setPageTite(this.crumbs[this.crumbs.length - 1].text);
+      this.setPageTitle(this.crumbs[this.crumbs.length - 1].text);
     }
   }
 

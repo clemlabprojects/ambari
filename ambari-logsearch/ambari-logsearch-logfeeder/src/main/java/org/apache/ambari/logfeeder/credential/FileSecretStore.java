@@ -1,0 +1,60 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.ambari.logfeeder.credential;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.File;
+import java.nio.charset.Charset;
+
+public class FileSecretStore implements SecretStore {
+
+  private static final Logger logger = LogManager.getLogger(FileSecretStore.class);
+
+  private final String fileLocation;
+  private final String defaultSecret;
+
+  public FileSecretStore(String fileLocation, String defaultSecret) {
+    this.fileLocation = fileLocation;
+    this.defaultSecret = defaultSecret;
+  }
+
+  public FileSecretStore(String fileLocation) {
+    this.fileLocation = fileLocation;
+    this.defaultSecret = null;
+  }
+
+  @Override
+  public char[] getSecret() {
+    try {
+      File pwdFile = new File(fileLocation);
+      if (!pwdFile.exists() && defaultSecret != null) {
+        FileUtils.writeStringToFile(pwdFile, defaultSecret, Charset.defaultCharset());
+        return defaultSecret.toCharArray();
+      } else {
+        return FileUtils.readFileToString(pwdFile, Charset.defaultCharset()).toCharArray();
+      }
+    } catch (Exception e) {
+      logger.warn("Exception occurred during read/write password file.", e);
+      return null;
+    }
+  }
+}

@@ -16,7 +16,14 @@
  */
 
 @import '../../modules/shared/variables';
-
-.login-form {
-  margin-top: @block-margin-top;
+:host {
+  footer {
+    display: flex;
+    .checking-auth-in-progress {
+      margin-left: auto;
+    }
+  }
+  .login-form {
+    margin-top: @block-margin-top;
+  }
 }

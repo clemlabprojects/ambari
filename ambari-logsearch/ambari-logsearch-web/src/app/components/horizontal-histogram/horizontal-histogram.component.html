@@ -18,5 +18,5 @@
 <div #graphContainer></div>
 <graph-legend class="col-md-12" [items]="legendItems"></graph-legend>
 <graph-tooltip #tooltip [data]="tooltipInfo.data" [title]="tooltipInfo.title" [ngClass]="{'hide': !tooltipInfo.data}"
-               [style.top]="tooltipInfo.data ? tooltipPosition.top + 'px' : ''"
-               [style.left]="tooltipInfo.data ? tooltipPosition.left + 'px' : ''"></graph-tooltip>
+               [style.top]="tooltipPosition ? tooltipPosition.top + 'px' : ''"
+               [style.left]="tooltipPosition ? tooltipPosition.left + 'px' : ''"></graph-tooltip>

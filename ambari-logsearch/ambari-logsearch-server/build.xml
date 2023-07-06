@@ -43,12 +43,12 @@
     </copy>
     <copy todir="target/package/conf" includeEmptyDirs="no">
       <fileset file="src/main/scripts/logsearch-env.sh"/>
-      <fileset file="target/classes/log4j.xml"/>
+      <fileset file="target/classes/log4j2.yml"/>
       <fileset file="target/classes/default.properties"/>
       <fileset file="target/classes/logsearch.properties"/>
       <fileset file="target/classes/info.properties"/>
       <fileset file="target/classes/user_pass.json"/>
-      <fileset file="target/classes/HadoopServiceConfig.json"/>
+      <fileset file="target/classes/roles.json"/>
     </copy>
     <copy todir="target/package/conf/solr_configsets" includeEmptyDirs="yes">
       <fileset dir="src/main/configsets"/>
@@ -66,5 +66,11 @@
         <exclude name="**/*.sh"/>
       </tarfileset>
     </tar>
+    <copy todir="target" >
+      <fileset dir="../jenkins/containers" includes="**"/>
+    </copy>
+    <copy todir="target/docker-logsearch-portal/logsearch-portal" >
+      <fileset dir="target/package" includes="**"/>
+    </copy>
   </target>
 </project>

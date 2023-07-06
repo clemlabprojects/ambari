@@ -20,27 +20,59 @@ package org.apache.ambari.logfeeder.plugin.manager;
 
 import org.apache.ambari.logfeeder.plugin.input.Input;
 
-import java.io.File;
 import java.util.List;
 
-
+/**
+ * Holds input objects for Log Feeder and start monitoring them if those are in "ready" state.
+ */
 public abstract class InputManager implements BlockManager {
 
+  /**
+   * Add a new input to not ready list (from that point, input manager will check inputs are ready or not, if an input is ready, start monitoring it)
+   * @param input input type
+   */
   public abstract void addToNotReady(Input input);
 
+  /**
+   * Check in all inputs. (dump details for every inputs)
+   */
   public abstract void checkInAll();
 
+  /**
+   * Get all input objects (1 input can have more sub-thread inputs)
+   * @param serviceName input type
+   * @return list of inputs
+   */
   public abstract List<Input> getInputList(String serviceName);
 
+  /**
+   * Add a new input object
+   * @param serviceName input type
+   * @param input input object
+   */
   public abstract void add(String serviceName, Input input);
 
+  /**
+   * Remove an input
+   * @param input input object
+   */
   public abstract void removeInput(Input input);
 
-  public abstract File getCheckPointFolderFile();
-
-  public abstract void cleanCheckPointFiles();
-
+  /**
+   * Remove an input identified by the input type
+   * @param serviceName input type
+   */
   public abstract void removeInputsForService(String serviceName);
 
+  /**
+   * Check inputs are ready, if they are, start monitoring them.
+   * @param serviceName input type
+   */
   public abstract void startInputs(String serviceName);
+
+  /**
+   * Get checkpoint handler which can be used to check in data for inputs during processing them.
+   * @return checkpoint manager
+   */
+  public abstract CheckpointManager getCheckpointHandler();
 }

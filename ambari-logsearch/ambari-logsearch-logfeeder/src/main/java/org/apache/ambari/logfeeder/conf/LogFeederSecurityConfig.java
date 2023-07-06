@@ -19,21 +19,22 @@
 package org.apache.ambari.logfeeder.conf;
 
 import org.apache.ambari.logfeeder.common.LogFeederConstants;
+import org.apache.ambari.logfeeder.credential.CompositeSecretStore;
+import org.apache.ambari.logfeeder.credential.FileSecretStore;
+import org.apache.ambari.logfeeder.credential.HadoopCredentialSecretStore;
+import org.apache.ambari.logfeeder.credential.SecretStore;
 import org.apache.ambari.logsearch.config.api.LogSearchPropertyDescription;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang3.ArrayUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 
 import javax.annotation.PostConstruct;
 import java.io.File;
-import java.nio.charset.Charset;
 
 public class LogFeederSecurityConfig {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogFeederSecurityConfig.class);
+  private static final Logger logger = LogManager.getLogger(LogFeederSecurityConfig.class);
 
   private static final String KEYSTORE_LOCATION_ARG = "javax.net.ssl.keyStore";
   private static final String TRUSTSTORE_LOCATION_ARG = "javax.net.ssl.trustStore";
@@ -142,48 +143,12 @@ public class LogFeederSecurityConfig {
   }
 
   private String getPassword(String propertyName, String fileName) {
-    String credentialStorePassword = getPasswordFromCredentialStore(propertyName);
-    if (credentialStorePassword != null) {
-      return credentialStorePassword;
-    }
+    SecretStore hadoopSecretStore = new HadoopCredentialSecretStore(propertyName, credentialStoreProviderPath);
+    SecretStore fileSecretStore = new FileSecretStore(String.join(File.separator, LOGFEEDER_CERT_DEFAULT_FOLDER, fileName), LOGFEEDER_STORE_DEFAULT_PASSWORD);
+    SecretStore compositeSecretStore = new CompositeSecretStore(hadoopSecretStore, fileSecretStore);
 
-    String filePassword = getPasswordFromFile(fileName);
-    if (filePassword != null) {
-      return filePassword;
-    }
-
-    return LOGFEEDER_STORE_DEFAULT_PASSWORD;
-  }
-
-  private String getPasswordFromCredentialStore(String propertyName) {
-    try {
-      if (StringUtils.isEmpty(credentialStoreProviderPath)) {
-        return null;
-      }
-
-      org.apache.hadoop.conf.Configuration config = new org.apache.hadoop.conf.Configuration();
-      config.set(CREDENTIAL_STORE_PROVIDER_PATH_PROPERTY, credentialStoreProviderPath);
-      char[] passwordChars = config.getPassword(propertyName);
-      return (ArrayUtils.isNotEmpty(passwordChars)) ? new String(passwordChars) : null;
-    } catch (Exception e) {
-      LOG.warn(String.format("Could not load password %s from credential store, using default password", propertyName));
-      return null;
-    }
-  }
-
-  private String getPasswordFromFile(String fileName) {
-    try {
-      File pwdFile = new File(LOGFEEDER_CERT_DEFAULT_FOLDER, fileName);
-      if (!pwdFile.exists()) {
-        FileUtils.writeStringToFile(pwdFile, LOGFEEDER_STORE_DEFAULT_PASSWORD, Charset.defaultCharset());
-        return LOGFEEDER_STORE_DEFAULT_PASSWORD;
-      } else {
-        return FileUtils.readFileToString(pwdFile, Charset.defaultCharset());
-      }
-    } catch (Exception e) {
-      LOG.warn("Exception occurred during read/write password file for keystore/truststore.", e);
-      return null;
-    }
+    char[] password = compositeSecretStore.getSecret();
+    return password == null ? LOGFEEDER_STORE_DEFAULT_PASSWORD: new String(password);
   }
 
 }

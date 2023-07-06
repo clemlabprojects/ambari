@@ -20,10 +20,23 @@ package org.apache.ambari.logfeeder.plugin.input;
 
 import java.util.Map;
 
+/**
+ * This interface stores unique data about an input.
+ * @param <INPUT_TYPE> Type of the input
+ */
 public interface InputMarker <INPUT_TYPE extends Input> {
 
+
+  /**
+   * Get the input for an input marker
+   * @return An Log Feeder input instance
+   */
   INPUT_TYPE getInput();
 
+  /**
+   * Get input marker properties
+   * @return marker properties which represents an input
+   */
   Map<String, Object> getAllProperties();
 
 }

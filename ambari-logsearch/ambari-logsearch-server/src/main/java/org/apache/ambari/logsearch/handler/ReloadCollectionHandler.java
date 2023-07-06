@@ -19,25 +19,25 @@
 package org.apache.ambari.logsearch.handler;
 
 import org.apache.ambari.logsearch.conf.SolrPropsConfig;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class ReloadCollectionHandler implements SolrZkRequestHandler<Boolean> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ReloadCollectionHandler.class);
+  private static final Logger logger = LogManager.getLogger(ReloadCollectionHandler.class);
 
   @Override
   public Boolean handle(CloudSolrClient solrClient, SolrPropsConfig solrPropsConfig) throws Exception {
     boolean result = false;
     try {
-      LOG.info("Reload collection - '{}'", solrPropsConfig.getCollection());
+      logger.info("Reload collection - '{}'", solrPropsConfig.getCollection());
       CollectionAdminRequest.Reload request = CollectionAdminRequest.reloadCollection(solrPropsConfig.getCollection());
       request.process(solrClient);
       result = true;
     } catch (Exception e) {
-      LOG.error(String.format("Reload collection ('%s') failed.", solrPropsConfig.getCollection()), e);
+      logger.error(String.format("Reload collection ('%s') failed.", solrPropsConfig.getCollection()), e);
     }
     return result;
   }

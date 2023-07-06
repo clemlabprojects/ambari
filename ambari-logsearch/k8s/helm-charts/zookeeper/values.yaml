@@ -1,0 +1,9 @@
+enabled: true
+zookeeperImage: "k8s.gcr.io/kubernetes-zookeeper:1.0-3.4.10"
+
+affinity: false
+persistence:
+  enabled: false
+  size: 100G
+
+replicas: 1

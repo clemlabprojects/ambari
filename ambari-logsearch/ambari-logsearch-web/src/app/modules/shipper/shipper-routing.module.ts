@@ -16,14 +16,16 @@
  * limitations under the License.
  */
 
-import {NgModule} from '@angular/core';
-import {RouterModule, Routes} from '@angular/router';
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
 
-import {AuthGuardService} from '@app/services/auth-guard.service';
-import {CanDeactivateGuardService} from '@modules/shared/services/can-deactivate-guard.service';
+import { AuthGuardService } from '@app/services/auth-guard.service';
+import { CanDeactivateGuardService } from '@modules/shared/services/can-deactivate-guard.service';
 
-import {ShipperConfigurationComponent} from './components/shipper-configuration/shipper-configuration.component';
-import {ShipperGuard} from '@modules/shipper/services/shipper.guard';
+import { ShipperConfigurationComponent } from './components/shipper-configuration/shipper-configuration.component';
+import { ShipperGuard } from '@modules/shipper/services/shipper.guard';
+
+import { MetaDataApiFeatureGuard } from '@app/services/meta-data-api-feature.guard';
 
 const shipperRoutes: Routes = [{
   path: 'shipper/:cluster/add',
@@ -32,7 +34,7 @@ const shipperRoutes: Routes = [{
     breadcrumbs: ['shipperConfiguration.breadcrumbs.title', 'shipperConfiguration.breadcrumbs.add'],
     multiClusterFilter: false
   },
-  canActivate: [AuthGuardService],
+  canActivate: [AuthGuardService, MetaDataApiFeatureGuard],
   canDeactivate: [CanDeactivateGuardService]
 }, {
   path: 'shipper/:cluster/:service',
@@ -41,7 +43,7 @@ const shipperRoutes: Routes = [{
     breadcrumbs: ['shipperConfiguration.breadcrumbs.title', 'shipperConfiguration.breadcrumbs.update'],
     multiClusterFilter: false
   },
-  canActivate: [AuthGuardService, ShipperGuard],
+  canActivate: [AuthGuardService, ShipperGuard, MetaDataApiFeatureGuard],
   canDeactivate: [CanDeactivateGuardService]
 }, {
   path: 'shipper/:cluster',
@@ -50,7 +52,7 @@ const shipperRoutes: Routes = [{
     breadcrumbs: 'shipperConfiguration.breadcrumbs.title',
     multiClusterFilter: false
   },
-  canActivate: [AuthGuardService, ShipperGuard]
+  canActivate: [AuthGuardService, ShipperGuard, MetaDataApiFeatureGuard]
 }, {
   path: 'shipper',
   component: ShipperConfigurationComponent,
@@ -58,7 +60,7 @@ const shipperRoutes: Routes = [{
     breadcrumbs: 'shipperConfiguration.breadcrumbs.title',
     multiClusterFilter: false
   },
-  canActivate: [AuthGuardService, ShipperGuard]
+  canActivate: [AuthGuardService, ShipperGuard, MetaDataApiFeatureGuard]
 }];
 
 @NgModule({

@@ -22,11 +22,24 @@ import { HttpClientModule } from '@angular/common/http';
 import { AppLoadService } from './services/app-load.service';
 import { DataAvailabilityStatesStore } from '@app/modules/app-load/stores/data-availability-state.store';
 
-export function check_if_authorized(appLoadService: AppLoadService) {
-  return () => appLoadService.syncAuthorizedStateWithBackend();
-}
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { CheckAuthorizationStatusAction } from '@app/store/actions/auth.actions';
+import { selectAuthStatus } from '@app/store/selectors/auth.selectors';
+import { AuthorizationStatuses } from '@app/store/reducers/auth.reducers';
+
 export function set_translation_service(appLoadService: AppLoadService) {
   return () => appLoadService.setTranslationService();
+}
+
+export function check_auth_status(store: Store<AppStore>) {
+  return () => new Promise((resolve) => {
+    store.select(selectAuthStatus)
+      .filter(
+        (status: AuthorizationStatuses): boolean => (status !== null && AuthorizationStatuses.CHEKCING_AUTHORIZATION_STATUS !== status)
+      ).first().subscribe(resolve);
+    store.dispatch(new CheckAuthorizationStatusAction());
+  });
 }
 
 @NgModule({
@@ -36,8 +49,8 @@ export function set_translation_service(appLoadService: AppLoadService) {
   providers: [
     AppLoadService,
     DataAvailabilityStatesStore,
-{ provide: APP_INITIALIZER, useFactory: set_translation_service, deps: [AppLoadService], multi: true },
-    { provide: APP_INITIALIZER, useFactory: check_if_authorized, deps: [AppLoadService], multi: true }
+    { provide: APP_INITIALIZER, useFactory: set_translation_service, deps: [AppLoadService], multi: true },
+    { provide: APP_INITIALIZER, useFactory: check_auth_status, deps: [Store], multi: true }
   ]
 })
 export class AppLoadModule { }

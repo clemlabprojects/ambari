@@ -105,15 +105,14 @@ public class SolrConstants {
     public static final String AUDIT_TAGS_STR = "tags_str";
   }
 
-  public class EventHistoryConstants {
-    private EventHistoryConstants() {
+  public class MetadataConstants {
+    private MetadataConstants() {
     }
 
     public static final String ID = "id";
     public static final String USER_NAME = "username";
-    public static final String VALUES = "jsons";
-    public static final String FILTER_NAME = "filtername";
-    public static final String ROW_TYPE = "rowtype";
-    public static final String SHARE_NAME_LIST = "share_username_list";
+    public static final String VALUE = "value";
+    public static final String NAME = "name";
+    public static final String TYPE = "type";
   }
 }

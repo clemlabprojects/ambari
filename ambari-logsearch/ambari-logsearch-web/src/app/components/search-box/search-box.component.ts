@@ -16,14 +16,13 @@
  * limitations under the License.
  */
 
-import {Component, OnInit, OnDestroy, HostListener, Input, ViewChild, ElementRef, forwardRef} from '@angular/core';
-import {ControlValueAccessor, NG_VALUE_ACCESSOR} from '@angular/forms';
-import {Subject} from 'rxjs/Subject';
-import {SearchBoxParameter, SearchBoxParameterProcessed, SearchBoxParameterTriggered} from '@app/classes/filtering';
-import {ListItem} from '@app/classes/list-item';
-import {HomogeneousObject} from '@app/classes/object';
-import {UtilsService} from '@app/services/utils.service';
-import {Subscription} from 'rxjs/Subscription';
+import { Component, OnInit, OnDestroy, HostListener, Input, ViewChild, ElementRef, forwardRef } from '@angular/core';
+import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
+import { Subject } from 'rxjs/Subject';
+import { SearchBoxParameter, SearchBoxParameterProcessed, SearchBoxParameterTriggered } from '@app/classes/filtering';
+import { ListItem } from '@app/classes/list-item';
+import { HomogeneousObject } from '@app/classes/object';
+import { UtilsService } from '@app/services/utils.service';
 
 @Component({
   selector: 'search-box',
@@ -39,21 +38,21 @@ import {Subscription} from 'rxjs/Subscription';
 })
 export class SearchBoxComponent implements OnInit, OnDestroy, ControlValueAccessor {
 
-  private currentId: number = 0;
+  private currentId = 0;
 
-  private isExclude: boolean = false;
+  private isExclude = false;
 
   /**
    * Indicates whether search box is currently active
    * @type {boolean}
    */
-  isActive: boolean = false;
+  isActive = false;
 
   /**
    * Indicates whether search query parameter value is currently typed
    * @type {boolean}
    */
-  isValueInput: boolean = false;
+  isValueInput = false;
 
   currentValue: string;
 
@@ -61,13 +60,13 @@ export class SearchBoxComponent implements OnInit, OnDestroy, ControlValueAccess
    * Indicates whether there's no autocomplete matches in preset options for search query parameter name
    * @type {boolean}
    */
-  private noMatchingParameterName: boolean = true;
+  private noMatchingParameterName = true;
 
   /**
    * Indicates whether there's no autocomplete matches in preset options for search query parameter value
    * @type {boolean}
    */
-  private noMatchingParameterValue: boolean = true;
+  private noMatchingParameterValue = true;
 
   @Input()
   items: ListItem[] = [];

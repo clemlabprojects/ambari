@@ -24,6 +24,15 @@
   &.disabled {
     cursor: auto;
   }
+  .dropdown {
+    padding: .3em;
+  }
+  .has-selection {
+    background: @blue;
+    * {
+      color: @white;
+    }
+  }
   a {
     text-align: center;
     text-decoration: none;
@@ -40,13 +49,18 @@
   }
 
   .badge {
-    background: @badge-bg;
-    font-size: 1rem;
+    align-items: center;
+    background: @blue;
+    border: 1px solid @white;
+    display: flex;
+    font-size: 1.2rem;
+    font-weight: lighter;
+    justify-content: center;
+    justify-items: center;
     min-width: 1em;
-    padding: @badge-padding;
     position: absolute;
-    top: 0;
-    right: -1em;
+    left: -1em;
+    top: -.5em;
   }
 
   .disabled {

@@ -26,6 +26,9 @@ import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilte
 
 import java.util.Map;
 
+/**
+ * Implement it to make notifications against log level filter operations.
+ */
 public interface LogLevelFilterMonitor {
   /**
    * Notification of a new or updated log level filter.
@@ -44,6 +47,7 @@ public interface LogLevelFilterMonitor {
 
   /**
    * Helper function to get all log level filters
+   * @return get log level filters per log types
    */
   Map<String, LogLevelFilter> getLogLevelFilters();
 

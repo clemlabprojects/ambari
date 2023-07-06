@@ -53,6 +53,9 @@ export class ModalDialogComponent implements AfterViewInit {
 
   @Output()
   onCloseRequest: EventEmitter<MouseEvent> =  new EventEmitter();
+  
+  @Output()
+  onAfterViewInit: EventEmitter<ModalDialogComponent> =  new EventEmitter();
 
   @ViewChild('header')
   headerElementRef: ElementRef;
@@ -74,9 +77,14 @@ export class ModalDialogComponent implements AfterViewInit {
     if (this.showCloseBtn) {
       totalBuiltInHeaderElement += 1;
     }
-    this.showHeader = this.headerElementRef && (this.headerElementRef.nativeElement.children.length - totalBuiltInHeaderElement > 0);
+    this.showHeader = this.showCloseBtn || !!this.title || (
+      this.headerElementRef && (this.headerElementRef.nativeElement.children.length - totalBuiltInHeaderElement > 0)
+    );
     this.showFooter = this.footerElementRef && this.footerElementRef.nativeElement.children.length;
     this.cdRef.detectChanges();
+    if (this.onAfterViewInit) {
+      this.onAfterViewInit.emit(this);
+    }
   }
 
   onCloseBtnClick(event: MouseEvent) {

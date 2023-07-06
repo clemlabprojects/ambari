@@ -26,17 +26,46 @@ import org.apache.ambari.logfeeder.plugin.input.InputMarker;
 import org.apache.ambari.logfeeder.util.LogFeederUtil;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.FilterKeyValueDescriptor;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+/**
+ * Filter for parsing lines as key value pairs (it is required to provide delimiters for splitting values/fields and borders as well)
+ * Example configuration: (input: "User(admin), RemoteIp(10.0.0.1)")
+ * <pre>
+ * "filter": [
+ *    "filter": "keyvalue",
+ *    "sort_order": 1,
+ *    "conditions": {
+ *      "fields": {
+ *         "type": [
+ *           "ambari_audit"
+ *         ]
+ *      }
+ *    },
+ *    "source_field": "log_message",
+ *    "field_split": ", ",
+ *    "value_borders": "()",
+ *    "post_map_values": {
+ *      "User": {
+ *        "map_field_value": {
+ *           "pre_value": "null",
+ *           "post_value": "unknown"
+ *        }
+ *      }
+ *    }
+ * ]
+ * </pre>
+ */
 public class FilterKeyValue extends Filter<LogFeederProps> {
 
-  private static final Logger LOG = Logger.getLogger(FilterKeyValue.class);
+  private static final Logger logger = LogManager.getLogger(FilterKeyValue.class);
 
   private String sourceField = null;
   private String valueSplit = "=";
@@ -54,11 +83,10 @@ public class FilterKeyValue extends Filter<LogFeederProps> {
     fieldSplit = StringUtils.defaultString(((FilterKeyValueDescriptor)getFilterDescriptor()).getFieldSplit(), fieldSplit);
     valueBorders = ((FilterKeyValueDescriptor)getFilterDescriptor()).getValueBorders();
 
-    LOG.info("init() done. source_field=" + sourceField + ", value_split=" + valueSplit + ", " + ", field_split=" +
+    logger.info("init() done. source_field=" + sourceField + ", value_split=" + valueSplit + ", " + ", field_split=" +
         fieldSplit + ", " + getShortDescription());
     if (StringUtils.isEmpty(sourceField)) {
-      LOG.fatal("source_field is not set for filter. Thiss filter will not be applied");
-      return;
+      logger.fatal("source_field is not set for filter. Thiss filter will not be applied");
     }
   }
 
@@ -83,8 +111,8 @@ public class FilterKeyValue extends Filter<LogFeederProps> {
       String[] tokens = keyValueString.split(splitPattern);
       for (String nv : tokens) {
         String[] nameValue = getNameValue(nv);
-        String name = nameValue != null && nameValue.length == 2 ? nameValue[0] : null;
-        String value = nameValue != null && nameValue.length == 2 ? nameValue[1] : null;
+        String name = nameValue.length == 2 ? nameValue[0] : null;
+        String value = nameValue.length == 2 ? nameValue[1] : null;
         if (name != null && value != null) {
           if (valueMap.containsKey(value)) {
             value = valueMap.get(value);
@@ -122,7 +150,9 @@ public class FilterKeyValue extends Filter<LogFeederProps> {
           String value = keyValueString.substring(lastPos, pos).trim();
           String valueId = "$VALUE" + (++valueNum);
           valueMap.put(valueId, value);
-          processed.append(valueSplit + valueId);
+          processed
+            .append(valueSplit)
+            .append(valueId);
           lastPos = pos + 1;
         }
       }
@@ -140,7 +170,7 @@ public class FilterKeyValue extends Filter<LogFeederProps> {
     errorMetric.value++;
     String logMessageKey = this.getClass().getSimpleName() + "_PARSEERROR";
     LogFeederUtil.logErrorMessageByInterval(logMessageKey, "Error parsing string. length=" + inputStr.length() + ", input=" +
-        getInput().getShortDescription() + ". First upto 200 characters=" + StringUtils.abbreviate(inputStr, 200), null, LOG,
+        getInput().getShortDescription() + ". First upto 200 characters=" + StringUtils.abbreviate(inputStr, 200), null, logger,
         Level.ERROR);
   }
 

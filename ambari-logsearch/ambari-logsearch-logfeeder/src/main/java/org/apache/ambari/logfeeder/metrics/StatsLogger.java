@@ -18,10 +18,10 @@
  */
 package org.apache.ambari.logfeeder.metrics;
 
-import org.apache.ambari.logfeeder.common.ConfigHandler;
+import org.apache.ambari.logfeeder.manager.InputConfigManager;
 import org.apache.ambari.logfeeder.plugin.common.MetricData;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.annotation.PostConstruct;
 import javax.inject.Inject;
@@ -30,21 +30,21 @@ import java.util.List;
 
 public class StatsLogger extends Thread {
 
-  private static final Logger LOG = LoggerFactory.getLogger(StatsLogger.class);
+  private static final Logger logger = LogManager.getLogger("logfeeder.metrics");
 
   private static final int CHECKPOINT_CLEAN_INTERVAL_MS = 24 * 60 * 60 * 60 * 1000; // 24 hours
 
   private long lastCheckPointCleanedMS = 0;
 
-  @Inject
-  private ConfigHandler configHandler;
+  private final InputConfigManager inputConfigManager;
 
   @Inject
   private MetricsManager metricsManager;
 
-  public StatsLogger() {
-    super("statLogger");
+  public StatsLogger(String name, InputConfigManager inputConfigManager) {
+    super(name);
     setDaemon(true);
+    this.inputConfigManager = inputConfigManager;
   }
 
   @PostConstruct
@@ -63,21 +63,21 @@ public class StatsLogger extends Thread {
       try {
         logStats();
       } catch (Throwable t) {
-        LOG.error("LogStats: Caught exception while logging stats.", t);
+        logger.error("LogStats: Caught exception while logging stats.", t);
       }
 
       if (System.currentTimeMillis() > (lastCheckPointCleanedMS + CHECKPOINT_CLEAN_INTERVAL_MS)) {
         lastCheckPointCleanedMS = System.currentTimeMillis();
-        configHandler.cleanCheckPointFiles();
+        inputConfigManager.cleanCheckPointFiles();
       }
     }
   }
 
   private void logStats() {
-    configHandler.logStats();
+    inputConfigManager.logStats();
     if (metricsManager.isMetricsEnabled()) {
       List<MetricData> metricsList = new ArrayList<MetricData>();
-      configHandler.addMetrics(metricsList);
+      inputConfigManager.addMetrics(metricsList);
       metricsManager.useMetrics(metricsList);
     }
   }

@@ -43,22 +43,14 @@ export class HistoryManagerService {
    * Maximal number of displayed history items
    * @type {number}
    */
-  private readonly maxHistoryItemsCount: number = 25;
-
-  /**
-   * Indicates whether there is no changes being applied to filters that are triggered by undo or redo action.
-   * Since user can undo or redo several filters changes at once, and they are applied to form controls step-by-step,
-   * this flag is needed to avoid recording intermediate items to history.
-   * @type {boolean}
-   */
-  private hasNoPendingUndoOrRedo: boolean = true;
+  private readonly maxHistoryItemsCount = 25;
 
   /**
    * Id of currently active history item.
    * Generally speaking, it isn't id of the latest one because it can be shifted by undo or redo action.
    * @type {number}
    */
-  private currentHistoryItemId: number = -1;
+  private currentHistoryItemId = -1;
 
   /**
    * Contains i18n labels for filtering form control names
@@ -125,7 +117,7 @@ export class HistoryManagerService {
     });
 
     this.logsContainerService.filtersForm.valueChanges
-      .filter(() => !this.logsContainerService.filtersFormSyncInProgress.getValue())
+      .filter(() => !this.logsContainerService.filtersFormSyncInProgress$.getValue())
       .distinctUntilChanged(this.isHistoryUnchanged)
       .subscribe(this.onFormValueChanges);
   }
@@ -146,41 +138,33 @@ export class HistoryManagerService {
   }
 
   onFormValueChanges = (value): void => {
-    if (this.hasNoPendingUndoOrRedo) {
-      const defaultState = this.logsContainerService.getFiltersData(this.logsContainerService.activeLogsType);
-      const currentHistory = this.activeHistory;
-      const previousValue = this.activeHistory.length ? this.activeHistory[0].value.currentValue : defaultState;
-      const isUndoOrRedo = value.isUndoOrRedo;
-      const previousChangeId = this.currentHistoryItemId;
-      if (isUndoOrRedo) {
-        this.hasNoPendingUndoOrRedo = false;
-        this.logsContainerService.filtersForm.patchValue({
-          isUndoOrRedo: false
-        });
-        this.hasNoPendingUndoOrRedo = true;
-      } else {
-        this.currentHistoryItemId = currentHistory.length;
-      }
-      const newItem = {
-        value: {
-          currentValue: Object.assign({}, value),
-          previousValue: Object.assign({}, previousValue),
-          changeId: this.currentHistoryItemId,
-          previousChangeId,
-          isUndoOrRedo
-        },
-        label: this.getHistoryItemLabel(previousValue, value)
-      };
-      if (newItem.label) {
-        this.activeHistory = [
-          newItem,
-          ...currentHistory
-        ].slice(0, this.maxHistoryItemsCount);
-        this.appState.setParameter('history', {
-          items: this.activeHistory.slice(),
-          currentId: this.currentHistoryItemId
-        });
-      }
+    const defaultState = this.logsContainerService.getFiltersData(this.logsContainerService.activeLogsType);
+    const currentHistory = this.activeHistory;
+    const previousValue = this.activeHistory.length ? this.activeHistory[0].value.currentValue : defaultState;
+    const previousChangeId = this.currentHistoryItemId;
+    this.currentHistoryItemId = currentHistory.length;
+    const newItem = {
+      value: {
+        currentValue: Object.assign({}, value),
+        previousValue: Object.assign({}, previousValue),
+        changeId: this.currentHistoryItemId,
+        previousChangeId
+      },
+      label: this.getHistoryItemLabel(previousValue, value)
+    };
+    if (newItem.label) {
+      this.activeHistory = [
+        newItem,
+        ...currentHistory
+      ].slice(0, this.maxHistoryItemsCount);
+      this.activeHistory = this.activeHistory.map((item) => {
+        item.cssClass = item.value.changeId === this.currentHistoryItemId ? 'current-history-item' : '';
+        return item;
+      });
+      this.appState.setParameter('history', {
+        items: [...this.activeHistory],
+        currentId: this.currentHistoryItemId
+      });
     }
   }
 
@@ -191,15 +175,11 @@ export class HistoryManagerService {
   get undoItems(): ListItem[] {
     const allItems = this.activeHistory;
     const startIndex = allItems.findIndex((item: ListItem): boolean => {
-        return item.value.changeId === this.currentHistoryItemId && !item.value.isUndoOrRedo;
-      });
-    let endIndex = allItems.slice(startIndex + 1).findIndex((item: ListItem): boolean => item.value.isUndoOrRedo);
+      return item.value.changeId === this.currentHistoryItemId;
+    });
     let items = [];
     if (startIndex > -1) {
-      if (endIndex === -1) {
-        endIndex = allItems.length;
-      }
-      items = allItems.slice(startIndex, startIndex + endIndex + 1);
+      items = allItems.slice(startIndex);
     }
     return items;
   }
@@ -209,18 +189,14 @@ export class HistoryManagerService {
    * @returns {ListItem[]}
    */
   get redoItems(): ListItem[] {
-    const allItems = this.activeHistory.slice().reverse();
+    const allItems = [...this.activeHistory].reverse();
     let startIndex = allItems.findIndex((item: ListItem): boolean => {
-        return item.value.previousChangeId === this.currentHistoryItemId && !item.value.isUndoOrRedo;
-      }),
-      endIndex = allItems.slice(startIndex + 1).findIndex((item: ListItem): boolean => item.value.isUndoOrRedo);
+      return item.value.previousChangeId === this.currentHistoryItemId;
+    });
     if (startIndex === -1) {
       startIndex = allItems.length;
     }
-    if (endIndex === -1) {
-      endIndex = allItems.length;
-    }
-    return allItems.slice(startIndex, endIndex + startIndex + 1);
+    return allItems.slice(startIndex);
   }
 
   /**
@@ -292,24 +268,11 @@ export class HistoryManagerService {
    * @param {object} value
    */
   private handleUndoOrRedo(value: object): void {
-    const filtersForm = this.logsContainerService.filtersForm;
-    this.hasNoPendingUndoOrRedo = false;
-    this.logsContainerService.filtersFormSyncInProgress.next(true);
-    this.filterParameters.filter(controlName => this.ignoredParameters.indexOf(controlName) === -1)
-      .forEach((controlName: string): void => {
-        filtersForm.controls[controlName].setValue(value[controlName], {
-          emitEvent: false,
-          onlySelf: true
-        });
-      });
-    this.logsContainerService.filtersFormSyncInProgress.next(false);
-    this.hasNoPendingUndoOrRedo = true;
-    filtersForm.controls.isUndoOrRedo.setValue(true);
+    this.logsContainerService.resetFiltersForms(value);
   }
 
   undo(item: ListItem): void {
     if (item) {
-      this.hasNoPendingUndoOrRedo = false;
       this.currentHistoryItemId = item.value.previousChangeId;
       this.handleUndoOrRedo(item.value.previousValue);
     }
@@ -317,7 +280,6 @@ export class HistoryManagerService {
 
   redo(item: ListItem): void {
     if (item) {
-      this.hasNoPendingUndoOrRedo = false;
       this.currentHistoryItemId = item.value.changeId;
       this.handleUndoOrRedo(item.value.currentValue);
     }

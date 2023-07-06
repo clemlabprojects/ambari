@@ -22,13 +22,14 @@ package org.apache.ambari.logsearch.util;
 import java.io.File;
 import java.net.URL;
 
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.tools.ant.Project;
 import org.apache.tools.ant.taskdefs.Chmod;
 import org.apache.tools.ant.types.FileSet;
 
 public class FileUtil {
-  private static final Logger logger = Logger.getLogger(FileUtil.class);
+  private static final Logger logger = LogManager.getLogger(FileUtil.class);
 
   private FileUtil() {
     throw new UnsupportedOperationException();

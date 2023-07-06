@@ -16,23 +16,29 @@
  * limitations under the License.
  */
 
-import {ReflectiveInjector} from '@angular/core';
-import {Observable} from 'rxjs/Observable';
-import {Store, Action} from '@ngrx/store';
-import {AppSettings} from '@app/classes/models/app-settings';
-import {AppState} from '@app/classes/models/app-state';
-import {AuditLog} from '@app/classes/models/audit-log';
-import {ServiceLog} from '@app/classes/models/service-log';
-import {BarGraph} from '@app/classes/models/bar-graph';
-import {Graph} from '@app/classes/models/graph';
-import {NodeItem} from '@app/classes/models/node-item';
-import {UserConfig} from '@app/classes/models/user-config';
-import {LogTypeTab} from '@app/classes/models/log-type-tab';
-import {LogField} from '@app/classes/object';
-import {UtilsService} from '@app/services/utils.service';
-import {NotificationInterface} from '@modules/shared/interfaces/notification.interface';
-import {LogsState} from '@app/classes/models/logs-state';
+import { ReflectiveInjector } from '@angular/core';
+import { Observable } from 'rxjs/Observable';
+import { Store, Action } from '@ngrx/store';
+import { AppSettings } from '@app/classes/models/app-settings';
+import { AppState } from '@app/classes/models/app-state';
+import { AuditLog } from '@app/classes/models/audit-log';
+import { ServiceLog } from '@app/classes/models/service-log';
+import { BarGraph } from '@app/classes/models/bar-graph';
+import { Graph } from '@app/classes/models/graph';
+import { NodeItem } from '@app/classes/models/node-item';
+import { UserConfig } from '@app/classes/models/user-config';
+import { LogTypeTab } from '@app/classes/models/log-type-tab';
+import { LogField, AuditLogsFieldSet } from '@app/classes/object';
+import { UtilsService } from '@app/services/utils.service';
+import { NotificationInterface } from '@modules/shared/interfaces/notification.interface';
+import { LogsState } from '@app/classes/models/logs-state';
 import { DataAvaibilityStatesModel } from '@app/modules/app-load/models/data-availability-state.model';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import * as filterHistory from '@app/store/reducers/filter-history.reducers';
+import * as auditLogRepos from '@app/store/reducers/audit-log-repos.reducers';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+import * as apiFeatures from '@app/store/reducers/api-features.reducers';
 
 const storeActions = {
     'ARRAY.ADD': 'ADD',
@@ -60,14 +66,19 @@ export interface AppStore {
   graphs: Graph[];
   hosts: NodeItem[];
   userConfigs: UserConfig[];
+  userSettings: userSettings.UserSettingsState;
   clusters: string[];
   components: NodeItem[];
   serviceLogsFields: LogField[];
-  auditLogsFields: LogField[];
+  auditLogsFields: AuditLogsFieldSet;
   tabs: LogTypeTab[];
   notifications: NotificationInterface[];
   logsState: LogsState;
   dataAvailabilityStates: DataAvaibilityStatesModel;
+  auth: auth.State;
+  filterHistory: filterHistory.FilterHistoryState;
+  auditLogRepos: auditLogRepos.AuditLogRepo[];
+  apiFeatures: apiFeatures.ApiFeatureSet;
 }
 
 export class ModelService {

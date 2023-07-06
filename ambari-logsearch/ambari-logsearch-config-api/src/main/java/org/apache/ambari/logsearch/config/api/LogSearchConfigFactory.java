@@ -19,20 +19,20 @@
 
 package org.apache.ambari.logsearch.config.api;
 
-import java.util.Map;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Map;
 
 /**
  * Factory class for LogSearchConfigServer and LogSearchConfigLogFeeder.
  */
 public class LogSearchConfigFactory {
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigFactory.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigFactory.class);
 
   /**
    * Creates a Log Search Configuration instance for the Log Search Server that implements
-   * {@link org.apache.ambari.logsearch.config.api.LogSearchConfigServer}.
+   * {@link LogSearchConfigServer}.
    * 
    * @param properties The properties of the component for which the configuration is created. If the properties contain the
    *                  "logsearch.config.class" entry than the class defined there would be used instead of the default class.
@@ -63,7 +63,7 @@ public class LogSearchConfigFactory {
       }
       return logSearchConfig;
     } catch (Exception e) {
-      LOG.error("Could not initialize logsearch config.", e);
+      logger.error("Could not initialize logsearch config.", e);
       throw e;
     }
   }
@@ -102,14 +102,14 @@ public class LogSearchConfigFactory {
       }
       return logSearchConfig;
     } catch (Exception e) {
-      LOG.error("Could not initialize logsearch config.", e);
+      logger.error("Could not initialize logsearch config.", e);
       throw e;
     }
   }
 
   /**
    * Creates a Log Search Configuration instance for the Log Search Server that implements
-   * {@link org.apache.ambari.logsearch.config.api.LogSearchConfigServer}.
+   * {@link LogSearchConfigServer}.
    *
    * @param properties The properties of the component for which the configuration is created. If the properties contain the
    *                  "logsearch.config.class" entry than the class defined there would be used instead of the default class.

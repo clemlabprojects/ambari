@@ -47,6 +47,13 @@ import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.serv
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
 import {NotificationService} from '@modules/shared/services/notification.service';
 
+import * as auth from '@app/store/reducers/auth.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { reducer as userSettings } from '@app/store/reducers/user-settings.reducers';
+
 describe('LogContextComponent', () => {
   let component: LogContextComponent;
   let fixture: ComponentFixture<LogContextComponent>;
@@ -72,8 +79,12 @@ describe('LogContextComponent', () => {
           components,
           hosts,
           serviceLogsTruncated,
-          tabs
+          tabs,
+          auth: auth.reducer,
+          userSettings
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects),
         ...TranslationModules
       ],
       providers: [
@@ -98,7 +109,8 @@ describe('LogContextComponent', () => {
         LogsFilteringUtilsService,
         LogsStateService,
         NotificationsService,
-        NotificationService
+        NotificationService,
+        AuthService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

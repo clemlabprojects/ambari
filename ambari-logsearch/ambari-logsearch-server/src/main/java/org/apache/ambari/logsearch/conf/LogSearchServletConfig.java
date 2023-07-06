@@ -18,22 +18,28 @@
  */
 package org.apache.ambari.logsearch.conf;
 
-import javax.inject.Inject;
-import javax.servlet.http.HttpSessionListener;
-
 import org.apache.ambari.logsearch.configurer.SslConfigurer;
 import org.apache.ambari.logsearch.web.listener.LogSearchSessionListener;
+import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.glassfish.jersey.servlet.ServletContainer;
 import org.glassfish.jersey.servlet.ServletProperties;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer;
+import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactory;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
+import org.springframework.boot.web.servlet.server.ConfigurableServletWebServerFactory;
+import org.springframework.boot.web.servlet.server.ServletWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import javax.inject.Inject;
+import javax.servlet.http.HttpSessionListener;
+
 @Configuration
 public class LogSearchServletConfig {
-
-  private static final Integer SESSION_TIMEOUT = 60 * 30;
 
   @Inject
   private ServerProperties serverProperties;
@@ -55,4 +61,10 @@ public class LogSearchServletConfig {
     registration.addInitParameter(ServletProperties.JAXRS_APPLICATION_CLASS, LogSearchJerseyResourceConfig.class.getName());
     return registration;
   }
+
+  @Bean
+  public ServletWebServerFactory webServerFactory() {
+    return new JettyServletWebServerFactory();
+  }
+
 }

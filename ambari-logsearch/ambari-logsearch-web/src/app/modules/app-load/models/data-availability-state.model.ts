@@ -22,6 +22,7 @@ export interface DataAvaibilityStatesModel {
   hostsDataState: DataAvailabilityValues;
   componentsDataState: DataAvailabilityValues;
   logFieldsDataState: DataAvailabilityValues;
+  [key: string]: DataAvailabilityValues;
 }
 
 export const initialDataAvaibilityStates: DataAvaibilityStatesModel = {

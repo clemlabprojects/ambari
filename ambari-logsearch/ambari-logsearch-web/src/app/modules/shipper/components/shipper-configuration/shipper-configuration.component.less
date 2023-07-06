@@ -17,17 +17,23 @@
  */
 
 @import "../../../shared/variables";
+:host {
+  .shipper-configuration {
+    background-color: @filters-panel-background-color;
+    margin-top: 40px;
+    min-height: 100vh;
+  }
 
-.shipper-configuration {
-  background-color: @filters-panel-background-color;
-  margin-top: 40px;
-  min-height: 100vh;
-}
+  a.btn, a.btn:focus, a.btn:visited {
+    color: #fff;
+  }
 
-a.btn, a.btn:focus, a.btn:visited {
-  color: #fff;
-}
+  /deep/ .navigation-bar-container {
+    padding-bottom: 1em;
+  }
 
-/deep/ .navigation-bar-container {
-  padding-bottom: 1em;
+  .row .col-md-2.service-list {
+    padding: 0
+  }
+
 }

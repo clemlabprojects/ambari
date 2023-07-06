@@ -15,13 +15,16 @@
   limitations under the License.
 -->
 
-<div #dropdown [ngClass]="{'dropdown': hasSubItems, 'text-center': true, 'open': dropdownIsOpen, 'disabled': isDisabled}">
+<div #dropdown [ngClass]="{'dropdown': hasSubItems, 'text-center': true, 'open': dropdownIsOpen, 'disabled': disabled, 'has-selection': hasSelection}">
   <a class="dropdown-toggle" [ngClass]="(labelClass || '') + (hasCaret ? ' has-caret' : '')"
     (click)="onMouseClick($event)"
     (mousedown)="onMouseDown($event)">
     <i *ngIf="iconClass" [ngClass]="['icon', iconClass]"></i>
     <i *ngIf="hasCaret" [ngClass]="['fa ', caretClass ]"></i>
     <span *ngIf="label" class="menu-button-label">{{label}}</span>
+    <span *ngIf="showTotalSelection && totalSelection" class="total-selection badge">
+      {{totalSelection}}
+    </span>
   </a>
   <ul data-component="dropdown-list" *ngIf="hasSubItems" [items]="subItems"
       (selectedItemChange)="onDropdownItemChange($event)" [isMultipleChoice]="isMultipleChoice"

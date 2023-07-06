@@ -18,15 +18,15 @@
  */
 package org.apache.ambari.logsearch.config.api;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * Used for connect a remote source periodically to get / set log level filters.
  */
 public abstract class LogLevelFilterUpdater extends Thread {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogLevelFilterUpdater.class);
+  private static final Logger LOG = LogManager.getLogger(LogLevelFilterUpdater.class);
 
   private final LogLevelFilterMonitor logLevelFilterMonitor;
   private final int interval;
@@ -61,6 +61,7 @@ public abstract class LogLevelFilterUpdater extends Thread {
 
   /**
    * Periodically check filters from a source (and use log level filter monitor to create/update/delete it)
+   * @param logLevelFilterMonitor log level filter monitor (as input) which can be used to change state
    */
   protected abstract void checkFilters(final LogLevelFilterMonitor logLevelFilterMonitor);
 }

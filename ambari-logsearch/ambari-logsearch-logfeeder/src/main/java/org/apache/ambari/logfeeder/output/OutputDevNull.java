@@ -21,7 +21,8 @@ package org.apache.ambari.logfeeder.output;
 import org.apache.ambari.logfeeder.conf.LogFeederProps;
 import org.apache.ambari.logfeeder.plugin.input.InputMarker;
 import org.apache.ambari.logfeeder.plugin.output.Output;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 
@@ -30,11 +31,11 @@ import java.io.File;
  */
 public class OutputDevNull extends Output<LogFeederProps, InputMarker> {
 
-  private static final Logger LOG = Logger.getLogger(OutputDevNull.class);
+  private static final Logger logger = LogManager.getLogger(OutputDevNull.class);
 
   @Override
   public void write(String block, InputMarker inputMarker){
-    LOG.trace("Ignore log block: " + block);
+    logger.trace("Ignore log block: " + block);
   }
 
   @Override

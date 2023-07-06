@@ -32,27 +32,27 @@ import java.lang.annotation.Target;
 public @interface LogSearchPropertyDescription {
 
   /**
-   * Name of the property inside the application level property file.
+   * @return Name of the property inside the application level property file.
    */
   String name();
 
   /**
-   * Describe what the property used for.
+   * @return Describe what the property used for.
    */
   String description();
 
   /**
-   * An example value for the property.
+   * @return Example values for the property.
    */
   String[] examples();
 
   /**
-   * Default value of the property, emtpy by default.
+   * @return Default value of the property, emtpy by default.
    */
   String defaultValue() default "";
 
   /**
-   * Name of the property files where the configurations located
+   * @return Name of the property files where the configurations located
    */
   String[] sources();
 

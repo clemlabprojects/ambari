@@ -1,0 +1,92 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@import "variables";
+@import "mixins";
+
+.dashrow-container {
+  .dashrow-row-wrapper {
+    display: flex;
+    margin: @dashrow-margin;
+    position: relative;
+    .dashrow-initial {
+      .hexagon(@dashrow-hexagon-size);
+      align-self: center;
+      color: @white;
+      left: -(@dashrow-hexagon-size/2);
+      order: -1;
+      position: absolute;
+      z-index: 2;
+    }
+    .dashrow-row {
+      align-items: stretch;
+      background-color: @white;
+      box-shadow: @dashrow-box-shadow;
+      display: flex;
+      flex: 1;
+      height: @dashrow-row-height;
+      overflow-x: auto;
+      overflow-y: hidden;
+      .dashrow-column-group {
+        align-items: stretch;
+        display: flex;
+        &[class*='dashrow-column-group-fixed-'] {
+          position: sticky;
+        }
+        &.dashrow-column-group-fixed-left {
+          background-color: @white;
+          box-shadow: @dashrow-fixed-group-side-box-shadow;
+          left: 0;
+          margin-right: 1rem;
+          padding: 0 2rem 0 5rem;
+          z-index: 1;
+        }
+        &.dashrow-column-group-fixed-right {
+          box-shadow: 1rem 0rem -1rem 1rem fadeout(@fluid-gray-2, .3);
+          margin-left: 1rem;
+          right: 0;
+          z-index: 1;
+        }
+        .dashrow-column {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          .dashrow-value {
+            color: @dashrow-value-font-color;
+            font-size: @dashrow-value-font-size;
+
+          }
+          .dashrow-label {
+            color: @dashrow-label-color;
+            display: block;
+            font-size: @dashrow-label-font-size;
+            font-weight: lighter;
+            text-transform: uppercase;
+            white-space: nowrap;
+          }
+        }
+      }
+    }
+  }
+  .dashrow-row:first-child {
+    margin-top: 0;
+  }
+  .dashrow-row:last-child {
+    margin-bottom: 0;
+  }
+}

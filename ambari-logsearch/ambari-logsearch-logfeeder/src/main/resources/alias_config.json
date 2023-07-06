@@ -1,13 +1,13 @@
 {
-"input": {
+  "input": {
     "file": {
       "klass": "org.apache.ambari.logfeeder.input.InputFile"
     },
-    "s3_file": {
-      "klass": "org.apache.ambari.logfeeder.input.InputS3File"
-    },
     "simulate": {
       "klass": "org.apache.ambari.logfeeder.input.InputSimulate"
+    },
+    "socket": {
+      "klass": "org.apache.ambari.logfeeder.input.InputSocket"
     }
   },
   "filter": {
@@ -50,12 +50,6 @@
     },
     "dev_null": {
       "klass": "org.apache.ambari.logfeeder.output.OutputDevNull"
-    },
-    "s3_file": {
-      "klass": "org.apache.ambari.logfeeder.output.OutputS3File"
-    },
-    "hdfs": {
-      "klass": "org.apache.ambari.logfeeder.output.OutputHDFSFile"
     }
   }
 }

@@ -23,8 +23,10 @@
                 defaultParameterName="log_message"></search-box>
     <time-range-picker *ngIf="isFilterConditionDisplayed('timeRange')" formControlName="timeRange"
                        class="filter-input"></time-range-picker>
-    <timezone-picker class="filter-input"></timezone-picker>
-    <button class="btn btn-success search-button" type="button" (click)="updateSearchBoxValue()">
+    <button class="btn btn-link time-zone-picker-btn" (click)="openTimeZonePicker()">
+      {{(timeZone$ | async) | timeZoneAbbr}} <span class="caret"></span>
+    </button>
+    <button class="btn btn-success search-button" type="button" (click)="onSearchBtnClick()">
       <span class="fa fa-search"></span>
     </button>
   </div>
@@ -32,25 +34,60 @@
     <dropdown-button iconClass="fa fa-search-minus" label="{{'filter.exclude' | translate}}" [hideCaret]="true"
                      [showSelectedValue]="false" [showCommonLabelWithSelection]="true"
                      [options]="searchBoxItems$ | async" (selectItem)="proceedWithExclude($event)"></dropdown-button>
-    <filter-button *ngIf="isFilterConditionDisplayed('hosts')" formControlName="hosts"
-                   label="{{filters.hosts.label | translate}}" [iconClass]="filters.hosts.iconClass"
-                   [subItems]="filters.hosts.options" [isMultipleChoice]="true" [isRightAlign]="true"
-                   additionalLabelComponentSetter="getDataForHostsNodeBar"
-                   [class.disabled]="isServiceLogsFileView$ | async" [isDisabled]="isServiceLogsFileView$ | async"
-                   [useDropDownLocalFilter]="true"></filter-button>
-    <filter-button *ngIf="isFilterConditionDisplayed('users')" formControlName="users"
-                   label="{{filters.users.label | translate}}" [iconClass]="filters.users.iconClass"
-                   [subItems]="filters.users.options" [isMultipleChoice]="true" [isRightAlign]="true"
-                   [useDropDownLocalFilter]="true"></filter-button>
-    <filter-button *ngIf="isFilterConditionDisplayed('components')" formControlName="components"  [useDropDownLocalFilter]="true"
-                   label="{{filters.components.label | translate}}" [iconClass]="filters.components.iconClass"
-                   [subItems]="filters.components.options" [isMultipleChoice]="true" [isRightAlign]="true"
-                   [class.disabled]="isServiceLogsFileView$ | async" [isDisabled]="isServiceLogsFileView$ | async"
-                   additionalLabelComponentSetter="getDataForComponentsNodeBar"></filter-button>
-    <filter-button *ngIf="isFilterConditionDisplayed('levels')" formControlName="levels"
-                   label="{{filters.levels.label | translate}}" [iconClass]="filters.levels.iconClass"
-                   [subItems]="filters.levels.options" [isMultipleChoice]="true" [isRightAlign]="true"
-                   [useDropDownLocalFilter]="true"></filter-button>
+
+    <filter-button *ngIf="isFilterConditionDisplayed('hosts')"
+      formControlName="hosts"
+      [subItems]="filters.hosts.options"
+      label="{{filters.hosts.label | translate}}"
+      [useDropDownLocalFilter]="true"
+      [isMultipleChoice]="true"
+      [iconClass]="filters.hosts.iconClass"
+      [isRightAlign]="true"
+      [class.disabled]="isServiceLogsFileView$ | async"
+      [disabled]="isServiceLogsFileView$ | async"
+      additionalLabelComponentSetter="getDataForHostsNodeBar"></filter-button>
+
+    <filter-button *ngIf="isFilterConditionDisplayed('users')"
+      formControlName="users"
+      label="{{filters.users.label | translate}}"
+      [iconClass]="filters.users.iconClass"
+      [subItems]="filters.users.options"
+      [isMultipleChoice]="true"
+      [isRightAlign]="true"
+      [useDropDownLocalFilter]="true"></filter-button>
+
+    <filter-button *ngIf="isFilterConditionDisplayed('components')"
+      formControlName="components"
+      [subItems]="filters.components.options"
+      label="{{filters.components.label | translate}}"
+      [useDropDownLocalFilter]="true"
+      [isMultipleChoice]="true"
+      [iconClass]="filters.components.iconClass"
+      [isRightAlign]="true"
+      [class.disabled]="isServiceLogsFileView$ | async"
+      [disabled]="isServiceLogsFileView$ | async"
+      additionalLabelComponentSetter="getDataForComponentsNodeBar"></filter-button>
+
+    <filter-button *ngIf="isFilterConditionDisplayed('repos')"
+      formControlName="repos"
+      [subItems]="filters.repos.options"
+      label="{{filters.repos.label | translate}}"
+      [useDropDownLocalFilter]="true"
+      [isMultipleChoice]="true"
+      [iconClass]="filters.repos.iconClass"
+      [isRightAlign]="true"
+      [class.disabled]="isServiceLogsFileView$ | async"
+      [disabled]="isServiceLogsFileView$ | async"></filter-button>
+
+    <filter-button *ngIf="isFilterConditionDisplayed('levels')"
+      formControlName="levels"
+      label="{{filters.levels.label | translate}}"
+      [iconClass]="filters.levels.iconClass"
+      [subItems]="filters.levels.options"
+      [isMultipleChoice]="true"
+      [isRightAlign]="true"
+      [useDropDownLocalFilter]="true"></filter-button>
+
     <menu-button class="clear-filter-btn" iconClass="fa fa-times" label="{{'filters.clear' | translate}}"
     (buttonClick)="onClearBtnClick($event)"></menu-button>
   </div>

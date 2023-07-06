@@ -17,8 +17,24 @@
  */
 
 // Variables
+
+@font-size-root: 10px;
+@font-size-base: 10px;
+
+@blue: #1491C1;
+@grey: #DDD;
+@white: #FFF;
+
+@fluid-gray-1: #ccc;
+@fluid-gray-2: #999;
+@fluid-gray-3: #666;
+@fluid-gray-4: #333;
+
+@green: #3FAE2A;
+
 @base-font-color: #666;
-@navbar-background-color: #323544;
+@navbar-background-color: #313544;
+@navbar-active-background-color: #414354;
 @navbar-logo-background-color: #303d54;
 @h1-vertical-margin: 20px;
 @button-border-radius: 4px;
@@ -26,17 +42,18 @@
 @input-border: @input-border-width solid #CFD3D7;
 @input-group-addon-padding: 6px 12px 6px 0;
 @block-margin-top: 20px;
-@link-color: #1491C1;
-@link-hover-color: #23527C;
+@link-color: @blue;
+@link-hover-color: darken(@blue, 10%);
 @grey-color: #DDD;
 @default-line-height: 1.42857143;
 @main-background-color: #ECECEC;
-@filters-panel-background-color: #FFF;
+@filters-panel-background-color: @white;
 @filters-panel-padding: 10px 0;
 @list-header-background-color: #F2F2F2;
 @checkbox-top: 4px;
 @dropdown-min-width: 160px;
 @dropdown-max-height: 60vh; // TODO get rid of magic number, base on actual design
+@dropdown-max-width: 50vw; // TODO get rid of magic number, base on actual design
 @dropdown-border-radius: 2px;
 @input-height: 34px;
 @input-padding: 10px;
@@ -66,7 +83,7 @@
 
 // Badge
 @badge-bg: rgba(239, 97, 98, 1);
-@badge-padding: 2px 5px;
+@badge-padding: .5rem;
 
 // Icon
 @icon-padding: 5px;
@@ -87,9 +104,27 @@
 
 // Modals
 @large-modal-width: 1200px;
+@modal-dialog-content-padding: 2rem;
+@modal-dialog-header-padding: 0 0 1rem 0;
+@modal-dialog-body-padding: 0;
+@modal-dialog-footer-padding: 1rem 0 0 0;
 
 // Notifications
 @notification-color: @base-font-color;
 @notification-title-font-size: 14px;
 @notification-content-font-size: 12px;
 @notification-background-color: #FFF;
+
+// (Audit) Log List
+@log-list-label-color: @fluid-gray-2;
+
+
+@dashrow-row-height: 9rem;
+@dashrow-margin: 2rem 0;
+@dashrow-box-shadow: 0 0 1rem fadeout(@fluid-gray-2, 85%);
+@dashrow-fixed-group-side-box-shadow: 0 0 1rem 0 fadeout(@fluid-gray-2, 50%);
+@dashrow-value-font-size: 2rem;
+@dashrow-value-font-color: @fluid-gray-4;
+@dashrow-label-color: @fluid-gray-3;
+@dashrow-label-font-size: 1.2rem;
+@dashrow-hexagon-size: 3.8rem;

@@ -47,6 +47,13 @@ import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.serv
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
 import {NotificationService} from '@modules/shared/services/notification.service';
 
+import { AuthService } from '@app/services/auth.service';
+import * as auth from '@app/store/reducers/auth.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+
 describe('ComponentGeneratorService', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
@@ -65,8 +72,12 @@ describe('ComponentGeneratorService', () => {
           clusters,
           components,
           serviceLogsTruncated,
-          tabs
+          tabs,
+          auth: auth.reducer,
+          userSettings: userSettings.reducer
         }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects),
         ...TranslationModules
       ],
       providers: [
@@ -93,7 +104,8 @@ describe('ComponentGeneratorService', () => {
         LogsFilteringUtilsService,
         LogsStateService,
         NotificationsService,
-        NotificationService
+        NotificationService,
+        AuthService
       ]
     });
   });

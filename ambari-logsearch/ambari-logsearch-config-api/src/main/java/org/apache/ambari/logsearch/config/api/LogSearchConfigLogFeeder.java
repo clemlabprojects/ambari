@@ -30,7 +30,7 @@ public interface LogSearchConfigLogFeeder extends LogSearchConfig {
    * 
    * @param properties The properties of that component.
    * @param clusterName The name of the cluster.
-   * @throws Exception
+   * @throws Exception error during Log Feeder config initialization
    */
   void init(Map<String, String> properties, String clusterName) throws Exception;
 
@@ -39,7 +39,7 @@ public interface LogSearchConfigLogFeeder extends LogSearchConfig {
    * 
    * @param serviceName The name of the service looked for.
    * @return If input configuration exists for the service.
-   * @throws Exception
+   * @throws Exception error during checking Log Feeder config
    */
   boolean inputConfigExists(String serviceName) throws Exception;
 
@@ -49,8 +49,8 @@ public interface LogSearchConfigLogFeeder extends LogSearchConfig {
    * @param inputConfigMonitor The input config monitor to call in case of an input config change.
    * @param logLevelFilterMonitor The log level filter monitor to call in case of a log level filter change.
    * @param clusterName The name of the cluster.
-   * @throws Exception
+   * @throws Exception error during input configuration change
    */
   void monitorInputConfigChanges(InputConfigMonitor inputConfigMonitor, LogLevelFilterMonitor logLevelFilterMonitor,
-      String clusterName) throws Exception;
+                                 String clusterName) throws Exception;
 }

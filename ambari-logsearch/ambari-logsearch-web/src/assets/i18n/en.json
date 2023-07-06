@@ -7,6 +7,8 @@
   "common.name": "Name",
   "common.value": "Value",
   "common.settings": "Settings",
+  "common.loading": "Loading...",
+  "common.notAvailable": "N/A",
 
   "common.form.errors.required": "This field is required",
 
@@ -25,7 +27,13 @@
   "authorization.name": "Username",
   "authorization.password": "Password",
   "authorization.signIn": "Sign In",
-  "authorization.error.401": "Unable to sign in. Invalid username/password combination.",
+  "authorization.checkingAuthorization": "Checking authorization...",
+  "authorization.authorized": "Successful authorization.",
+  "authorization.loggedOut": "Successfuly logged out.",
+  "authorization.error.authorizationError": "Error during authorization. Maybe your session expired.",
+  "authorization.error.unauthorized": "Unable to sign in. Invalid username/password combination.",
+  "authorization.error.forbidden": "Access forbidden.",
+  "authorization.error.authorizationTimeout": "Authorization timeout.",
 
   "login.title": "Login",
 
@@ -40,6 +48,7 @@
 
   "filter.clusters": "Clusters",
   "filter.components": "Components",
+  "filter.repos": "Audit Source",
   "filter.levels": "Levels",
   "filter.include": "Include",
   "filter.exclude": "Exclude",
@@ -47,7 +56,13 @@
   "filter.users": "Users",
 
   "filter.capture": "Capture",
+  "filter.captureSnapshot": "Snapshot",
+  "filter.refreshingLogListIn": "Please wait while the logs for your capture period are indexed...",
+  "filter.capture.min": "Min",
+  "filter.capture.sec": "Sec",
   "filter.capture.triggeringRefresh": "Triggering auto-refresh in {{remainingSeconds}} sec",
+  "filter.youAreInSnapshotView": "You are in snapshot view",
+  "filter.closeSnapshotView": "Close snapshot view",
 
   "filters.clear": "Clear",
 
@@ -88,6 +103,85 @@
   "filter.toggleTo.include": "Toggle to include",
 
   "filter.timeRange.error.tooShort": "The selected time range is too short.",
+
+  "filterHistory": {
+    "initialState": "Initial filter values",
+    "paramNames": {
+      "clusters": "Cluster",
+      "timeRange": "Time Range",
+      "components": "Component",
+      "levels": "Level",
+      "hosts": "Host",
+      "auditLogsSorting": "Sort by",
+      "serviceLogsSorting": "Sort by",
+      "pageSize": "Result Per Page",
+      "page": "Page Number",
+      "query": "Query",
+      "users": "User",
+      "sortingType": "Sorting Direction",
+      "sortingKey": "Sorting Field"
+    },
+    "single": {
+      "actionLabel": {
+        "change": "changed"
+      },
+      "changeLabel": {
+        "change": "{{fieldLabel}}: {{valueLabel}}"
+      }
+    },
+    "multiple": {
+      "actionLabel": {
+        "add": "selected",
+        "change": "changed",
+        "remove": "unselected",
+        "clear": "selection cleared"
+      },
+      "changeLabel": {
+        "add": "{{fieldLabel}}: {{valueLabel}}",
+        "change": "{{fieldLabel}}: {{valueLabel}}",
+        "remove": "{{fieldLabel}}: {{valueLabel}}",
+        "clear": "{{fieldLabel}}: {{valueLabel}}"
+      }
+    },
+    "query": {
+      "type": {
+        "include": "include",
+        "exclude": "exclude"
+      },
+      "changeLabel": {
+        "add": "{{queryType}} query added: {{fieldLabel}} - {{valueLabel}}",
+        "remove": "{{queryType}} query removed: {{fieldLabel}} - {{valueLabel}}",
+        "clear": "Query cleared"
+      }
+    },
+    "timeRange": {
+      "type": {
+        "last": "last",
+        "past": "previous",
+        "current": "this",
+        "today": "today",
+        "custom": ""
+      },
+      "unit": {
+        "d": ["day", "days"],
+        "M": ["month", "months"],
+        "y": ["year", "years"],
+        "w": ["week", "weeks"],
+        "m": ["minute", "minutes"],
+        "h": ["hour", "hours"]
+      },
+      "valueLabel": {
+        "last": "{{typeLabel}} {{value}} {{unitLabel}}",
+        "past": "{{typeLabel}} {{value}} {{unitLabel}}",
+        "yesterday": "yesterday",
+        "current": "{{typeLabel}} {{value}} {{unitLabel}}",
+        "today": "today",
+        "custom": "`{{valueStart}} - {{valueEnd}}`"
+      },
+      "changeLabel": "{{fieldLabel}}: {{valueLabel}}",
+      "dateTimeFormat": "YYYY-MM-DD hh:mm A zz"
+    }
+  },
 
   "levels.fatal": "Fatal",
   "levels.error": "Error",
@@ -145,8 +239,8 @@
   "logs.policy": "Policy",
   "logs.proxyUsers": "Proxy Users",
   "logs.reason": "Reason",
-  "logs.repo": "Repo",
-  "logs.repoType": "Repo Type",
+  "logs.repo": "Audit Source",
+  "logs.repoType": "Audit Source Type",
   "logs.reqCallerId": "Req Caller Id",
   "logs.reqContext": "Req Context",
   "logs.reqData": "Req Data",
@@ -267,6 +361,51 @@
   "dataAvaibilityState.clustersDataState.label": "Loading clusters",
   "dataAvaibilityState.hostsDataState.label": "Loading hosts",
   "dataAvaibilityState.componentsDataState.label": "Loading components",
-  "dataAvaibilityState.hasError.message": "We were not able to load the data. Please check your internet connection and reload the page!"
+  "dataAvaibilityState.logFieldsDataState.label": "Loading fields definitions",
+  "dataAvaibilityState.hasError.message": "We were not able to load the data. Please check your internet connection and reload the page!",
+
+
+  "urlParamsLabels": {
+    "clusters": "Clusters",
+    "timeRange": "Time range",
+    "components": "Components",
+    "levels": "Levels",
+    "hosts": "Hosts",
+    "auditLogsSorting": "Sort by",
+    "serviceLogsSorting": "Sort by",
+    "pageSize": "# of logs",
+    "page": "Page",
+    "query": "Query",
+    "users": "Users"
+  },
+
+  "userSettings": {
+    "modalTitle": "User Settings",
+    "displayShortHostName": {
+      "description": "Choose the way Hostname will be displayed throughout Log Search",
+      "valueFalse": "Full hostname",
+      "valueTrue": "Short hostname"
+    },
+    "timeZone": {
+      "description": "Choose the time zone will be used throughout Log Search"
+    },
+    "saveAction": {
+      "success": "The user settings has been saved.",
+      "error": "Some error happened saving the user settings."
+    }
+  },
+  "apiFeatures": {
+    "loadFailed": "We were not able to explore the available features from the server. Some of the features maybe not disabled in the client but disabled on the server.",
+    "disabled": "This feature is disabled on the server."
+  },
+
+  "timezoneMapInput" : {
+    "modal": {
+      "title": "Set Timezone"
+    },
+    "dropdown": {
+      "label": "Select your timezone"
+    }
+  }
 
 }

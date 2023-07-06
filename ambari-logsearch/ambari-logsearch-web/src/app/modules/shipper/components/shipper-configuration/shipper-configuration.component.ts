@@ -15,25 +15,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {Component, Input, OnDestroy, OnInit, ViewChild} from '@angular/core';
-import {ActivatedRoute, Router} from '@angular/router';
-import {Response} from '@angular/http';
-import {Observable} from 'rxjs/Observable';
+import { Component, Input, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Response } from '@angular/http';
+import { Observable } from 'rxjs/Observable';
 import 'rxjs/add/operator/skipWhile';
 
-import {NotificationService, NotificationType} from '@modules/shared/services/notification.service';
-import {CanComponentDeactivate} from '@modules/shared/services/can-deactivate-guard.service';
+import { NotificationService, NotificationType } from '@modules/shared/services/notification.service';
+import { CanComponentDeactivate } from '@modules/shared/services/can-deactivate-guard.service';
 
-import {ShipperCluster} from '../../models/shipper-cluster.type';
-import {ShipperClusterService} from '../../models/shipper-cluster-service.type';
-import {ShipperConfigurationService} from '../../services/shipper-configuration.service';
-import {ShipperClusterServiceListService} from '../../services/shipper-cluster-service-list.service';
-import {
-  ShipperServiceConfigurationFormComponent
-} from '@modules/shipper/components/shipper-service-configuration-form/shipper-service-configuration-form.component';
-import {TranslateService} from '@ngx-translate/core';
-import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
-import {Subscription} from 'rxjs/Subscription';
+import { ShipperCluster } from '../../models/shipper-cluster.type';
+import { ShipperClusterService } from '../../models/shipper-cluster-service.type';
+import { ShipperConfigurationService } from '../../services/shipper-configuration.service';
+import { ShipperClusterServiceListService } from '../../services/shipper-cluster-service-list.service';
+import { ShipperServiceConfigurationFormComponent } from '@modules/shipper/components/shipper-service-configuration-form/shipper-service-configuration-form.component';
+import { TranslateService } from '@ngx-translate/core';
+import { ClusterSelectionService } from '@app/services/storage/cluster-selection.service';
+import { Subscription } from 'rxjs/Subscription';
 import { BehaviorSubject } from 'rxjs/BehaviorSubject';
 import { FormGroup } from '@angular/forms';
 
@@ -43,7 +41,6 @@ import { FormGroup } from '@angular/forms';
   styleUrls: ['./shipper-configuration.component.less']
 })
 export class ShipperConfigurationComponent implements CanComponentDeactivate, OnInit, OnDestroy {
-
   static clusterSelectionStoreKey = 'shipper';
 
   @Input()
@@ -57,21 +54,25 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
   private clusterName$: Observable<ShipperClusterService> = this.activatedRoute.params.map(params => params.cluster);
   private serviceName$: Observable<ShipperClusterService> = this.activatedRoute.params.map(params => params.service);
 
-  private serviceNamesList$: Observable<ShipperClusterService[]> = this.clusterName$.switchMap((cluster: ShipperCluster) => {
-    return cluster ? this.shipperClusterServiceListService.getServicesForCluster(cluster) : Observable.of(undefined);
-  });
+  private serviceNamesList$: Observable<ShipperClusterService[]> = this.clusterName$.switchMap(
+    (cluster: ShipperCluster) => {
+      return cluster ? this.shipperClusterServiceListService.getServicesForCluster(cluster) : Observable.of(undefined);
+    }
+  );
 
-  private configuration$: Observable<{[key: string]: any}> = Observable.combineLatest(
-      this.clusterName$,
-      this.serviceName$
-    ).switchMap(([clusterName, serviceName]: [ShipperCluster, ShipperClusterService]) => {
-      return clusterName && serviceName ?
-        this.shipperConfigurationService.loadConfiguration(clusterName, serviceName) : Observable.of(undefined);
-    });
+  private configuration$: Observable<{
+    [key: string]: any;
+  }> = Observable.combineLatest(this.clusterName$, this.serviceName$).switchMap(
+    ([clusterName, serviceName]: [ShipperCluster, ShipperClusterService]) => {
+      return clusterName && serviceName
+        ? this.shipperConfigurationService.loadConfiguration(clusterName, serviceName)
+        : Observable.of(undefined);
+    }
+  );
 
   private subscriptions: Subscription[] = [];
 
-  validationResponse: {[key: string]: any};
+  validationResponse: { [key: string]: any };
 
   constructor(
     private router: Router,
@@ -81,7 +82,7 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
     private notificationService: NotificationService,
     private translate: TranslateService,
     private clusterSelectionStoreService: ClusterSelectionService
-  ) { }
+  ) {}
 
   ngOnInit() {
     this.subscriptions.push(
@@ -98,7 +99,8 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
   }
 
   private getPathMapForClusterFirstService(cluster: ShipperCluster): Observable<string[]> {
-    return this.shipperClusterServiceListService.getServicesForCluster(cluster)
+    return this.shipperClusterServiceListService
+      .getServicesForCluster(cluster)
       .switchMap((serviceNamesList: ShipperClusterService[]) => {
         return Observable.of(this.getRouterLink([cluster, serviceNamesList[0]]));
       });
@@ -112,26 +114,42 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
     if (clusterName) {
       this.clusterName$.first().subscribe((currentClusterName: ShipperCluster) => {
         if (currentClusterName !== clusterName) {
-          this.getPathMapForClusterFirstService(clusterName).first().subscribe((path: string[]) => this.router.navigate(path));
+          this.getPathMapForClusterFirstService(clusterName)
+            .first()
+            .subscribe((path: string[]) => this.router.navigate(path));
         }
       });
     }
-  }
+  };
 
   private getRouterLink(path: string | string[]): string[] {
     return [...this.routerPath, ...(Array.isArray(path) ? path : [path])];
   }
 
-  getResponseHandler(cmd: string, type: string, form?: FormGroup) {
-    const msgVariables = form.getRawValue();
+  getResponseHandler(cmd: string, type: string, msgVariables: any = {}, form?: FormGroup) {
     return (response: Response) => {
       const result = response.json();
       // @ToDo change the backend response status to some error code if the configuration is not valid and don't use the .message prop
-      const resultType = response ? (response.ok && !result.errorMessage ? NotificationType.SUCCESS : NotificationType.ERROR) : type;
-      const translateParams = {errorMessage: (result && result.message) || '', ...msgVariables, ...result};
+      const resultType = response
+        ? response.ok && !result.errorMessage
+          ? NotificationType.SUCCESS
+          : NotificationType.ERROR
+        : type;
+      const translateParams = {
+        errorMessage: (result && result.message) || '',
+        ...msgVariables,
+        ...result
+      };
       const title = this.translate.instant(`shipperConfiguration.action.${cmd}.title`, translateParams);
-      const message = this.translate.instant(`shipperConfiguration.action.${cmd}.${resultType}.message`, translateParams);
-      this.notificationService.addNotification({type: resultType, title, message});
+      const message = this.translate.instant(
+        `shipperConfiguration.action.${cmd}.${resultType}.message`,
+        translateParams
+      );
+      this.notificationService.addNotification({
+        type: resultType,
+        title,
+        message
+      });
       if (resultType !== NotificationType.ERROR) {
         form.markAsPristine();
       }
@@ -149,23 +167,24 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
         service: rawValue.serviceName,
         configuration: JSON.parse(rawValue.configuration)
       }).subscribe(
-        this.getResponseHandler(cmd, NotificationType.SUCCESS, configurationForm),
-        this.getResponseHandler(cmd, NotificationType.ERROR, configurationForm)
+        this.getResponseHandler(cmd, NotificationType.SUCCESS, rawValue, configurationForm),
+        this.getResponseHandler(cmd, NotificationType.ERROR, rawValue, configurationForm)
       );
     });
   }
 
-  private setValidationResult = (result: {[key: string]: any}) => {
+  private setValidationResult = (result: { [key: string]: any }) => {
     this.validationResponse = result;
-  }
+  };
 
   onValidationFormSubmit(validationForm: FormGroup): void {
     this.validationResponse = null;
     const rawValue = validationForm.getRawValue();
+    rawValue.componentName = rawValue.componentName[0].value;
     const request$: Observable<Response> = this.shipperConfigurationService.testConfiguration(rawValue);
     request$.subscribe(
-      this.getResponseHandler('validate', NotificationType.SUCCESS, validationForm),
-      this.getResponseHandler('validate', NotificationType.ERROR, validationForm)
+      this.getResponseHandler('validate', NotificationType.SUCCESS, rawValue, validationForm),
+      this.getResponseHandler('validate', NotificationType.ERROR, rawValue, validationForm)
     );
     request$
       .filter((response: Response): boolean => response.ok)
@@ -178,5 +197,4 @@ export class ShipperConfigurationComponent implements CanComponentDeactivate, On
   canDeactivate() {
     return this.configurationFormRef.canDeactivate();
   }
-
 }

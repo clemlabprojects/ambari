@@ -22,7 +22,7 @@ package org.apache.ambari.logsearch.appender;
 import org.apache.log4j.Logger;
 
 public class AppTest {
-  private static Logger logger = Logger.getLogger(AppTest.class);
+  private static final Logger logger = Logger.getLogger(AppTest.class);
 
   public static void main(String[] args) {
 

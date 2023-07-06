@@ -20,8 +20,8 @@ package org.apache.ambari.logfeeder.input.monitor;
 
 import org.apache.ambari.logfeeder.input.InputFile;
 import org.apache.ambari.logfeeder.util.FileUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.util.List;
@@ -32,7 +32,7 @@ import java.util.Map;
  */
 public class LogFilePathUpdateMonitor extends AbstractLogFileMonitor {
 
-  private Logger LOG = LoggerFactory.getLogger(LogFilePathUpdateMonitor.class);
+  private static final Logger logger = LogManager.getLogger(LogFilePathUpdateMonitor.class);
 
   public LogFilePathUpdateMonitor(InputFile inputFile, int interval, int detachTime) {
     super(inputFile, interval, detachTime);
@@ -54,17 +54,17 @@ public class LogFilePathUpdateMonitor extends AbstractLogFileMonitor {
         if (!entry.getValue().isEmpty()) { // check tail only for now
           File lastFile = entry.getValue().get(0);
           if (!originalLogFiles.get(0).getAbsolutePath().equals(lastFile.getAbsolutePath())) {
-            LOG.info("New file found (old: '{}', new: {}), reload thread for {}",
+            logger.info("New file found (old: '{}', new: {}), reload thread for {}",
               lastFile.getAbsolutePath(), originalLogFiles.get(0).getAbsolutePath(), entry.getKey());
             getInputFile().stopChildInputFileThread(entry.getKey());
             getInputFile().startNewChildInputFileThread(entry);
           }
         }
       } else {
-        LOG.info("New log file folder found: {}, start a new thread if tail file is not too old.", entry.getKey());
+        logger.info("New log file folder found: {}, start a new thread if tail file is not too old.", entry.getKey());
         File monitoredFile = entry.getValue().get(0);
         if (FileUtil.isFileTooOld(monitoredFile, getDetachTime())) {
-          LOG.info("'{}' file is too old. No new thread start needed.", monitoredFile.getAbsolutePath());
+          logger.info("'{}' file is too old. No new thread start needed.", monitoredFile.getAbsolutePath());
         } else {
           getInputFile().startNewChildInputFileThread(entry);
         }

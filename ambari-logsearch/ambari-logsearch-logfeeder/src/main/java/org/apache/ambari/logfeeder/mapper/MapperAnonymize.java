@@ -27,13 +27,30 @@ import org.apache.ambari.logsearch.config.api.model.inputconfig.MapAnonymizeDesc
 import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldDescriptor;
 import org.apache.commons.lang.CharUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
+/**
+ * Field mapper to anonymize fields if it has match with on a specific pattern.
+ * Example:
+ * <pre>
+ *   "post_map_values": {
+ *           "message_field_with_password": [
+ *             {
+ *               "map_anonymize": {
+ *                 "pattern": "password: *."
+ *                 "hide_char: "*"
+ *               }
+ *             }
+ *           ]
+ *         }
+ * </pre>
+ */
 public class MapperAnonymize extends Mapper<LogFeederProps> {
-  private static final Logger LOG = Logger.getLogger(MapperAnonymize.class);
+  private static final Logger logger = LogManager.getLogger(MapperAnonymize.class);
   
   private static final char DEFAULT_HIDE_CHAR = '*';
 
@@ -42,12 +59,12 @@ public class MapperAnonymize extends Mapper<LogFeederProps> {
   private char hideChar;
 
   @Override
-  public boolean init(String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
+  public boolean init(LogFeederProps logFeederProps, String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
     init(inputDesc, fieldName, mapClassCode);
     
     pattern = ((MapAnonymizeDescriptor)mapFieldDescriptor).getPattern();
     if (StringUtils.isEmpty(pattern)) {
-      LOG.fatal("pattern is empty.");
+      logger.fatal("pattern is empty.");
       return false;
     }
     
@@ -64,7 +81,7 @@ public class MapperAnonymize extends Mapper<LogFeederProps> {
         hide((String)value, jsonObj);
       } catch (Throwable t) {
         LogFeederUtil.logErrorMessageByInterval(this.getClass().getSimpleName() + ":apply", "Error applying anonymization." +
-            " pattern=" + pattern + ", hideChar=" + hideChar, t, LOG, Level.ERROR);
+            " pattern=" + pattern + ", hideChar=" + hideChar, t, logger, Level.ERROR);
       }
     }
     return value;

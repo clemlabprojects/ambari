@@ -20,15 +20,22 @@
 
 :host {
   max-height: @dropdown-max-height;
+  max-width: @dropdown-max-width;
   overflow-y: auto;
+  z-index: 1100;
 
   > li {
     .dropdown-item-default;
     transition: opacity 300ms ease-in, height 100ms 400ms ease-in;
+    text-overflow: ellipsis;
     &.filtered {
       overflow: hidden;
       opacity: 0;
       height: 0;
+    }
+    &.disabled {
+      color: @fluid-gray-2;
+      cursor: default;
     }
     .list-item-label {
       .dropdown-item-child-default;
@@ -46,9 +53,16 @@
         width: 100%;
       }
     }
+    .item-secondary-label-text {
+      color: @fluid-gray-2;
+      display: block;
+      font-size: .8em;
+    }
     &.filter {
+      background-color: @white;
       padding: 0 .25em;
-      position: relative;
+      position: sticky;
+      top: -5px;
       &:hover {
         background-color: transparent;
       }

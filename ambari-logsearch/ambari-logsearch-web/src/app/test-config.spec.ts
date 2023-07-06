@@ -16,20 +16,27 @@
  * limitations under the License.
  */
 
-import {HttpModule, Http, BrowserXhr, XSRFStrategy, ResponseOptions, XHRBackend} from '@angular/http';
-import {TranslateModule, TranslateLoader} from '@ngx-translate/core';
-import {TranslateHttpLoader} from '@ngx-translate/http-loader';
-import {Injector} from '@angular/core';
-import {InMemoryBackendService} from 'angular-in-memory-web-api';
-import {MockApiDataService} from '@app/services/mock-api-data.service';
-import {HttpClientService} from '@app/services/http-client.service';
-import {RouterTestingModule} from '@angular/router/testing';
-import {clusters, ClustersService} from '@app/services/storage/clusters.service';
-import {StoreModule} from '@ngrx/store';
-import {UtilsService} from '@app/services/utils.service';
-import {ComponentGeneratorService} from '@app/services/component-generator.service';
-import {HostsService} from '@app/services/storage/hosts.service';
-import {ComponentsService} from '@app/services/storage/components.service';
+import { HttpModule, Http, BrowserXhr, XSRFStrategy, ResponseOptions, XHRBackend } from '@angular/http';
+import { TranslateModule, TranslateLoader } from '@ngx-translate/core';
+import { TranslateHttpLoader } from '@ngx-translate/http-loader';
+import { Injector } from '@angular/core';
+import { InMemoryBackendService } from 'angular-in-memory-web-api';
+import { MockApiDataService } from '@app/services/mock-api-data.service';
+import { HttpClientService } from '@app/services/http-client.service';
+import { RouterTestingModule } from '@angular/router/testing';
+import { clusters, ClustersService } from '@app/services/storage/clusters.service';
+import { StoreModule } from '@ngrx/store';
+import { UtilsService } from '@app/services/utils.service';
+import { ComponentGeneratorService } from '@app/services/component-generator.service';
+import { HostsService } from '@app/services/storage/hosts.service';
+import { ComponentsService } from '@app/services/storage/components.service';
+
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+
+import * as auth from '@app/store/reducers/auth.reducers';
 
 function HttpLoaderFactory(http: Http) {
   return new TranslateHttpLoader(http, 'assets/i18n/', '.json');
@@ -60,10 +67,13 @@ export const getCommonTestingBedConfiguration = (
 ) => ({
   imports: [
     ...TranslationModules,
-    RouterTestingModule,
+    // RouterTestingModule,
     StoreModule.provideStore({
-      clusters
+      clusters,
+      auth: auth.reducer
     }),
+    EffectsModule.run(AuthEffects),
+    EffectsModule.run(NotificationEffects),
     ...imports
   ],
   providers: [
@@ -73,6 +83,7 @@ export const getCommonTestingBedConfiguration = (
     HostsService,
     ComponentsService,
     UtilsService,
+    AuthService,
     ...providers
   ],
   declarations: [

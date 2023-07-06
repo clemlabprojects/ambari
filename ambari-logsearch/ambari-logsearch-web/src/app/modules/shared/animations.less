@@ -25,9 +25,40 @@
   }
 }
 
+@keyframes rotatecircle {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes running-progress {
+  0% { margin-left: 0px; margin-right: 100%; }
+  50% { margin-left: 25%; margin-right: 0%; }
+  100% { margin-left: 100%; margin-right: 0; }
+}
+
 .square-spinner(@size: 40px, @background: #3FAE2A, @speed: 1.2s) {
   width: @size;
   height: @size;
   background: @background;
   animation: rotateplane @speed infinite ease-in-out;
+}
+
+.circle-spinner(@size: 40px, @thickness: 3px, @color: #3FAE2A, @speed: 1.2s) {
+  animation: rotatecircle @speed  infinite ease-in-out;
+  border: @thickness solid @color;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  height: @size;
+  width: @size;
+}
+
+.line-progress(@height: 3px, @color: #3FAE2A, @speed: 1.2s) {
+  height: @height;
+  background-color: @color;
+  animation: running-progress @speed cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }

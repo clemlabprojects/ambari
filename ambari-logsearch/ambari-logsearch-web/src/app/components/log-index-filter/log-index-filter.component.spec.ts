@@ -38,7 +38,7 @@ import {ServiceLogsTruncatedService, serviceLogsTruncated} from '@app/services/s
 import {TabsService, tabs} from '@app/services/storage/tabs.service';
 import {ComponentGeneratorService} from '@app/services/component-generator.service';
 import {LogsContainerService} from '@app/services/logs-container.service';
-import {UserSettingsService} from '@app/services/user-settings.service';
+import {ServerSettingsService} from '@app/services/server-settings.service';
 import {UtilsService} from '@app/services/utils.service';
 import {DropdownButtonComponent} from '@modules/shared/components/dropdown-button/dropdown-button.component';
 import {DropdownListComponent} from '@modules/shared/components/dropdown-list/dropdown-list.component';
@@ -54,6 +54,13 @@ import {NotificationService} from '@modules/shared/services/notification.service
 import {ComponentLabelPipe} from '@app/pipes/component-label';
 
 import { dataAvailabilityStates, DataAvailabilityStatesStore } from '@app/modules/app-load/stores/data-availability-state.store';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { reducer as userSettings } from '@app/store/reducers/user-settings.reducers';
 
 describe('LogIndexFilterComponent', () => {
   let component: LogIndexFilterComponent;
@@ -79,8 +86,12 @@ describe('LogIndexFilterComponent', () => {
           hosts,
           serviceLogsTruncated,
           tabs,
-          dataAvailabilityStates
-        })
+          dataAvailabilityStates,
+          auth: auth.reducer,
+          userSettings
+        }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects)
       ],
       declarations: [
         LogIndexFilterComponent,
@@ -92,7 +103,7 @@ describe('LogIndexFilterComponent', () => {
         ...MockHttpRequestModules,
         ComponentGeneratorService,
         LogsContainerService,
-        UserSettingsService,
+        ServerSettingsService,
         UtilsService,
         AuditLogsService,
         ServiceLogsService,
@@ -113,7 +124,8 @@ describe('LogIndexFilterComponent', () => {
         LogsStateService,
         NotificationsService,
         NotificationService,
-        DataAvailabilityStatesStore
+        DataAvailabilityStatesStore,
+        AuthService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

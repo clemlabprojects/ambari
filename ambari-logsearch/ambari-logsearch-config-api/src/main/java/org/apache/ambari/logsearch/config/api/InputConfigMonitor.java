@@ -37,7 +37,7 @@ public interface InputConfigMonitor {
    * 
    * @param serviceName The name of the service for which the input configuration was created.
    * @param inputConfig The input configuration.
-   * @throws Exception
+   * @throws Exception error during loading the input configurations
    */
   void loadInputConfigs(String serviceName, InputConfig inputConfig) throws Exception;
   

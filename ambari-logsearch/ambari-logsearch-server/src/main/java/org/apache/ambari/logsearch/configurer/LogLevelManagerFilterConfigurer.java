@@ -24,10 +24,10 @@ import org.apache.ambari.logsearch.conf.global.LogLevelFilterManagerState;
 import org.apache.ambari.logsearch.config.solr.LogLevelFilterManagerSolr;
 import org.apache.ambari.logsearch.config.zookeeper.LogLevelFilterManagerZK;
 import org.apache.ambari.logsearch.config.zookeeper.LogSearchConfigZKHelper;
-import org.apache.ambari.logsearch.dao.EventHistorySolrDao;
+import org.apache.ambari.logsearch.dao.MetadataSolrDao;
 import org.apache.curator.framework.CuratorFramework;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.annotation.PostConstruct;
 import javax.inject.Inject;
@@ -35,11 +35,11 @@ import javax.inject.Named;
 
 @Named
 public class LogLevelManagerFilterConfigurer implements Configurer {
-  private static final Logger logger = LoggerFactory.getLogger(LogLevelManagerFilterConfigurer.class);
+  private static final Logger logger = LogManager.getLogger(LogLevelManagerFilterConfigurer.class);
 
   private static final int RETRY_INTERVAL_SECONDS = 10;
 
-  private final EventHistorySolrDao eventHistorySolrDao;
+  private final MetadataSolrDao metadataSolrDao;
   private final LogLevelFilterManagerState logLevelFilterManagerState;
   private final LogSearchConfigApiConfig logSearchConfigApiConfig;
   private final LogSearchConfigMapHolder logSearchConfigMapHolder;
@@ -50,11 +50,11 @@ public class LogLevelManagerFilterConfigurer implements Configurer {
   @Inject
   public LogLevelManagerFilterConfigurer(final LogSearchConfigApiConfig logSearchConfigApiConfig,
                                          final LogLevelFilterManagerState logLevelFilterManagerState,
-                                         final EventHistorySolrDao eventHistorySolrDao,
+                                         final MetadataSolrDao metadataSolrDao,
                                          final LogSearchConfigMapHolder logSearchConfigMapHolder) {
     this.logSearchConfigApiConfig = logSearchConfigApiConfig;
     this.logLevelFilterManagerState = logLevelFilterManagerState;
-    this.eventHistorySolrDao = eventHistorySolrDao;
+    this.metadataSolrDao = metadataSolrDao;
     this.logSearchConfigMapHolder = logSearchConfigMapHolder;
   }
 
@@ -69,8 +69,8 @@ public class LogLevelManagerFilterConfigurer implements Configurer {
           while (true) {
             try {
               if (logSearchConfigApiConfig.isSolrFilterStorage()) {
-                if (eventHistorySolrDao.getSolrCollectionState().isSolrCollectionReady()) {
-                  setLogLevelFilterManagerSolr(new LogLevelFilterManagerSolr(eventHistorySolrDao.getSolrClient()));
+                if (metadataSolrDao.getSolrCollectionState().isSolrCollectionReady()) {
+                  setLogLevelFilterManagerSolr(new LogLevelFilterManagerSolr(metadataSolrDao.getSolrClient()));
                   logLevelFilterManagerState.setLogLevelFilterManagerIsReady(true);
                   logger.info("Log level filter manager (solr) successfully initialized.");
                   break;

@@ -1,0 +1,100 @@
+{{ if .Values.enabled }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-logsearch-configmap
+  namespace: {{.Values.global.namespace.logging}}
+  labels:
+    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+  logsearch.properties: |-
+    ---
+    logsearch.solr.zk_connect_string={{.Values.zkRelease}}-zookeeper-cs.{{.Values.global.namespace.logging}}.svc.{{.Values.global.clusterDomain}}:2181
+    logsearch.config.zk_connect_string={{.Values.zkRelease}}-zookeeper-cs.{{.Values.global.namespace.logging}}.svc.{{.Values.global.clusterDomain}}:2181
+    logsearch.config.api.enabled={{.Values.configApiEnabled }}
+    logsearch.config.api.filter.zk.enabled=true
+
+    # Service Logs
+    logsearch.solr.service.logs.collection=service_logs
+    logsearch.solr.service.logs.config.name=hadoop_logs
+
+    logsearch.solr.service.logs.numshards=6
+    logsearch.solr.service.logs.replication.factor=2
+    logsearch.web.service_logs.field.visible=sdi_java_logger_name,sdi_java_method
+
+    # Audit logs
+    logsearch.solr.audit.logs.zk_connect_string={{.Release.Name}}-zookeeper-cs.{{.Values.global.namespace.logging}}.svc.{{.Values.global.clusterDomain}}:2181
+
+    logsearch.solr.audit.logs.url=
+    logsearch.solr.audit.logs.collection=audit_logs
+    logsearch.solr.audit.logs.numshards=2
+    logsearch.solr.audit.logs.replication.factor=2
+
+    logsearch.solr.config_set.folder=/usr/lib/ambari-logsearch-portal/conf/solr_configsets
+    logsearch.solr.audit.logs.config_set.folder=/usr/lib/ambari-logsearch-portal/conf/solr_configsets
+
+    # Metadata collection
+    logsearch.solr.logsearch_metadata.collection=logsearch_metadata
+    logsearch.solr.logsearch_metadata.config.name=logsearch_metadata
+    logsearch.solr.logsearch_metadata.replication.factor=2
+
+    # Logfeeder Settings
+    logsearch.logfeeder.include.default.level=FATAL,ERROR,WARN,INFO
+
+    # logsearch-admin.json
+    logsearch.auth.file.enable=true
+    logsearch.login.credentials.file=users.json
+
+    logsearch.auth.ldap.enable=false
+    logsearch.auth.simple.enable=false
+    logsearch.auth.external_auth.enable=false
+    logsearch.auth.redirect.forward=true
+
+    logsearch.protocol=http
+  log4j2.yml: |-
+      Configutation:
+        name: LogSearchConfig
+        packages: org.apache.ambari.logsearch.layout
+        Properties:
+          Property:
+            name: log-path
+            value: "/var/log/ambari-logsearch-portal"
+        Appenders:
+          Console:
+            name: Console_Appender
+            target: SYSTEM_OUT
+            PatternLayout:
+              pattern: "%d [%t] %-5p %C{6} (%F:%L) - %m%n"
+        Loggers:
+          Root:
+            level: info
+            AppenderRef:
+            - ref: Console_Appender
+
+  users.json: |-
+    {
+      "users": [{
+        "name": "Logsearch Admin",
+        "username": "{{.Values.username}}",
+        "password": "{{.Values.password}}",
+        "en_password": ""
+      }]
+    }
+  
+  logsearch-env.sh: |-
+    set -e
+    export JAVA_HOME=/usr/java/default
+    export LOGFILE=/var/log/ambari-logsearch-portal/logsearch.log
+    export LOGSEARCH_PORT=61888
+    export LOGSEARCH_PATH=/usr/lib/ambari-logsearch-portal
+    export LOGSEARCH_CONF_DIR=/logsearch-conf
+    export LOGSEARCH_PID_FILE=/var/run/ambari-logsearch-portal/logsearch.pid
+    export LOGSEARCH_JAVA_MEM=${LOGSEARCH_JAVA_MEM:-"-Xmx1024m"}
+    export LOGSEARCH_DEBUG=false
+    export LOGSEARCH_DEBUG_PORT=5005
+    export LOGSEARCH_SSL="false"
+
+{{ end }}

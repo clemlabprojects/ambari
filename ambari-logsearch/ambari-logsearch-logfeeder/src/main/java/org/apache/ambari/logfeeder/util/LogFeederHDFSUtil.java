@@ -19,49 +19,75 @@
 package org.apache.ambari.logfeeder.util;
 
 import java.io.IOException;
+import java.nio.file.Paths;
+import java.util.Map;
+import java.util.Properties;
 
+import org.apache.ambari.logfeeder.conf.LogFeederProps;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.log4j.Logger;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class LogFeederHDFSUtil {
-  private static final Logger LOG = Logger.getLogger(LogFeederHDFSUtil.class);
+  private static final Logger logger = LogManager.getLogger(LogFeederHDFSUtil.class);
 
   private LogFeederHDFSUtil() {
     throw new UnsupportedOperationException();
   }
   
-  public static boolean copyFromLocal(String sourceFilepath, String destFilePath, FileSystem fileSystem, boolean overwrite,
-      boolean delSrc) {
+  public static void copyFromLocal(String sourceFilepath, String destFilePath, FileSystem fileSystem, boolean overwrite,
+                                      boolean delSrc, FsPermission fsPermission) throws Exception {
+    String fsUri = fileSystem.getUri().toString();
     Path src = new Path(sourceFilepath);
     Path dst = new Path(destFilePath);
-    boolean isCopied = false;
-    try {
-      LOG.info("copying localfile := " + sourceFilepath + " to hdfsPath := " + destFilePath);
-      fileSystem.copyFromLocalFile(delSrc, overwrite, src, dst);
-      isCopied = true;
-    } catch (Exception e) {
-      LOG.error("Error copying local file :" + sourceFilepath + " to hdfs location : " + destFilePath, e);
+    logger.info("Copying localfile '{}' to hdfsPath (FS base URI: {}) '{}'", sourceFilepath, fsUri, destFilePath);
+    fileSystem.copyFromLocalFile(delSrc, overwrite, src, dst);
+    if (fsPermission != null) {
+      fileSystem.setPermission(dst, fsPermission);
     }
-    return isCopied;
   }
 
   public static FileSystem buildFileSystem(String hdfsHost, String hdfsPort) {
-    try {
-      Configuration configuration = buildHdfsConfiguration(hdfsHost, hdfsPort);
-      FileSystem fs = FileSystem.get(configuration);
-      return fs;
-    } catch (Exception e) {
-      LOG.error("Exception is buildFileSystem :", e);
-    }
-    return null;
+    return buildFileSystem(hdfsHost, hdfsPort, "hdfs");
   }
 
-  private static Configuration buildHdfsConfiguration(String hdfsHost, String hdfsPort) {
-    String url = "hdfs://" + hdfsHost + ":" + hdfsPort + "/";
+  public static FileSystem buildFileSystem(String hdfsHost, String hdfsPort, String scheme) {
+    Configuration configuration = buildHdfsConfiguration(hdfsHost, hdfsPort, scheme);
+    return buildFileSystem(configuration);
+  }
+
+  public static FileSystem buildFileSystem(Configuration configuration) {
+    return buildFileSystem(configuration, 5);
+  }
+
+  public static FileSystem buildFileSystem(Configuration configuration, int sleepSeconds) {
+    while (true) {
+      try {
+        return FileSystem.get(configuration);
+      } catch (Exception e) {
+        logger.error("Exception during buildFileSystem call:", e);
+      }
+      try {
+        Thread.sleep(1000 * sleepSeconds);
+      } catch (InterruptedException e) {
+        logger.error("Error during thread sleep (filesystem bootstrap)", e);
+        Thread.currentThread().interrupt();
+        return null;
+      }
+    }
+  }
+
+  public static Configuration buildHdfsConfiguration(String hdfsHost, String hdfsPort, String scheme) {
+    return buildHdfsConfiguration(String.format("%s:%s", hdfsHost, hdfsPort), scheme);
+  }
+
+  public static Configuration buildHdfsConfiguration(String address, String scheme) {
+    String url = String.format("%s://%s/", scheme, address);
     Configuration configuration = new Configuration();
-    configuration.set("fs.default.name", url);
+    configuration.set("fs.defaultFS", url);
     return configuration;
   }
 
@@ -70,7 +96,23 @@ public class LogFeederHDFSUtil {
       try {
         fileSystem.close();
       } catch (IOException e) {
-        LOG.error(e.getLocalizedMessage(), e.getCause());
+        logger.error(e.getLocalizedMessage(), e.getCause());
+      }
+    }
+  }
+
+  /**
+   * Override Hadoop configuration object based on logfeeder.properties configurations (with keys that starts with "fs." or "hadoop.*")
+   * @param logFeederProps global property holder
+   * @param configuration hadoop configuration holder
+   */
+  public static void overrideFileSystemConfigs(LogFeederProps logFeederProps, Configuration configuration) {
+    Properties properties = logFeederProps.getProperties();
+    for (Map.Entry<Object, Object> prop : properties.entrySet()) {
+      String propertyName = prop.getKey().toString();
+      if (propertyName.startsWith("fs.")) {
+        logger.info("Override {} configuration (by logfeeder.properties)", propertyName);
+        configuration.set(propertyName, prop.getValue().toString());
       }
     }
   }

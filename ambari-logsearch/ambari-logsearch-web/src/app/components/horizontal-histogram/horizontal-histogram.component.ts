@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import { Component, Input } from '@angular/core';
 import * as d3 from 'd3';
-import {GraphComponent} from '@app/classes/components/graph/graph.component';
-import {HomogeneousObject} from '@app/classes/object';
+import { GraphComponent } from '@app/classes/components/graph/graph.component';
+import { HomogeneousObject } from '@app/classes/object';
 
 @Component({
   selector: 'horizontal-histogram',
@@ -32,33 +32,33 @@ export class HorizontalHistogramComponent extends GraphComponent {
    * @type {number}
    */
   @Input()
-  barSize: number = 5;
+  barSize = 5;
 
   rowsCount: number;
 
-  readonly reverseYRange: boolean = true;
+  readonly reverseYRange = true;
 
   protected populate(): void {
-    const barSize = this.barSize,
-      data = this.data,
-      yValues = Object.keys(data),
-      keys = Object.keys(this.labels),
-      rowsCount = yValues.reduce((currentCount: number, currentKey: string): number => {
+    const barSize = this.barSize;
+    const data = this.data;
+    const yValues = Object.keys(data);
+    const keys = Object.keys(this.labels);
+    const rowsCount = yValues.reduce((currentCount: number, currentKey: string): number => {
         return currentCount + Object.keys(this.data[currentKey]).length;
-      }, 0),
-      formattedData = yValues.reduce((currentData, currentKey: string) => {
-        const currentValues = data[currentKey],
-          currentObjects = keys.map((key: string): HomogeneousObject<number> => {
-            return {
-              [key]: currentValues[key] || 0
-            };
-          });
-        return [...currentData, Object.assign({
-          tick: currentKey
-        }, ...currentObjects)];
-      }, []),
-      layers = d3.stack().keys(keys)(formattedData),
-      formattedLayers = d3.transpose<any>(layers);
+      }, 0);
+    const formattedData = yValues.reduce((currentData, currentKey: string) => {
+      const currentValues = data[currentKey],
+        currentObjects = keys.map((key: string): HomogeneousObject<number> => {
+          return {
+            [key]: currentValues[key] || 0
+          };
+        });
+      return [...currentData, Object.assign({
+        tick: currentKey
+      }, ...currentObjects)];
+    }, []);
+    const layers = d3.stack().keys(keys)(formattedData);
+    const formattedLayers = d3.transpose<any>(layers);
 
     this.rowsCount = rowsCount;
 
@@ -78,7 +78,8 @@ export class HorizontalHistogramComponent extends GraphComponent {
         if (item [0] !== item[1]) {
           return this.yScale(i++) - this.barSize / 2;
         }
-      }).attr('height', item => item[0] === item[1] ? '0' : barSize.toString())
+      })
+      .attr('height', item => item[0] === item[1] ? '0' : barSize.toString())
       .attr('width', item => this.xScale(item[1]) - this.xScale(item[0]))
       .style('fill', (item, index) => this.orderedColors[index])
       .on('mouseover', this.handleMouseOver)

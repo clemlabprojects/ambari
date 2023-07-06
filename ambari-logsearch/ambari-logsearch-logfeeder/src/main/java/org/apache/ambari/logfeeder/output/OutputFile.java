@@ -27,7 +27,8 @@ import org.apache.ambari.logfeeder.util.LogFeederUtil;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -37,7 +38,7 @@ import java.io.PrintWriter;
 import java.util.Map;
 
 public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
-  private static final Logger LOG = Logger.getLogger(OutputFile.class);
+  private static final Logger logger = LogManager.getLogger(OutputFile.class);
 
   private PrintWriter outWriter;
   private String filePath = null;
@@ -49,7 +50,7 @@ public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
     this.logFeederProps = logFeederProps;
     filePath = getStringValue("path");
     if (StringUtils.isEmpty(filePath)) {
-      LOG.error("Filepath config property <path> is not set in config file.");
+      logger.error("Filepath config property <path> is not set in config file.");
       return;
     }
     codec = getStringValue("codec");
@@ -61,11 +62,11 @@ public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
       } else if (codec.trim().equalsIgnoreCase("json")) {
         codec = "csv";
       } else {
-        LOG.error("Unsupported codec type. codec=" + codec + ", will use json");
+        logger.error("Unsupported codec type. codec=" + codec + ", will use json");
         codec = "json";
       }
     }
-    LOG.info("Out filePath=" + filePath + ", codec=" + codec);
+    logger.info("Out filePath=" + filePath + ", codec=" + codec);
     File outFile = new File(filePath);
     if (outFile.getParentFile() != null) {
       File parentDir = outFile.getParentFile();
@@ -76,12 +77,12 @@ public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
 
     outWriter = new PrintWriter(new BufferedWriter(new FileWriter(outFile, true)));
 
-    LOG.info("init() is successfull. filePath=" + outFile.getAbsolutePath());
+    logger.info("init() is successfull. filePath=" + outFile.getAbsolutePath());
   }
 
   @Override
   public void close() {
-    LOG.info("Closing file." + getShortDescription());
+    logger.info("Closing file." + getShortDescription());
     if (outWriter != null) {
       try {
         outWriter.close();
@@ -89,7 +90,7 @@ public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
         // Ignore this exception
       }
     }
-    setClosed(true);
+    shouldCloseOutput();
   }
 
   @Override
@@ -97,7 +98,7 @@ public class OutputFile extends Output<LogFeederProps, InputFileMarker> {
     String outStr = null;
     CSVPrinter csvPrinter = null;
     try {
-      if (codec.equals("csv")) {
+      if ("csv".equals(codec)) {
         csvPrinter = new CSVPrinter(outWriter, CSVFormat.RFC4180);
         //TODO:
       } else {

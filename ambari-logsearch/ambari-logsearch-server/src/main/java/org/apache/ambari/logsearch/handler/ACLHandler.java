@@ -20,38 +20,38 @@ package org.apache.ambari.logsearch.handler;
 
 import org.apache.ambari.logsearch.conf.SolrPropsConfig;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.SolrZooKeeper;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Stat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 public class ACLHandler implements SolrZkRequestHandler<Boolean> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ACLHandler.class);
+  private static final Logger logger = LogManager.getLogger(ACLHandler.class);
 
   @Override
   public Boolean handle(CloudSolrClient solrClient, SolrPropsConfig solrPropsConfig) throws Exception {
     List<ACL> aclsToSetList = solrPropsConfig.getZkAcls();
     if (CollectionUtils.isNotEmpty(aclsToSetList)) {
-      LOG.info("Setting acls for '{}' collection...", solrPropsConfig.getCollection());
+      logger.info("Setting acls for '{}' collection...", solrPropsConfig.getCollection());
       SolrZkClient zkClient = solrClient.getZkStateReader().getZkClient();
       SolrZooKeeper solrZooKeeper = zkClient.getSolrZooKeeper();
       String collectionPath = String.format("/collections/%s", solrPropsConfig.getCollection());
       String configsPath = String.format("/configs/%s", solrPropsConfig.getConfigName());
       List<ACL> collectionAcls = solrZooKeeper.getACL(collectionPath, new Stat());
       if (isRefreshAclsNeeded(aclsToSetList, collectionAcls)) {
-        LOG.info("Acls differs for {}, update acls.", collectionPath);
+        logger.info("Acls differs for {}, update acls.", collectionPath);
         setRecursivelyOn(solrZooKeeper, collectionPath, aclsToSetList);
       }
       List<ACL> configsAcls = solrZooKeeper.getACL(configsPath, new Stat());
       if (isRefreshAclsNeeded(aclsToSetList, configsAcls)) {
-        LOG.info("Acls differs for {}, update acls.", configsPath);
+        logger.info("Acls differs for {}, update acls.", configsPath);
         setRecursivelyOn(solrZooKeeper, configsPath, aclsToSetList);
       }
     }
@@ -77,7 +77,7 @@ public class ACLHandler implements SolrZkRequestHandler<Boolean> {
       for (ACL newAcl : aclList2) {
         if (acl.getId() != null && acl.getId().getId().equals(newAcl.getId().getId())
           && acl.getPerms() != newAcl.getPerms()) {
-          LOG.info("ACL for '{}' differs: '{}' on znode, should be '{}'",
+          logger.info("ACL for '{}' differs: '{}' on znode, should be '{}'",
             acl.getId().getId(), acl.getPerms(), newAcl.getPerms());
           return true;
         }

@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.MapFieldNameDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -30,17 +29,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MapperFieldNameTest {
-  private static final Logger LOG = Logger.getLogger(MapperFieldNameTest.class);
 
   @Test
   public void testMapperFieldName_replaceField() {
-    LOG.info("testMapperFieldName_replaceField()");
 
     MapFieldNameDescriptorImpl mapFieldNameDescriptor = new MapFieldNameDescriptorImpl();
     mapFieldNameDescriptor.setNewFieldName("someOtherField");
 
     MapperFieldName mapperFieldName = new MapperFieldName();
-    assertTrue("Could not initialize!", mapperFieldName.init(null, "someField", null, mapFieldNameDescriptor));
+    assertTrue("Could not initialize!", mapperFieldName.init(null, null, "someField", null, mapFieldNameDescriptor));
 
     Map<String, Object> jsonObj = new HashMap<>();
     jsonObj.put("someField", "someValue");
@@ -54,11 +51,10 @@ public class MapperFieldNameTest {
 
   @Test
   public void testMapperFieldName_noNewFieldName() {
-    LOG.info("testMapperFieldName_noNewFieldName()");
 
     MapFieldNameDescriptorImpl mapFieldNameDescriptor = new MapFieldNameDescriptorImpl();
 
     MapperFieldName mapperFieldName = new MapperFieldName();
-    assertFalse("Was able to initialize!", mapperFieldName.init(null, "someField", null, mapFieldNameDescriptor));
+    assertFalse("Was able to initialize!", mapperFieldName.init(null, null, "someField", null, mapFieldNameDescriptor));
   }
 }

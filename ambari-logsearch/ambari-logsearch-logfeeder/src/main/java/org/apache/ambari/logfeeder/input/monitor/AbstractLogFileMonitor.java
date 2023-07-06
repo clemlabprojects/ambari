@@ -19,12 +19,15 @@
 package org.apache.ambari.logfeeder.input.monitor;
 
 import org.apache.ambari.logfeeder.input.InputFile;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
+/**
+ * Holds common file monitoring operations: start a thread that periodically do something which can be implemented by subclasses.
+ */
 public abstract class AbstractLogFileMonitor implements Runnable {
 
-  private Logger LOG = LoggerFactory.getLogger(AbstractLogFileMonitor.class);
+  private static final Logger LOG = LogManager.getLogger(AbstractLogFileMonitor.class);
 
   private final InputFile inputFile;
   private final int waitInterval;

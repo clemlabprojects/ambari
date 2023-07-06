@@ -26,6 +26,7 @@ import {UtilsService} from '@app/services/utils.service';
 import {SearchBoxComponent} from './search-box.component';
 import {ComponentsService, components} from '@app/services/storage/components.service';
 import {ComponentLabelPipe} from '@app/pipes/component-label';
+import {HostNamePipe} from "@app/pipes/host-name.pipe";
 
 describe('SearchBoxComponent', () => {
   let component: SearchBoxComponent;
@@ -35,6 +36,7 @@ describe('SearchBoxComponent', () => {
     TestBed.configureTestingModule({
       declarations: [
         ComponentLabelPipe,
+        HostNamePipe,
         SearchBoxComponent
       ],
       imports: [

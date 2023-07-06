@@ -28,31 +28,45 @@ import org.apache.ambari.logsearch.config.api.model.inputconfig.MapFieldDescript
 import org.apache.commons.lang.time.DateUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.FastDateFormat;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.text.ParseException;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.Map;
 
+/**
+ * Map date string from string format to date with providing date patterns. (source and target patterns can be provided)
+ * <pre>
+ *   "post_map_values": {
+ *         "logtime": {
+ *           "map_date": {
+ *             "target_date_pattern": "yyyy-MM-dd HH:mm:ss,SSS",
+ *             "src_date_pattern" :"MMM dd HH:mm:ss"
+ *           }
+ *         }
+ *       }
+ * </pre>
+ */
 public class MapperDate extends Mapper<LogFeederProps> {
-  private static final Logger LOG = Logger.getLogger(MapperDate.class);
+  private static final Logger logger = LogManager.getLogger(MapperDate.class);
 
   private FastDateFormat targetDateFormatter = null;
   private boolean isEpoch = false;
   private FastDateFormat srcDateFormatter=null;
 
   @Override
-  public boolean init(String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
+  public boolean init(LogFeederProps logFeederProps, String inputDesc, String fieldName, String mapClassCode, MapFieldDescriptor mapFieldDescriptor) {
     init(inputDesc, fieldName, mapClassCode);
     
     String targetDateFormat = ((MapDateDescriptor)mapFieldDescriptor).getTargetDatePattern();
     String srcDateFormat = ((MapDateDescriptor)mapFieldDescriptor).getSourceDatePattern();
     if (StringUtils.isEmpty(targetDateFormat)) {
-      LOG.fatal("Date format for map is empty. " + this);
+      logger.fatal("Date format for map is empty. " + this);
     } else {
-      LOG.info("Date mapper format is " + targetDateFormat);
+      logger.info("Date mapper format is " + targetDateFormat);
 
       if (targetDateFormat.equalsIgnoreCase("epoch")) {
         isEpoch = true;
@@ -65,7 +79,7 @@ public class MapperDate extends Mapper<LogFeederProps> {
           }
           return true;
         } catch (Throwable ex) {
-          LOG.fatal("Error creating date format. format=" + targetDateFormat + ". " + this.toString());
+          logger.fatal("Error creating date format. format=" + targetDateFormat + ". " + this.toString());
         }
       } 
     }
@@ -96,7 +110,7 @@ public class MapperDate extends Mapper<LogFeederProps> {
       } catch (Throwable t) {
         LogFeederUtil.logErrorMessageByInterval(this.getClass().getSimpleName() + ":apply", "Error applying date transformation." +
             " isEpoch=" + isEpoch + ", targetDateFormat=" + (targetDateFormatter!=null ?targetDateFormatter.getPattern():"")
-            + ", value=" + value + ". " + this.toString(), t, LOG, Level.ERROR);
+            + ", value=" + value + ". " + this.toString(), t, logger, Level.ERROR);
       }
     }
     return value;

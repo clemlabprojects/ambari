@@ -30,7 +30,6 @@ import org.apache.ambari.logfeeder.conf.LogFeederProps;
 import org.apache.ambari.logfeeder.input.InputFileMarker;
 import org.apache.ambari.logfeeder.plugin.manager.OutputManager;
 import org.apache.ambari.logsearch.config.json.model.inputconfig.impl.FilterJsonDescriptorImpl;
-import org.apache.log4j.Logger;
 import org.easymock.Capture;
 import org.easymock.CaptureType;
 import org.easymock.EasyMock;
@@ -42,7 +41,6 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class FilterJSONTest {
-  private static final Logger LOG = Logger.getLogger(FilterJSONTest.class);
 
   private FilterJSON filterJson;
   private OutputManager mockOutputManager;
@@ -60,8 +58,6 @@ public class FilterJSONTest {
 
   @Test
   public void testJSONFilterCode_convertFields() throws Exception {
-    LOG.info("testJSONFilterCode_convertFields()");
-
     init(new FilterJsonDescriptorImpl());
 
     mockOutputManager.write(EasyMock.capture(capture), EasyMock.anyObject(InputFileMarker.class));
@@ -85,8 +81,6 @@ public class FilterJSONTest {
 
   @Test
   public void testJSONFilterCode_logTimeOnly() throws Exception {
-    LOG.info("testJSONFilterCode_logTimeOnly()");
-
     init(new FilterJsonDescriptorImpl());
 
     mockOutputManager.write(EasyMock.capture(capture), EasyMock.anyObject(InputFileMarker.class));
@@ -110,8 +104,6 @@ public class FilterJSONTest {
 
   @Test
   public void testJSONFilterCode_lineNumberOnly() throws Exception {
-    LOG.info("testJSONFilterCode_lineNumberOnly()");
-
     init(new FilterJsonDescriptorImpl());
 
     mockOutputManager.write(EasyMock.capture(capture), EasyMock.anyObject(InputFileMarker.class));
@@ -131,8 +123,6 @@ public class FilterJSONTest {
   
   @Test
   public void testJSONFilterCode_invalidJson() throws Exception {
-    LOG.info("testJSONFilterCode_invalidJson()");
-    
     init(new FilterJsonDescriptorImpl());
     
     String inputStr = "invalid json";

@@ -19,6 +19,7 @@
 import {async, ComponentFixture, TestBed} from '@angular/core/testing';
 import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {StoreModule} from '@ngrx/store';
+import {TooltipModule} from 'ngx-bootstrap';
 import {MockHttpRequestModules, TranslationModules} from '@app/test-config.spec';
 import {AppSettingsService, appSettings} from '@app/services/storage/app-settings.service';
 import {AppStateService, appState} from '@app/services/storage/app-state.service';
@@ -42,11 +43,21 @@ import {TabsComponent} from '@app/components/tabs/tabs.component';
 import {LogsContainerComponent} from './logs-container.component';
 import {ClusterSelectionService} from '@app/services/storage/cluster-selection.service';
 import {RouterTestingModule} from '@angular/router/testing';
-import {LogsStateService} from '@app/services/storage/logs-state.service';
 import {RoutingUtilsService} from '@app/services/routing-utils.service';
 import {LogsFilteringUtilsService} from '@app/services/logs-filtering-utils.service';
 import {NotificationService} from '@modules/shared/services/notification.service';
 import {NotificationsService} from 'angular2-notifications/src/notifications.service';
+
+import {LogsStateService} from '@app/services/storage/logs-state.service';
+
+import * as auth from '@app/store/reducers/auth.reducers';
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { UserSettingsEffects } from '@app/store/effects/user-settings.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
+import { UserSettingsService } from '@app/services/user-settings.service';
 
 describe('LogsContainerComponent', () => {
   let component: LogsContainerComponent;
@@ -73,9 +84,15 @@ describe('LogsContainerComponent', () => {
           serviceLogsHistogramData,
           tabs,
           hosts,
-          serviceLogsTruncated
+          serviceLogsTruncated,
+          auth: auth.reducer,
+          userSettings: userSettings.reducer
         }),
-        ...TranslationModules
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(UserSettingsEffects),
+        EffectsModule.run(NotificationEffects),
+        ...TranslationModules,
+        TooltipModule.forRoot(),
       ],
       providers: [
         ...MockHttpRequestModules,
@@ -97,9 +114,11 @@ describe('LogsContainerComponent', () => {
         ClusterSelectionService,
         RoutingUtilsService,
         LogsFilteringUtilsService,
-        LogsStateService,
         NotificationsService,
-        NotificationService
+        NotificationService,
+        LogsStateService,
+        AuthService,
+        UserSettingsService
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA]
     })

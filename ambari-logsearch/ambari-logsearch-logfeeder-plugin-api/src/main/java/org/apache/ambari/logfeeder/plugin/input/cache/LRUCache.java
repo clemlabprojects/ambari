@@ -47,6 +47,17 @@ public class LRUCache implements Serializable {
     };
   }
 
+  /**
+   * Check that an entry can be replaced with new values.
+   * <ol>
+   * <li> If key does not exist in the cache, entry can be replaced (it will be a new one) </li>
+   * <li> If "last" de-duplication is enabled, do not replace key as that is the most recent element </li>
+   * <li> If key exists and "last" de-duplication disabled, replace an entry only if the right interval passed between old and new values (as values are long timestamps) </li>
+   * </ol>
+   * @param key Key of the cache entry
+   * @param value Value of the cache entry
+   * @return Entry replaceable or not
+   */
   public boolean isEntryReplaceable(String key, Long value) {
     boolean result = true;
     Long existingValue = keyValueMap.get(key);

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-import {Component, Input, Output, EventEmitter} from '@angular/core';
-import {LogTypeTab} from '@app/classes/models/log-type-tab';
+import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { LogTypeTab } from '@app/classes/models/log-type-tab';
 import { LogsFilteringUtilsService } from '@app/services/logs-filtering-utils.service';
 
 export enum TabsSwitchMode {

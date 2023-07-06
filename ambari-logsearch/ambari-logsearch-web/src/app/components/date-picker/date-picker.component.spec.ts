@@ -16,12 +16,19 @@
  * limitations under the License.
  */
 
-import {async, ComponentFixture, TestBed} from '@angular/core/testing';
-import {StoreModule} from '@ngrx/store';
-import * as moment from 'moment-timezone';
-import {AppSettingsService, appSettings} from '@app/services/storage/app-settings.service';
+import { async, ComponentFixture, TestBed } from '@angular/core/testing';
+import { MockHttpRequestModules } from '@app/test-config.spec';
 
-import {DatePickerComponent} from './date-picker.component';
+import { StoreModule } from '@ngrx/store';
+import * as moment from 'moment-timezone';
+import { AppSettingsService, appSettings } from '@app/services/storage/app-settings.service';
+
+import * as userSettings from '@app/store/reducers/user-settings.reducers';
+import { EffectsModule } from '@ngrx/effects';
+import { UserSettingsEffects } from '@app/store/effects/user-settings.effects';
+import { UserSettingsService } from '@app/services/user-settings.service';
+
+import { DatePickerComponent } from './date-picker.component';
 
 describe('DatePickerComponent', () => {
   let component: DatePickerComponent;
@@ -32,10 +39,14 @@ describe('DatePickerComponent', () => {
       declarations: [DatePickerComponent],
       imports: [
         StoreModule.provideStore({
-          appSettings
+          appSettings,
+          userSettings: userSettings.reducer
         })
       ],
-      providers: [AppSettingsService]
+      providers: [
+        AppSettingsService,
+        UserSettingsService
+      ]
     })
     .compileComponents();
   }));

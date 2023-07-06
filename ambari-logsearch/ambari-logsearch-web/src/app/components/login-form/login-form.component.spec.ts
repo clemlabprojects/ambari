@@ -16,18 +16,25 @@
  * limitations under the License.
  */
 
-import {async, ComponentFixture, TestBed} from '@angular/core/testing';
+import {async, inject, ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormsModule} from '@angular/forms';
-import {TranslationModules} from '@app/test-config.spec';
+import {TranslationModules, MockHttpRequestModules} from '@app/test-config.spec';
 import {StoreModule} from '@ngrx/store';
 import {AppStateService, appState} from '@app/services/storage/app-state.service';
 import {HttpClientService} from '@app/services/http-client.service';
-import {AuthService} from '@app/services/auth.service';
 
 import {LoginFormComponent} from './login-form.component';
 import {RouterTestingModule} from '@angular/router/testing';
 import {NotificationsService} from 'angular2-notifications';
 import {NotificationService} from '@app/modules/shared/services/notification.service';
+
+import {Store} from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import * as auth from '@app/store/reducers/auth.reducers';
+import { AuthService } from '@app/services/auth.service';
+import { EffectsModule } from '@ngrx/effects';
+import { AuthEffects } from '@app/store/effects/auth.effects';
+import { NotificationEffects } from '@app/store/effects/notification.effects';
 
 describe('LoginFormComponent', () => {
   let component: LoginFormComponent;
@@ -56,17 +63,22 @@ describe('LoginFormComponent', () => {
         FormsModule,
         ...TranslationModules,
         StoreModule.provideStore({
-          appState
-        })
+          appState,
+          auth: auth.reducer
+        }),
+        EffectsModule.run(AuthEffects),
+        EffectsModule.run(NotificationEffects)
       ],
       providers: [
+        ...MockHttpRequestModules,
         AppStateService,
         {
           provide: AuthService,
           useValue: AuthServiceMock
         },
         NotificationsService,
-        NotificationService
+        NotificationService,
+        AuthService
       ]
     })
     .compileComponents();
@@ -82,36 +94,4 @@ describe('LoginFormComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  describe('#login()', () => {
-    const cases = [
-      {
-        isError: true,
-        isLoginAlertDisplayed: true,
-        isAuthorized: false,
-        title: 'login failure'
-      },
-      {
-        isError: false,
-        isLoginAlertDisplayed: false,
-        isAuthorized: true,
-        title: 'login success'
-      }
-    ];
-
-    cases.forEach(test => {
-      describe(test.title, () => {
-        beforeEach(() => {
-          authMock.isError = test.isError;
-          authMock.isAuthorized = test.isAuthorized;
-          component.login();
-        });
-
-        it('isLoginAlertDisplayed', () => {
-          expect(component.isLoginAlertDisplayed).toEqual(test.isLoginAlertDisplayed);
-        });
-
-      });
-    });
-
-  });
 });

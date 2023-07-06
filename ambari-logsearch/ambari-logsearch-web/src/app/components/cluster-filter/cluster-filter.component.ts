@@ -45,7 +45,7 @@ export class ClusterFilterComponent implements OnInit, OnDestroy {
 
   private clusterSelectionStoreKey: BehaviorSubject<string> = new BehaviorSubject('');
 
-  private clustersAsListItems$: Observable<ListItem[]> = this.clusterSelectionStoreKey.distinctUntilChanged()
+  clustersAsListItems$: Observable<ListItem[]> = this.clusterSelectionStoreKey.distinctUntilChanged()
     .switchMap((selectionStoreKey: string) => Observable.combineLatest(
         this.clusterSelectionStoreService.getParameter(selectionStoreKey),
         this.clusterStoreService.getAll()
@@ -58,8 +58,8 @@ export class ClusterFilterComponent implements OnInit, OnDestroy {
       })
     ).startWith([]);
 
-  private readonly defaultUseMultiSelection = true;
-  private useMultiSelection: BehaviorSubject<boolean> = new BehaviorSubject(false);
+  readonly defaultUseMultiSelection = true;
+  useMultiSelection: BehaviorSubject<boolean> = new BehaviorSubject(false);
 
   private subscriptions: Subscription[] = [];
 

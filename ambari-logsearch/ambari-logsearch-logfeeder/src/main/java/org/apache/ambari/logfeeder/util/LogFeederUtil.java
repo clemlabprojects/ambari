@@ -25,8 +25,9 @@ import org.apache.ambari.logfeeder.input.InputFile;
 import org.apache.ambari.logfeeder.plugin.common.MetricData;
 import org.apache.ambari.logfeeder.plugin.input.InputMarker;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.lang.reflect.Type;
 import java.net.InetAddress;
@@ -36,7 +37,7 @@ import java.util.Hashtable;
 import java.util.Map;
 
 public class LogFeederUtil {
-  private static final Logger LOG = Logger.getLogger(LogFeederUtil.class);
+  private static final Logger logger = LogManager.getLogger(LogFeederUtil.class);
 
   private final static String GSON_DATE_FORMAT = "yyyy-MM-dd HH:mm:ss.SSS";
   private static Gson gson = new GsonBuilder().setDateFormat(GSON_DATE_FORMAT).create();
@@ -55,16 +56,16 @@ public class LogFeederUtil {
       String getHostName = ip.getHostName();
       String getCanonicalHostName = ip.getCanonicalHostName();
       if (!getCanonicalHostName.equalsIgnoreCase(ipAddress)) {
-        LOG.info("Using getCanonicalHostName()=" + getCanonicalHostName);
+        logger.info("Using getCanonicalHostName()=" + getCanonicalHostName);
         hostName = getCanonicalHostName;
       } else {
-        LOG.info("Using getHostName()=" + getHostName);
+        logger.info("Using getHostName()=" + getHostName);
         hostName = getHostName;
       }
-      LOG.info("ipAddress=" + ipAddress + ", getHostName=" + getHostName + ", getCanonicalHostName=" + getCanonicalHostName +
+      logger.info("ipAddress=" + ipAddress + ", getHostName=" + getHostName + ", getCanonicalHostName=" + getCanonicalHostName +
         ", hostName=" + hostName);
     } catch (UnknownHostException e) {
-      LOG.error("Error getting hostname.", e);
+      logger.error("Error getting hostname.", e);
     }
   }
 
@@ -72,7 +73,7 @@ public class LogFeederUtil {
     long currStat = metric.value;
     long currMS = System.currentTimeMillis();
     if (currStat > metric.prevLogValue) {
-      LOG.info(prefixStr + ": total_count=" + metric.value + ", duration=" + (currMS - metric.prevLogTime) / 1000 +
+      logger.info(prefixStr + ": total_count=" + metric.value + ", duration=" + (currMS - metric.prevLogTime) / 1000 +
         " secs, count=" + (currStat - metric.prevLogValue) + postFix);
     }
     metric.prevLogValue = currStat;
@@ -105,7 +106,7 @@ public class LogFeederUtil {
       try {
         retValue = Integer.parseInt(strValue);
       } catch (Throwable t) {
-        LOG.error("Error parsing integer value. str=" + strValue + ", " + errMessage);
+        logger.error("Error parsing integer value. str=" + strValue + ", " + errMessage);
       }
     }
     return retValue;
@@ -116,12 +117,12 @@ public class LogFeederUtil {
     private int counter = 0;
   }
 
-  private static Map<String, LogFeederUtil.LogHistory> logHistoryList = new Hashtable<>();
+  private static Map<String, LogHistory> logHistoryList = new Hashtable<>();
 
   public static boolean logErrorMessageByInterval(String key, String message, Throwable e, Logger callerLogger, Level level) {
-    LogFeederUtil.LogHistory log = logHistoryList.get(key);
+    LogHistory log = logHistoryList.get(key);
     if (log == null) {
-      log = new LogFeederUtil.LogHistory();
+      log = new LogHistory();
       logHistoryList.put(key, log);
     }
 

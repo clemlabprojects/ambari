@@ -20,11 +20,11 @@ package org.apache.ambari.logfeeder.input;
 
 import com.google.common.io.Files;
 import org.apache.ambari.logfeeder.loglevelfilter.LogLevelFilterHandler;
-import org.apache.ambari.logfeeder.common.ConfigHandler;
 import org.apache.ambari.logfeeder.conf.LogFeederProps;
+import org.apache.ambari.logfeeder.manager.InputConfigManager;
 import org.apache.ambari.logsearch.config.api.LogSearchConfigLogFeeder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.annotation.PostConstruct;
 import javax.inject.Inject;
@@ -36,8 +36,11 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Upload configs with config handler (if those do not exist in the config store) and cache them in order to not check them again
+ */
 public class InputConfigUploader extends Thread {
-  protected static final Logger LOG = LoggerFactory.getLogger(InputConfigUploader.class);
+  private static final Logger logger = LogManager.getLogger(InputConfigUploader.class);
 
   private static final long SLEEP_BETWEEN_CHECK = 2000;
 
@@ -47,19 +50,17 @@ public class InputConfigUploader extends Thread {
   private final Pattern serviceNamePattern = Pattern.compile("input.config-(.+).json");
 
   @Inject
-  private LogSearchConfigLogFeeder config;
-
-  @Inject
   private LogFeederProps logFeederProps;
 
-  @Inject
-  private LogLevelFilterHandler logLevelFilterHandler;
+  private final InputConfigManager inputConfigManager;
+  private final LogSearchConfigLogFeeder config;
+  private final LogLevelFilterHandler logLevelFilterHandler;
 
-  @Inject
-  private ConfigHandler configHandler;
-
-  public InputConfigUploader() {
-    super("Input Config Loader");
+  public InputConfigUploader(String name, LogSearchConfigLogFeeder config, InputConfigManager inputConfigManager, LogLevelFilterHandler logLevelFilterHandler) {
+    super(name);
+    this.config = config;
+    this.inputConfigManager = inputConfigManager;
+    this.logLevelFilterHandler = logLevelFilterHandler;
     setDaemon(true);
   }
 
@@ -67,7 +68,9 @@ public class InputConfigUploader extends Thread {
   public void init() throws Exception {
     this.configDir = new File(logFeederProps.getConfDir());
     this.start();
-    config.monitorInputConfigChanges(configHandler, logLevelFilterHandler, logFeederProps.getClusterName());
+    if (config != null) {
+      config.monitorInputConfigChanges(inputConfigManager, logLevelFilterHandler, logFeederProps.getClusterName());
+    }
   }
 
   @Override
@@ -82,23 +85,23 @@ public class InputConfigUploader extends Thread {
               m.find();
               String serviceName = m.group(1);
               String inputConfig = Files.toString(inputConfigFile, Charset.defaultCharset());
-              if (!config.inputConfigExists(serviceName)) {
+              if (config != null && !config.inputConfigExists(serviceName)) {
                 config.createInputConfig(logFeederProps.getClusterName(), serviceName, inputConfig);
               }
               filesHandled.add(inputConfigFile.getAbsolutePath());
             } catch (Exception e) {
-              LOG.warn("Error handling file " + inputConfigFile.getAbsolutePath(), e);
+              logger.warn("Error handling file " + inputConfigFile.getAbsolutePath(), e);
             }
           }
         }
       } else {
-        LOG.warn("Cannot find input config files in config dir ({})", logFeederProps.getConfDir());
+        logger.warn("Cannot find input config files in config dir ({})", logFeederProps.getConfDir());
       }
 
       try {
         Thread.sleep(SLEEP_BETWEEN_CHECK);
       } catch (InterruptedException e) {
-        LOG.debug("Interrupted during sleep", e);
+        logger.debug("Interrupted during sleep", e);
       }
     }
   }

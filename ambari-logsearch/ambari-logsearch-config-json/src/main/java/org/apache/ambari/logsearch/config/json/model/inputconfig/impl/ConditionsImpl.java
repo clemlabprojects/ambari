@@ -35,7 +35,8 @@ public class ConditionsImpl implements Conditions {
   @ShipperConfigElementDescription(
     path = "/filter/[]/conditions/fields",
     type = "json object",
-    description = "The fields in the input element of which's value should be met."
+    description = "The fields in the input element of which's value should be met.",
+    examples = {"\"fields\"{\"type\": [\"hdfs_audit\", \"hdfs_datanode\"]}"}
   )
   @Expose
   private FieldsImpl fields;

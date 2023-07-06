@@ -108,21 +108,21 @@ public class DocConstants {
     public static final String GET_FEATURES_LIST = "Get features list.";
     public static final String GET_APP_DETAILS_OD = "Get application details.";
     public static final String GET_AUTH_DETAILS_OD = "Get authentication details.";
-    public static final String GET_ALL_PROPERTIES_INFO_OD = "List all available properties for Log Search and Log Feeder";
-    public static final String GET_LOGSEARCH_PROPERTIES_INFO_OD = "List all available properties for Log Search property file (e.g: logsearch.properties/logfeeder.properties)";
-    public static final String GET_ALL_SHIPPER_CONFIG_INFO_OD = "List all available shipper configuration element";
   }
 
-  public class EventHistoryDescriptions {
-    public static final String FILTER_NAME_D = "The saved query as filter in Solr, search is sopprted by this param";
-    public static final String ROW_TYPE_D = "Row type is solr to identify as filter query";
+  public class MetadataDescriptions {
+    public static final String NAME_D = "Name identifier of the metadata";
+    public static final String TYPE_D = "Type of the metadata";
+    public static final String USER_NAME_D = "User name of the metadata";
   }
 
-  public class EventHistoryOperationDescriptions {
-    public static final String SAVE_EVENT_HISTORY_DATA_OD = "Save event history data";
-    public static final String DELETE_EVENT_HISTORY_DATA_OD = "Delete event history data";
-    public static final String GET_EVENT_HISTORY_DATA_OD = "Get event history data";
-    public static final String GET_ALL_USER_NAMES_OD = "Get all user names";
+  public class MetadataOperationDescriptions {
+    public static final String GET_METADATA_OD = "Get metadata";
+    public static final String GET_METADATA_LIST_OD = "Get metadata list";
+    public static final String SAVE_METADATA_OD = "Save metadata";
+    public static final String SAVE_METADATA_LIST_OD = "Save metadata list";
+    public static final String DELETE_METADATA_OD = "Delete metadata";
+    public static final String DELETE_METADATA_LIST_OD = "Delete metadata list";
   }
 
   public class ShipperConfigOperationDescriptions {
@@ -138,6 +138,6 @@ public class DocConstants {
     public static final String STATUS_OD = "Get statuses for collections (not health state - show true if something already done)";
     public static final String SERVICE_LOGS_STATUS_OD = "Get statuses for service log collection (not health state - show true if something already done)";
     public static final String AUDIT_LOGS_STATUS_OD = "Get statuses for collections (not health state - show true if something already done)";
-    public static final String EVENT_HISTORY_STATUS_OD = "Get statuses for history collection (not health state - show true if something already done)";
+    public static final String METADATA_STATUS_OD = "Get statuses for metadata collection (not health state - show true if something already done)";
   }
 }

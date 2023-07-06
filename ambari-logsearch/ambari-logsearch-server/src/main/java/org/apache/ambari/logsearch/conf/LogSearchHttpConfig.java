@@ -18,11 +18,11 @@
  */
 package org.apache.ambari.logsearch.conf;
 
-import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_PROPERTIES_FILE;
-
 import org.apache.ambari.logsearch.config.api.LogSearchPropertyDescription;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+
+import static org.apache.ambari.logsearch.common.LogSearchConstants.LOGSEARCH_PROPERTIES_FILE;
 
 @Configuration
 public class LogSearchHttpConfig {
@@ -58,14 +58,24 @@ public class LogSearchHttpConfig {
   private String protocol;
 
   @LogSearchPropertyDescription(
-          name = "logsearch.session.timeout",
-          description = "Log Search http session timeout in minutes.",
-          examples = {"300"},
-          defaultValue = "30",
-          sources = {LOGSEARCH_PROPERTIES_FILE}
+    name = "logsearch.session.timeout",
+    description = "Log Search http session timeout in minutes.",
+    examples = {"300"},
+    defaultValue = "30",
+    sources = {LOGSEARCH_PROPERTIES_FILE}
   )
   @Value("${logsearch.session.timeout:30}")
   private Integer sessionTimeout;
+
+  @LogSearchPropertyDescription(
+    name = "logsearch.jetty.access.log.enabled",
+    description = "Enable jetty access logs",
+    examples = {"true"},
+    defaultValue = "false",
+    sources = {LOGSEARCH_PROPERTIES_FILE}
+  )
+  @Value("${logsearch.jetty.access.log.enabled:false}")
+  private boolean useAccessLogs;
 
   public String getProtocol() {
     return protocol;
@@ -97,5 +107,13 @@ public class LogSearchHttpConfig {
 
   public void setSessionTimeout(Integer sessionTimeout) {
     this.sessionTimeout = sessionTimeout;
+  }
+
+  public boolean isUseAccessLogs() {
+    return useAccessLogs;
+  }
+
+  public void setUseAccessLogs(boolean useAccessLogs) {
+    this.useAccessLogs = useAccessLogs;
   }
 }

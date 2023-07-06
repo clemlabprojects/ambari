@@ -24,14 +24,15 @@ import org.apache.ambari.logfeeder.conf.MetricsCollectorConfig;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.metrics2.sink.timeline.AbstractTimelineMetricsSink;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Collection;
 import java.util.List;
 
 // TODO: Refactor for failover
 public class LogFeederAMSClient extends AbstractTimelineMetricsSink {
-  private static final Logger LOG = Logger.getLogger(LogFeederAMSClient.class);
+  private static final Logger logger = LogManager.getLogger(LogFeederAMSClient.class);
 
   private final List<String> collectorHosts;
   private final String collectorProtocol;
@@ -42,7 +43,7 @@ public class LogFeederAMSClient extends AbstractTimelineMetricsSink {
     String collectorHostsString = metricsCollectorConfig.getHostsString();
     if (!StringUtils.isBlank(collectorHostsString)) {
       collectorHostsString = collectorHostsString.trim();
-      LOG.info("AMS collector Hosts=" + collectorHostsString);
+      logger.info("AMS collector Hosts=" + collectorHostsString);
       
       collectorHosts = metricsCollectorConfig.getHosts();
       collectorProtocol = metricsCollectorConfig.getProtocol();

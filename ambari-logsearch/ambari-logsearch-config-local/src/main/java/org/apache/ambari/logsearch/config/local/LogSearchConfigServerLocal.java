@@ -20,7 +20,6 @@ package org.apache.ambari.logsearch.config.local;
 
 import org.apache.ambari.logsearch.config.api.LogSearchConfigServer;
 import org.apache.ambari.logsearch.config.api.model.inputconfig.InputConfig;
-import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilter;
 
 import java.io.File;
 import java.io.IOException;

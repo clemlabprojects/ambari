@@ -15,4 +15,4 @@
   limitations under the License.
 -->
 <i class="fa {{cssClass}}"></i>
-{{logEntry.level}}
+{{('levels.' + (logEntry.level || 'unknown').toLowerCase()) | translate}}

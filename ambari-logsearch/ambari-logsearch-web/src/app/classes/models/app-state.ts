@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 
-import {ActiveServiceLogEntry} from '@app/classes/active-service-log-entry';
-import {ListItem} from '@app/classes/list-item';
-import {DataAvailability, DataAvailabilityValues, LogsType} from '@app/classes/string';
+import { ActiveServiceLogEntry } from '@app/classes/active-service-log-entry';
+import { ListItem } from '@app/classes/list-item';
+import { DataAvailabilityValues, LogsType } from '@app/classes/string';
 
 export interface History {
   items: ListItem[];
@@ -26,10 +26,9 @@ export interface History {
 }
 
 export interface AppState {
-  isAuthorized: boolean;
   isInitialLoading: boolean;
   isLoginInProgress: boolean;
-  baseDataSetState: DataAvailability;
+  baseDataSetState: DataAvailabilityValues;
   activeLogsType?: LogsType;
   isServiceLogsFileView: boolean;
   isServiceLogContextView: boolean;
@@ -39,7 +38,6 @@ export interface AppState {
 }
 
 export const initialState: AppState = {
-  isAuthorized: false,
   isInitialLoading: false,
   isLoginInProgress: false,
   baseDataSetState: DataAvailabilityValues.NOT_AVAILABLE,

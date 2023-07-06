@@ -16,46 +16,49 @@
  * limitations under the License.
  */
 
-import {AbstractControl, ValidatorFn} from '@angular/forms';
-import {ShipperClusterService} from '@modules/shipper/models/shipper-cluster-service.type';
-import {ValidationErrors} from '@angular/forms/src/directives/validators';
-import {BehaviorSubject} from 'rxjs/BehaviorSubject';
+import { AbstractControl, ValidatorFn } from '@angular/forms';
+import { ShipperClusterService } from '@modules/shipper/models/shipper-cluster-service.type';
+import { ValidationErrors } from '@angular/forms/src/directives/validators';
+import { BehaviorSubject } from 'rxjs/BehaviorSubject';
 
 export function configurationValidator(): ValidatorFn {
   return (control: AbstractControl): ValidationErrors | null => {
     try {
-      const json: {[key: string]: any} = JSON.parse(control.value);
+      const json: { [key: string]: any } = JSON.parse(control.value);
       return null;
     } catch (error) {
       return {
-        invalidJSON: {value: control.value}
+        invalidJSON: { value: control.value }
       };
     }
   };
 }
 
-export function uniqueServiceNameValidator(
-  serviceNames: BehaviorSubject<ShipperClusterService[]>
-): ValidatorFn {
+export function uniqueServiceNameValidator(serviceNames: BehaviorSubject<ShipperClusterService[]>): ValidatorFn {
   return (control: AbstractControl): ValidationErrors | null => {
     const services: ShipperClusterService[] = serviceNames.getValue();
-    return services && services.indexOf(control.value) > -1 ? {
-      serviceNameExists: {value: control.value}
-    } : null;
+    return services && services.indexOf(control.value) > -1
+      ? {
+          serviceNameExists: { value: control.value }
+        }
+      : null;
   };
 }
 
-export function getConfigurationServiceValidator(configControl: AbstractControl): ValidatorFn {
+export function getConfigurationServiceValidator(configControl: AbstractControl, valueMapper?: Function): ValidatorFn {
   return (control: AbstractControl): ValidationErrors | null => {
     let components: string[];
     try {
-      const inputs: {[key: string]: any}[] = (configControl.value ? JSON.parse(configControl.value) : {}).input;
+      const inputs: { [key: string]: any }[] = (configControl.value ? JSON.parse(configControl.value) : {}).input;
       components = inputs && inputs.length ? inputs.map(input => input.type) : [];
     } catch (error) {
       components = [];
     }
-    return components.length && components.indexOf(control.value) === -1 ? {
-      serviceNameDoesNotExistInConfiguration: {value: control.value}
-    } : null;
+    const value = valueMapper ? valueMapper(control.value) : control.value;
+    return components.length && components.indexOf(value) === -1
+      ? {
+          serviceNameDoesNotExistInConfiguration: { value: value }
+        }
+      : null;
   };
 }

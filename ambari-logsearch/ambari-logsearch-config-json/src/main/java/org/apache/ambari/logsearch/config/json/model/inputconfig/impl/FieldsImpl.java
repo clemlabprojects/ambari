@@ -38,7 +38,7 @@ public class FieldsImpl implements Fields {
     path = "/filter/[]/conditions/fields/type",
     type = "list of strings",
     description = "The acceptable values for the type field in the input element.",
-    examples = {"ambari_server", "\"spark_jobhistory_server\", \"spark_thriftserver\", \"livy_server\""}
+    examples = {"\"ambari_server\"", "\"spark_jobhistory_server\", \"spark_thriftserver\", \"livy_server\""}
   )
   @Expose
   private Set<String> type;

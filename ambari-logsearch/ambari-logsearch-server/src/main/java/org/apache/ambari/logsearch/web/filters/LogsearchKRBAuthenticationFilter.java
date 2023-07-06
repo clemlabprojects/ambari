@@ -43,8 +43,8 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.ambari.logsearch.conf.LogSearchSpnegoConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -66,9 +66,8 @@ import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
-
 public class LogsearchKRBAuthenticationFilter extends LogsearchKrbFilter {
-  private static final Logger logger = LoggerFactory.getLogger(LogsearchKRBAuthenticationFilter.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchKRBAuthenticationFilter.class);
 
   @Inject
   private LogSearchSpnegoConfig logSearchSpnegoConfig;

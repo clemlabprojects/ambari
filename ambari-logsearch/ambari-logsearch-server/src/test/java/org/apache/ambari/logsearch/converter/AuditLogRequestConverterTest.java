@@ -18,8 +18,6 @@
  */
 package org.apache.ambari.logsearch.converter;
 
-import static org.junit.Assert.assertEquals;
-
 import org.apache.ambari.logsearch.model.request.impl.AuditLogRequest;
 import org.apache.ambari.logsearch.model.request.impl.query.AuditLogQueryRequest;
 import org.apache.solr.client.solrj.SolrQuery;
@@ -27,6 +25,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.springframework.data.solr.core.DefaultQueryParser;
 import org.springframework.data.solr.core.query.SimpleQuery;
+
+import static org.junit.Assert.assertEquals;
 
 public class AuditLogRequestConverterTest extends AbstractRequestConverterTest {
 

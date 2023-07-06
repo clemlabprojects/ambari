@@ -59,4 +59,36 @@
       }
     }
   }
+  .auth-checking-in-progress {
+    align-content: center;
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+  }
+
+  .request-indicator {
+    background: rgba(255,255,255,.7);
+    top: calc(-1 * (3em + .3em));
+    color: @info-color;
+    left: 50%;
+    margin-left: auto;
+    margin-right: auto;
+    opacity: .7;
+    padding: .3em;
+    position: fixed;
+    transition: top 500ms ease-in-out;
+    transform: translateX(-50%);
+    z-index: 1200;
+    &.open {
+      top: 0;
+    }
+    // &:before {
+    //   .circle-spinner(1em, 2px, @info-color);
+    //   content: ' ';
+    //   display: inline-block;
+    //   line-height: 1.1em;
+    // }
+  }
+
 }

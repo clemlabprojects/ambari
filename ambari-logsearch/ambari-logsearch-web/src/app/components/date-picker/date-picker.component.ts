@@ -22,37 +22,18 @@ import {
 import * as $ from 'jquery';
 import * as moment from 'moment';
 import '@vendor/js/bootstrap-datetimepicker.min';
-import {AppSettingsService} from '@app/services/storage/app-settings.service';
 
+import { Subject } from 'rxjs/Subject';
+import { Observable } from 'rxjs/Observable';
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { selectTimeZone } from '@app/store/selectors/user-settings.selectors';
+import { SetUserSettingsAction } from '@app/store/actions/user-settings.actions';
 @Component({
   selector: 'date-picker',
   templateUrl: './date-picker.component.html'
 })
 export class DatePickerComponent implements OnInit, OnChanges, OnDestroy {
-
-  constructor(private appSettings: AppSettingsService) {
-  }
-
-  ngOnInit(): void {
-    this.appSettings.getParameter('timeZone').subscribe((value: string): void => {
-      this.destroyDatePicker();
-      this.timeZone = value;
-      if (this.datePickerElement) {
-        this.createDatePicker();
-      }
-    });
-    this.createDatePicker();
-  }
-
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes.hasOwnProperty('time') && this.datePickerElement) {
-      this.setTime(changes.time.currentValue);
-    }
-  }
-
-  ngOnDestroy(): void {
-    this.destroyDatePicker();
-  }
 
   /**
    * Value of time input field passed from parent component
@@ -71,6 +52,46 @@ export class DatePickerComponent implements OnInit, OnChanges, OnDestroy {
 
   private timeZone: string;
 
+  timeZone$: Observable<string> = this.store.select(selectTimeZone);
+
+  destroyed$: Subject<boolean> = new Subject();
+
+  constructor( private store: Store<AppStore> ) {}
+
+  ngOnInit(): void {
+    this.timeZone$.takeUntil(this.destroyed$).subscribe(this.onTimeZoneSettingsChange);
+    this.createDatePicker();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes.hasOwnProperty('time') && this.datePickerElement) {
+      this.setTime(changes.time.currentValue);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.destroyDatePicker();
+    this.destroyed$.next(true);
+    this.destroyed$.complete();
+  }
+
+  /**
+   * Set value to time input field
+   * @param {Moment|Date|string} time
+   */
+  private setTime(time: moment.Moment | Date | string): void {
+    const timeMoment = moment.isMoment(time) ? time : moment(time);
+    this.datePickerElement.data('DateTimePicker').date(timeMoment);
+  }
+
+  onTimeZoneSettingsChange = (timeZone: string): void => {
+    this.destroyDatePicker();
+    this.timeZone = timeZone;
+    if (this.datePickerElement) {
+      this.createDatePicker();
+    }
+  }
+
   private createDatePicker(): void {
     this.datePickerElement = $(this.datePicker.nativeElement);
     this.datePickerElement.datetimepicker({
@@ -85,15 +106,6 @@ export class DatePickerComponent implements OnInit, OnChanges, OnDestroy {
     if (datePicker) {
       datePicker.data('DateTimePicker').destroy();
     }
-  }
-
-  /**
-   * Set value to time input field
-   * @param {Moment|Date|string} time
-   */
-  private setTime(time: moment.Moment | Date | string): void {
-    const timeMoment = moment.isMoment(time) ? time : moment(time);
-    this.datePickerElement.data('DateTimePicker').date(timeMoment);
   }
 
 }

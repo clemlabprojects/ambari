@@ -23,19 +23,13 @@ public class LogFeederConstants {
   public static final String ALL = "all";
   public static final String LOGFEEDER_FILTER_NAME = "log_feeder_config";
   public static final String LOG_LEVEL_UNKNOWN = "UNKNOWN";
-  
+
+  public static final String CLOUD_PREFIX = "cl-";
+
   // solr fields
   public static final String SOLR_LEVEL = "level";
   public static final String SOLR_COMPONENT = "type";
   public static final String SOLR_HOST = "host";
-
-  // Event History Constants History
-  public static final String VALUES = "jsons";
-  public static final String ROW_TYPE = "rowtype";
-  
-  // S3 Constants
-  public static final String S3_PATH_START_WITH = "s3://";
-  public static final String S3_PATH_SEPARATOR = "/";
 
   public static final String IN_MEMORY_TIMESTAMP = "in_memory_timestamp";
 
@@ -104,7 +98,57 @@ public class LogFeederConstants {
   public static final String MONITOR_SOLR_FILTER_STORAGE_PROPERTY = "logfeeder.configs.filter.solr.monitor.enabled";
   public static final boolean MONITOR_SOLR_FILTER_STORAGE_DEFAULT = true;
 
+  public static final String MONITOR_SOLR_FILTER_INTERVAL_PROPERTY = "logfeeder.configs.filter.solr.monitor.interval";
+
   public static final String SOLR_ZK_CONNECTION_STRING = "logfeeder.solr.zk_connect_string";
   public static final String SOLR_URLS = "logfeeder.solr.urls";
+  public static final String SOLR_CLOUD_DISCOVER = "logfeeder.solr.cloud.client.discover";
+  public static final String SOLR_METADATA_COLLECTION = "logfeeder.solr.metadata.collection";
+
+  public static final String CLOUD_STORAGE_MODE = "logfeeder.cloud.storage.mode";
+  public static final String CLOUD_STORAGE_DESTINATION = "logfeeder.cloud.storage.destination";
+  public static final String CLOUD_STORAGE_UPLOAD_ON_SHUTDOWN = "logfeeder.cloud.storage.upload.on.shutdown";
+  public static final String CLOUD_STORAGE_UPLOADER_TIMEOUT_MINUTUES = "logfeeder.cloud.storage.uploader.timeout.minutes";
+  public static final String CLOUD_STORAGE_UPLOADER_INTERVAL_SECONDS = "logfeeder.cloud.storage.uploader.interval.seconds";
+  public static final String CLOUD_STORAGE_BUCKET = "logfeeder.cloud.storage.bucket";
+  public static final String CLOUD_STORAGE_BUCKET_BOOTSTRAP = "logfeeder.cloud.storage.bucket.bootstrap";
+  public static final String CLOUD_STORAGE_USE_HDFS_CLIENT = "logfeeder.cloud.storage.use.hdfs.client";
+  public static final String CLOUD_STORAGE_USE_FILTERS = "logfeeder.cloud.storage.use.filters";
+  public static final String CLOUD_STORAGE_CUSTOM_FS = "logfeeder.cloud.storage.custom.fs";
+  public static final String CLOUD_STORAGE_BASE_PATH = "logfeeder.cloud.storage.base.path";
+
+  public static final String CLOUD_ROLLOVER_ARCHIVE_LOCATION = "logfeeder.cloud.rollover.archive.base.dir";
+  public static final String CLOUD_ROLLOVER_THRESHOLD_TIME_MIN = "logfeeder.cloud.rollover.threshold.min";
+  public static final String CLOUD_ROLLOVER_THRESHOLD_TIME_SIZE = "logfeeder.cloud.rollover.threshold.size";
+  public static final String CLOUD_ROLLOVER_MAX_BACKUP_FILES = "logfeeder.cloud.rollover.max.files";
+  public static final String CLOUD_ROLLOVER_THRESHOLD_TIME_SIZE_UNIT = "logfeeder.cloud.rollover.threshold.size.unit";
+  public static final String CLOUD_ROLLOVER_USE_GZIP = "logfeeder.cloud.rollover.use.gzip";
+  public static final String CLOUD_ROLLOVER_IMMEDIATE_FLUSH = "logfeeder.cloud.rollover.immediate.flush";
+  public static final String CLOUD_ROLLOVER_ON_SHUTDOWN = "logfeeder.cloud.rollover.on.shutdown";
+  public static final String CLOUD_ROLLOVER_ON_STARTUP = "logfeeder.cloud.rollover.on.startup";
+
+  public static final String HDFS_USER = "logfeeder.hdfs.user";
+
+  public static final String HDFS_HOST = "logfeeder.hdfs.host";
+  public static final String HDFS_PORT = "logfeeder.hdfs.port";
+  public static final String HDFS_FILE_PERMISSIONS = "logfeeder.hdfs.file.permissions";
+  public static final String HDFS_KERBEROS = "logfeeder.hdfs.kerberos";
+  public static final String HDFS_KERBEROS_KEYTAB = "logfeeder.hdfs.keytab";
+  public static final String HDFS_KERBEROS_PRINCIPAL = "logfeeder.hdfs.principal";
+
+  public static final String S3_ENDPOINT = "logfeeder.s3.endpoint";
+  public static final String S3_ENDPOINT_DEFAULT = "https://s3.amazonaws.com";
+  public static final String S3_REGION = "logfeeder.s3.region";
+  public static final String S3_OBJECT_ACL = "logfeeder.s3.object.acl";
+  public static final String S3_PATH_STYLE_ACCESS = "logfeeder.s3.path.style.access";
+  public static final String S3_MULTIOBJECT_DELETE_ENABLE = "logfeeder.s3.multiobject.delete.enable";
+  public static final String S3_SECRET_KEY = "logfeeder.s3.secret.key";
+  public static final String S3_ACCESS_KEY = "logfeeder.s3.access.key";
+  public static final String S3_SECRET_KEY_FILE = "logfeeder.s3.secret.key.file";
+  public static final String S3_ACCESS_KEY_FILE = "logfeeder.s3.access.key.file";
+  public static final String S3_USE_FILE = "logfeeder.s3.credentials.file.enabled";
+  public static final String S3_USE_HADOOP_CREDENTIAL_PROVIDER = "logfeeder.s3.credentials.hadoop.enabled";
+  public static final String S3_HADOOP_CREDENTIAL_SECRET_REF = "logfeeder.s3.credentials.hadoop.secret.ref";
+  public static final String S3_HADOOP_CREDENTIAL_ACCESS_REF = "logfeeder.s3.credentials.hadoop.access.ref";
 
 }

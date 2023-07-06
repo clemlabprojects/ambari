@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
+ * 
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * 
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -27,7 +27,8 @@ import javax.ws.rs.core.Response;
 import org.apache.ambari.logsearch.conf.AuthPropsConfig;
 import org.apache.ambari.logsearch.configurer.SslConfigurer;
 import org.apache.http.auth.InvalidCredentialsException;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.glassfish.jersey.client.JerseyClient;
 import org.glassfish.jersey.client.JerseyClientBuilder;
 import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
@@ -41,7 +42,7 @@ public class ExternalServerClient {
   @Inject
   private SslConfigurer sslConfigurer;
 
-  private static Logger LOG = Logger.getLogger(ExternalServerClient.class);
+  private static final Logger logger = LogManager.getLogger(ExternalServerClient.class);
   private ThreadLocal<JerseyClient> localJerseyClient;
 
   @Inject
@@ -49,20 +50,21 @@ public class ExternalServerClient {
 
   /**
    * Send GET request to an external server
+   * @param loginUrl external url
+   * @param classObject response object type
+   * @param username basic auth credential user
+   * @param password basic auth credential password
+   * @return response
+   * @throws Exception error during send request to external location
    */
-  public Object sendGETRequest(String loginUrl, Class<?> klass, String username, String password) throws Exception {
+  public Object sendGETRequest(String loginUrl, Class<?> classObject, String username, String password) throws Exception {
     if (localJerseyClient == null) {
       if (sslConfigurer.isKeyStoreSpecified()) {
         sslConfigurer.ensureStorePasswords();
       }
-      localJerseyClient = new ThreadLocal<JerseyClient>() {
-        @Override
-        protected JerseyClient initialValue() {
-          return sslConfigurer.isKeyStoreSpecified() ?
-            new JerseyClientBuilder().sslContext(sslConfigurer.getSSLContext()).build() :
-            JerseyClientBuilder.createClient();
-        }
-      };
+      localJerseyClient = ThreadLocal.withInitial(() -> sslConfigurer.isKeyStoreSpecified() ?
+        new JerseyClientBuilder().sslContext(sslConfigurer.getSSLContext()).build() :
+        JerseyClientBuilder.createClient());
     }
     String url = authPropsConfig.getExternalAuthHostUrl() + loginUrl;
     JerseyClient client = localJerseyClient.get();
@@ -72,8 +74,8 @@ public class ExternalServerClient {
     client.register(authFeature);
 
     WebTarget target = client.target(url);
-    LOG.debug("URL: " + url);
-
+    logger.debug("URL: " + url);
+    
     Invocation.Builder invocationBuilder =  target.request();
     try {
       Response response = invocationBuilder.get();
@@ -82,7 +84,7 @@ public class ExternalServerClient {
         throw new InvalidCredentialsException(String.format("External auth failed with status code: %d, response: %s",
           response.getStatus(), response.readEntity(String.class)));
       }
-      return response.readEntity(klass);
+      return response.readEntity(classObject);
     } catch (Exception e) {
       throw new Exception(e.getCause());
     } finally {

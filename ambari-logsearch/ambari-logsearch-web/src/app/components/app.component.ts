@@ -16,23 +16,43 @@
  * limitations under the License.
  */
 
-import {Component} from '@angular/core';
-import {AppStateService} from '@app/services/storage/app-state.service';
-import {Observable} from 'rxjs/Observable';
-import {Options} from 'angular2-notifications/src/options.type';
-import {notificationIcons} from '@modules/shared/services/notification.service';
-import { DataAvailability, DataAvailabilityValues } from '@app/classes/string';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Observable } from 'rxjs/Observable';
+import { Subject } from 'rxjs/Subject';
+
+import { Options } from 'angular2-notifications/src/options.type';
+
+import { AppStateService } from '@app/services/storage/app-state.service';
+import { DataAvailabilityValues } from '@app/classes/string';
+import { notificationIcons } from '@modules/shared/services/notification.service';
+
+import { Store } from '@ngrx/store';
+import { AppStore } from '@app/classes/models/store';
+import { AuthorizationStatuses } from '@app/store/reducers/auth.reducers';
+import { isAuthorizedSelector, selectAuthStatus, isCheckingAuthStatusInProgressSelector } from '@app/store/selectors/auth.selectors';
+
+import { HttpClientService } from '@app/services/http-client.service';
 
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
-  styleUrls: ['./app.component.less', '../modules/shared/notifications.less']
+  styleUrls: ['./app.component.less', '../modules/shared/notifications.less'],
+  host: {
+    '[class]': 'hostCssClasses'
+  }
 })
-export class AppComponent {
+export class AppComponent implements OnInit, OnDestroy {
 
-  isAuthorized$: Observable<boolean> = this.appState.getParameter('isAuthorized');
+  authorizationStatuses = AuthorizationStatuses;
+
+  isAuthorized$: Observable<boolean> = this.store.select(isAuthorizedSelector);
+  authorizationStatus$: Observable<AuthorizationStatuses> = this.store.select(selectAuthStatus);
+  isCheckingAuthStatusInProgress$: Observable<boolean> = this.store.select(isCheckingAuthStatusInProgressSelector);
+  authorizationCode$: Observable<number> = this.appState.getParameter('authorizationCode');
   isBaseDataAvailable$: Observable<boolean> = this.appState.getParameter('baseDataSetState')
-    .map((dataSetState: DataAvailability) => dataSetState === DataAvailabilityValues.AVAILABLE);
+    .map((dataSetState: DataAvailabilityValues) => dataSetState === DataAvailabilityValues.AVAILABLE);
+
+  destroyed$ = new Subject();
 
   notificationServiceOptions: Options = {
     timeOut: 2000,
@@ -44,8 +64,28 @@ export class AppComponent {
     position: ['top', 'left']
   };
 
+  hostCssClasses = '';
+
   constructor(
-    private appState: AppStateService
+    private appState: AppStateService,
+    public httpClient: HttpClientService,
+    private store: Store<AppStore>
   ) {}
+
+  ngOnInit() {
+    this.authorizationStatus$.distinctUntilChanged().takeUntil(this.destroyed$).subscribe(this.onAuthStatusChange);
+  }
+
+  ngOnDestroy() {
+    this.destroyed$.next(true);
+  }
+
+  onAuthStatusChange = (status: AuthorizationStatuses): void => {
+    this.setHostCssClasses(status ? status.replace(/\s/, '-').toLocaleLowerCase() : '');
+  }
+
+  setHostCssClasses(cls: string) {
+    this.hostCssClasses = cls;
+  }
 
 }

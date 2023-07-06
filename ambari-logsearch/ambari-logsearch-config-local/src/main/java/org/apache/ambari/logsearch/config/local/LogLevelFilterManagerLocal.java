@@ -22,8 +22,8 @@ import com.google.gson.Gson;
 import org.apache.ambari.logsearch.config.api.LogLevelFilterManager;
 import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilter;
 import org.apache.ambari.logsearch.config.api.model.loglevelfilter.LogLevelFilterMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.io.FilenameFilter;
@@ -40,7 +40,7 @@ import java.util.TreeMap;
  */
 public class LogLevelFilterManagerLocal implements LogLevelFilterManager {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogLevelFilterManagerLocal.class);
+  private static final Logger logger = LogManager.getLogger(LogLevelFilterManagerLocal.class);
 
   private final String configDir;
   private final Gson gson;
@@ -75,7 +75,7 @@ public class LogLevelFilterManagerLocal implements LogLevelFilterManager {
         if (!logLevelFilterJson.equals(currentLogLevelFilterJson)) {
           byte[] data = logLevelFilterJson.getBytes(StandardCharsets.UTF_8);
           Files.write(filePath, data);
-          LOG.info("Set log level filter for the log " + e.getKey() + " for cluster " + clusterName);
+          logger.info("Set log level filter for the log " + e.getKey() + " for cluster " + clusterName);
         }
       }
     }

@@ -36,11 +36,11 @@ import org.apache.curator.framework.recipes.cache.TreeCacheListener;
 import org.apache.curator.retry.RetryForever;
 import org.apache.curator.retry.RetryUntilElapsed;
 import org.apache.curator.utils.ZKPaths;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Id;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +52,7 @@ import java.util.Set;
  */
 public class LogSearchConfigZKHelper {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LogSearchConfigZKHelper.class);
+  private static final Logger logger = LogManager.getLogger(LogSearchConfigZKHelper.class);
 
   private static final int DEFAULT_SESSION_TIMEOUT = 60000;
   private static final int DEFAULT_CONNECTION_TIMEOUT = 30000;
@@ -116,10 +116,12 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Create ZK curator client from a configuration (map holds the configs for that)
+   * @param properties key/value pairs that holds configurations for the zookeeper client
+   * @return zookeeper client
    */
   public static CuratorFramework createZKClient(Map<String, String> properties) {
     String root = MapUtils.getString(properties, ZK_ROOT_NODE_PROPERTY, DEFAULT_ZK_ROOT);
-    LOG.info("Connecting to ZooKeeper at " + properties.get(ZK_CONNECT_STRING_PROPERTY) + root);
+    logger.info("Connecting to ZooKeeper at " + properties.get(ZK_CONNECT_STRING_PROPERTY) + root);
     return CuratorFrameworkFactory.builder()
       .connectString(properties.get(ZK_CONNECT_STRING_PROPERTY) + root)
       .retryPolicy(getRetryPolicy(properties.get(ZK_CONNECTION_RETRY_TIMEOUT_PROPERTY)))
@@ -130,6 +132,8 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Get ACLs from a property (get the value then parse and transform it as ACL objects)
+   * @param properties key/value pairs that needs to be parsed as ACLs
+   * @return list of ACLs
    */
   public static List<ACL> getAcls(Map<String, String> properties) {
     String aclStr = properties.get(ZK_ACLS_PROPERTY);
@@ -165,6 +169,10 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Create listener for znode of log level filters - can be used for Log Feeder as it can be useful if it's monitoring the log level changes
+   * @param clusterName name of the cluster
+   * @param gson object to be used for json serialization
+   * @param logLevelFilterMonitor log level filter monitor object that can be used to do something during znode chagne
+   * @return listener response
    */
   public static TreeCacheListener createTreeCacheListener(String clusterName, Gson gson, LogLevelFilterMonitor logLevelFilterMonitor) {
     return new TreeCacheListener() {
@@ -188,6 +196,9 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Create root + cluster name znode cache
+   * @param client zookeeper client
+   * @param clusterName name of the cluster
+   * @return znode cache
    */
   public static TreeCache createClusterCache(CuratorFramework client, String clusterName) {
     return new TreeCache(client, String.format("/%s", clusterName));
@@ -195,6 +206,9 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Assign listener to cluster cache and start to use that listener
+   * @param clusterCache zookeeper znode cache (cluster)
+   * @param listener znode cache listener - trigger on events
+   * @throws Exception error during assinging the listener to the cache
    */
   public static void addAndStartListenersOnCluster(TreeCache clusterCache, TreeCacheListener listener) throws Exception {
     clusterCache.getListenable().addListener(listener);
@@ -203,25 +217,30 @@ public class LogSearchConfigZKHelper {
 
   public static void waitUntilRootAvailable(CuratorFramework client) throws Exception {
     while (client.checkExists().forPath("/") == null) {
-      LOG.info("Root node is not present yet, going to sleep for " + WAIT_FOR_ROOT_SLEEP_SECONDS + " seconds");
+      logger.info("Root node is not present yet, going to sleep for " + WAIT_FOR_ROOT_SLEEP_SECONDS + " seconds");
       Thread.sleep(WAIT_FOR_ROOT_SLEEP_SECONDS * 1000);
     }
   }
 
   /**
    * Call log level filter monitor interface to handle node related operations (on update/remove)
+   * @param eventType zookeeper event type (add/update/remove)
+   * @param nodeName name of the znode
+   * @param nodeData znode data
+   * @param gson object that can serialize inputs
+   * @param logLevelFilterMonitor monitor object that can pass business logic that should happen during znode events
    */
-  public static void handleLogLevelFilterChange(final TreeCacheEvent.Type eventType, final String nodeName, final String nodeData,
+  static void handleLogLevelFilterChange(final TreeCacheEvent.Type eventType, final String nodeName, final String nodeData,
                                                 final Gson gson, final LogLevelFilterMonitor logLevelFilterMonitor) {
     switch (eventType) {
       case NODE_ADDED:
       case NODE_UPDATED:
-        LOG.info("Node added/updated under loglevelfilter ZK node: " + nodeName);
+        logger.info("Node added/updated under loglevelfilter ZK node: " + nodeName);
         LogLevelFilter logLevelFilter = gson.fromJson(nodeData, LogLevelFilter.class);
         logLevelFilterMonitor.setLogLevelFilter(nodeName, logLevelFilter);
         break;
       case NODE_REMOVED:
-        LOG.info("Node removed loglevelfilter input ZK node: " + nodeName);
+        logger.info("Node removed loglevelfilter input ZK node: " + nodeName);
         logLevelFilterMonitor.removeLogLevelFilter(nodeName);
         break;
       default:
@@ -231,6 +250,8 @@ public class LogSearchConfigZKHelper {
 
   /**
    * Pares ZK ACL permission string and transform it to an integer
+   * @param permission string input (permission) that will be transformed to an integer
+   * @return Integer code of a zookeeper ACL
    */
   public static Integer parsePermission(String permission) {
     int permissionCode = 0;

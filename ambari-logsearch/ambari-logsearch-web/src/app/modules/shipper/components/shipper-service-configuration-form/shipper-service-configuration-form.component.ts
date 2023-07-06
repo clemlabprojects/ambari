@@ -16,23 +16,34 @@
  * limitations under the License.
  */
 
-import {ChangeDetectorRef, Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output, SimpleChanges} from '@angular/core';
-import {AbstractControl, FormBuilder, FormGroup, ValidatorFn, Validators} from '@angular/forms';
-import {Observable} from 'rxjs/Observable';
-import {Subject} from 'rxjs/Subject';
-import {Observer} from 'rxjs/Observer';
+import {
+  ChangeDetectorRef,
+  Component,
+  EventEmitter,
+  Input,
+  OnChanges,
+  OnDestroy,
+  OnInit,
+  Output,
+  SimpleChanges
+} from '@angular/core';
+import { AbstractControl, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
+import { Observable } from 'rxjs/Observable';
+import { Subject } from 'rxjs/Subject';
+import { Observer } from 'rxjs/Observer';
 import 'rxjs/add/operator/startWith';
 
-import {CanComponentDeactivate} from '@modules/shared/services/can-deactivate-guard.service';
+import { CanComponentDeactivate } from '@modules/shared/services/can-deactivate-guard.service';
 
-import {ShipperCluster} from '../../models/shipper-cluster.type';
-import {ShipperClusterService} from '../../models/shipper-cluster-service.type';
-import {ShipperClusterServiceConfigurationInterface} from '../../models/shipper-cluster-service-configuration.interface';
-import {ShipperConfigurationModel} from '../../models/shipper-configuration.model';
+import { ShipperCluster } from '../../models/shipper-cluster.type';
+import { ShipperClusterService } from '../../models/shipper-cluster-service.type';
+import { ShipperClusterServiceConfigurationInterface } from '../../models/shipper-cluster-service-configuration.interface';
+import { ShipperConfigurationModel } from '../../models/shipper-configuration.model';
 import * as formValidators from '../../directives/validator.directive';
-import {BehaviorSubject} from 'rxjs/BehaviorSubject';
-import {Subscription} from 'rxjs/Subscription';
-import {ActivatedRoute} from '@angular/router';
+import { BehaviorSubject } from 'rxjs/BehaviorSubject';
+import { Subscription } from 'rxjs/Subscription';
+import { ActivatedRoute } from '@angular/router';
+import { ListItem } from '@app/classes/list-item';
 
 @Component({
   selector: 'shipper-configuration-form',
@@ -40,7 +51,6 @@ import {ActivatedRoute} from '@angular/router';
   styleUrls: ['./shipper-service-configuration-form.component.less']
 })
 export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestroy, OnChanges, CanComponentDeactivate {
-
   private configurationForm: FormGroup;
   private validatorForm: FormGroup;
 
@@ -57,7 +67,7 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
   existingServiceNames: Observable<ShipperClusterService[]> | ShipperClusterService[];
 
   @Input()
-  validationResponse: {[key: string]: any};
+  validationResponse: { [key: string]: any };
 
   @Input()
   disabled = false;
@@ -69,6 +79,7 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
   validationSubmit: EventEmitter<FormGroup> = new EventEmitter<FormGroup>();
 
   private configurationComponents$: Observable<string[]>;
+  private configurationComponentsList$: Observable<ListItem[]>;
 
   private isLeavingDirtyForm = false;
 
@@ -94,17 +105,19 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
 
   private canDeactivateModalResult: Subject<boolean> = new Subject<boolean>();
 
-  private canDeactivateObservable$: Observable<boolean> = Observable.create((observer: Observer<boolean>)  => {
-    this.subscriptions.push(
-      this.canDeactivateModalResult.subscribe((result: boolean) => {
-        observer.next(result);
-      })
-    );
+  private canDeactivateObservable$: Observable<boolean> = Observable.create((observer: Observer<boolean>) => {
+    this.canDeactivateModalResult.takeUntil(this.destroyed$).subscribe((result: boolean) => {
+      observer.next(result);
+    });
   });
 
-  private serviceNamesListSubject: BehaviorSubject<ShipperClusterService[]> = new BehaviorSubject<ShipperClusterService[]>([]);
+  private serviceNamesListSubject: BehaviorSubject<ShipperClusterService[]> = new BehaviorSubject<
+    ShipperClusterService[]
+  >([]);
 
   private subscriptions: Subscription[] = [];
+
+  private destroyed$ = new Subject();
 
   constructor(
     private formBuilder: FormBuilder,
@@ -118,33 +131,52 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
 
   ngOnInit() {
     this.subscriptions.push(
-      this.activatedRoute.params.map(params => params.service).subscribe((service) => {
-        this.serviceName = service;
-      })
+      this.activatedRoute.params
+        .map(params => params.service)
+        .subscribe(service => {
+          this.serviceName = service;
+        })
     );
     if (!this.serviceName) {
       this.configurationForm.controls.serviceName.setValidators([
         Validators.required,
         formValidators.uniqueServiceNameValidator(this.serviceNamesListSubject)
       ]);
-      this.changeDetectionRef.detectChanges();
     }
-    this.configurationComponents$ = this.configurationForm.controls.configuration.valueChanges.map((newValue: string): string[] => {
-      let components: string[];
-      try {
-        const inputs: {[key: string]: any}[] = (newValue ? JSON.parse(newValue) : {}).input;
-        components = inputs && inputs.length ? inputs.map(input => input.type) : [];
-      } catch (error) {
-        components = [];
-      }
-      return components;
-    }).startWith([]);
+    this.configurationComponents$ = this.configurationForm.controls.configuration.valueChanges
+      .map(
+        (newValue: string): string[] => {
+          let components: string[];
+          try {
+            const inputs: { [key: string]: any }[] = (newValue ? JSON.parse(newValue) : {}).input;
+            components = inputs && inputs.length ? inputs.map(input => input.type) : [];
+          } catch (error) {
+            components = [];
+          }
+          return components || [];
+        }
+      )
+      .startWith([]);
+    this.configurationComponentsList$ = this.configurationComponents$
+      .map(
+        (components: string[]): ListItem[] =>
+          components
+            .filter((component: string) => component)
+            .map(
+              (component: string, index: number): ListItem => {
+                return {
+                  value: component,
+                  label: component,
+                  isChecked: index === 0
+                };
+              }
+            )
+      )
+      .startWith([]);
     if (this.existingServiceNames instanceof Observable) {
-      this.subscriptions.push(
-        this.existingServiceNames.subscribe((serviceNames: ShipperClusterService[]) => {
-          this.serviceNamesListSubject.next(serviceNames);
-        })
-      );
+      this.existingServiceNames.takeUntil(this.destroyed$).subscribe((serviceNames: ShipperClusterService[]) => {
+        this.serviceNamesListSubject.next(serviceNames);
+      });
     } else {
       this.serviceNamesListSubject.next(this.existingServiceNames);
     }
@@ -168,7 +200,11 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
         }
       });
     }
-    if (this.validatorForm && changes.clusterName && this.validatorForm.controls.clusterName.value !== changes.clusterName.currentValue) {
+    if (
+      this.validatorForm &&
+      changes.clusterName &&
+      this.validatorForm.controls.clusterName.value !== changes.clusterName.currentValue
+    ) {
       this.validatorForm.controls.clusterName.setValue(changes.clusterName.currentValue);
       this.validatorForm.markAsPristine();
     }
@@ -178,17 +214,18 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
     if (this.subscriptions) {
       this.subscriptions.forEach(subscription => subscription.unsubscribe());
     }
+    this.destroyed$.next(true);
   }
 
   leaveDirtyFormConfirmed = () => {
     this.canDeactivateModalResult.next(true);
     this.isLeavingDirtyForm = false;
-  }
+  };
 
   leaveDirtyFormCancelled = () => {
     this.canDeactivateModalResult.next(false);
     this.isLeavingDirtyForm = false;
-  }
+  };
 
   canDeactivate(): Observable<boolean> {
     if (this.configurationForm.pristine) {
@@ -203,39 +240,33 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
   }
 
   createForms(): void {
-    const configuration: ShipperClusterServiceConfigurationInterface = this.configuration || (
-      this.serviceName ? this.configuration : new ShipperConfigurationModel()
-    );
+    const configuration: ShipperClusterServiceConfigurationInterface =
+      this.configuration || (this.serviceName ? this.configuration : new ShipperConfigurationModel());
     this.configurationForm = this.formBuilder.group({
       clusterName: this.formBuilder.control(this.clusterName, Validators.required),
-      serviceName: this.formBuilder.control(
-        this.serviceName,
-        [Validators.required]
-      ),
-      configuration: this.formBuilder.control(
-        this.getConfigurationAsString(configuration),
-        [Validators.required, formValidators.configurationValidator()]
-      )
+      serviceName: this.formBuilder.control(this.serviceName, [Validators.required]),
+      configuration: this.formBuilder.control(this.getConfigurationAsString(configuration), [
+        Validators.required,
+        formValidators.configurationValidator()
+      ])
     });
 
     this.validatorForm = this.formBuilder.group({
-      clusterName: this.formBuilder.control(
-        this.clusterName,
-        [Validators.required]
-      ),
+      clusterName: this.formBuilder.control(this.clusterName, [Validators.required]),
       componentName: this.formBuilder.control('', [
         Validators.required,
-        formValidators.getConfigurationServiceValidator(this.configurationForm.controls.configuration)
+        formValidators.getConfigurationServiceValidator(
+          this.configurationForm.controls.configuration,
+          listItem => listItem && listItem.length && listItem[0].value
+        )
       ]),
       sampleData: this.formBuilder.control('', Validators.required),
       configuration: this.formBuilder.control('', Validators.required)
     });
-    this.subscriptions.push(
-      this.configurationForm.valueChanges.subscribe(() => {
-        this.validatorForm.controls.componentName.updateValueAndValidity();
-        this.validatorForm.controls.configuration.setValue(this.configurationForm.controls.configuration.value);
-      })
-    );
+    this.configurationForm.valueChanges.takeUntil(this.destroyed$).subscribe(() => {
+      this.validatorForm.controls.componentName.updateValueAndValidity();
+      this.validatorForm.controls.configuration.setValue(this.configurationForm.controls.configuration.value);
+    });
   }
 
   onConfigurationSubmit(): void {
@@ -249,5 +280,4 @@ export class ShipperServiceConfigurationFormComponent implements OnInit, OnDestr
       this.validationSubmit.emit(this.validatorForm);
     }
   }
-
 }

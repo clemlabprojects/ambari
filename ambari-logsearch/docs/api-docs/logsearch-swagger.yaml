@@ -1,0 +1,4839 @@
+---
+swagger: "2.0"
+info:
+  description: "Log aggregation, analysis, and visualization."
+  version: "1.0.0"
+  title: "Log Search REST API"
+  license:
+    name: "Apache 2.0"
+    url: "http://www.apache.org/licenses/LICENSE-2.0.html"
+basePath: "/api/v1"
+tags:
+- name: "auditlogs"
+- name: "info"
+- name: "metadata"
+- name: "servicelogs"
+- name: "shipper"
+- name: "status"
+schemes:
+- "http"
+- "https"
+paths:
+  /audit/logs/schema/fields:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get list of schema fields in audit collection"
+      description: ""
+      operationId: "getSolrFieldListGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/AuditFieldMetadataResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get list of schema fields in audit collection"
+      description: ""
+      operationId: "getSolrFieldListPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/AuditFieldMetadataResponse"
+      security:
+      - basicAuth: []
+  /audit/logs:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get the list of logs details"
+      description: ""
+      operationId: "getAuditLogsGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "userList"
+        in: "query"
+        description: "Filter for users (comma separated list)"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/AuditLogResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get the list of logs details"
+      description: ""
+      operationId: "getAuditLogsPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/AuditLogBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/AuditLogResponse"
+      security:
+      - basicAuth: []
+    delete:
+      tags:
+      - "auditlogs"
+      summary: "Purge service logs based by criteria"
+      description: ""
+      operationId: "deleteAuditLogs"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/AuditLogBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/StatusMessage"
+      security:
+      - basicAuth: []
+  /audit/logs/components:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get the list of audit components currently active or having data in\
+        \ Solr"
+      description: ""
+      operationId: "getAuditComponentsGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusters"
+        in: "query"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              type: "string"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get the list of audit components currently active or having data in\
+        \ Solr"
+      description: ""
+      operationId: "getAuditComponentsPost"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ClusterBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              type: "string"
+      security:
+      - basicAuth: []
+  /audit/logs/bargraph:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get the data required for line graph"
+      description: ""
+      operationId: "getAuditBarGraphDataGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "userList"
+        in: "query"
+        description: "Filter for users (comma separated list)"
+        required: false
+        type: "string"
+      - name: "unit"
+        in: "query"
+        description: "Aggregate the data with time gap as unit i.e 1MINUTE"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get the data required for line graph"
+      description: ""
+      operationId: "getAuditBarGraphDataPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/AuditBarGraphBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+  /audit/logs/resources/{top}:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get the top audit resource count (grouped by type)"
+      description: ""
+      operationId: "getResourcesGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "field"
+        in: "query"
+        description: "Get values for particular field"
+        required: true
+        type: "string"
+      - name: "userList"
+        in: "query"
+        description: "Filter for users (comma separated list)"
+        required: false
+        type: "string"
+      - name: "top"
+        in: "path"
+        description: "Number that defines how many top element you would like to see."
+        required: true
+        type: "integer"
+        format: "int32"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get the top audit resource count (grouped by type)"
+      description: ""
+      operationId: "getResourcesPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/TopFieldAuditLogBodyRequest"
+      - name: "top"
+        in: "path"
+        required: true
+        type: "integer"
+        format: "int32"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+  /audit/logs/export:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Export the tables shown on Audit tab"
+      description: ""
+      operationId: "exportUserTableToTextFileGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "field"
+        in: "query"
+        description: "Get values for particular field"
+        required: true
+        type: "string"
+      - name: "userList"
+        in: "query"
+        description: "Filter for users (comma separated list)"
+        required: false
+        type: "string"
+      - name: "format"
+        in: "query"
+        description: "File Export format, can be 'txt' or 'json'"
+        required: false
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Export the tables shown on Audit tab"
+      description: ""
+      operationId: "exportUserTableToTextFilePost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/UserExportBodyRequest"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /audit/logs/serviceload:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "The graph for showing the top users accessing the services"
+      description: ""
+      operationId: "getServiceLoadGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "userList"
+        in: "query"
+        description: "Filter for users (comma separated list)"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "The graph for showing the top users accessing the services"
+      description: ""
+      operationId: "getServiceLoadPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/AuditServiceLoadBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+  /audit/logs/clusters:
+    get:
+      tags:
+      - "auditlogs"
+      summary: "Get all of the clusters for audit logs"
+      description: ""
+      operationId: "getClustersForAuditLogGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              type: "string"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "auditlogs"
+      summary: "Get all of the clusters for audit logs"
+      description: ""
+      operationId: "getClustersForAuditLogPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              type: "string"
+      security:
+      - basicAuth: []
+  /info/features:
+    get:
+      tags:
+      - "info"
+      summary: "Get features list."
+      description: ""
+      operationId: "getFeatures"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              type: "object"
+  /info:
+    get:
+      tags:
+      - "info"
+      summary: "Get application details."
+      description: ""
+      operationId: "getApplicationInfo"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              type: "string"
+  /info/features/auth:
+    get:
+      tags:
+      - "info"
+      summary: "Get authentication details."
+      description: ""
+      operationId: "getAuthInfo"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              type: "boolean"
+  /metadata/list:
+    get:
+      tags:
+      - "metadata"
+      summary: "Get metadata list"
+      description: ""
+      operationId: "getMetadataList"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "name"
+        in: "query"
+        description: "Name identifier of the metadata"
+        required: false
+        type: "string"
+      - name: "type"
+        in: "query"
+        description: "Type of the metadata"
+        required: true
+        type: "string"
+      - name: "userName"
+        in: "query"
+        description: "User name of the metadata"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/LogsearchMetaData"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "metadata"
+      summary: "Save metadata list"
+      description: ""
+      operationId: "saveMetadataList"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          type: "array"
+          items:
+            $ref: "#/definitions/LogsearchMetaData"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "string"
+      security:
+      - basicAuth: []
+    delete:
+      tags:
+      - "metadata"
+      summary: "Delete metadata list"
+      description: ""
+      operationId: "deleteMetadataList"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          type: "array"
+          items:
+            $ref: "#/definitions/LogsearchMetaData"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /metadata:
+    get:
+      tags:
+      - "metadata"
+      summary: "Get metadata"
+      description: ""
+      operationId: "getMetadata"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "name"
+        in: "query"
+        description: "Name identifier of the metadata"
+        required: false
+        type: "string"
+      - name: "type"
+        in: "query"
+        description: "Type of the metadata"
+        required: true
+        type: "string"
+      - name: "userName"
+        in: "query"
+        description: "User name of the metadata"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/LogsearchMetaData"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "metadata"
+      summary: "Save metadata"
+      description: ""
+      operationId: "saveMetadata"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/LogsearchMetaData"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "string"
+      security:
+      - basicAuth: []
+    delete:
+      tags:
+      - "metadata"
+      summary: "Delete metadata"
+      description: ""
+      operationId: "deleteMetadata"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/LogsearchMetaData"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /service/logs:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Searching logs entry"
+      description: ""
+      operationId: "searchServiceLogsGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceLogResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Searching logs entry"
+      description: ""
+      operationId: "searchServiceLogsPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceLogResponse"
+      security:
+      - basicAuth: []
+    delete:
+      tags:
+      - "servicelogs"
+      summary: "Purge service logs based by criteria"
+      description: ""
+      operationId: "deleteServiceLogs"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/StatusMessage"
+      security:
+      - basicAuth: []
+  /service/logs/hosts:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get the list of service hosts currently active or having data in Solr"
+      description: ""
+      operationId: "getHostsGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusters"
+        in: "query"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/GroupListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get the list of service hosts currently active or having data in Solr"
+      description: ""
+      operationId: "getHostsPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ClusterBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/GroupListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/components:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get the list of service components currently active or having data\
+        \ in Solr"
+      description: ""
+      operationId: "getComponentsByGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusters"
+        in: "query"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceComponentMetadataWrapper"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get the list of service components currently active or having data\
+        \ in Solr"
+      description: ""
+      operationId: "getComponentsByPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ClusterBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceComponentMetadataWrapper"
+      security:
+      - basicAuth: []
+  /service/logs/aggregated:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "not required"
+      description: ""
+      operationId: "getAggregatedInfoGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/GraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "not required"
+      description: ""
+      operationId: "getAggregatedInfoPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogAggregatedInfoBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/GraphDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/components/count:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get components with their counts"
+      description: ""
+      operationId: "getComponentsCountGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusters"
+        in: "query"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/CountDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get components with their counts"
+      description: ""
+      operationId: "getComponentsCountPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ClusterBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/CountDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/hosts/count:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get hosts with their counts"
+      description: ""
+      operationId: "getHostsCountGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusters"
+        in: "query"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/CountDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get hosts with their counts"
+      description: ""
+      operationId: "getHostsCountPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ClusterBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/CountDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/tree:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get host and compoenets hierarchy with log counts"
+      description: ""
+      operationId: "getTreeExtensionGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get host and compoenets hierarchy with log counts"
+      description: ""
+      operationId: "getTreeExtensionPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogHostComponentBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/levels/counts:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get Log levels with their counts"
+      description: ""
+      operationId: "getLogsLevelCountGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NameValueDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get Log levels with their counts"
+      description: ""
+      operationId: "getLogsLevelCountPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogLevelCountBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NameValueDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/histogram:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get data for histogram"
+      description: ""
+      operationId: "getHistogramDataGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      - name: "unit"
+        in: "query"
+        description: "Aggregate the data with time gap as unit i.e 1MINUTE"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get data for histogram"
+      description: ""
+      operationId: "getHistogramDataPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceGraphBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/export:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Export the table data in file"
+      description: ""
+      operationId: "exportToTextFileGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      - name: "format"
+        in: "query"
+        description: "File Export format, can be 'txt' or 'json'"
+        required: false
+        type: "string"
+      - name: "utcOffset"
+        in: "query"
+        description: "timezone offset"
+        required: false
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Export the table data in file"
+      description: ""
+      operationId: "exportToTextFilePost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogExportBodyRequest"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /service/logs/hosts/components:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get host list of components"
+      description: ""
+      operationId: "getHostListByComponentGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get host list of components"
+      description: ""
+      operationId: "getHostListByComponentPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogComponentHostBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/components/levels/counts:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get components with log level distribution count"
+      description: ""
+      operationId: "getComponentListWithLevelCountsGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get components with log level distribution count"
+      description: ""
+      operationId: "getComponentListWithLevelCountsPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogComponentLevelBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/schema/fields:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get service logs schema fields"
+      description: ""
+      operationId: "getServiceLogsSchemaFieldsNameGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/FieldMetadata"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get service logs schema fields"
+      description: ""
+      operationId: "getServiceLogsSchemaFieldsNamePost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/FieldMetadata"
+      security:
+      - basicAuth: []
+  /service/logs/count/anygraph:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get the data generic enough to use for graph plots (yAzis is always\
+        \ count)"
+      description: ""
+      operationId: "getAnyGraphCountDataGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      - name: "xAxis"
+        in: "query"
+        description: "The column which can be value for x-axis in graph formation"
+        required: false
+        type: "string"
+      - name: "yAxis"
+        in: "query"
+        description: "The column which can be value for y-axis in graph formation"
+        required: false
+        type: "string"
+      - name: "stackBy"
+        in: "query"
+        description: "The graph property for stacking the plot"
+        required: false
+        type: "string"
+      - name: "unit"
+        in: "query"
+        description: "Aggregate the data with time gap as unit i.e 1MINUTE"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get the data generic enough to use for graph plots (yAzis is always\
+        \ count)"
+      description: ""
+      operationId: "getAnyGraphCountDataPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceAnyGraphBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/BarGraphDataListResponse"
+      security:
+      - basicAuth: []
+  /service/logs/truncated:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Preview feature data"
+      description: ""
+      operationId: "getAfterBeforeLogsByGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "startIndex"
+        in: "query"
+        description: "Start index of the queried result"
+        required: false
+        type: "string"
+      - name: "page"
+        in: "query"
+        description: "Number of pages for the results"
+        required: false
+        type: "string"
+        default: "0"
+      - name: "pageSize"
+        in: "query"
+        description: "Page size of the results"
+        required: false
+        type: "string"
+        default: "1000"
+      - name: "sortBy"
+        in: "query"
+        description: "Sorting the results based on this field"
+        required: false
+        type: "string"
+      - name: "sortType"
+        in: "query"
+        description: "Type of sorting (osc, desc)"
+        required: false
+        type: "string"
+      - name: "start_time"
+        in: "query"
+        description: "Date range param which is suportted from browser url"
+        required: false
+        type: "string"
+      - name: "end_time"
+        in: "query"
+        description: "Date range param which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      - name: "includeMessage"
+        in: "query"
+        description: "Include query which will query against message column"
+        required: false
+        type: "string"
+      - name: "excludeMessage"
+        in: "query"
+        description: "Exclude query which will query against message column"
+        required: false
+        type: "string"
+      - name: "mustBe"
+        in: "query"
+        description: "Include the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "mustNot"
+        in: "query"
+        description: "Exclude the components, comma separated values"
+        required: false
+        type: "string"
+      - name: "includeQuery"
+        in: "query"
+        description: "Include the values in query result e.g.: [{message:*exception*}]"
+        required: false
+        type: "string"
+      - name: "excludeQuery"
+        in: "query"
+        description: "Exclude the values in query result e.g.: [{message:*timeout*}]"
+        required: false
+        type: "string"
+      - name: "from"
+        in: "query"
+        description: "Date range param, start date"
+        required: false
+        type: "string"
+      - name: "to"
+        in: "query"
+        description: "Date range param, end date"
+        required: false
+        type: "string"
+      - name: "level"
+        in: "query"
+        description: "filter for log level"
+        required: false
+        type: "string"
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "file_name"
+        in: "query"
+        description: "File name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "bundle_id"
+        in: "query"
+        description: "filter for host"
+        required: false
+        type: "string"
+      - name: "hostList"
+        in: "query"
+        description: "filter for hosts"
+        required: false
+        type: "string"
+      - name: "find"
+        in: "query"
+        description: "Finding particular text on subsequent pages in case of table\
+          \ view with pagination"
+        required: false
+        type: "string"
+      - name: "sourceLogId"
+        in: "query"
+        description: "fetch the record set having that log Id"
+        required: false
+        type: "string"
+      - name: "keywordType"
+        in: "query"
+        description: "Serching the find param value in previous or next in paginated\
+          \ table"
+        required: false
+        type: "string"
+      - name: "token"
+        in: "query"
+        description: "unique number used along with FIND_D. The request can be canceled\
+          \ using this token"
+        required: false
+        type: "string"
+      - name: "id"
+        in: "query"
+        description: "Log id value for traversing to that particular record with that\
+          \ log id"
+        required: false
+        type: "string"
+      - name: "scrollType"
+        in: "query"
+        description: "Used in 'Preview' feature for getting records 'after' or 'before'"
+        required: false
+        type: "string"
+      - name: "numberRows"
+        in: "query"
+        description: "Getting rows after particular log entry - used in 'Preview'\
+          \ option"
+        required: false
+        type: "integer"
+        format: "int32"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceLogResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Preview feature data"
+      description: ""
+      operationId: "getAfterBeforeLogsByPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceLogTruncatedBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ServiceLogResponse"
+      security:
+      - basicAuth: []
+  /service/logs/request/cancel:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Cancel an ongoing solr request"
+      description: ""
+      operationId: "cancelRequestGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "string"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Cancel an ongoing solr request"
+      description: ""
+      operationId: "cancelRequestPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "string"
+      security:
+      - basicAuth: []
+  /service/logs/files:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get the log files of the components of a host"
+      description: ""
+      operationId: "getHostLogFilesByGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "host_name"
+        in: "query"
+        description: "Host name filter which is supported from browser url"
+        required: true
+        type: "string"
+      - name: "component_name"
+        in: "query"
+        description: "Component name filter which is supported from browser url"
+        required: false
+        type: "string"
+      - name: "clusters"
+        in: "query"
+        description: "filter for clusters (comma separated list)"
+        required: false
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/HostLogFilesResponse"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get the log files of the components of a host"
+      description: ""
+      operationId: "getHostLogFilesByPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/HostLogFilesBodyRequest"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/HostLogFilesResponse"
+      security:
+      - basicAuth: []
+  /service/logs/clusters:
+    get:
+      tags:
+      - "servicelogs"
+      summary: "Get all of the clusters for service logs"
+      description: ""
+      operationId: "getClustersForServiceLogGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              type: "string"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "servicelogs"
+      summary: "Get all of the clusters for service logs"
+      description: ""
+      operationId: "getClustersForServiceLogPost"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              type: "string"
+      security:
+      - basicAuth: []
+  /shipper/input/{clusterName}/services:
+    get:
+      tags:
+      - "shipper"
+      summary: "Get service names"
+      description: ""
+      operationId: "getServices"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "array"
+            items:
+              type: "string"
+      security:
+      - basicAuth: []
+  /shipper/input/{clusterName}/services/{serviceName}:
+    get:
+      tags:
+      - "shipper"
+      summary: "Get shipper config"
+      description: ""
+      operationId: "getShipperConfig"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      - name: "serviceName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/LSServerInputConfig"
+      security:
+      - basicAuth: []
+    post:
+      tags:
+      - "shipper"
+      summary: "Set shipper config"
+      description: ""
+      operationId: "createShipperConfig"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/LSServerInputConfig"
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      - name: "serviceName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+    put:
+      tags:
+      - "shipper"
+      summary: "Set shipper config"
+      description: ""
+      operationId: "setShipperConfig"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/LSServerInputConfig"
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      - name: "serviceName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /shipper/filters/{clusterName}/level:
+    get:
+      tags:
+      - "shipper"
+      summary: "Get log level filter"
+      description: ""
+      operationId: "getLogLevelFilters"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/LSServerLogLevelFilterMap"
+      security:
+      - basicAuth: []
+    put:
+      tags:
+      - "shipper"
+      summary: "Update log level filter"
+      description: ""
+      operationId: "setLogLevelFilter"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        required: false
+        schema:
+          $ref: "#/definitions/LSServerLogLevelFilterMap"
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /shipper/input/{clusterName}/test:
+    post:
+      tags:
+      - "shipper"
+      summary: "Test shipper config"
+      description: ""
+      operationId: "testShipperConfig"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "logId"
+        in: "formData"
+        description: "Id of the log component"
+        required: true
+        type: "string"
+      - name: "testEntry"
+        in: "formData"
+        description: "Log sample for testing"
+        required: true
+        type: "string"
+      - name: "shipperConfig"
+        in: "formData"
+        description: "Input config json for logfeeder shipper"
+        required: true
+        type: "string"
+      - name: "clusterName"
+        in: "path"
+        required: true
+        type: "string"
+      responses:
+        default:
+          description: "successful operation"
+      security:
+      - basicAuth: []
+  /status:
+    get:
+      tags:
+      - "status"
+      summary: "Get statuses for collections (not health state - show true if something\
+        \ already done)"
+      description: ""
+      operationId: "getStatus"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            type: "object"
+            additionalProperties:
+              $ref: "#/definitions/SolrCollectionState"
+      security:
+      - basicAuth: []
+  /status/servicelogs:
+    get:
+      tags:
+      - "status"
+      summary: "Get statuses for service log collection (not health state - show true\
+        \ if something already done)"
+      description: ""
+      operationId: "getServiceLogStatus"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/SolrCollectionState"
+      security:
+      - basicAuth: []
+  /status/auditlogs:
+    get:
+      tags:
+      - "status"
+      summary: "Get statuses for collections (not health state - show true if something\
+        \ already done)"
+      description: ""
+      operationId: "getSolrAuditLogsStatus"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/SolrCollectionState"
+      security:
+      - basicAuth: []
+  /status/metadata:
+    get:
+      tags:
+      - "status"
+      summary: "Get statuses for metadata collection (not health state - show true\
+        \ if something already done)"
+      description: ""
+      operationId: "getSolrEventHistoryStatus"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/SolrCollectionState"
+      security:
+      - basicAuth: []
+securityDefinitions:
+  basicAuth:
+    type: "basic"
+definitions:
+  AuditFieldMetadataResponse:
+    type: "object"
+    properties:
+      defaults:
+        type: "array"
+        items:
+          $ref: "#/definitions/FieldMetadata"
+      overrides:
+        type: "object"
+        additionalProperties:
+          type: "array"
+          items:
+            $ref: "#/definitions/FieldMetadata"
+  FieldMetadata:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      label:
+        type: "string"
+      filterable:
+        type: "boolean"
+      visible:
+        type: "boolean"
+  AuditLogData:
+    type: "object"
+    properties:
+      resource:
+        type: "string"
+      result:
+        type: "integer"
+        format: "int32"
+      text:
+        type: "string"
+      policy:
+        type: "string"
+      reqContext:
+        type: "string"
+      access:
+        type: "string"
+      sess:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      reason:
+        type: "string"
+      logType:
+        type: "string"
+      proxyUsers:
+        type: "array"
+        items:
+          type: "string"
+      action:
+        type: "string"
+      agent:
+        type: "string"
+      agentHost:
+        type: "string"
+      cliIP:
+        type: "string"
+      cliType:
+        type: "string"
+      enforcer:
+        type: "string"
+      evtTime:
+        type: "string"
+        format: "date-time"
+      repo:
+        type: "string"
+      repoType:
+        type: "integer"
+        format: "int32"
+      reqData:
+        type: "string"
+      reqUser:
+        type: "string"
+      resType:
+        type: "string"
+      tags_str:
+        type: "string"
+      id:
+        type: "string"
+      type:
+        type: "string"
+      file:
+        type: "string"
+      _version_:
+        type: "integer"
+        format: "int64"
+      log_message:
+        type: "string"
+      bundle_id:
+        type: "string"
+      case_id:
+        type: "string"
+      logfile_line_number:
+        type: "integer"
+        format: "int32"
+      seq_num:
+        type: "integer"
+        format: "int64"
+      message_md5:
+        type: "string"
+      cluster:
+        type: "string"
+      event_count:
+        type: "integer"
+        format: "int64"
+      event_md5:
+        type: "string"
+      event_dur_ms:
+        type: "integer"
+        format: "int64"
+      _ttl_:
+        type: "string"
+      _expire_at_:
+        type: "string"
+        format: "date-time"
+      _router_field_:
+        type: "integer"
+        format: "int32"
+  AuditLogResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      logList:
+        type: "array"
+        items:
+          $ref: "#/definitions/AuditLogData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  AuditLogBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      userList:
+        type: "string"
+  StatusMessage:
+    type: "object"
+    properties:
+      status:
+        type: "integer"
+        format: "int32"
+      message:
+        type: "string"
+      statusCode:
+        type: "integer"
+        format: "int32"
+  ClusterBodyRequest:
+    type: "object"
+    properties:
+      clusters:
+        type: "string"
+  BarGraphData:
+    type: "object"
+    properties:
+      dataCount:
+        type: "array"
+        items:
+          $ref: "#/definitions/NameValueData"
+      name:
+        type: "string"
+  BarGraphDataListResponse:
+    type: "object"
+    properties:
+      graphData:
+        type: "array"
+        items:
+          $ref: "#/definitions/BarGraphData"
+  NameValueData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      value:
+        type: "string"
+  AuditBarGraphBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      userList:
+        type: "string"
+      unit:
+        type: "string"
+  TopFieldAuditLogBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      field:
+        type: "string"
+      userList:
+        type: "string"
+  UserExportBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      field:
+        type: "string"
+      userList:
+        type: "string"
+      format:
+        type: "string"
+  AuditServiceLoadBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      userList:
+        type: "string"
+  LogsearchMetaData:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      userName:
+        type: "string"
+      name:
+        type: "string"
+      value:
+        type: "string"
+      type:
+        type: "string"
+  ServiceLogData:
+    type: "object"
+    properties:
+      method:
+        type: "string"
+      type:
+        type: "string"
+      path:
+        type: "string"
+      host:
+        type: "string"
+      line_number:
+        type: "integer"
+        format: "int32"
+      level:
+        type: "string"
+      logger_name:
+        type: "string"
+      group:
+        type: "string"
+      logtime:
+        type: "string"
+        format: "date-time"
+      ip:
+        type: "string"
+      id:
+        type: "string"
+      file:
+        type: "string"
+      _version_:
+        type: "integer"
+        format: "int64"
+      log_message:
+        type: "string"
+      bundle_id:
+        type: "string"
+      case_id:
+        type: "string"
+      logfile_line_number:
+        type: "integer"
+        format: "int32"
+      seq_num:
+        type: "integer"
+        format: "int64"
+      message_md5:
+        type: "string"
+      cluster:
+        type: "string"
+      event_count:
+        type: "integer"
+        format: "int64"
+      event_md5:
+        type: "string"
+      event_dur_ms:
+        type: "integer"
+        format: "int64"
+      _ttl_:
+        type: "string"
+      _expire_at_:
+        type: "string"
+        format: "date-time"
+      _router_field_:
+        type: "integer"
+        format: "int32"
+  ServiceLogResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      logList:
+        type: "array"
+        items:
+          $ref: "#/definitions/ServiceLogData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  ServiceLogBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+  GroupListResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      groupList:
+        type: "array"
+        items:
+          $ref: "#/definitions/LogData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  LogData:
+    type: "object"
+  ComponentMetadata:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      label:
+        type: "string"
+      group:
+        type: "string"
+  ServiceComponentMetadataWrapper:
+    type: "object"
+    properties:
+      groups:
+        type: "object"
+        additionalProperties:
+          type: "string"
+      metadata:
+        type: "array"
+        items:
+          $ref: "#/definitions/ComponentMetadata"
+  GraphData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      count:
+        type: "integer"
+        format: "int64"
+      dataList:
+        type: "array"
+        items:
+          $ref: "#/definitions/GraphData"
+  GraphDataListResponse:
+    type: "object"
+    properties:
+      graphData:
+        type: "array"
+        items:
+          $ref: "#/definitions/GraphData"
+  ServiceLogAggregatedInfoBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+  CountData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      count:
+        type: "integer"
+        format: "int64"
+  CountDataListResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      getvCounts:
+        type: "array"
+        items:
+          $ref: "#/definitions/CountData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  NodeData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      type:
+        type: "string"
+      value:
+        type: "string"
+      childs:
+        type: "array"
+        items:
+          $ref: "#/definitions/NodeData"
+      logLevelCount:
+        type: "array"
+        items:
+          $ref: "#/definitions/NameValueData"
+      isParent:
+        type: "boolean"
+      isRoot:
+        type: "boolean"
+  NodeListResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      getvNodeList:
+        type: "array"
+        items:
+          $ref: "#/definitions/NodeData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  ServiceLogHostComponentBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      hostName:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+  NameValueDataListResponse:
+    type: "object"
+    properties:
+      startIndex:
+        type: "integer"
+        format: "int32"
+      pageSize:
+        type: "integer"
+        format: "int32"
+      totalCount:
+        type: "integer"
+        format: "int64"
+      resultSize:
+        type: "integer"
+        format: "int32"
+      sortType:
+        type: "string"
+      sortBy:
+        type: "string"
+      queryTimeMS:
+        type: "integer"
+        format: "int64"
+      getvNameValues:
+        type: "array"
+        items:
+          $ref: "#/definitions/NameValueData"
+      listSize:
+        type: "integer"
+        format: "int32"
+  ServiceLogLevelCountBodyRequest:
+    type: "object"
+    properties:
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+  ServiceGraphBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+      unit:
+        type: "string"
+  ServiceLogExportBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+      format:
+        type: "string"
+      utcOffset:
+        type: "string"
+  ServiceLogComponentHostBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+  ServiceLogComponentLevelBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+  ServiceAnyGraphBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+      getxAxis:
+        type: "string"
+      getyAxis:
+        type: "string"
+      stackBy:
+        type: "string"
+      unit:
+        type: "string"
+  ServiceLogTruncatedBodyRequest:
+    type: "object"
+    properties:
+      lastPage:
+        type: "boolean"
+      startIndex:
+        type: "string"
+      page:
+        type: "string"
+      pageSize:
+        type: "string"
+      sortBy:
+        type: "string"
+      sortType:
+        type: "string"
+      start_time:
+        type: "string"
+      end_time:
+        type: "string"
+      clusters:
+        type: "string"
+      includeMessage:
+        type: "string"
+      excludeMessage:
+        type: "string"
+      mustBe:
+        type: "string"
+      mustNot:
+        type: "string"
+      includeQuery:
+        type: "string"
+      excludeQuery:
+        type: "string"
+      from:
+        type: "string"
+      to:
+        type: "string"
+      level:
+        type: "string"
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      file_name:
+        type: "string"
+      bundle_id:
+        type: "string"
+      hostList:
+        type: "string"
+      find:
+        type: "string"
+      sourceLogId:
+        type: "string"
+      keywordType:
+        type: "string"
+      token:
+        type: "string"
+      id:
+        type: "string"
+      scrollType:
+        type: "string"
+      numberRows:
+        type: "integer"
+        format: "int32"
+  HostLogFilesResponse:
+    type: "object"
+    properties:
+      hostLogFiles:
+        type: "object"
+        additionalProperties:
+          type: "array"
+          items:
+            type: "string"
+  HostLogFilesBodyRequest:
+    type: "object"
+    required:
+    - "host_name"
+    properties:
+      host_name:
+        type: "string"
+      component_name:
+        type: "string"
+      clusters:
+        type: "string"
+  LSServerConditions:
+    type: "object"
+    required:
+    - "fields"
+    properties:
+      fields:
+        $ref: "#/definitions/LSServerFields"
+  LSServerFields:
+    type: "object"
+    required:
+    - "type"
+    properties:
+      type:
+        type: "array"
+        uniqueItems: true
+        items:
+          type: "string"
+  LSServerFilter:
+    type: "object"
+    required:
+    - "conditions"
+    - "filter"
+    properties:
+      filter:
+        type: "string"
+      conditions:
+        $ref: "#/definitions/LSServerConditions"
+      sort_order:
+        type: "integer"
+        format: "int32"
+      source_field:
+        type: "string"
+      remove_source_field:
+        type: "boolean"
+      post_map_values:
+        type: "object"
+        additionalProperties:
+          $ref: "#/definitions/LSServerPostMapValuesList"
+      is_enabled:
+        type: "boolean"
+  LSServerInput:
+    type: "object"
+    required:
+    - "path"
+    - "type"
+    properties:
+      type:
+        type: "string"
+      rowtype:
+        type: "string"
+      path:
+        type: "string"
+      source:
+        type: "string"
+      tail:
+        type: "boolean"
+      add_fields:
+        type: "object"
+        readOnly: true
+        additionalProperties:
+          type: "string"
+      gen_event_md5:
+        type: "boolean"
+        readOnly: true
+      use_event_md5_as_id:
+        type: "boolean"
+        readOnly: true
+      cache_enabled:
+        type: "boolean"
+        readOnly: true
+      cache_key_field:
+        type: "string"
+        readOnly: true
+      cache_last_dedup_enabled:
+        type: "boolean"
+        readOnly: true
+      cache_size:
+        type: "integer"
+        format: "int32"
+        readOnly: true
+      cache_dedup_interval:
+        type: "integer"
+        format: "int64"
+        readOnly: true
+      is_enabled:
+        type: "boolean"
+        readOnly: true
+      init_default_fields:
+        type: "boolean"
+        readOnly: true
+      default_log_levels:
+        type: "array"
+        readOnly: true
+        items:
+          type: "string"
+  LSServerInputConfig:
+    type: "object"
+    required:
+    - "filter"
+    - "input"
+    properties:
+      input:
+        type: "array"
+        items:
+          $ref: "#/definitions/LSServerInput"
+      filter:
+        type: "array"
+        items:
+          $ref: "#/definitions/LSServerFilter"
+  LSServerPostMapValuesList:
+    type: "object"
+  LSServerLogLevelFilter:
+    type: "object"
+    required:
+    - "defaultLevels"
+    - "hosts"
+    - "label"
+    properties:
+      label:
+        type: "string"
+      hosts:
+        type: "array"
+        items:
+          type: "string"
+      defaultLevels:
+        type: "array"
+        items:
+          type: "string"
+      overrideLevels:
+        type: "array"
+        items:
+          type: "string"
+      expiryTime:
+        type: "string"
+        format: "date-time"
+  LSServerLogLevelFilterMap:
+    type: "object"
+    required:
+    - "filter"
+    properties:
+      filter:
+        type: "object"
+        additionalProperties:
+          $ref: "#/definitions/LSServerLogLevelFilter"
+  SolrCollectionState:
+    type: "object"
+    properties:
+      solrCollectionReady:
+        type: "boolean"
+      znodeReady:
+        type: "boolean"
+      configurationUploaded:
+        type: "boolean"

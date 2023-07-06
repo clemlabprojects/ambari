@@ -30,7 +30,8 @@ import org.apache.ambari.logsearch.model.response.LogSearchResponse;
 import org.apache.ambari.logsearch.dao.SolrDaoBase;
 import org.apache.ambari.logsearch.util.SolrUtil;
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.response.FacetField;
 import org.apache.solr.client.solrj.response.QueryResponse;
@@ -40,7 +41,7 @@ import org.springframework.data.solr.core.query.SimpleQuery;
 import org.springframework.data.solr.core.query.SolrDataQuery;
 
 public abstract class ManagerBase<LOG_DATA_TYPE extends LogData, SEARCH_RESPONSE extends LogSearchResponse<LOG_DATA_TYPE>> extends JsonManagerBase {
-  private static final Logger logger = Logger.getLogger(ManagerBase.class);
+  private static final Logger logger = LogManager.getLogger(ManagerBase.class);
 
   public ManagerBase() {
     super();

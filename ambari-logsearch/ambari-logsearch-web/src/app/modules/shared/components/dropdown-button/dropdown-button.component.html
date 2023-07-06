@@ -15,22 +15,34 @@
   limitations under the License.
 -->
 
-<div [ngClass]="{'dropup': isDropup}">
-  <button [ngClass]="['btn', 'dropdown-toggle', buttonClass]" data-toggle="dropdown">
+<div [ngClass]="{ dropup: isDropup, 'has-selection': hasSelection }">
+  <button [ngClass]="['btn', 'dropdown-toggle', buttonClass]" [class.disabled]="disabled" data-toggle="dropdown">
     <span class="filter-label">
       <span *ngIf="iconClass || label" [class.plain]="!isMultipleChoice && !hideCaret && showSelectedValue">
         <span *ngIf="iconClass" [ngClass]="iconClass"></span>
-        <span *ngIf="label && (!selection.length || isMultipleChoice || showCommonLabelWithSelection)"
-              [class.label-before-selection]="isSelectionDisplayable">
-          {{label}}
+        <span
+          *ngIf="label && (!hasSelection || isMultipleChoice || showCommonLabelWithSelection)"
+          [class.label-before-selection]="isSelectionDisplayable"
+        >
+          {{ label }}
         </span>
+        <span *ngIf="showTotalSelection && totalSelection" class="total-selection badge">{{ totalSelection }}</span>
       </span>
-      <span *ngIf="isSelectionDisplayable">{{selection[0].label | translate}}</span>
+      <span *ngIf="isSelectionDisplayable">
+        <span class="selected-item-label" *ngFor="let item of selectedItems">{{ item.label | translate }}</span>
+      </span>
       <span *ngIf="!hideCaret" class="caret"></span>
     </span>
   </button>
-  <ul data-component="dropdown-list" (selectedItemChange)="updateSelection($event)"
-    [ngClass]="{'dropdown-menu': true, 'dropdown-menu-right': isRightAlign}"
-    [items]="options" [actionArguments]="listItemArguments" [isMultipleChoice]="isMultipleChoice"
-    [useClearToDefaultSelection]="useClearToDefaultSelection"></ul>
+  <ul
+    data-component="dropdown-list"
+    (selectedItemChange)="updateSelection($event)"
+    [ngClass]="{ 'dropdown-menu': true, 'dropdown-menu-right': isRightAlign }"
+    [closeOnSelection]="closeOnSelection"
+    [items]="options"
+    [actionArguments]="listItemArguments"
+    [isMultipleChoice]="isMultipleChoice"
+    [useClearToDefaultSelection]="useClearToDefaultSelection"
+    [useLocalFilter]="useDropDownLocalFilter"
+  ></ul>
 </div>

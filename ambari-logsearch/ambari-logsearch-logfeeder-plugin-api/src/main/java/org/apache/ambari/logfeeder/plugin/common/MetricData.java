@@ -20,6 +20,9 @@ package org.apache.ambari.logfeeder.plugin.common;
 
 import java.io.Serializable;
 
+/**
+ * Holds Log Feeder metrics data
+ */
 public class MetricData implements Serializable {
   public final String metricsName;
   public final boolean isPointInTime;

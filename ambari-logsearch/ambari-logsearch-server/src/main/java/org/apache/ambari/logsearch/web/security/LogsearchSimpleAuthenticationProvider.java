@@ -22,7 +22,8 @@ import org.apache.ambari.logsearch.conf.AuthPropsConfig;
 import org.apache.ambari.logsearch.web.model.User;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -34,7 +35,7 @@ import javax.inject.Named;
 @Named
 public class LogsearchSimpleAuthenticationProvider extends LogsearchAbstractAuthenticationProvider {
 
-  private static final Logger logger = Logger.getLogger(LogsearchSimpleAuthenticationProvider.class);
+  private static final Logger logger = LogManager.getLogger(LogsearchSimpleAuthenticationProvider.class);
 
   @Inject
   private AuthPropsConfig authPropsConfig;
