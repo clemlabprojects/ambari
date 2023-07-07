@@ -15,16 +15,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 ///<reference path="../../../headers/common.d.ts" />
 
-import 'angular';
 import _ from 'lodash';
 import kbn from 'app/core/utils/kbn';
 import {QueryCtrl} from 'app/plugins/sdk';
 
 export class AmbariMetricsQueryCtrl extends QueryCtrl {
-
     static templateUrl = 'partials/query.editor.html';
     aggregators: any;
     aggregator: any;
@@ -36,67 +33,45 @@ export class AmbariMetricsQueryCtrl extends QueryCtrl {
     suggestMetrics: any;
     suggestApps: any;
     suggestHosts: any;
-    seriesAggregators: any;
 
     /** @ngInject **/
     constructor($scope, $injector) {
         super($scope, $injector);
-        this.errors = this.validateTarget(this.target);
+
+        this.errors = this.validateTarget();
         this.aggregators = ['none','avg', 'sum', 'min', 'max'];
         this.precisions = ['default','seconds', 'minutes', 'hours', 'days'];
-        this.transforms = ['none','diff','rate'];
-        this.seriesAggregators = ['none', 'avg', 'sum', 'min', 'max'];
+        this.transforms = ['none','rate'];
 
         if (!this.target.aggregator) {
             this.target.aggregator = 'avg';
         }
+
         this.precisionInit = function () {
-            if (typeof this.target.precision == 'undefined') {
+           if (typeof this.target.precision == 'undefined') {
                 this.target.precision = "default";
-            }
+           }
         };
+
         this.transform = function () {
-            if (typeof this.target.transform == 'undefined') {
+           if (typeof this.target.transform == 'undefined') {
                 this.target.transform = "none";
-            }
+           }
         };
-        this.seriesAggregator = function () {
-            if (typeof $scope.target.seriesAggregator == 'undefined') {
-                this.target.seriesAggregator = "none";
-            }
-        };
-        $scope.$watch('target.app', function (newValue) {
+        $scope.$watch('ctrl.target.app', function (newValue) {
             if (newValue === '') {
-                this.target.metric = '';
-                this.target.hosts = '';
-                this.target.cluster = '';
+                $scope.ctrl.target.metric = '';
+                $scope.ctrl.target.hosts = '';
             }
         });
-        if (!this.target.downsampleAggregator) {
-            this.target.downsampleAggregator = 'avg';
-        }
 
-        this.datasource.getAggregators().then(function(aggs) {
-            this.aggregators = aggs;
+
+        this.datasource.getAggregators().then((aggs) => {
+            if (aggs.length !== 0) {
+                this.aggregators = aggs;
+            }
         });
 
-        this.suggestApps = (query, callback) => {
-            this.datasource.suggestApps(query)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-
-        this.suggestClusters = (query, callback) => {
-            this.datasource.suggestClusters(this.target.app)
-                .then(this.getTextValues)
-                .then(callback);
-        };
-
-        this.suggestHosts = (query, callback) => {
-            this.datasource.suggestHosts(this.target.app, this.target.cluster)
-                .then(this.getTextValues)
-                .then(callback);
-        };
 
         this.suggestMetrics = (query, callback) => {
             this.datasource.suggestMetrics(query, this.target.app)
@@ -104,70 +79,35 @@ export class AmbariMetricsQueryCtrl extends QueryCtrl {
                 .then(callback);
         };
 
-        this.suggestTagKeys = (query, callback) => {
-            this.datasource.metricFindQuery('tag_names(' + this.target.metric + ')')
+        this.suggestApps = (query, callback) => {
+            this.datasource.suggestApps(query)
                 .then(this.getTextValues)
                 .then(callback);
         };
 
-        this.suggestTagValues = (query, callback) => {
-            this.datasource.metricFindQuery('tag_values(' + this.target.metric + ',' + this.target.currentTagKey + ')')
+        this.suggestHosts = (query, callback) => {
+            this.datasource.suggestHosts(query, this.target.app)
                 .then(this.getTextValues)
                 .then(callback);
         };
-
-        this.getTextValues = (metricFindResult) => {
-            return metricFindResult.map((value) => {return value.text });
-        }
     }
 
-    targetBlur () {
-        this.target.errors = this.validateTarget(this.target);
+    targetBlur() {
+        this.errors = this.validateTarget();
         this.refresh();
-    };
-    
+    }
 
-    addTag () {
-        if (!this.addTagMode) {
-            this.addTagMode = true;
-            return;
-        }
-
-        if (!this.target.tags) {
-            this.target.tags = {};
-        }
-
-        this.target.errors = this.validateTarget(this.target);
-
-        if (!this.target.errors.tags) {
-            this.target.tags[this.target.currentTagKey] = this.target.currentTagValue;
-            this.target.currentTagKey = '';
-            this.target.currentTagValue = '';
-            this.targetBlur();
-        }
-
-        this.addTagMode = false;
-    };
-
-    removeTag (key) {
-        delete this.target.tags[key];
-        this.targetBlur();
-    };
-
+    getTextValues(metricFindResult) {
+        return _.map(metricFindResult, function(value) { return value.text; });
+    }
     getCollapsedText () {
         var text = this.target.metric + ' on ' + this.target.app;
         return text;
-    };
+    }
 
-    validateTarget (target) {
-        var errs = {};
-
-        if (target.tags && _.has(target.tags, target.currentTagKey)) {
-            errs.tags = "Duplicate tag key '" + target.currentTagKey + "'.";
-        }
-
+    validateTarget() {
+        var errs: any = {};
         return errs;
     }
+
 }
-
-

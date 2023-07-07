@@ -16,6 +16,11 @@
       "small": "img/apache-ambari-logo-sm.png",
       "large": "img/apache-ambari-logo.png"
     },
-    "version": "1.0.2"
+    "version": "1.2.0",
+    "updated": "2018-10-02"
+  },
+  "dependencies": {
+    "grafanaVersion": "4.5.x - 5.x.x",
+    "plugins": [ ]
   }
 }
