@@ -52,8 +52,8 @@
     <hbase.folder>hbase-${hbase.version}</hbase.folder>
     <hadoop.tar>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/${odp.release.stack}-${odp.release.number}/tars/hadoop/hadoop-${hadoop.version}.tar.gz</hadoop.tar>
     <hadoop.folder>hadoop-${hadoop.version}</hadoop.folder>
-    <grafana.folder>grafana-6.7.4</grafana.folder>
-    <grafana.tar>https://dl.grafana.com/oss/release/grafana-6.7.4.linux-amd64.tar.gz</grafana.tar>
+    <grafana.folder>grafana-10.0.1</grafana.folder>
+    <grafana.tar>https://dl.grafana.com/oss/release/grafana-10.0.1.linux-amd64.tar.gz</grafana.tar>
     <phoenix.tar>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/${odp.release.stack}-${odp.release.number}/tars/phoenix/phoenix-hbase-${phoenix.hbase.compat}-${phoenix.version}-bin.tar.gz</phoenix.tar>
     <phoenix.folder>phoenix-hbase-${phoenix.hbase.compat}-${phoenix.version}-bin</phoenix.folder>
     <resmonitor.install.dir>/usr/lib/python2.6/site-packages/resource_monitoring</resmonitor.install.dir>
