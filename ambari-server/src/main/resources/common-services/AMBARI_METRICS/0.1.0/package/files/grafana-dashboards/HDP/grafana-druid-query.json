@@ -832,7 +832,7 @@
           }
         ],
         "query": "druidDataSources",
-        "refresh": true,
+        "refresh": 1,
         "regex": "",
         "type": "query"
       }
