@@ -144,7 +144,7 @@ define([
         var templatedHosts = templateSrv.variables.filter(function(o) { return o.name === "hosts";});
         var templatedHost = (_.isEmpty(templatedHosts)) ? '' : templatedHosts[0].options.filter(function(host)
         { return host.selected; }).map(function(hostName) { return hostName.value; });
-
+        _.isEmpty(templatedHosts) ? console.log("it's a templated host"):console.log ("its NOT templated HOST");
         //For Component Specific Templatized dashboards.
         //"components" needs to be templated variable #1 and "hosts" needs to be the other query
         //"components" will be a custom templated variable, and "hosts" will be a query variable.
@@ -194,7 +194,7 @@ define([
         // Time Ranges
         var from = Math.floor(options.range.from);
         var to = Math.floor(options.range.to);
-
+        console.log(JSON.stringify(templateSrv.variables));
         var metricsPromises = [];
         if (!_.isEmpty(templateSrv.variables)) {
           // YARN Queues Dashboard
@@ -225,14 +225,18 @@ define([
             }
           }
           // To speed up querying on templatized dashboards.
-          if (templateSrv.variables[1] && templateSrv.variables[1].name === "hosts") {
+          var hostsVariable = templateSrv.getVariables("toto").filter(function(n){if (n.id === "hosts") {return true } });
+
+          console.log(hostsVariable[0].options);
+          if (!_.isEmpty(hostsVariable)) {
+            hostsVariable = hostsVariable[0];
             var splitHosts = []; var allHosts;
-            if (templateSrv.index.hosts.current.text === "All") {
-              allHosts = templateSrv.index.hosts.options.filter(function(hostName) { return hostName.text !== "All"; })
+            if (hostsVariable.current.text[0] === "All") {
+              allHosts = hostsVariable.options.filter(function(hostName) { return hostName.text !== "All"; })
                 .map(function(hostVal) { return hostVal.value; });
             }
             else {
-              allHosts = templateSrv.index.hosts.current.text.split(' + ');
+              allHosts = hostsVariable.current.text[0].split(' + ');
             }
             while (allHosts.length > 0) {
               splitHosts.push(allHosts.splice(0,50));
@@ -247,7 +251,9 @@ define([
           metricsPromises = _.flatten(metricsPromises);
         } else {
           // Non Templatized Dashboards
+          
           metricsPromises = _.map(options.targets, function(target) {
+            console.log(target.hosts);
             if (!!target.hosts) {
               return getHostAppIdData(target);
             } else {
@@ -255,6 +261,7 @@ define([
             }
           });
         }
+        console.log(metricsPromises);
 
         return $q.all(metricsPromises).then(function(metricsDataArray) {
           var data = _.map(metricsDataArray, function(metricsData) {
