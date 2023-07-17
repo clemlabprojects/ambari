@@ -1882,6 +1882,7 @@
         ],
         "query": "namenode",
         "refresh": false,
+        "skipUrlSync": false,
         "type": "custom"
       },
       {
@@ -1896,14 +1897,20 @@
         "options": [],
         "query": "cluster",
         "refresh": 1,
+        "skipUrlSync": false,
         "regex": "",
         "type": "query"
       },
       {
         "allFormat": "glob",
         "current": {
-          "text": "All",
-          "value": ""
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         },
         "datasource": null,
         "includeAll": true,
@@ -1920,6 +1927,7 @@
         "label": "Hosts",
         "query": "hosts.$cluster",
         "refresh": 1,
+        "skipUrlSync": false,
         "regex": "",
         "type": "query"
       }

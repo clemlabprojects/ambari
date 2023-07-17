@@ -1162,8 +1162,13 @@
       {
         "allFormat": "glob",
         "current": {
-          "text": "All",
-          "value": ""
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         },
         "datasource": null,
         "includeAll": true,
