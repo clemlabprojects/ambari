@@ -64,10 +64,10 @@
                     </packages>
                 </osSpecific>
                 <osSpecific>
-                    <osFamily>debian9,ubuntu14,ubuntu16</osFamily>
+                    <osFamily>debian9,ubuntu14,ubuntu16,ubuntu22</osFamily>
                     <packages>
                         <package>
-                            <name>nifi-registry-${stack_version}</name>
+                            <name>nifi-${stack_version}-registry</name>
                         </package>
                     </packages>
                 </osSpecific>

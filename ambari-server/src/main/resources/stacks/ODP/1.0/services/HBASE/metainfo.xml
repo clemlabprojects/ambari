@@ -202,7 +202,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16</osFamily>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22</osFamily>
           <packages>
             <package>
               <name>hbase-${stack_version}</name>
@@ -210,6 +210,10 @@
             <package>
               <name>phoenix-${stack_version}</name>
               <condition>should_install_phoenix</condition>
+            </package>
+            <package>
+              <name>atlas-{stack_version}-hbase-hook</name>
+              <condition>should_install_atlas</condition>
             </package>
           </packages>
         </osSpecific>

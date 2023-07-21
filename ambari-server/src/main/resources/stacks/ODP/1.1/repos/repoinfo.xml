@@ -33,7 +33,7 @@
       <unique>true</unique>
     </repo>
   </os>
-    <os family="almalinux8">
+  <os family="almalinux8">
     <repo>
       <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.1.6.0-17/rpms/</baseurl>
       <repoid>ODP-1.1.6.0-17</repoid>
@@ -41,7 +41,15 @@
       <unique>true</unique>
     </repo>
   </os>
-    <os family="ubuntu22">
+  <os family="ubuntu18">
+    <repo>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu18/odp-release/1.1.6.0-17/dist/ODP</baseurl>
+      <repoid>ODP-1.1.6.0-17</repoid>
+      <reponame>ODP</reponame>
+      <unique>true</unique>
+    </repo>
+  </os>
+  <os family="ubuntu22">
     <repo>
       <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/1.1.6.0-17/dist/ODP</baseurl>
       <repoid>ODP-1.1.6.0-17</repoid>

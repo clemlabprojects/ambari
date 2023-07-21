@@ -212,6 +212,14 @@
             </package>
           </packages>
         </osSpecific>
+        <osSpecific>
+          <osFamily>ubuntu22</osFamily>
+          <packages>
+            <package>
+              <name>flink-${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
       </osSpecifics>
 
       <quickLinksConfigurations>

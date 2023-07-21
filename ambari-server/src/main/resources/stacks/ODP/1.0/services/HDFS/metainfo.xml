@@ -407,7 +407,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian9,ubuntu16</osFamily>
+          <osFamily>debian9,ubuntu16,ubuntu18,ubuntu22</osFamily>
           <packages>
             <package>
               <name>hadoop-${stack_version}-client</name>
