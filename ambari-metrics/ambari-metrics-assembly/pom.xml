@@ -748,6 +748,7 @@
             <groupId>org.vafer</groupId>
             <executions>
               <execution>
+                <id>jdeb-ambari-metrics-assembly</id>
                 <phase>package</phase>
                 <goals>
                   <goal>jdeb</goal>
