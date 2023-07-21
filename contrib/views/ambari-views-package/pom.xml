@@ -84,31 +84,32 @@
         <artifactId>jdeb</artifactId>
         <executions>
           <execution>
+            <id>jdeb-ambari-views-package</id>
             <phase>none</phase>
             <goals>
               <goal>jdeb</goal>
             </goals>
+            <configuration>
+            <verbose>true</verbose>
+            <skip>false</skip>
+            <controlDir>${basedir}/src/main/package/deb/control</controlDir>
+            <deb>${basedir}/target/${project.artifactId}_${package-version}-${package-release}.deb</deb>
+            <dataSet>
+              <data>
+                <src>${views.jars.dir.rel}</src>
+                <type>directory</type>
+                <mapper>
+                  <prefix>${views.directory}</prefix>
+                  <filemode>777</filemode>
+                  <type>perm</type>
+                  <user>root</user>
+                  <group>root</group>
+                </mapper>
+              </data>
+            </dataSet>
+          </configuration>
           </execution>
         </executions>
-        <configuration>
-          <verbose>true</verbose>
-          <skip>false</skip>
-          <controlDir>${basedir}/src/main/package/deb/control</controlDir>
-          <deb>${basedir}/target/${project.artifactId}_${package-version}-${package-release}.deb</deb>
-          <dataSet>
-            <data>
-              <src>${views.jars.dir.rel}</src>
-              <type>directory</type>
-              <mapper>
-                <prefix>${views.directory}</prefix>
-                <filemode>777</filemode>
-                <type>perm</type>
-                <user>root</user>
-                <group>root</group>
-              </mapper>
-            </data>
-          </dataSet>
-        </configuration>
       </plugin>
       <plugin>
         <artifactId>maven-assembly-plugin</artifactId>
