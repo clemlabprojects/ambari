@@ -746,6 +746,7 @@
           <plugin>
             <artifactId>jdeb</artifactId>
             <groupId>org.vafer</groupId>
+            <version>1.4</version>
             <executions>
               <execution>
                 <id>jdeb-ambari-metrics-assembly</id>
@@ -756,6 +757,8 @@
                 <configuration>
                   <controlDir>${project.build.directory}/resources/deb/control</controlDir>
                   <deb>${basedir}/target/${project.artifactId}_${project.version}-${release.version}.deb</deb>
+                  <skip>false</skip>
+                  <skipPOMs>false</skipPOMs>
                   <dataSet>
                     <data>
                       <type>file</type>
