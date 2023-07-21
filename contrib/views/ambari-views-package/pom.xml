@@ -85,7 +85,7 @@
         <executions>
           <execution>
             <id>jdeb-ambari-views-package</id>
-            <phase>none</phase>
+            <phase>package</phase>
             <goals>
               <goal>jdeb</goal>
             </goals>
