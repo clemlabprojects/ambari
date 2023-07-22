@@ -18,5 +18,5 @@ Section: [[deb.section]]
 Priority: [[deb.priority]]
 Depends: [[deb.dependency.list]]
 Architecture: [[deb.architecture]]
-Description: [[description]]
+Description:  Apache Ambari Agent Package build by Clemlab
 Maintainer: [[deb.publisher]]
