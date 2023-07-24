@@ -1,0 +1,10 @@
+[Unit]
+  Description=Ambari Agent
+  After=network.target
+  [Service]
+  Type=forking
+  ExecStart=/etc/init.d/ambari-agent start
+  ExecStop=/etc/init.d/ambari-agent stop
+  LimitNOFILE=256000
+  [Install]
+  WantedBy=multi-user.target

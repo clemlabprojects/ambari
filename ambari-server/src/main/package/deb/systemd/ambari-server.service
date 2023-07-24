@@ -1,0 +1,10 @@
+[Unit]
+  Description=Ambari Server
+  After=network.target
+  [Service]
+  Type=forking
+  ExecStartPre=/bin/sleep 30
+  ExecStart=/etc/init.d/ambari-server start
+  ExecStop=/etc/init.d/ambari-server stop
+  [Install]
+  WantedBy=multi-user.target
