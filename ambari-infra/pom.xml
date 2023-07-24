@@ -28,7 +28,7 @@
     <solr.version>8.11.2</solr.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <python.ver>python &gt;= 2.6</python.ver>
-    <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
+    <deb.python.ver>python2 (&gt;= 2.6)</deb.python.ver>
     <deb.architecture>amd64</deb.architecture>
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>
     <odp.release.stack>1.2.1.0</odp.release.stack>

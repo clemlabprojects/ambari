@@ -81,7 +81,7 @@
   <properties>
     <jdk.version>1.8</jdk.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <python.ver>python &gt;= 2.6</python.ver>
+    <python.ver>python2 &gt;= 2.6</python.ver>
     <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
     <deb.architecture>amd64</deb.architecture>
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>

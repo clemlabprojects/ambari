@@ -30,8 +30,7 @@
   </parent>
 
   <description>
-    This package is a meta package to create installable RPM and DEB file
-    which includes all the views jars.
+    Apache Ambari Metrics Package build by Clemlab company
   </description>
 
   <properties>

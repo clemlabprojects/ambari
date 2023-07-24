@@ -30,7 +30,7 @@
   <name>Ambari Metrics Assembly</name>
   <packaging>pom</packaging>
   <version>2.7.8.0.0</version>
-  <description>Ambari Metrics Assembly</description>
+  <description>Ambari Metrics Package Build by Clemlab company</description>
 
   <properties>
     <collector.dir>${project.basedir}/../ambari-metrics-timelineservice</collector.dir>
@@ -47,7 +47,7 @@
     <deb.section>universe/admin</deb.section>
     <deb.architecture>i386 amd64</deb.architecture>
     <deb.priority>extra</deb.priority>
-    <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
+    <deb.python.ver>python2 (&gt;= 2.6)</deb.python.ver>
     <deb.architecture>amd64</deb.architecture>
     <deb.dependency.list>${deb.python.ver},python-dev,gcc</deb.dependency.list>
     <hadoop.sink.jar>ambari-metrics-hadoop-sink-with-common-${project.version}.jar</hadoop.sink.jar>
@@ -746,7 +746,6 @@
           <plugin>
             <artifactId>jdeb</artifactId>
             <groupId>org.vafer</groupId>
-            <version>1.4</version>
             <executions>
               <execution>
                 <id>jdeb-ambari-metrics-assembly</id>
@@ -757,8 +756,6 @@
                 <configuration>
                   <controlDir>${project.build.directory}/resources/deb/control</controlDir>
                   <deb>${basedir}/target/${project.artifactId}_${project.version}-${release.version}.deb</deb>
-                  <skip>false</skip>
-                  <skipPOMs>false</skipPOMs>
                   <dataSet>
                     <data>
                       <type>file</type>
@@ -1169,7 +1166,6 @@
                 </configuration>
               </execution>
             </executions>
-            
           </plugin>
         </plugins>
       </build>
