@@ -757,6 +757,8 @@
                 <configuration>
                   <controlDir>${project.build.directory}/resources/deb/control</controlDir>
                   <deb>${basedir}/target/${project.artifactId}_${project.version}-${release.version}.deb</deb>
+                  <skip>false</skip>
+                  <skipPOMs>false</skipPOMs>
                   <dataSet>
                     <data>
                       <type>file</type>
