@@ -41,9 +41,9 @@ def sqoop(type=None):
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
 def sqoop(type=None):
   import params
-  Link(params.sqoop_lib + "/mysql-connector-java.jar",
-       to = '/usr/share/java/mysql-connector-java.jar'
-  )
+  # Link(params.sqoop_lib + "/mysql-connector-java.jar",
+  #      to = '/usr/share/java/mysql-connector-java.jar'
+  # )
 
   jdbc_connector()
   
