@@ -24,6 +24,7 @@ import os
 from hive import refresh_yarn, create_hive_hdfs_dirs, create_hive_metastore_schema, create_metastore_schema, hive, jdbc_connector
 from hive_service import hive_service
 from setup_ranger_hive import setup_ranger_hive_metastore_service
+from setup_ranger_hive import setup_ranger_hive_metastore
 
 # Ambari Commons & Resource Management Imports
 from resource_management.core.logger import Logger
@@ -66,6 +67,7 @@ class HiveMetastore(Script):
 
     # below function call is used for cluster depolyed in cloud env to create ranger hive service in ranger admin.
     setup_ranger_hive_metastore_service()
+    setup_ranger_hive_metastore(upgrade_type=upgrade_type)
 
   def stop(self, env, upgrade_type=None):
     import params

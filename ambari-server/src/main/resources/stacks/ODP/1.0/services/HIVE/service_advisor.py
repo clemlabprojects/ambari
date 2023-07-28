@@ -381,6 +381,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     # hive_security_authorization == "ranger"
     if str(configurations["hive-env"]["properties"]["hive_security_authorization"]).lower() == "ranger":
       putHiveSiteProperty("hive.server2.enable.doAs", "false")
+      putHiveProperty("hive.security.authorization.manager", "org.apache.ranger.authorization.hive.authorizer.RangerHiveAuthorizerFactory")
       putHiveServerProperty("hive.security.authorization.enabled", "true")
       putHiveServerProperty("hive.security.authorization.manager", "org.apache.ranger.authorization.hive.authorizer.RangerHiveAuthorizerFactory")
       putHiveServerProperty("hive.security.authenticator.manager", "org.apache.hadoop.hive.ql.security.SessionStateUserAuthenticator")
@@ -766,6 +767,7 @@ class HiveValidator(service_advisor.ServiceAdvisor):
   def validateHiveServer2ConfigurationsFromHDP30(self, properties, recommendedDefaults, configurations, services, hosts):
 
     hive_server2 = properties
+    hive_site_properties = self.getSiteProperties(configurations, "hive-site")
     validationItems = []
     #Adding Ranger Plugin logic here
     ranger_plugin_properties = self.getSiteProperties(configurations, "ranger-hive-plugin-properties")
@@ -774,7 +776,7 @@ class HiveValidator(service_advisor.ServiceAdvisor):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     ##Add stack validations only if Ranger is enabled.
     if ("RANGER" in servicesList):
-      ##Add stack validations for  Ranger plugin enabled.
+      ##Add stack validations for  Ranger plugin enabled. - Hive Server 2 since ODP 1.0
       if ranger_plugin_enabled:
         prop_name = "hive.security.authorization.manager"
         prop_val = "org.apache.ranger.authorization.hive.authorizer.RangerHiveAuthorizerFactory"
@@ -813,6 +815,44 @@ class HiveValidator(service_advisor.ServiceAdvisor):
           validationItems.append({"config-name": prop_name,
             "item": self.getWarnItem("If Ranger Hive Plugin is enabled."\
             " {0} under hiveserver2-site needs to contain missing value {1}".format(prop_name, ",".join(missing_vals)))})
+
+        ##Add stack validations for  Ranger plugin enabled. - Hive Metastore since ODP 1.0
+        if prop_name in hive_site_properties and hive_site_properties[prop_name] != prop_val:
+          validationItems.append({"config-name": prop_name,
+                                  "item": self.getWarnItem(
+                                  "If Ranger Hive Plugin is enabled."\
+                                  " {0} under hive-site needs to be set to {1}".format(prop_name,prop_val))})
+        prop_name = "hive.security.authenticator.manager"
+        prop_val = "org.apache.hadoop.hive.ql.security.SessionStateUserAuthenticator"
+        if prop_name in hive_site_properties and hive_site_properties[prop_name] != prop_val:
+          validationItems.append({"config-name": prop_name,
+                                  "item": self.getWarnItem(
+                                  "If Ranger Hive Plugin is enabled."\
+                                  " {0} under hive-site needs to be set to {1}".format(prop_name,prop_val))})
+        prop_name = "hive.security.authorization.enabled"
+        prop_val = "true"
+        if prop_name in hive_site_properties and hive_site_properties[prop_name] != prop_val:
+          validationItems.append({"config-name": prop_name,
+                                  "item": self.getWarnItem(
+                                  "If Ranger Hive Plugin is enabled."\
+                                  " {0} under hive-site needs to be set to {1}".format(prop_name, prop_val))})
+        prop_name = "hive.conf.restricted.list"
+        prop_vals = "hive.security.authorization.enabled,hive.security.authorization.manager,hive.security.authenticator.manager".split(",")
+        current_vals = []
+        missing_vals = []
+        if hive_site_properties and prop_name in hive_site_properties:
+          current_vals = hive_site_properties[prop_name].split(",")
+          current_vals = [x.strip() for x in current_vals]
+
+        for val in prop_vals:
+          if not val in current_vals:
+            missing_vals.append(val)
+
+        if missing_vals:
+          validationItems.append({"config-name": prop_name,
+            "item": self.getWarnItem("If Ranger Hive Plugin is enabled."\
+            " {0} under hive-site needs to contain missing value {1}".format(prop_name, ",".join(missing_vals)))})
+        
       ##Add stack validations for  Ranger plugin disabled.
       elif not ranger_plugin_enabled:
         prop_name = "hive.security.authorization.manager"
