@@ -203,7 +203,7 @@
           <osFamily>ubuntu16,debian9,ubuntu22</osFamily>
           <packages>
             <package>
-              <name>ambari-metrics-assembly</name>
+              <name>ambari-metrics</name>
               <skipUpgrade>true</skipUpgrade>
             </package>
             <package>
