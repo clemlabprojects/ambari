@@ -133,11 +133,16 @@ phoenix_hosts = default('/clusterHostInfo/phoenix_query_server_hosts', [])
 phoenix_enabled = default('/configurations/hbase-env/phoenix_sql_enabled', False)
 has_phoenix = len(phoenix_hosts) > 0
 
+create_hbase_jna_symlink = False
+target_hbase_jna_dir = '/tmp/hbase'
+src_hbase_jna_dir = '/run/hbase'
+
 underscored_version = stack_version_unformatted.replace('.', '_')
 dashed_version = stack_version_unformatted.replace('.', '-')
 if OSCheck.is_redhat_family() or OSCheck.is_suse_family():
   phoenix_package = format("phoenix_{underscored_version}_*")
 elif OSCheck.is_ubuntu_family():
+  create_hbase_jna_symlink = True
   phoenix_package = format("phoenix-{dashed_version}-.*")
 
 pid_dir = status_params.pid_dir

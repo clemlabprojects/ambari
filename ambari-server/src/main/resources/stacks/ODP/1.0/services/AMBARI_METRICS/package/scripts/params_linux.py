@@ -48,6 +48,13 @@ if rpm_version is not None:
   #RPM versioning support
   rpm_version = default("/configurations/hadoop-env/rpm_version", None)
 
+create_hbase_jna_symlink = False
+underscored_version = stack_version_unformatted.replace('.', '_')
+dashed_version = stack_version_unformatted.replace('.', '-')
+if OSCheck.is_ubuntu_family():
+  create_hbase_jna_symlink = True
+
+
 hadoop_native_lib = format("/usr/lib/ams-hbase/lib/hadoop-native")
 hadoop_bin_dir = "/usr/bin"
 daemon_script = "/usr/lib/ams-hbase/bin/hbase-daemon.sh"
