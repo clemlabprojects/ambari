@@ -77,10 +77,10 @@ java.arg.13=-XX:+UseG1GC
 #Set headless mode by default
 java.arg.14=-Djava.awt.headless=true
 
-#Ambari Metrics Collector URL - passed in to flow.xml for AmbariReportingTask
+#Ambari Metrics Collector URL - passed in to flow.json for AmbariReportingTask
 java.arg.15=-Dambari.metrics.collector.url={{metrics_collector_protocol}}://{{metrics_collector_host}}:{{metrics_collector_port}}/ws/v1/timeline/metrics
 
-#Application ID - used in flow.xml - passed into flow.xml for AmbariReportingTask 
+#Application ID - used in flow.json - passed into flow.json for AmbariReportingTask 
 java.arg.16=-Dambari.application.id=nifi
 
 # Requires JAAS to use only the provided JAAS configuration to authenticate a Subject, without using any "fallback" methods (such as prompting for username/password)

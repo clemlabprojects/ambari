@@ -18,15 +18,8 @@
 <configuration supports_final="false">
   <!--# Core Properties #-->
   <property>
-    <name>nifi.version</name>
-    <value>1.0.0.{{stack_version_buildnum}}</value>
-    <on-ambari-upgrade add="true" update="true" delete="false"/>
-    <description>The version number of the current release.</description>
-  </property>
-
-  <property>
-    <name>nifi.flow.configuration.file</name>
-    <value>{{nifi_flow_config_dir}}/flow.xml.gz</value>
+    <name>nifi.flow.configuration.json.file</name>
+    <value>{{nifi_flow_config_dir}}/flow.json.gz</value>
     <on-ambari-upgrade add="true"/>
     <description>The location of the flow configuration file (i.e., the file that contains what is currently displayed on the NiFi graph).</description>
   </property>
@@ -34,7 +27,7 @@
     <name>nifi.flow.configuration.archive.dir</name>
     <value>{{nifi_internal_dir}}/archive/</value>
     <on-ambari-upgrade add="true"/>
-    <description>The location of the archive directory where backup copies of the flow.xml are saved.</description>
+    <description>The location of the archive directory where backup copies of the flow.json are saved.</description>
   </property>
   <property>
     <name>nifi.flow.configuration.archive.enabled</name>
@@ -52,7 +45,7 @@
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
-    <description>The lifespan of archived flow.xml files. NiFi will delete expired archive files when it updates flow.xml. Expiration is determined based on current system time and the last modified timestamp of an archived flow.xml. The default value is 30 days.</description>
+    <description>The lifespan of archived flow.json files. NiFi will delete expired archive files when it updates flow.json. Expiration is determined based on current system time and the last modified timestamp of an archived flow.xml. The default value is 30 days.</description>
   </property>
   <property>
     <name>nifi.flow.configuration.archive.max.storage</name>

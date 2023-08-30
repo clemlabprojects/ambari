@@ -115,7 +115,7 @@
     <name>nifi.flow.config.dir</name>
     <value>{nifi_internal_dir}/conf</value>
     <display-name>Nifi internal config dir</display-name>
-    <description>The directory to store the state, flow.xml.gz and authorizations.xml files. This directory will be created (if not already existing)</description>
+    <description>The directory to store the state, flow.json.gz and authorizations.xml files. This directory will be created (if not already existing)</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
