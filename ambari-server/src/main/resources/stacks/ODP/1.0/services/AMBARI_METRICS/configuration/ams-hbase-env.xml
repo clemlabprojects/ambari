@@ -215,6 +215,9 @@ else
   export HBASE_CLASSPATH=${HBASE_CLASSPATH}
 fi
 
+
+export HBASE_CLASSPATH=${HBASE_CLASSPATH}:/usr/lib/ambari-metrics-collector/hadoop-shaded-guava-1.1.1.jar
+
 # The maximum amount of heap to use for hbase shell.
 export HBASE_SHELL_OPTS="-Xmx256m"
 
