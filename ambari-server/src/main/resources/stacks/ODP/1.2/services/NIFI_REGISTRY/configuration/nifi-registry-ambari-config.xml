@@ -1,0 +1,105 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+    <!-- Note: these two properties must be in same xml file for quicklinks to correctly work -->
+    <property>
+        <name>nifi.registry.port</name>
+        <value>61080</value>
+        <display-name>HTTP port (non-SSL)</display-name>
+        <description>HTTP port NiFi Registry runs on when SSL is not enabled</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.port.ssl</name>
+        <value>61443</value>
+        <display-name>HTTPS port (SSL)</display-name>
+        <description>HTTPS port NiFi Registry runs on when SSL is enabled</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <!-- End Note -->
+
+    <property>
+        <name>nifi.registry.initial_mem</name>
+        <value>512m</value>
+        <display-name>Initial memory allocation</display-name>
+        <description>Initial memory allocation for NiFi Registry JVM (Xms)</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.max_mem</name>
+        <value>512m</value>
+        <display-name>Max memory allocation</display-name>
+        <description>Max memory allocation for NiFi Registry JVM (Xmx)</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.internal.dir</name>
+        <value>/var/lib/nifi-registry</value>
+        <display-name>Internal Directory</display-name>
+        <description>Internal directory for NiFi Registry (used to store database and other data). This directory will be created (if not already existing)</description>
+        <value-attributes>
+            <type>directory</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.config.dir</name>
+        <value>{nifi_registry_install_dir}/conf</value>
+        <display-name>Config Directory</display-name>
+        <description>The directory to store config files (nifi-registry.properties, bootstrap.conf etc). This directory will be created (if not already existing)</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.internal.config.dir</name>
+        <value>{nifi_registry_internal_dir}/conf</value>
+        <display-name>Internal Config Directory</display-name>
+        <description>The directory to store files such as users.xml and authorizations.xml. This directory will be created (if not already existing)</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.database.dir</name>
+        <value>{nifi_registry_internal_dir}/database</value>
+        <display-name>Database Directory</display-name>
+        <description>The directory for the H2 database. The H2 database keeps track of all items stored in the registry. This directory will be created (if not already existing)</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+    <property>
+        <name>nifi.registry.security.encrypt.configuration.password</name>
+        <value/>
+        <property-type>PASSWORD</property-type>
+        <display-name>Encrypt Configuration Master Key Password</display-name>
+        <description>
+            This password is used to generate the master key for encryption of sensitive properties in nifi-registry.properties file when written to disk. Password needs to at least be 12 characters.
+        </description>
+        <value-attributes>
+            <overridable>false</overridable>
+            <type>password</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+</configuration>

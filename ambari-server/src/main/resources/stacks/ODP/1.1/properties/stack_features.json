@@ -373,6 +373,11 @@
         "min_version": "1.0.0.0"
       },
       {
+        "name": "nifi_admin_toolkit_support",
+        "description": "Supports the nifi admin toolkit",
+        "min_version": "1.0.0.0"
+      },
+      {
         "name": "admin_toolkit_support",
         "description": "Supports the nifi admin toolkit",
         "min_version": "1.0.0.0"
