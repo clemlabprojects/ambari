@@ -20,11 +20,50 @@
 
   <property>
     <name>content</name>
-    <display-name>Template for flow.xml</display-name>            
+    <display-name>Template for flow.json</display-name>            
     <value>
-
+{
+  "encodingVersion": {
+    "majorVersion": 2,
+    "minorVersion": 0
+  },
+  "maxTimerDrivenThreadCount": 10,
+  "maxEventDrivenThreadCount": 1,
+  "registries": [],
+  "parameterContexts": [],
+  "parameterProviders": [],
+  "controllerServices": [],
+  "reportingTasks": [],
+  "templates": [],
+  "rootGroup": {
+    "identifier": "6225cf74-e889-3969-b045-4805f4601b24",
+    "instanceIdentifier": "4627cf46-018a-1000-9a9e-4c72f1539bd7",
+    "name": "NiFi Flow",
+    "comments": "",
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "processGroups": [],
+    "remoteProcessGroups": [],
+    "processors": [],
+    "inputPorts": [],
+    "outputPorts": [],
+    "connections": [],
+    "labels": [],
+    "funnels": [],
+    "controllerServices": [],
+    "variables": {},
+    "defaultFlowFileExpiration": "0 sec",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "componentType": "PROCESS_GROUP"
+  }
+}
   </value>
-  <description>Initial template for flow.xml. Only used during initial install of Nifi service. Post-install this can be reconfigured from Nifi UI under Controller Settings</description>
+  <description>Initial template for flow.json. Only used during initial install of Nifi service. Post-install this can be reconfigured from Nifi UI under Controller Settings</description>
   <value-attributes>
     <type>content</type>
   </value-attributes>    

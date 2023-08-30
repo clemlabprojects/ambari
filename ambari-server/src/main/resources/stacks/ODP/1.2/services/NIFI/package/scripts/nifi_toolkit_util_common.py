@@ -558,10 +558,10 @@ def encrypt_sensitive_properties(
       encrypt_config_command += ('-v', '-b', nifi_config_dir + '/bootstrap.conf')
       encrypt_config_command += ('-n', nifi_config_dir + '/nifi.properties')
 
-      if (sudo.path_isfile(nifi_flow_config_dir + '/flow.xml.gz')
-          and len(sudo.read_file(nifi_flow_config_dir + '/flow.xml.gz')) > 0):
+      if (sudo.path_isfile(nifi_flow_config_dir + '/flow.json.gz')
+          and len(sudo.read_file(nifi_flow_config_dir + '/flow.json.gz')) > 0):
         encrypt_config_command += (
-          '-f', nifi_flow_config_dir + '/flow.xml.gz', '-s', PasswordString(nifi_sensitive_props_key))
+          '-f', nifi_flow_config_dir + '/flow.json.gz', '-s', PasswordString(nifi_sensitive_props_key))
 
       if contains_providers(nifi_config_dir + '/login-identity-providers.xml', "provider"):
         encrypt_config_command += ('-l', nifi_config_dir + '/login-identity-providers.xml')
