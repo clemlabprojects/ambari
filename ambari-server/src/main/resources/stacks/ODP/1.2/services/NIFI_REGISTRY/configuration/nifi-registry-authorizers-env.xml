@@ -1,0 +1,330 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+    <property>
+        <name>content</name>
+        <display-name>Template for authorizers.xml</display-name>
+        <description>This is the jinja template for authorizers.xml</description>
+        <value>
+&lt;!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+      http://www.apache.org/licenses/LICENSE-2.0
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+--&gt;
+&lt;!--
+    This file lists the userGroupProviders, accessPolicyProviders, and authorizers to use when running securely. In order
+    to use a specific authorizer it must be configured here and its identifier must be specified in the nifi.properties file.
+    If the authorizer is a managedAuthorizer, it may need to be configured with an accessPolicyProvider and an userGroupProvider.
+    This file allows for configuration of them, but they must be configured in order:
+
+    ...
+    all userGroupProviders
+    all accessPolicyProviders
+    all Authorizers
+    ...
+--&gt;
+&lt;authorizers&gt;
+
+    &lt;!--
+        The FileUserGroupProvider will provide support for managing users and groups which is backed by a file
+        on the local file system.
+
+        - Users File - The file where the FileUserGroupProvider will store users and groups.
+
+        - Initial User Identity [unique key] - The identity of a users and systems to seed the Users File. The name of
+            each property must be unique, for example: "Initial User Identity A", "Initial User Identity B",
+            "Initial User Identity C" or "Initial User Identity 1", "Initial User Identity 2", "Initial User Identity 3"
+
+            NOTE: Any identity mapping rules specified in nifi.properties will also be applied to the user identities,
+            so the values should be the unmapped identities (i.e. full DN from a certificate).
+    --&gt;
+    &lt;userGroupProvider&gt;
+        &lt;identifier&gt;file-user-group-provider&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.authorization.file.FileUserGroupProvider&lt;/class&gt;
+        &lt;property name="Users File"&gt;{{nifi_registry_internal_config_dir}}/users.xml&lt;/property&gt;
+        &lt;property name="Initial User Identity 0"&gt;{{nifi_registry_initial_admin_id}}&lt;/property&gt;
+        {{nifi_registry_ssl_config_content | replace(&quot;NiFi&quot;,&quot;Initial User&quot;)}}
+    &lt;/userGroupProvider&gt;
+
+    &lt;!--
+        The LdapUserGroupProvider will retrieve users and groups from an LDAP server. The users and groups
+        are not configurable.
+
+        'Authentication Strategy' - How the connection to the LDAP server is authenticated. Possible
+            values are ANONYMOUS, SIMPLE, LDAPS, or START_TLS.
+
+        'Manager DN' - The DN of the manager that is used to bind to the LDAP server to search for users.
+        'Manager Password' - The password of the manager that is used to bind to the LDAP server to
+            search for users.
+
+        'TLS - Keystore' - Path to the Keystore that is used when connecting to LDAP using LDAPS or START_TLS.
+        'TLS - Keystore Password' - Password for the Keystore that is used when connecting to LDAP
+            using LDAPS or START_TLS.
+        'TLS - Keystore Type' - Type of the Keystore that is used when connecting to LDAP using
+            LDAPS or START_TLS (i.e. JKS or PKCS12).
+        'TLS - Truststore' - Path to the Truststore that is used when connecting to LDAP using LDAPS or START_TLS.
+        'TLS - Truststore Password' - Password for the Truststore that is used when connecting to
+            LDAP using LDAPS or START_TLS.
+        'TLS - Truststore Type' - Type of the Truststore that is used when connecting to LDAP using
+            LDAPS or START_TLS (i.e. JKS or PKCS12).
+        'TLS - Client Auth' - Client authentication policy when connecting to LDAP using LDAPS or START_TLS.
+            Possible values are REQUIRED, WANT, NONE.
+        'TLS - Protocol' - Protocol to use when connecting to LDAP using LDAPS or START_TLS. (i.e. TLS,
+            TLSv1.1, TLSv1.2, etc).
+        'TLS - Shutdown Gracefully' - Specifies whether the TLS should be shut down gracefully
+            before the target context is closed. Defaults to false.
+
+        'Referral Strategy' - Strategy for handling referrals. Possible values are FOLLOW, IGNORE, THROW.
+        'Connect Timeout' - Duration of connect timeout. (i.e. 10 secs).
+        'Read Timeout' - Duration of read timeout. (i.e. 10 secs).
+
+        'Url' - Space-separated list of URLs of the LDAP servers (i.e. ldap://&lt;hostname&gt;:&lt;port&gt;).
+        'Page Size' - Sets the page size when retrieving users and groups. If not specified, no paging is performed.
+        'Sync Interval' - Duration of time between syncing users and groups. (i.e. 30 mins).
+
+        'User Search Base' - Base DN for searching for users (i.e. ou=users,o=nifi). Required to search users.
+        'User Object Class' - Object class for identifying users (i.e. person). Required if searching users.
+        'User Search Scope' - Search scope for searching users (ONE_LEVEL, OBJECT, or SUBTREE). Required if searching users.
+        'User Search Filter' - Filter for searching for users against the 'User Search Base' (i.e. (memberof=cn=team1,ou=groups,o=nifi) ). Optional.
+        'User Identity Attribute' - Attribute to use to extract user identity (i.e. cn). Optional. If not set, the entire DN is used.
+        'User Group Name Attribute' - Attribute to use to define group membership (i.e. memberof). Optional. If not set
+            group membership will not be calculated through the users. Will rely on group membership being defined
+            through 'Group Member Attribute' if set.
+        'User Group Name Attribute - Referenced Group Attribute' - If blank, the value of the attribute defined in 'User Group Name Attribute'
+            is expected to be the full dn of the group. If not blank, this property will define the attribute of the group ldap entry that
+            the value of the attribute defined in 'User Group Name Attribute' is referencing (i.e. name). Use of this property requires that
+            'Group Search Base' is also configured.
+
+        'Group Search Base' - Base DN for searching for groups (i.e. ou=groups,o=nifi). Required to search groups.
+        'Group Object Class' - Object class for identifying groups (i.e. groupOfNames). Required if searching groups.
+        'Group Search Scope' - Search scope for searching groups (ONE_LEVEL, OBJECT, or SUBTREE). Required if searching groups.
+        'Group Search Filter' - Filter for searching for groups against the 'Group Search Base'. Optional.
+        'Group Name Attribute' - Attribute to use to extract group name (i.e. cn). Optional. If not set, the entire DN is used.
+        'Group Member Attribute' - Attribute to use to define group membership (i.e. member). Optional. If not set
+            group membership will not be calculated through the groups. Will rely on group member being defined
+            through 'User Group Name Attribute' if set.
+        'Group Member Attribute - Referenced User Attribute' - If blank, the value of the attribute defined in 'Group Member Attribute'
+            is expected to be the full dn of the user. If not blank, this property will define the attribute of the user ldap entry that
+            the value of the attribute defined in 'Group Member Attribute' is referencing (i.e. uid). Use of this property requires that
+            'User Search Base' is also configured. (i.e. member: cn=User 1,ou=users,o=nifi-registry vs. memberUid: user1)
+
+        NOTE: Any identity mapping rules specified in nifi.properties will also be applied to the user identities.
+            Group names are not mapped.
+    --&gt;
+    &lt;!-- To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2.
+    &lt;userGroupProvider&gt;
+        &lt;identifier&gt;ldap-user-group-provider&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.ldap.tenants.LdapUserGroupProvider&lt;/class&gt;
+        &lt;property name="Authentication Strategy"&gt;START_TLS&lt;/property&gt;
+
+        &lt;property name="Manager DN"&gt;&lt;/property&gt;
+        &lt;property name="Manager Password"&gt;&lt;/property&gt;
+
+        &lt;property name="TLS - Keystore"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Keystore Password"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Keystore Type"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Truststore"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Truststore Password"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Truststore Type"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Client Auth"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Protocol"&gt;&lt;/property&gt;
+        &lt;property name="TLS - Shutdown Gracefully"&gt;&lt;/property&gt;
+
+        &lt;property name="Referral Strategy"&gt;FOLLOW&lt;/property&gt;
+        &lt;property name="Connect Timeout"&gt;10 secs&lt;/property&gt;
+        &lt;property name="Read Timeout"&gt;10 secs&lt;/property&gt;
+
+        &lt;property name="Url"&gt;&lt;/property&gt;
+        &lt;property name="Page Size"&gt;&lt;/property&gt;
+        &lt;property name="Sync Interval"&gt;30 mins&lt;/property&gt;
+
+        &lt;property name="User Search Base"&gt;&lt;/property&gt;
+        &lt;property name="User Object Class"&gt;person&lt;/property&gt;
+        &lt;property name="User Search Scope"&gt;ONE_LEVEL&lt;/property&gt;
+        &lt;property name="User Search Filter"&gt;&lt;/property&gt;
+        &lt;property name="User Identity Attribute"&gt;&lt;/property&gt;
+        &lt;property name="User Group Name Attribute"&gt;&lt;/property&gt;
+        &lt;property name="User Group Name Attribute - Referenced Group Attribute"&gt;&lt;/property&gt;
+
+        &lt;property name="Group Search Base"&gt;&lt;/property&gt;
+        &lt;property name="Group Object Class"&gt;group&lt;/property&gt;
+        &lt;property name="Group Search Scope"&gt;ONE_LEVEL&lt;/property&gt;
+        &lt;property name="Group Search Filter"&gt;&lt;/property&gt;
+        &lt;property name="Group Name Attribute"&gt;&lt;/property&gt;
+        &lt;property name="Group Member Attribute"&gt;&lt;/property&gt;
+        &lt;property name="Group Member Attribute - Referenced User Attribute"&gt;&lt;/property&gt;
+    &lt;/userGroupProvider&gt;
+    To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2. --&gt;
+
+    &lt;!--
+        The CompositeUserGroupProvider will provide support for retrieving users and groups from multiple sources.
+
+        - User Group Provider [unique key] - The identifier of user group providers to load from. The name of
+            each property must be unique, for example: "User Group Provider A", "User Group Provider B",
+            "User Group Provider C" or "User Group Provider 1", "User Group Provider 2", "User Group Provider 3"
+
+            NOTE: Any identity mapping rules specified in nifi.properties are not applied in this implementation. This behavior
+            would need to be applied by the base implementation.
+    --&gt;
+    &lt;!-- To enable the composite-user-group-provider remove 2 lines. This is 1 of 2.
+    &lt;userGroupProvider&gt;
+        &lt;identifier&gt;composite-user-group-provider&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.authorization.CompositeUserGroupProvider&lt;/class&gt;
+        &lt;property name="User Group Provider 1"&gt;&lt;/property&gt;
+    &lt;/userGroupProvider&gt;
+    To enable the composite-user-group-provider remove 2 lines. This is 2 of 2. --&gt;
+
+    &lt;!--
+        The CompositeConfigurableUserGroupProvider will provide support for retrieving users and groups from multiple sources.
+        Additionally, a single configurable user group provider is required. Users from the configurable user group provider
+        are configurable, however users loaded from one of the User Group Provider [unique key] will not be.
+
+        - Configurable User Group Provider - A configurable user group provider.
+
+        - User Group Provider [unique key] - The identifier of user group providers to load from. The name of
+            each property must be unique, for example: "User Group Provider A", "User Group Provider B",
+            "User Group Provider C" or "User Group Provider 1", "User Group Provider 2", "User Group Provider 3"
+
+            NOTE: Any identity mapping rules specified in nifi.properties are not applied in this implementation. This behavior
+            would need to be applied by the base implementation.
+    --&gt;
+    &lt;!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2.
+    &lt;userGroupProvider&gt;
+        &lt;identifier&gt;composite-configurable-user-group-provider&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.authorization.CompositeConfigurableUserGroupProvider&lt;/class&gt;
+        &lt;property name="Configurable User Group Provider"&gt;file-user-group-provider&lt;/property&gt;
+        &lt;property name="User Group Provider 1"&gt;&lt;/property&gt;
+    &lt;/userGroupProvider&gt;
+    To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. --&gt;
+
+    &lt;!--
+        The FileAccessPolicyProvider will provide support for managing access policies which is backed by a file
+        on the local file system.
+
+        - User Group Provider - The identifier for an User Group Provider defined above that will be used to access
+            users and groups for use in the managed access policies.
+
+        - Authorizations File - The file where the FileAccessPolicyProvider will store policies.
+
+        - Initial Admin Identity - The identity of an initial admin user that will be granted access to the UI and
+            given the ability to create additional users, groups, and policies. The value of this property could be
+            a DN when using certificates or LDAP. This property will only be used when there
+            are no other policies defined.
+
+            NOTE: Any identity mapping rules specified in nifi.properties will also be applied to the initial admin identity,
+            so the value should be the unmapped identity. This identity must be found in the configured User Group Provider.
+
+        - Node Identity [unique key] - The identity of a NiFi cluster node. When clustered, a property for each node
+            should be defined, so that every node knows about every other node. If not clustered these properties can be ignored.
+            The name of each property must be unique, for example for a three node cluster:
+            "Node Identity A", "Node Identity B", "Node Identity C" or "Node Identity 1", "Node Identity 2", "Node Identity 3"
+
+            NOTE: Any identity mapping rules specified in nifi.properties will also be applied to the node identities,
+            so the values should be the unmapped identities (i.e. full DN from a certificate). This identity must be found
+            in the configured User Group Provider.
+    --&gt;
+    &lt;accessPolicyProvider&gt;
+        &lt;identifier&gt;file-access-policy-provider&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.authorization.file.FileAccessPolicyProvider&lt;/class&gt;
+        &lt;property name="User Group Provider"&gt;file-user-group-provider&lt;/property&gt;
+        &lt;property name="Authorizations File"&gt;{{nifi_registry_internal_config_dir}}/authorizations.xml&lt;/property&gt;
+        &lt;property name="Initial Admin Identity"&gt;{{nifi_registry_initial_admin_id}}&lt;/property&gt;
+        {{nifi_registry_ssl_config_content}}
+    &lt;/accessPolicyProvider&gt;
+
+    &lt;!--
+        The StandardManagedAuthorizer. This authorizer implementation must be configured with the
+        Access Policy Provider which it will use to access and manage users, groups, and policies.
+        These users, groups, and policies will be used to make all access decisions during authorization
+        requests.
+
+        - Access Policy Provider - The identifier for an Access Policy Provider defined above.
+    --&gt;
+    &lt;authorizer&gt;
+        &lt;identifier&gt;managed-authorizer&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.security.authorization.StandardManagedAuthorizer&lt;/class&gt;
+        &lt;property name="Access Policy Provider"&gt;file-access-policy-provider&lt;/property&gt;
+    &lt;/authorizer&gt;
+
+    &lt;authorizer&gt;
+        &lt;identifier&gt;ranger-authorizer&lt;/identifier&gt;
+        &lt;class&gt;org.apache.nifi.registry.ranger.RangerAuthorizer&lt;/class&gt;
+        &lt;property name="Ranger Service Type"&gt;nifi-registry&lt;/property&gt;
+
+        &lt;property name="User Group Provider"&gt;file-user-group-provider&lt;/property&gt;
+
+        &lt;!-- Specify Ranger service name to use --&gt;
+        &lt;property name="Ranger Application Id"&gt;nifi-registry&lt;/property&gt;
+
+        &lt;!--
+            Specify configuration file paths for Ranger plugin.
+            See the XML files bundled with this extension for further details.
+         --&gt;
+        &lt;property name="Ranger Security Config Path"&gt;{{nifi_registry_config_dir}}/ranger-nifi-registry-security.xml&lt;/property&gt;
+        &lt;property name="Ranger Audit Config Path"&gt;{{nifi_registry_config_dir}}/ranger-nifi-registry-audit.xml&lt;/property&gt;
+
+        &lt;!--
+            Specify user identity that is used by Ranger to access NiFi Registry.
+            This property is used by NiFi Registry for Ranger to get available NiFi Registry policy resource identifiers.
+            The configured user can access NiFi Registry /policies/resources REST endpoint regardless of configured access policies.
+            Ranger uses available policies for user input suggestion at Ranger policy editor UI.
+        --&gt;
+        &lt;property name="Ranger Admin Identity"&gt;{{ranger_admin_identity}}&lt;/property&gt;
+
+        &lt;!--
+            Specify if target Ranger is Kerberized.
+            If set to true, NiFi Registry will use the principal and keytab defined at nifi-registry.properties:
+            - nifi.registry.kerberos.service.principal
+            - nifi.registry.kerberos.service.keytab.location
+
+            The specified credential is used to access Ranger API, and to write audit logs into HDFS (if enabled).
+
+            At Ranger side, the configured user needs to be added to 'policy.download.auth.users' property, see Ranger configuration section below.
+
+            Also, ranger-nifi-registry-security.xml needs additional "xasecure.add-hadoop-authorization = true" configuration.
+        --&gt;
+        {% if security_enabled %}
+        &lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;true&lt;/property&gt;
+        {% else %}
+        &lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;false&lt;/property&gt;
+        {% endif %}
+
+    &lt;/authorizer&gt;
+
+&lt;/authorizers&gt;
+
+
+        </value>
+        <value-attributes>
+            <type>content</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+
+</configuration>
