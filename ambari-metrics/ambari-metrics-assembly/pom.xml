@@ -135,7 +135,7 @@
 
   <profiles>
     <profile>
-      <id>rpm</id>
+      <id>rpm-rhel7</id>
       <activation>
         <property>
           <name>build-rpm-rhel7</name>
@@ -701,7 +701,7 @@
       </build>
     </profile>
         <profile>
-      <id>rpm</id>
+      <id>rpm-rhel8</id>
       <activation>
         <property>
           <name>build-rpm-rhel8</name>
