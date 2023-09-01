@@ -126,6 +126,7 @@ class AtlasServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender = AtlasRecommender()
     recommender.recommendAtlasConfigurationsFromHDP25(configurations, clusterData, services, hosts)
     recommender.recommendAtlasConfigurationsFromHDP26(configurations, clusterData, services, hosts)
+    recommender.recommendAtlasConfigurationsFromODP12(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsForSSO(configurations, clusterData, services, hosts)
 
 
@@ -378,6 +379,40 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
           services['configurations']['knox-env']['properties'] \
         else 'knox'
       putAtlasApplicationProperty('atlas.proxyusers', knox_service_user)
+
+  def recommendAtlasConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    putAtlasApplicationProperty = self.putProperty(configurations, "application-properties", services)
+
+    atlasServiceVersion = [service['StackServices']['service_version'] for service in services["services"] if service['StackServices']['service_name'] == 'ATLAS'][0]
+    if atlasServiceVersion == '2.3.0':
+      if "AMBARI_INFRA_SOLR" in servicesList and 'infra-solr-env' in services['configurations']:
+        if 'infra_solr_znode' in services['configurations']['infra-solr-env']['properties']:
+          infra_solr_znode = services['configurations']['infra-solr-env']['properties']['infra_solr_znode']
+        else:
+          infra_solr_znode = None
+
+        zookeeper_hosts = self.getHostNamesWithComponent("ZOOKEEPER", "ZOOKEEPER_SERVER", services)
+        zookeeper_host_arr = []
+
+        zookeeper_port = self.getZKPort(services)
+        for i in range(len(zookeeper_hosts)):
+          zookeeper_host = zookeeper_hosts[i] + ':' + zookeeper_port
+          zookeeper_host_arr.append(zookeeper_host)
+
+        solr_zookeeper_url = ",".join(zookeeper_host_arr)
+
+        if infra_solr_znode is not None:
+          solr_zookeeper_url += infra_solr_znode
+
+        putAtlasApplicationProperty('atlas.graph.index.search.solr.zookeeper-url', solr_zookeeper_url)
+      else:
+        putAtlasApplicationProperty('atlas.graph.index.search.solr.zookeeper-url', "")
+
+      security_enabled = AtlasServiceAdvisor.isKerberosEnabled(services, configurations)
+
+      if security_enabled:
+        putAtlasApplicationProperty('atlas.graph.index.search.solr.kerberos-enabled', "true")
 
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
