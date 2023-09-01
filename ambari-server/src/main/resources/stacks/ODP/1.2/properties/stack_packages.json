@@ -405,28 +405,28 @@
         }
       },
       "SPARK3": {
-        "LIVY2_CLIENT": {
-          "STACK-SELECT-PACKAGE": "livy2-client",
+        "SPARK3_LIVY2_CLIENT": {
+          "STACK-SELECT-PACKAGE": "spark3-livy2-client",
           "INSTALL": [
-            "livy2-client"
+            "spark3-livy2-client"
           ],
           "PATCH": [
-            "livy2-client"
+            "spark3-livy2-client"
           ],
           "STANDARD": [
-            "livy2-client"
+            "spark3-livy2-client"
           ]
         },
-        "LIVY2_SERVER": {
-          "STACK-SELECT-PACKAGE": "livy2-server",
+        "SPARK3_LIVY2_SERVER": {
+          "STACK-SELECT-PACKAGE": "spark3-livy2-server",
           "INSTALL": [
-            "livy2-server"
+            "spark3-livy2-server"
           ],
           "PATCH": [
-            "livy2-server"
+            "spark3-livy2-server"
           ],
           "STANDARD": [
-            "livy2-server"
+            "spark3-livy2-server"
           ]
         },
         "SPARK3_CLIENT": {
@@ -467,28 +467,28 @@
         }
       },
       "SPARK2": {
-        "LIVY2_CLIENT": {
-          "STACK-SELECT-PACKAGE": "livy2-client",
+        "SPARK2_LIVY2_CLIENT": {
+          "STACK-SELECT-PACKAGE": "spark2-livy2-client",
           "INSTALL": [
-            "livy2-client"
+            "spark2-livy2-client"
           ],
           "PATCH": [
-            "livy2-client"
+            "spark2-livy2-client"
           ],
           "STANDARD": [
-            "livy2-client"
+            "spark2-livy2-client"
           ]
         },
-        "LIVY2_SERVER": {
-          "STACK-SELECT-PACKAGE": "livy2-server",
+        "SPARK2_LIVY2_SERVER": {
+          "STACK-SELECT-PACKAGE": "spark2-livy2-server",
           "INSTALL": [
-            "livy2-server"
+            "spark2-livy2-server"
           ],
           "PATCH": [
-            "livy2-server"
+            "spark2-livy2-server"
           ],
           "STANDARD": [
-            "livy2-server"
+            "spark2-livy2-server"
           ]
         },
         "SPARK2_CLIENT": {
