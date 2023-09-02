@@ -55,7 +55,7 @@
     <property>
         <name>livy2_log_dir</name>
         <display-name>Livy2 Log directory</display-name>
-        <value>/var/log/livy2</value>
+        <value>/var/log/spark2/livy2</value>
         <description>Livy Log Dir</description>
         <value-attributes>
             <type>directory</type>
@@ -65,11 +65,21 @@
     <property>
         <name>livy2_pid_dir</name>
         <display-name>Livy2 PID directory</display-name>
-        <value>/var/run/livy2</value>
+        <value>/var/run/spark2/livy2</value>
         <value-attributes>
             <type>directory</type>
         </value-attributes>
         <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>livy2_conf_dir</name>
+        <display-name>Livy2 Conf directory</display-name>
+        <value>/etc/spark2-livy2/conf</value>
+        <description>Livy2 Service Conf Dir</description>
+        <value-attributes>
+            <type>directory</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>spark_home</name>
@@ -91,11 +101,13 @@
             # - HADOOP_CONF_DIR Directory containing the Hadoop / YARN configuration to use.
             # - LIVY_LOG_DIR    Where log files are stored.  (Default: ${LIVY_HOME}/logs)
             # - LIVY_PID_DIR    Where the pid file is stored. (Default: /tmp)
+            # - LIVY_CONF_DIR    Where the conf directory file is stored. (Default: /etc/livy/conf)
             # - LIVY_SERVER_JAVA_OPTS  Java Opts for running livy server (You can set jvm related setting here, like jvm memory/gc algorithm and etc.)
             export SPARK_HOME=/usr/odp/current/spark2-client
             export SPARK_CONF_DIR=/etc/spark2/conf
             export JAVA_HOME={{java_home}}
             export HADOOP_CONF_DIR=/etc/hadoop/conf
+            expport LIVY_CONF_DIR={{livy2_conf_dir}}
             export LIVY_LOG_DIR={{livy2_log_dir}}
             export LIVY_PID_DIR={{livy2_pid_dir}}
             export LIVY_SERVER_JAVA_OPTS="-Xmx2g"
