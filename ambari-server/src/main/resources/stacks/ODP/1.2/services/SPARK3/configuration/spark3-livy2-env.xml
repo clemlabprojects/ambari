@@ -79,6 +79,16 @@
         </value-attributes>
         <on-ambari-upgrade add="false"/>
     </property>
+    <property>
+        <name>livy2_conf_dir</name>
+        <display-name>Livy2 Conf directory</display-name>
+        <value>/etc/spark3-livy2/conf</value>
+        <description>Livy2 Service Conf Dir</description>
+        <value-attributes>
+            <type>directory</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
     <!-- livy-env.sh -->
     <property>
         <name>content</name>
@@ -98,6 +108,7 @@
             export HADOOP_CONF_DIR=/etc/hadoop/conf
             export LIVY_LOG_DIR={{livy2_log_dir}}
             export LIVY_PID_DIR={{livy2_pid_dir}}
+            export LIVY_CONF_DIR={{livy2_conf_dir}}
             export LIVY_SERVER_JAVA_OPTS="-Xmx2g"
         </value>
         <value-attributes>
