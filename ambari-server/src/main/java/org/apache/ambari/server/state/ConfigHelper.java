@@ -1609,9 +1609,13 @@ public class ConfigHelper {
             Map<String, String> previousTypedConfigs = previousConfigs.get(currentConfigType);
 
             for (String currentKey : currentTypedConfigs.keySet()) {
-              if (!previousTypedConfigs.containsKey(currentKey)
+              if(currentTypedConfigs.get(currentKey)!= null ){
+                if (!previousTypedConfigs.containsKey(currentKey)
                   || !currentTypedConfigs.get(currentKey).equals(previousTypedConfigs.get(currentKey))) {
                 changedKeys.add(currentKey);
+                }
+              }else {
+                LOG.warn("Ignoring null value:  " + currentKey ) ;
               }
             }
             for (String previousKey : previousTypedConfigs.keySet()) {
