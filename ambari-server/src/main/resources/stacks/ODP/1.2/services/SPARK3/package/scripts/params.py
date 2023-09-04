@@ -237,6 +237,7 @@ has_livyserver = False
 if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, stack_version_formatted) and "spark3-livy2-env" in config['configurations']:
   livy2_component_directory = Script.get_component_from_role(SERVER_ROLE_DIRECTORY_MAP, "SPARK3_LIVY2_SERVER")
   livy2_conf = format("{stack_root}/current/{livy2_component_directory}/conf")
+  livy2_stack_conf = format("{livy2_conf}")
   if 'livy2_conf_dir' in config['configurations']['spark3-livy2-env']:
     livy2_conf = config['configurations']['spark3-livy2-env']['livy2_conf_dir']
   livy2_log_dir = config['configurations']['spark3-livy2-env']['livy2_log_dir']

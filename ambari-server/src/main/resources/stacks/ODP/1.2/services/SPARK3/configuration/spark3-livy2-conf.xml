@@ -31,7 +31,7 @@
     </property>
     <property>
         <name>livy.server.port</name>
-        <value>8999</value>
+        <value>8998</value>
         <description>
             What port to start the server on. Defaults to 8999.
         </description>
