@@ -209,9 +209,17 @@ else:
 
 smoke_user = config['configurations']['cluster-env']['smokeuser']
 
+zeppelin_site = {}
+for key in config['configurations']['zeppelin-site']:
+  zeppelin_site[key] = config['configurations']['zeppelin-site'][key]
+
 if security_enabled:
+  config['configurations']['zeppelin-site']['zeppelin.server.kerberos.principal']
   zeppelin_kerberos_keytab = config['configurations']['zeppelin-site']['zeppelin.server.kerberos.keytab']
   zeppelin_kerberos_principal = config['configurations']['zeppelin-site']['zeppelin.server.kerberos.principal']
+  _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
+  zeppelin_kerberos_principal = zeppelin_kerberos_principal.replace('_HOST',_hostname_lowercase)
+  zeppelin_site['zeppelin.server.kerberos.principal'] = zeppelin_site['zeppelin.server.kerberos.principal'].replace('_HOST',_hostname_lowercase)
 
   smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
   smokeuser_principal =  config['configurations']['cluster-env']['smokeuser_principal_name']

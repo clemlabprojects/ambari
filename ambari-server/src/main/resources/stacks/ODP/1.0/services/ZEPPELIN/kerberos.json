@@ -6,32 +6,49 @@
         {
           "name": "zeppelin_smokeuser",
           "reference": "/smokeuser"
-        },
-        {
-          "name": "zeppelin_user",
-          "principal": {
-            "value": "${zeppelin-env/zeppelin_user}${principal_suffix}@${realm}",
-            "type" : "user",
-            "configuration": "zeppelin-site/zeppelin.server.kerberos.principal",
-            "local_username" : "${zeppelin-env/zeppelin_user}"
-          },
-          "keytab": {
-            "file": "${keytab_dir}/zeppelin.server.kerberos.keytab",
-            "owner": {
-              "name": "${zeppelin-env/zeppelin_user}",
-              "access": "r"
-            },
-            "group": {
-              "name": "${cluster-env/user_group}",
-              "access": ""
-            },
-            "configuration": "zeppelin-site/zeppelin.server.kerberos.keytab"
-          }
         }
+        
       ],
       "components": [
         {
-          "name": "ZEPPELIN_MASTER"
+          "name": "ZEPPELIN_MASTER", 
+          "identities": [
+            {
+              "name": "zeppelin_zeppelin_master",  
+              "reference": "/ZEPPELIN/MASTER/zeppelin"
+            },
+            {
+              "name": "zeppelin_master_zeppelin",
+              "principal": {
+                "value": "zeppelin/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "zeppelin-site/zeppelin.server.kerberos.principal",
+                "local_username": "${zeppelin-env/zeppelin_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/zeppelin.service.keytab",
+                "owner": {
+                  "name": "${zeppelin-env/zeppelin_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "zeppelin-site/zeppelin.server.kerberos.keytab"
+              }
+            },
+            {
+              "name": "zeppelin_zeppelin_master_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "zeppelin-env/zeppelin_master_http_principal"
+              },
+              "keytab": {
+                "configuration": "zeppelin-env/zeppelin_master_http_keytab"
+              }
+            }
+          ] 
         }
       ],
       "configurations": [

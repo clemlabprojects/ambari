@@ -133,7 +133,7 @@ class Master(Script):
 
     XmlConfig("zeppelin-site.xml",
               conf_dir=params.conf_dir,
-              configurations=params.config['configurations']['zeppelin-site'],
+              configurations=params.zeppelin_site,
               owner=params.zeppelin_user,
               group=params.zeppelin_group
               )
