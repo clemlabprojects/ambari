@@ -142,6 +142,7 @@ class YARNServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendYARNConfigurationsFromHDP25(configurations, clusterData, services, hosts)
     recommender.recommendYARNConfigurationsFromHDP26(configurations, clusterData, services, hosts)
     recommender.recommendYARNConfigurationsFromHDP30(configurations, clusterData, services, hosts)
+    recommender.recommendYARNConfigurationsFromODP10(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsForSSO(configurations, clusterData, services, hosts)
 
   def getServiceConfigurationRecommendationsForSSO(self, configurations, clusterData, services, hosts):
@@ -881,6 +882,30 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
         if yarn_nm_mem_in_mb >= 10240 and total_cluster_capacity >= 51200:
            putYarnHBaseEnv("is_hbase_system_service_launch", "true")
         # Do not set to false in else
+
+  def recommendYARNConfigurationsFromODP10(self, configurations, clusterData, services, hosts):
+    putYarnProperty = self.putProperty(configurations, "yarn-site", services)
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    # check if spark is present to enable/disable spark_shuffle
+    sparkInstalled = False
+    if 'SPARK2' in servicesList:
+      sparkInstalled = True
+    if 'yarn.nodemanager.aux-services' in services["configurations"]["yarn-site"]["properties"]:
+      currentValueService = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.aux-services"]
+      if sparkInstalled:
+        if(currentValueService.find("spark2_shuffle") != -1):
+          self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is already set")
+        else:
+          self.logger.info("ServiceAdvisor Spark2 is installed - spark2_shuffle is added")
+          putYarnProperty('yarn.nodemanager.aux-services', currentValueService + ',spark2_shuffle')
+      else:
+        replaced = False
+        if(currentValueService.find(",spark2_shuffle") != -1):
+          currentValueService = currentValueService.replace(",spark2_shuffle","")
+        if( (currentValueService.find("spark2_shuffle") != -1) and  not replaced):
+          currentValueService = currentValueService.replace("spark2_shuffle","")
+        putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
+
 
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
@@ -2300,8 +2325,7 @@ class YARNValidator(service_advisor.ServiceAdvisor):
     self.as_super = super(YARNValidator, self)
     self.as_super.__init__(*args, **kwargs)
 
-    self.validators = [("yarn-site", self.validateYARNSiteConfigurationsFromHDP206),
-                       ("yarn-site", self.validateYARNSiteConfigurationsFromHDP25),
+    self.validators = [("yarn-site", self.validateYARNSiteConfigurationsFromHDP25),
                        ("yarn-site" , self.validateYARNSiteConfigurationsFromHDP26),
                        ("yarn-env", self.validateYARNEnvConfigurationsFromHDP206),
                        ("yarn-env", self.validateYARNEnvConfigurationsFromHDP22),
@@ -2331,18 +2355,6 @@ class YARNValidator(service_advisor.ServiceAdvisor):
                             "item": self.getErrorItem("My custom message in method %s" % inspect.stack()[0][3])})
     return self.toConfigurationValidationProblems(validationItems, "hadoop-env")
 
-  def validateYARNSiteConfigurationsFromHDP206(self, properties, recommendedDefaults, configurations, services, hosts):
-    """
-    This was copied from HDP 2.0.6; validate yarn-site
-    :return: A list of configuration validation problems.
-    """
-    clusterEnv = self.getSiteProperties(configurations, "cluster-env")
-    validationItems = [ {"config-name": 'yarn.nodemanager.resource.memory-mb', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'yarn.nodemanager.resource.memory-mb')},
-                        {"config-name": 'yarn.scheduler.minimum-allocation-mb', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'yarn.scheduler.minimum-allocation-mb')},
-                        {"config-name": 'yarn.nodemanager.linux-container-executor.group', "item": self.validatorEqualsPropertyItem(properties, "yarn.nodemanager.linux-container-executor.group", clusterEnv, "user_group")},
-                        {"config-name": 'yarn.scheduler.maximum-allocation-mb', "item": self.validatorLessThenDefaultValue(properties, recommendedDefaults, 'yarn.scheduler.maximum-allocation-mb')} ]
-    return self.toConfigurationValidationProblems(validationItems, "yarn-site")
-
   def validateYARNSiteConfigurationsFromHDP25(self, properties, recommendedDefaults, configurations, services, hosts):
     yarn_site_properties = self.getSiteProperties(configurations, "yarn-site")
     validationItems = []
@@ -2362,26 +2374,29 @@ class YARNValidator(service_advisor.ServiceAdvisor):
   def validateYARNSiteConfigurationsFromHDP26(self, properties, recommendedDefaults, configurations, services, hosts):
     validationItems = []
     siteProperties = services["configurations"]["yarn-site"]["properties"]
-    if services["configurations"]["yarn-site"]["properties"]["yarn.http.policy"] == 'HTTP_ONLY':
-      webapp_address = services["configurations"]["yarn-site"]["properties"]["yarn.timeline-service.webapp.address"]
-      propertyValue = "http://"+webapp_address+"/ws/v1/applicationhistory"
-    else:
-      webapp_address = services["configurations"]["yarn-site"]["properties"]["yarn.timeline-service.webapp.https.address"]
-      propertyValue = "https://"+webapp_address+"/ws/v1/applicationhistory"
-      self.logger.info("validateYarnSiteConfigurations: recommended value for webservice url"+services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"])
-    if services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"] != propertyValue:
-      validationItems = [
-                      {"config-name": "yarn.log.server.web-service.url",
-                       "item": self.getWarnItem("Value should be %s" % propertyValue)}]
+    if 'yarn.http.policy' in siteProperties:
+      if services["configurations"]["yarn-site"]["properties"]["yarn.http.policy"] == 'HTTP_ONLY':
+        webapp_address = services["configurations"]["yarn-site"]["properties"]["yarn.timeline-service.webapp.address"]
+        propertyValue = "http://"+webapp_address+"/ws/v1/applicationhistory"
+      else:
+        webapp_address = services["configurations"]["yarn-site"]["properties"]["yarn.timeline-service.webapp.https.address"]
+        propertyValue = "https://"+webapp_address+"/ws/v1/applicationhistory"
+        self.logger.info("validateYarnSiteConfigurations: recommended value for webservice url"+services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"])
+      if 'yarn.log.server.web-service.url' in siteProperties:
+        if services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"] != propertyValue:
+          validationItems = [
+                          {"config-name": "yarn.log.server.web-service.url",
+                          "item": self.getWarnItem("Value should be %s" % propertyValue)}]
 
-    if "yarn_hierarchy" in services["configurations"]["container-executor"]["properties"] \
-              and "yarn.nodemanager.linux-container-executor.cgroups.hierarchy" in services["configurations"]["yarn-site"]["properties"]:
-      yn_hirch = services["configurations"]["container-executor"]["properties"]["yarn_hierarchy"]
-      yn_crp_hirch = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.linux-container-executor.cgroups.hierarchy"]
-      if yn_hirch != yn_crp_hirch:
-        validationItems.append({"config-name": 'yarn.nodemanager.linux-container-executor.cgroups.hierarchy',
-                              "item": self.getWarnItem(
-                                "yarn.nodemanager.linux-container-executor.cgroups.hierarchy and yarn_hierarchy should always have same value")})
+    if "container-executor" in services["configurations"]:
+      if "yarn_hierarchy" in services["configurations"]["container-executor"]["properties"] \
+                and "yarn.nodemanager.linux-container-executor.cgroups.hierarchy" in services["configurations"]["yarn-site"]["properties"]:
+        yn_hirch = services["configurations"]["container-executor"]["properties"]["yarn_hierarchy"]
+        yn_crp_hirch = services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.linux-container-executor.cgroups.hierarchy"]
+        if yn_hirch != yn_crp_hirch:
+          validationItems.append({"config-name": 'yarn.nodemanager.linux-container-executor.cgroups.hierarchy',
+                                "item": self.getWarnItem(
+                                  "yarn.nodemanager.linux-container-executor.cgroups.hierarchy and yarn_hierarchy should always have same value")})
 
     return self.toConfigurationValidationProblems(validationItems, "yarn-site")
 
