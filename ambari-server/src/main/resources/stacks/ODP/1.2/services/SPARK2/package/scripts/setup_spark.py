@@ -84,6 +84,19 @@ def setup_spark(env, type, upgrade_type = None, action = None):
     spark2_defaults.pop("history.server.spnego.keytab.file")
     spark2_defaults['spark.history.kerberos.principal'] = spark2_defaults['spark.history.kerberos.principal'].replace('_HOST', socket.getfqdn().lower())
 
+  # add odp.version to spark.driver.extraJavaOptions
+  if "spark.driver.extraJavaOptions" in spark2_defaults:
+    current_value = spark2_defaults['spark.driver.extraJavaOptions']
+    spark2_defaults['spark.driver.extraJavaOptions'] = format("{current_value} -Dodp.version={params.version}")
+  else:
+    spark2_defaults['spark.driver.extraJavaOptions'] = format("-Dodp.version={params.version}")
+
+  if "spark.yarn.am.extraJavaOptions" in spark2_defaults:
+    current_value = spark2_defaults['spark.yarn.am.extraJavaOptions']
+    spark2_defaults['spark.yarn.am.extraJavaOptions'] = format("{current_value} -Dodp.version={params.version}")
+  else:
+    spark2_defaults['spark.yarn.am.extraJavaOptions'] = format("-Dodp.version={params.version}")
+
   PropertiesFile(format("{spark_conf}/spark-defaults.conf"),
     properties = spark2_defaults,
     key_value_delimiter = " ",
