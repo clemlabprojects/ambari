@@ -57,6 +57,12 @@ def knox():
        owner=params.knox_user,
        content=params.gateway_log4j
   )
+  # added for ODP 1.2
+  if params.knoxlogj2_enabled:
+      File(os.path.join(params.knox_conf_dir, "gateway-log4j2.xml"),
+       owner=params.knox_user,
+       content=params.gateway_log4j2
+      )
 
   File(os.path.join(params.knox_conf_dir, "topologies", "default.xml"),
        mode=0600,
