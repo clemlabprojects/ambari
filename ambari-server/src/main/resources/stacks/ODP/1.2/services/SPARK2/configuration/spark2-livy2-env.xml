@@ -107,7 +107,7 @@
             export SPARK_CONF_DIR=/etc/spark2/conf
             export JAVA_HOME={{java_home}}
             export HADOOP_CONF_DIR=/etc/hadoop/conf
-            expport LIVY_CONF_DIR={{livy2_conf_dir}}
+            export LIVY_CONF_DIR={{livy2_conf_dir}}
             export LIVY_LOG_DIR={{livy2_log_dir}}
             export LIVY_PID_DIR={{livy2_pid_dir}}
             export LIVY_SERVER_JAVA_OPTS="-Xmx2g"

@@ -240,6 +240,7 @@ if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, sta
   livy2_stack_conf = format("{livy2_conf}")
   if 'livy2_conf_dir' in config['configurations']['spark2-livy2-env']:
     livy2_conf = config['configurations']['spark2-livy2-env']['livy2_conf_dir']
+  livy2_conf_dir = livy2_conf
   livy2_log_dir = config['configurations']['spark2-livy2-env']['livy2_log_dir']
   livy2_pid_dir = status_params.livy2_pid_dir
   livy2_home = format("{stack_root}/current/{livy2_component_directory}")
