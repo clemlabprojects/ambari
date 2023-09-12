@@ -162,6 +162,13 @@ ssl_client_props_ignore = [
   'ssl.client.truststore.password'
 ]
 
+# Ozone Gateway TLS related params #
+ozone_ssl_client = {}
+
+for prop in config['configurations']['ozone-ssl-client'].keys():
+  ozone_ssl_client[prop] = config['configurations']['ozone-ssl-client'][prop]
+
+
 # Ozone Manager TLS related params #
 ozone_om_credential_file_path = config['configurations']['ssl-server-om']['hadoop.security.credential.provider.path']
 ozone_om_tls_ssl_keystore_password = config['configurations']['ssl-server-om']['ssl.server.keystore.password']

@@ -231,6 +231,13 @@ def ozone(name=None):
         owner = params.ozone_user,
         group = params.user_group
       )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.ozone_ssl_client,
+        configuration_attributes=params.config['configurationAttributes']['ozone-ssl-client'],
+        owner = params.ozone_user,
+        group = params.user_group
+      )
     
 
   if name == 'ozone-datanode':
