@@ -132,7 +132,7 @@ class RangeradminV2:
       ranger_lookup_password = unicode(rangerlookup_password)
       rangerlookup_username_password_for_ranger = format('rangerlookup:{ranger_lookup_password}')
       while retryCount <= 30:
-        response_code = self.check_ranger_login_urllib2(self.base_url, rangerlookup_username_password_for_ranger)
+        response_code = self.check_ranger_login_urllib2(self.base_url, rangerlookup_username_password_for_ranger, 'rangerlookup')
         if response_code is None and response_code != 200:
           Logger.info("Creating Respository rangerlookup User")
           user_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
@@ -277,14 +277,14 @@ class RangeradminV2:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
   @safe_retry(times=5, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
-  def check_ranger_login_urllib2(self, url, ambari_username_password_for_ranger):
+  def check_ranger_login_urllib2(self, url, ambari_username_password_for_ranger, user_login_check="admin"):
     """
     :param url: ranger admin host url
     :param usernamepassword: user credentials using which repository needs to be searched.
     :return: Returns login check response
     """
     try:
-      login_url = format('{url}/service/users/1')
+      login_url = format('{url}/service/users/1') if user_login_check is 'admin' else format('{url}/service/xusers/users/userName/{user_login_check}')
       search_policy_url = self.url_policies
       base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
       headers = {
