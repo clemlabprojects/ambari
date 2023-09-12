@@ -73,7 +73,6 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
-rangerlookup_create_user = config['configurations']['ranger-env']['rangerlookup_password'] if 'rangerlookup_password' in config['configurations']['ranger-env'] else False
 
 # hadoop default parameters
 hadoop_ozone_bin_dir = stack_select.get_hadoop_ozone_dir("bin")
@@ -518,129 +517,132 @@ jdk_location = config['ambariLevelParams']['jdk_location']
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
+enable_ranger_ozone = False
+if has_ranger_admin:
+  rangerlookup_create_user = config['configurations']['ranger-env']['rangerlookup_password'] if 'rangerlookup_password' in config['configurations']['ranger-env'] else False
+  # ranger support xml_configuration flag, instead of depending on ranger xml_configurations_supported/ranger-env introduced, using stack feature
+  xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
 
-# ranger support xml_configuration flag, instead of depending on ranger xml_configurations_supported/ranger-env introduced, using stack feature
-xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
+  # ranger ozone plugin enabled property
+  enable_ranger_ozone = default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")
+  enable_ranger_ozone = True if enable_ranger_ozone.lower() == 'yes' else False
+  ranger_policy_config = {}
+  # ranger ozone properties
+  if enable_ranger_ozone:
+    # get ranger policy url
+    policymgr_mgr_url = config['configurations']['admin-properties']['policymgr_external_url']
+    if xml_configurations_supported:
+      policymgr_mgr_url = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.policy.rest.url']
 
-# ranger ozone plugin enabled property
-enable_ranger_ozone = default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")
-enable_ranger_ozone = True if enable_ranger_ozone.lower() == 'yes' else False
-ranger_policy_config = {}
-# ranger ozone properties
-if enable_ranger_ozone:
-  # get ranger policy url
-  policymgr_mgr_url = config['configurations']['admin-properties']['policymgr_external_url']
-  if xml_configurations_supported:
-    policymgr_mgr_url = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.policy.rest.url']
+    if not is_empty(policymgr_mgr_url) and policymgr_mgr_url.endswith('/'):
+      policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
 
-  if not is_empty(policymgr_mgr_url) and policymgr_mgr_url.endswith('/'):
-    policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
+    # ranger audit db user
+    xa_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
 
-  # ranger audit db user
-  xa_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
+    # ranger ozone service/repository name
+    repo_name = str(config['clusterName']) + '_ozone'
+    repo_name_value = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.service.name']
+    if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
+      repo_name = repo_name_value
 
-  # ranger ozone service/repository name
-  repo_name = str(config['clusterName']) + '_ozone'
-  repo_name_value = config['configurations']['ranger-ozone-security']['ranger.plugin.ozone.service.name']
-  if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
-    repo_name = repo_name_value
+    common_name_for_certificate = config['configurations']['ranger-ozone-plugin-properties']['common.name.for.certificate']
+    repo_config_username = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_USERNAME']
+    ranger_plugin_properties = config['configurations']['ranger-ozone-plugin-properties']
+    policy_user = config['configurations']['ranger-ozone-plugin-properties']['policy_user']
+    repo_config_password = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
 
-  common_name_for_certificate = config['configurations']['ranger-ozone-plugin-properties']['common.name.for.certificate']
-  repo_config_username = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_USERNAME']
-  ranger_plugin_properties = config['configurations']['ranger-ozone-plugin-properties']
-  policy_user = config['configurations']['ranger-ozone-plugin-properties']['policy_user']
-  repo_config_password = config['configurations']['ranger-ozone-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
+    # ranger-env config
+    ranger_env = config['configurations']['ranger-env']
 
-  # ranger-env config
-  ranger_env = config['configurations']['ranger-env']
+    # create ranger-env config having external ranger credential properties
+    if not has_ranger_admin and enable_ranger_ozone:
+      external_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_admin_username', 'admin')
+      external_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_admin_password', 'admin')
+      external_ranger_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_username', 'amb_ranger_admin')
+      external_ranger_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_password', 'amb_ranger_admin')
+      ranger_env = {}
+      ranger_env['admin_username'] = external_admin_username
+      ranger_env['admin_password'] = external_admin_password
+      ranger_env['ranger_admin_username'] = external_ranger_admin_username
+      ranger_env['ranger_admin_password'] = external_ranger_admin_password
 
-  # create ranger-env config having external ranger credential properties
-  if not has_ranger_admin and enable_ranger_ozone:
-    external_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_admin_username', 'admin')
-    external_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_admin_password', 'admin')
-    external_ranger_admin_username = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_username', 'amb_ranger_admin')
-    external_ranger_admin_password = default('/configurations/ranger-ozone-plugin-properties/external_ranger_admin_password', 'amb_ranger_admin')
-    ranger_env = {}
-    ranger_env['admin_username'] = external_admin_username
-    ranger_env['admin_password'] = external_admin_password
-    ranger_env['ranger_admin_username'] = external_ranger_admin_username
-    ranger_env['ranger_admin_password'] = external_ranger_admin_password
+    xa_audit_db_password = ''
+    if not is_empty(config['configurations']['admin-properties']['audit_db_password']) and stack_supports_ranger_audit_db and has_ranger_admin:
+      xa_audit_db_password = config['configurations']['admin-properties']['audit_db_password']
 
-  xa_audit_db_password = ''
-  if not is_empty(config['configurations']['admin-properties']['audit_db_password']) and stack_supports_ranger_audit_db and has_ranger_admin:
-    xa_audit_db_password = config['configurations']['admin-properties']['audit_db_password']
+    downloaded_custom_connector = None
+    previous_jdbc_jar_name = None
+    driver_curl_source = None
+    driver_curl_target = None
+    previous_jdbc_jar = None
 
-  downloaded_custom_connector = None
-  previous_jdbc_jar_name = None
-  driver_curl_source = None
-  driver_curl_target = None
-  previous_jdbc_jar = None
+    if has_ranger_admin and stack_supports_ranger_audit_db:
+      xa_audit_db_flavor = config['configurations']['admin-properties']['DB_FLAVOR']
+      jdbc_jar_name, previous_jdbc_jar_name, audit_jdbc_url, jdbc_driver = get_audit_configs(config)
 
-  if has_ranger_admin and stack_supports_ranger_audit_db:
-    xa_audit_db_flavor = config['configurations']['admin-properties']['DB_FLAVOR']
-    jdbc_jar_name, previous_jdbc_jar_name, audit_jdbc_url, jdbc_driver = get_audit_configs(config)
+      downloaded_custom_connector = format("{exec_tmp_dir}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+      driver_curl_source = format("{jdk_location}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+      driver_curl_target = format("{stack_root}/current/{component_directory}/lib/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+      previous_jdbc_jar = format("{stack_root}/current/{component_directory}/lib/{previous_jdbc_jar_name}") if stack_supports_ranger_audit_db else None
+      sql_connector_jar = ''
 
-    downloaded_custom_connector = format("{exec_tmp_dir}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
-    driver_curl_source = format("{jdk_location}/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
-    driver_curl_target = format("{stack_root}/current/{component_directory}/lib/{jdbc_jar_name}") if stack_supports_ranger_audit_db else None
-    previous_jdbc_jar = format("{stack_root}/current/{component_directory}/lib/{previous_jdbc_jar_name}") if stack_supports_ranger_audit_db else None
-    sql_connector_jar = ''
+    ozone_ranger_plugin_config = {
+      'username': repo_config_username,
+      'password': repo_config_password,
+      'ozone.om.http-address': om_web_address,
+      'hadoop.security.authentication': hadoop_security_authentication,
+      'hadoop.security.authorization': hadoop_security_authorization,
+      'hadoop.security.auth_to_local': hadoop_security_auth_to_local,
+      'commonNameForCertificate': common_name_for_certificate
+    }
 
-  ozone_ranger_plugin_config = {
-    'username': repo_config_username,
-    'password': repo_config_password,
-    'ozone.om.http-address': om_web_address,
-    'hadoop.security.authentication': hadoop_security_authentication,
-    'hadoop.security.authorization': hadoop_security_authorization,
-    'hadoop.security.auth_to_local': hadoop_security_auth_to_local,
-    'commonNameForCertificate': common_name_for_certificate
-  }
+    if security_enabled:
+      ozone_ranger_plugin_config['policy.download.auth.users'] = ozone_user
+      ozone_ranger_plugin_config['tag.download.auth.users'] = ozone_user
+      ozone_ranger_plugin_config['policy.grantrevoke.auth.users'] = ozone_user
 
-  if security_enabled:
-    ozone_ranger_plugin_config['policy.download.auth.users'] = ozone_user
-    ozone_ranger_plugin_config['tag.download.auth.users'] = ozone_user
-    ozone_ranger_plugin_config['policy.grantrevoke.auth.users'] = ozone_user
+    # hbase_ranger_plugin_config['setup.additional.default.policies'] = "true"
+    # hbase_ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Hbase"
+    # hbase_ranger_plugin_config['default-policy.1.resource.table'] = "ambarismoketest"
+    # hbase_ranger_plugin_config['default-policy.1.resource.column-family'] = "*"
+    # hbase_ranger_plugin_config['default-policy.1.resource.column'] = "*"
+    # hbase_ranger_plugin_config['default-policy.1.policyItem.1.users'] = policy_user
+    # hbase_ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "read,write,create"
 
-  # hbase_ranger_plugin_config['setup.additional.default.policies'] = "true"
-  # hbase_ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Hbase"
-  # hbase_ranger_plugin_config['default-policy.1.resource.table'] = "ambarismoketest"
-  # hbase_ranger_plugin_config['default-policy.1.resource.column-family'] = "*"
-  # hbase_ranger_plugin_config['default-policy.1.resource.column'] = "*"
-  # hbase_ranger_plugin_config['default-policy.1.policyItem.1.users'] = policy_user
-  # hbase_ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "read,write,create"
+    # custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
+    # if len(custom_ranger_service_config) > 0:
+    #   hbase_ranger_plugin_config.update(custom_ranger_service_config)
 
-  # custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
-  # if len(custom_ranger_service_config) > 0:
-  #   hbase_ranger_plugin_config.update(custom_ranger_service_config)
+    ozone_ranger_plugin_repo = {
+      'isEnabled': 'true',
+      'configs': ozone_ranger_plugin_config,
+      'description': 'ozone repo',
+      'name': repo_name,
+      'type': 'ozone'
+    }
 
-  ozone_ranger_plugin_repo = {
-    'isEnabled': 'true',
-    'configs': ozone_ranger_plugin_config,
-    'description': 'ozone repo',
-    'name': repo_name,
-    'type': 'ozone'
-  }
+    ranger_ozone_principal = None
+    ranger_ozone_keytab = None
+    if stack_supports_ranger_kerberos and security_enabled and 'ozone-manager' in component_directory.lower():
+      ranger_ozone_principal = om_jaas_princ
+      ranger_ozone_keytab = om_keytab_path
+    
 
-  ranger_ozone_principal = None
-  ranger_ozone_keytab = None
-  if stack_supports_ranger_kerberos and security_enabled and 'ozone-manager' in component_directory.lower():
-    ranger_ozone_principal = om_jaas_princ
-    ranger_ozone_keytab = om_keytab_path
-  
-
-  xa_audit_db_is_enabled = False
-  if xml_configurations_supported and stack_supports_ranger_audit_db:
-    xa_audit_db_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.solr']
-
-  xa_audit_hdfs_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
-  ssl_keystore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None
-  ssl_truststore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password'] if xml_configurations_supported else None
-  credential_file = format('/etc/ranger/{repo_name}/cred.jceks')
-
-  # for SQLA explicitly disable audit to DB for Ranger
-  if has_ranger_admin and stack_supports_ranger_audit_db and xa_audit_db_flavor.lower() == 'sqla':
     xa_audit_db_is_enabled = False
+    if xml_configurations_supported and stack_supports_ranger_audit_db:
+      xa_audit_db_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.solr']
 
+    xa_audit_hdfs_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
+    ssl_keystore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None
+    ssl_truststore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password'] if xml_configurations_supported else None
+    credential_file = format('/etc/ranger/{repo_name}/cred.jceks')
+
+    # for SQLA explicitly disable audit to DB for Ranger
+    if has_ranger_admin and stack_supports_ranger_audit_db and xa_audit_db_flavor.lower() == 'sqla':
+      xa_audit_db_is_enabled = False
+else:
+  Logger.debug("Skipping Ranger as not ranger admin hosts is present")
 # need this to capture cluster name from where ranger hbase plugin is enabled
 cluster_name = config['clusterName']
 
