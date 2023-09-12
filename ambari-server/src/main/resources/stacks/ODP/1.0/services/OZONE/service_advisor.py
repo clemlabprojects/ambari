@@ -375,11 +375,11 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       else:
         putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
       # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
-      boundaries = [0] if len(scmHosts) is 1 else [0, len(scmHosts)-1]
+      boundaries = [0] if len(scmHosts) is 1 else list(range(0, len(scmHosts)))
       putOzoneSiteProperty("ozone.scm.nodes."+str(defaultSCMServiceName), ','.join(str("scm"+str(x)) for x in boundaries))
       scm_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.http-port"]
       scm_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.https-port"]
-      for x in [ 0, len(scmHosts)-1]:
+      for x in boundaries:
         scmhost = scmHosts[x]
         scmhostname = scmhost['Hosts']['host_name']
         putOzoneSiteProperty("ozone.scm.address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
@@ -403,12 +403,12 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       else:
         putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
       # configure ozone.om.nodes.EXAMPLESOMSERVICEID
-      boundaries = [0] if len(managerHosts) is 1 else [0, len(managerHosts)-1]
+      boundaries = [0] if len(managerHosts) is 1 else list(range(0, len(managerHosts)))
       putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name']+":"+str(default_ozone_dn_to_recon_port)))
       putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
       om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
       om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
-      for x in [ 0, len(managerHosts)-1]:
+      for x in boundaries:
         omhost = managerHosts[x]
         omhostname = omhost['Hosts']['host_name']
         putOzoneSiteProperty("ozone.om.address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name'])+":"+str(default_ozone_port))
