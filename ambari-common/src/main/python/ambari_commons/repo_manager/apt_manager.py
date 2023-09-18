@@ -262,7 +262,7 @@ class AptManager(GenericManager):
         if 'base' in context.use_repos:
           use_repos = set([v for k, v in context.use_repos.items() if k != 'base'])
         else:
-          cmd = cmd + ['-o', 'Dir::Etc::SourceList={0}'.format(self.properties.empty_file)]
+          # cmd = cmd + ['-o', 'Dir::Etc::SourceList={0}'.format(self.properties.empty_file)]
           use_repos = set(context.use_repos.values())
 
         if use_repos:
@@ -275,7 +275,7 @@ class AptManager(GenericManager):
             Logger.info("Temporary sources file will be copied: {0}".format(new_sources_file))
             sudo.copy(os.path.join(self.properties.repo_definition_location, repo + '.list'), new_sources_file)
             copied_sources_files.append(new_sources_file)
-          cmd = cmd + ['-o', 'Dir::Etc::SourceParts='.format(apt_sources_list_tmp_dir)]
+          #cmd = cmd + ['-o', 'Dir::Etc::SourceParts='.format(apt_sources_list_tmp_dir)]
 
       cmd = cmd + [name]
       Logger.info("Installing package {0} ('{1}')".format(name, shell.string_cmd_from_args_list(cmd)))
