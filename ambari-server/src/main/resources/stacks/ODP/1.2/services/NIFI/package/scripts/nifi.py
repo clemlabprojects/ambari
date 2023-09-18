@@ -72,8 +72,10 @@ class Master(Script):
             recursive_ownership=True,
             cd_access='a'
     )
-
-    nifi_toolkit_util_common.copy_toolkit_scripts(params.toolkit_files_dir, params.toolkit_tmp_dir, params.nifi_user, params.nifi_group, upgrade_type=None, service=nifi_toolkit_util_common.NIFI)
+    stack_name = default("/clusterLevelParams/stack_name", None)
+    # disable nifi toolkit install when ODP stack is enabled
+    if stack_name != "ODP":
+      nifi_toolkit_util_common.copy_toolkit_scripts(params.toolkit_files_dir, params.toolkit_tmp_dir, params.nifi_user, params.nifi_group, upgrade_type=None, service=nifi_toolkit_util_common.NIFI)
     Execute('touch ' +  params.nifi_node_log_file, user=params.nifi_user)
 
 
@@ -112,14 +114,14 @@ class Master(Script):
 
     generate_logfeeder_input_config('nifi', Template("input.config-nifi.json.j2", extra_imports=[default]))
 
-    # if this is not an additional node being added to an existing cluster write out flow.xml.gz to internal dir only if AMS installed (must be writable by Nifi)
+    # if this is not an additional node being added to an existing cluster write out flow.json.gz to internal dir only if AMS installed (must be writable by Nifi)
     #  and only during first install. It is used to automate setup of Ambari metrics reporting task in Nifi
     if not params.is_additional_node:
-      if params.metrics_collector_host and params.nifi_ambari_reporting_enabled and not sudo.path_isfile(params.nifi_flow_config_dir+'/flow.xml.gz'):
-        Execute('echo "First time setup so generating flow.xml.gz" >> ' + params.nifi_node_log_file, user=params.nifi_user)
+      if params.metrics_collector_host and params.nifi_ambari_reporting_enabled and not sudo.path_isfile(params.nifi_flow_config_dir+'/flow.json.gz'):
+        Execute('echo "First time setup so generating flow.json.gz" >> ' + params.nifi_node_log_file, user=params.nifi_user)
         flow_content=InlineTemplate(params.nifi_flow_content)
-        File(format("{params.nifi_flow_config_dir}/flow.xml"), content=flow_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
-        Execute(format("cd {params.nifi_flow_config_dir}; gzip flow.xml;"), user=params.nifi_user)
+        File(format("{params.nifi_flow_config_dir}/flow.json"), content=flow_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
+        Execute(format("cd {params.nifi_flow_config_dir}; gzip flow.json;"), user=params.nifi_user)
 
 
   def stop(self, env, upgrade_type=None):
