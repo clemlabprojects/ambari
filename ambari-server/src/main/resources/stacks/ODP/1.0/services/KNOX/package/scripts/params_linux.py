@@ -364,7 +364,7 @@ admin_topology_template = default('/configurations/admin-topology/content', None
 knoxsso_topology_template = config['configurations']['knoxsso-topology']['content']
 gateway_log4j = config['configurations']['gateway-log4j']['content']
 knoxlogj2_enabled = False
-if "gateway-log4j2" in config['configurations']
+if "gateway-log4j2" in config['configurations']:
   knoxlogj2_enabled = True
   gateway_log4j2 = config['configurations']['gateway-log4j2']['content']
 ldap_log4j = config['configurations']['ldap-log4j']['content']
