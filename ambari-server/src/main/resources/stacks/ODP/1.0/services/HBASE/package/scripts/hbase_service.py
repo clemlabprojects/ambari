@@ -23,6 +23,7 @@ from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.core.shell import as_sudo
 from resource_management.core.resources.system import Directory, Execute, File, Link
+from resource_management.core.source import StaticFile
 
 def hbase_service(
   name,
