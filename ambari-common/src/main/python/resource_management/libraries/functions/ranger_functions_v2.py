@@ -134,8 +134,8 @@ class RangeradminV2:
       while retryCount <= 30:
         response_code = self.check_ranger_login_urllib2(self.base_url, rangerlookup_username_password_for_ranger, 'rangerlookup')
         if response_code is None and response_code != 200:
-          Logger.info("Creating Respository rangerlookup User")
-          user_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password)
+          Logger.info("Creating rangerlookup User")
+          user_resp_code = self.create_rangerlookup_user(ambari_ranger_admin, ambari_ranger_password, rangerlookup_password, format("{admin_uname}:{admin_password}"))
           retryCount += 1
           if user_resp_code is not None and user_resp_code == 200:
             Logger.info("Repository rangerlookup User Created Successfully")
@@ -378,7 +378,7 @@ class RangeradminV2:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
   @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
-  def create_rangerlookup_user(self, ranger_admin_username, ranger_admin_password, ranger_lookup_password):
+  def create_rangerlookup_user(self, ranger_admin_username, ranger_admin_password, ranger_lookup_password, usernamepassword):
     """
     :param ranger_admin_username: admin username
     :param ranger_admin_password: admin password
@@ -393,7 +393,7 @@ class RangeradminV2:
       Logger.info('Cheking if rangerlookup user already exists')
       url =  self.url_users + '?name=' + str('rangerlookup')
       request = urllib2.Request(url)
-      base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+      base_64_string = base64.encodestring(usernamepassword).replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
