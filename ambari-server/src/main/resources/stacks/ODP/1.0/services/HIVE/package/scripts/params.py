@@ -119,6 +119,12 @@ hive_var_lib = '/var/lib/hive'
 hive_user_home_dir = "/home/hive"
 zk_bin = format('{stack_root}/current/zookeeper-client/bin')
 
+# check wheter HDFS or Ozone is installed to read core-site from the right source
+namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
+ozone_manager_hosts = default("/clusterHostInfo/ozone_manager_hosts", [])
+has_namenode = len(namenode_hosts) > 0
+has_ozone_manager = len(ozone_manager_hosts) > 0
+
 # starting on stacks where HSI is supported, we need to begin using the 'hive2' schematool
 hive_server2_hive_dir = None
 hive_server2_hive_lib = None
@@ -354,7 +360,8 @@ smoke_test_path = format("{tmp_dir}/hiveserver2Smoke.sh")
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 smokeuser_principal = config['configurations']['cluster-env']['smokeuser_principal_name']
 
-fs_root = config['configurations']['core-site']['fs.defaultFS']
+if has_namenode:
+  fs_root = config['configurations']['core-site']['fs.defaultFS']
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
@@ -544,7 +551,8 @@ security_param = "true" if security_enabled else "false"
 
 
 hdfs_site = config['configurations']['hdfs-site']
-default_fs = config['configurations']['core-site']['fs.defaultFS']
+if has_namenode:
+  default_fs = config['configurations']['core-site']['fs.defaultFS']
 
 dfs_type = default("/clusterLevelParams/dfs_type", "")
 
@@ -828,3 +836,5 @@ beeline_site_config = {
 
 if has_hive_interactive:
   beeline_site_config['beeline.hs2.jdbc.url.llap'] = hsi_jdbc_url
+
+# 

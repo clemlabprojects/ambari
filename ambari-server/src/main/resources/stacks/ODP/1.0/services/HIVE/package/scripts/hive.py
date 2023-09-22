@@ -65,6 +65,9 @@ def hive(name=None):
                                                      params.user_group
                                                      )
 
+  # create core-site.xml in /etc/hive/conf/
+  create_core_site_xml(params.hive_config_dir)
+
   XmlConfig("hive-site.xml",
             conf_dir = params.hive_config_dir,
             configurations = params.hive_site_config,
@@ -631,3 +634,27 @@ def jdbc_connector(target, hive_previous_jdbc_jar):
   File(target,
        mode = 0644,
   )
+
+## added for ambari 2.7.8.0
+def create_core_site_xml(conf_dir):
+  import params
+
+  if params.has_namenode:
+    XmlConfig("core-site.xml",
+              conf_dir=conf_dir,
+              configurations=params.config['configurations']['core-site'],
+              configuration_attributes=params.config['configurationAttributes']['core-site'],
+              owner=params.hive_user,
+              group=params.user_group,
+              mode=0644
+    )
+  elif params.has_ozone_manager:
+    XmlConfig("core-site.xml",
+      conf_dir=conf_dir,
+      configurations=params.config['configurations']['ozone-core-site'],
+      configuration_attributes=params.config['configurationAttributes']['core-site'],
+      owner=params.hive_user,
+      group=params.user_group,
+      mode=0644
+    )
+    
