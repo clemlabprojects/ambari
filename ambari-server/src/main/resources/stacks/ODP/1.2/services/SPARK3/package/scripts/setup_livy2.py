@@ -73,7 +73,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
 
   # create livy.conf in etc/conf dir
   PropertiesFile(format("{livy2_conf}/livy.conf"),
-                properties = params.config['configurations']['spark3-spark3-livy2-spark-blacklist'],
+                properties = params.config['configurations']['spark3-livy2-conf'],
                 key_value_delimiter = " ",
                 owner=params.livy2_user,
                 group=params.livy2_group,

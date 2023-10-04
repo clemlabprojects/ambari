@@ -55,7 +55,7 @@
           }
         },
         {
-          "spark3-livy2-spark-blacklist": {
+          "spark3-livy2-conf": {
             "livy.server.auth.type": "kerberos",
             "livy.impersonation.enabled": "true"
           }
@@ -125,7 +125,7 @@
               "principal": {
                 "value": "${spark3-livy2-env/livy2_user}/_HOST@${realm}",
                 "type" : "service",
-                "configuration": "spark3-livy2-spark-blacklist/livy.server.launch.kerberos.principal",
+                "configuration": "spark3-livy2-conf/livy.server.launch.kerberos.principal",
                 "local_username": "${spark3-livy2-env/livy2_user}"
               },
               "keytab": {
@@ -138,17 +138,17 @@
                   "name": "${cluster-env/user_group}",
                   "access": ""
                 },
-                "configuration": "spark3-livy2-spark-blacklist/livy.server.launch.kerberos.keytab"
+                "configuration": "spark3-livy2-conf/livy.server.launch.kerberos.keytab"
               }
             },
             {
               "name": "livy_spnego",
               "reference": "/spnego",
               "principal": {
-                "configuration": "spark3-livy2-spark-blacklist/livy.server.auth.kerberos.principal"
+                "configuration": "spark3-livy2-conf/livy.server.auth.kerberos.principal"
               },
               "keytab": {
-                "configuration": "spark3-livy2-spark-blacklist/livy.server.auth.kerberos.keytab"
+                "configuration": "spark3-livy2-conf/livy.server.auth.kerberos.keytab"
               }
             }
           ]

@@ -201,7 +201,12 @@ class ZeppelinRecommender(service_advisor.ServiceAdvisor):
         zeppelin_user = zeppelin_principal.split('@')[0] if zeppelin_principal else None
 
         if zeppelin_user:
-          self.__conditionallyUpdateSuperUsers('livy2-conf', 'livy.superusers', zeppelin_user, configurations, services)
+          if 'livy2-conf' in configurations:
+            self.__conditionallyUpdateSuperUsers('livy2-conf', 'livy.superusers', zeppelin_user, configurations, services)
+          if 'spark2-livy2-conf' in configurations:
+            self.__conditionallyUpdateSuperUsers('spark2-livy2-conf', 'livy.superusers', zeppelin_user, configurations, services)
+          if 'spark3-livy2-conf' in configurations:
+            self.__conditionallyUpdateSuperUsers('spark3-livy2-conf', 'livy.superusers', zeppelin_user, configurations, services)
 
   def __conditionallyUpdateSuperUsers(self, config_name, property_name, user_to_add, configurations, services):
     config = self.getServicesSiteProperties(services, config_name)

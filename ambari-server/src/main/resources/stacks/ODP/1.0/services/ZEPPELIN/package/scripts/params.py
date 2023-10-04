@@ -246,6 +246,8 @@ spark_client_version = get_stack_version('spark-client')
 hbase_master_hosts = default("/clusterHostInfo/hbase_master_hosts", [])
 livy_hosts = default("/clusterHostInfo/livy_server_hosts", [])
 livy2_hosts = default("/clusterHostInfo/livy2_server_hosts", [])
+spark2_livy2_hosts = default("/clusterHostInfo/spark2_livy2_server_hosts", [])
+spark3_livy2_hosts = default("/clusterHostInfo/spark3_livy2_server_hosts", [])
 
 livy_livyserver_host = None
 livy_livyserver_port = None
@@ -253,6 +255,13 @@ livy_livyserver_protocol = 'http'
 livy2_livyserver_host = None
 livy2_livyserver_port = None
 livy2_livyserver_protocol = 'http'
+spark2_livy2_livyserver_host = None
+spark2_livy2_livyserver_port = None
+spark2_livy2_livyserver_protocol = 'http'
+spark3_livy2_livyserver_host = None
+spark3_livy2_livyserver_port = None
+spark3_livy2_livyserver_protocol = 'http'
+
 if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY, stack_version_formatted) and \
     len(livy_hosts) > 0:
   livy_livyserver_host = str(livy_hosts[0])
@@ -262,10 +271,28 @@ if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY, stac
 
 if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, stack_version_formatted) and \
     len(livy2_hosts) > 0:
-  livy2_livyserver_host = str(livy2_hosts[0])
-  livy2_livyserver_port = config['configurations']['livy2-conf']['livy.server.port']
-  if 'livy.keystore' in config['configurations']['livy2-conf']:
-    livy2_livyserver_protocol = 'https'
+  if 'livy2-conf' in config['configurations']:
+    livy2_livyserver_host = str(livy2_hosts[0])
+    livy2_livyserver_port = config['configurations']['livy2-conf']['livy.server.port']
+    if 'livy.keystore' in config['configurations']['livy2-conf']:
+      livy2_livyserver_protocol = 'https'
+
+if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, stack_version_formatted) and \
+    len(spark2_livy2_hosts) > 0:
+  if 'spark2-livy2-conf' in config['configurations']:
+    spark2_livy2_livyserver_host = str(spark2_livy2_hosts[0])
+    spark2_livy2_livyserver_port = config['configurations']['spark2-livy2-conf']['livy.server.port']
+    if 'livy.keystore' in config['configurations']['spark2-livy2-conf']:
+      spark2_livy2_livyserver_protocol = 'https'
+
+if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, stack_version_formatted) and \
+    len(spark3_livy2_hosts) > 0:
+  if 'spark3-livy2-conf' in config['configurations']:
+    spark3_livy2_livyserver_host = str(spark3_livy2_hosts[0])
+    spark3_livy2_livyserver_port = config['configurations']['spark3-livy2-conf']['livy.server.port']
+    if 'livy.keystore' in config['configurations']['spark3-livy2-conf']:
+      spark3_livy2_livyserver_protocol = 'https'
+
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
 hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab']

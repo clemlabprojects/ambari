@@ -248,8 +248,8 @@ if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, sta
   user_group = status_params.user_group
   livy2_hdfs_user_dir = format("/user/{livy2_user}")
   livy2_server_pid_file = status_params.livy2_server_pid_file
-  livy2_recovery_dir = default("/configurations/spark3-livy2-spark-blacklist/livy.server.recovery.state-store.url", "/livy2-recovery")
-  livy2_recovery_store = default("/configurations/spark3-livy2-spark-blacklist/livy.server.recovery.state-store", "filesystem")
+  livy2_recovery_dir = default("/configurations/spark3-livy2-conf/livy.server.recovery.state-store.url", "/livy2-recovery")
+  livy2_recovery_store = default("/configurations/spark3-livy2-conf/livy.server.recovery.state-store", "filesystem")
 
   livy2_server_start = format("{livy2_home}/bin/livy-server start")
   livy2_server_stop = format("{livy2_home}/bin/livy-server stop")
@@ -259,17 +259,17 @@ if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, sta
   livy2_log4j_properties = config['configurations']['spark3-livy2-log4j-properties']['content']
   livy2_spark_blacklist_properties = config['configurations']['spark3-livy2-spark-blacklist']['content']
 
-  if 'livy.server.kerberos.keytab' in config['configurations']['spark3-livy2-spark-blacklist']:
-    livy_kerberos_keytab =  config['configurations']['spark3-livy2-spark-blacklist']['livy.server.kerberos.keytab']
+  if 'livy.server.kerberos.keytab' in config['configurations']['spark3-livy2-conf']:
+    livy_kerberos_keytab =  config['configurations']['spark3-livy2-conf']['livy.server.kerberos.keytab']
   else:
-    livy_kerberos_keytab =  config['configurations']['spark3-livy2-spark-blacklist']['livy.server.launch.kerberos.keytab']
-  if 'livy.server.kerberos.principal' in config['configurations']['spark3-livy2-spark-blacklist']:
-    livy_kerberos_principal = config['configurations']['spark3-livy2-spark-blacklist']['livy.server.kerberos.principal']
+    livy_kerberos_keytab =  config['configurations']['spark3-livy2-conf']['livy.server.launch.kerberos.keytab']
+  if 'livy.server.kerberos.principal' in config['configurations']['spark3-livy2-conf']:
+    livy_kerberos_principal = config['configurations']['spark3-livy2-conf']['livy.server.kerberos.principal']
   else:
-    livy_kerberos_principal = config['configurations']['spark3-livy2-spark-blacklist']['livy.server.launch.kerberos.principal']
+    livy_kerberos_principal = config['configurations']['spark3-livy2-conf']['livy.server.launch.kerberos.principal']
 
   livy2_livyserver_hosts = default("/clusterHostInfo/livy2_server_hosts", [])
-  livy2_http_scheme = 'https' if 'livy.keystore' in config['configurations']['spark3-livy2-spark-blacklist'] else 'http'
+  livy2_http_scheme = 'https' if 'livy.keystore' in config['configurations']['spark3-livy2-conf'] else 'http'
 
   # ats 1.5 properties
   entity_groupfs_active_dir = config['configurations']['yarn-site']['yarn.timeline-service.entity-group-fs-store.active-dir']
@@ -283,7 +283,7 @@ if stack_version_formatted and check_stack_feature(StackFeature.SPARK_LIVY2, sta
     if security_enabled:
       livy2_principal = livy_kerberos_principal.replace('_HOST', config['agentLevelParams']['hostname'].lower())
 
-  livy2_livyserver_port = default('configurations/spark3-livy2-spark-blacklist/livy.server.port',8999)
+  livy2_livyserver_port = default('configurations/spark3-livy2-conf/livy.server.port',8999)
 
 
 import functools
