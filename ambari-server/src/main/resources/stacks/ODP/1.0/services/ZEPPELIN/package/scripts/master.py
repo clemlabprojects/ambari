@@ -627,6 +627,14 @@ class Master(Script):
           self.storePropertyToInterpreter(interpreter, 'zeppelin.livy.url', 'string', params.livy2_livyserver_protocol + \
                                                                                       "://" + params.livy2_livyserver_host + \
                                                                                       ":" + params.livy2_livyserver_port)
+        elif params.spark2_livy2_livyserver_host:
+          self.storePropertyToInterpreter(interpreter, 'zeppelin.livy.url', 'string', params.spark2_livy2_livyserver_protocol + \
+                                                                                      "://" + params.spark2_livy2_livyserver_host + \
+                                                                                      ":" + params.spark2_livy2_livyserver_port)
+        elif params.spark3_livy2_livyserver_host:
+          self.storePropertyToInterpreter(interpreter, 'zeppelin.livy.url', 'string', params.spark3_livy2_livyserver_protocol + \
+                                                                                      "://" + params.spark3_livy2_livyserver_host + \
+                                                                                      ":" + params.spark3_livy2_livyserver_port)
         else:
           del interpreter_settings[setting_key]
 

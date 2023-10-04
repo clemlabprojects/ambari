@@ -231,9 +231,9 @@
         <config-type>spark3-thrift-fairscheduler</config-type>
         <config-type>spark3-livy2-client-conf</config-type>
         <config-type>spark3-livy2-spark-blacklist</config-type>
+        <config-type>spark3-livy2-conf</config-type>
         <config-type>spark3-livy2-env</config-type>
         <config-type>spark3-livy2-log4j-properties</config-type>
-        <config-type>spark3-livy2-spark-blacklist</config-type>
       </configuration-dependencies>
 
       <commandScript>

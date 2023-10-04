@@ -35,9 +35,9 @@ CRITICAL_MESSAGE = "Connection failed on host {0}:{1} ({2})"
 
 logger = logging.getLogger('ambari_alerts')
 
-LIVY_SERVER_HOST_KEY = '{{spark3-livy2-spark-blacklist/livy.server.host}}'
+LIVY_SERVER_HOST_KEY = '{{spark3-livy2-conf/livy.server.host}}'
 
-LIVY_SERVER_PORT_KEY = '{{spark3-livy2-spark-blacklist/livy.server.port}}'
+LIVY_SERVER_PORT_KEY = '{{spark3-livy2-conf/livy.server.port}}'
 
 LIVYUSER_DEFAULT = 'livy'
 
@@ -48,7 +48,7 @@ SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
 SMOKEUSER_KEYTAB_KEY = '{{cluster-env/smokeuser_keytab}}'
 SMOKEUSER_PRINCIPAL_KEY = '{{cluster-env/smokeuser_principal_name}}'
 SMOKEUSER_KEY = '{{cluster-env/smokeuser}}'
-LIVY_SSL_ENABLED_KEY = '{{spark3-livy2-spark-blacklist/livy.keystore}}'
+LIVY_SSL_ENABLED_KEY = '{{spark3-livy2-conf/livy.keystore}}'
 
 # The configured Kerberos executable search paths, if any
 KERBEROS_EXECUTABLE_SEARCH_PATHS_KEY = '{{kerberos-env/executable_search_paths}}'
