@@ -25,3 +25,14 @@ principal="{{knox_principal_name}}"
 storeKey=true
 useTicketCache=false;
 };
+
+Client {
+com.sun.security.auth.module.Krb5LoginModule required
+renewTGT=false
+doNotPrompt=true
+useKeyTab=true
+keyTab="{{knox_keytab_path}}"
+principal="{{knox_principal_name}}"
+storeKey=true
+useTicketCache=false;
+};
