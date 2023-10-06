@@ -66,8 +66,8 @@
           "name": "SPARK3_JOBHISTORYSERVER",
           "identities": [
             {
-              "name": "hdfs",
-              "reference": "/HDFS/NAMENODE/hdfs"
+              "name": "spark3_spark3_jobhistoryserver",
+              "reference": "/SPARK3/SPARK3_JOBHISTORYSERVER/spark3_jobhistoryserver"
             },
             {
               "name": "history_server_spnego",
@@ -117,8 +117,8 @@
           "name": "SPARK3_LIVY2_SERVER",
           "identities": [
             {
-              "name": "hdfs",
-              "reference": "/HDFS/NAMENODE/hdfs"
+              "name": "spark3_spark3_livy2_server",
+              "reference": "/SPARK3/SPARK3_LIVY2_SERVER/spark3_livy2_server"
             },
             {
               "name": "livyuser",
