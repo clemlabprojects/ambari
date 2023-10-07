@@ -74,54 +74,6 @@
           </logs>
         </component>
         <component>
-          <name>SPARK3_THRIFTSERVER</name>
-          <displayName>Spark3 Thrift Server</displayName>
-          <category>SLAVE</category>
-          <cardinality>0+</cardinality>
-          <versionAdvertised>true</versionAdvertised>
-          <dependencies>
-            <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-               <name>MAPREDUCE2/MAPREDUCE2_CLIENT</name>
-               <scope>host</scope>
-               <auto-deploy>
-                 <enabled>true</enabled>
-               </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>YARN/YARN_CLIENT</name>
-              <scope>host</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>HIVE/HIVE_METASTORE</name>
-              <scope>cluster</scope>
-              <auto-deploy>
-                <enabled>true</enabled>
-              </auto-deploy>
-            </dependency>
-          </dependencies>
-          <commandScript>
-            <script>scripts/spark_thrift_server.py</script>
-            <scriptType>PYTHON</scriptType>
-            <timeout>600</timeout>
-          </commandScript>
-          <logs>
-            <log>
-              <logId>spark3_thriftserver</logId>
-              <primary>true</primary>
-            </log>
-          </logs>
-        </component>
-        <component>
           <name>SPARK3_CLIENT</name>
           <displayName>Spark3 Client</displayName>
           <category>CLIENT</category>
