@@ -284,7 +284,7 @@ elif jdbc_driver_name == "com.mysql.jdbc.Driver":
   jdbc_driver_jar = default("/ambariLevelParams/custom_mysql_jdbc_name", None)
   previous_jdbc_jar_name = default("/ambariLevelParams/previous_custom_mysql_jdbc_name", None)
 elif jdbc_driver_name == "org.postgresql.Driver":
-  jdbc_driver_jar = format("{oozie_home}/lib/postgresql-9.0-801.jdbc4.jar")  #oozie using it's own postgres jdbc
+  jdbc_driver_jar = format("{oozie_home}/lib/postgresql-42.6.0.jar")  #oozie using it's own postgres jdbc
   previous_jdbc_jar_name = None
 elif jdbc_driver_name == "oracle.jdbc.driver.OracleDriver":
   jdbc_driver_jar = default("/ambariLevelParams/custom_oracle_jdbc_name", None)
