@@ -141,7 +141,7 @@ class KnoxGatewayDefault(KnoxGateway):
     try:
       Execute(daemon_cmd,
               user=params.knox_user,
-              environment={'JAVA_HOME': params.java_home},
+              environment={'JAVA_HOME': params.java_home, 'HADOOP_CONF_DIR': '/etc/hadoop/conf'},
               not_if=no_op_test
       )
     except:
