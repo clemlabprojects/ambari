@@ -93,7 +93,6 @@
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
-
   <property>
     <name>external_ranger_admin_username</name>
     <value></value>
