@@ -94,7 +94,7 @@
     <repository>
       <id>clemlab-releases</id>
       <name>releases</name>
-      <url>https://nexus.luc-data.com/repository/maven-releases/</url>
+      <url>https://nexus.clemlab.com/repository/maven-releases/</url>
     </repository>
 
   </repositories>
