@@ -145,7 +145,7 @@ class FlinkServiceAdvisor(service_advisor.ServiceAdvisor):
     return validator.validateListOfConfigUsingMethod(configurations, recommendedDefaults, services, hosts, validator.validators)
 
   def isComponentUsingCardinalityForLayout(self, componentName):
-    return componentName in ('SPARK2_THRIFTSERVER', 'LIVY2_SERVER')
+    return componentName in ('SPARK2_THRIFTSERVER', 'SPARK2_LIVY2_SERVER','SPARK3_LIVY2_SERVER')
 
   @staticmethod
   def isKerberosEnabled(services, configurations):

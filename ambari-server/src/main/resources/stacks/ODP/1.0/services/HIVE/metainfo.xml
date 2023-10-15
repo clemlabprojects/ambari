@@ -62,6 +62,13 @@
                 <enabled>true</enabled>
               </auto-deploy>
           </dependency>
+          <dependency>
+              <name>TEZ/TEZ_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+          </dependency>
         </component>
 
         <component>
