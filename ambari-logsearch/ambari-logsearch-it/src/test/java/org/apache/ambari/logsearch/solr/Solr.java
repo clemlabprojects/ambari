@@ -64,7 +64,7 @@ public class Solr {
 
     SolrResourceLoader solrResourceLoader = new SolrResourceLoader(solrHomeDir.toPath());
 
-    NodeConfig config = new NodeConfig.NodeConfigBuilder("embeddedSolrServerNode", solrResourceLoader)
+    NodeConfig config = new NodeConfig.NodeConfigBuilder("embeddedSolrServerNode", solrResourceLoader.getInstancePath())
             .setConfigSetBaseDirectory(targetConfigSetDir.getAbsolutePath())
             .build();
 
