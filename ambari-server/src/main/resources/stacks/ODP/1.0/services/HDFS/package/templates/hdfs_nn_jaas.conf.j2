@@ -25,3 +25,13 @@ com.sun.security.jgss.krb5.initiate {
     storeKey=true
     useTicketCache=false;
 };
+Client {
+    com.sun.security.auth.module.Krb5LoginModule required
+    renewTGT=false
+    doNotPrompt=true
+    useKeyTab=true
+    keyTab="{{nn_keytab}}"
+    principal="{{nn_principal_name}}"
+    storeKey=true
+    useTicketCache=false;
+};
