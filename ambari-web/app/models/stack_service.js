@@ -325,9 +325,12 @@ App.StackService.displayOrder = [
   'LOGSEARCH',
   'RANGER',
   'RANGER_KMS',
+  'NIFI',
+  'NIFI_REGISTRY',
   'SMARTSENSE',
   'SPARK',
   'SPARK2',
+  'SPARK3',
   'ZEPPELIN',
   'FLINK',
   'OZONE'
