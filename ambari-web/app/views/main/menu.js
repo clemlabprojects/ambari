@@ -22,9 +22,7 @@ App.MainSideMenuView = Em.CollectionView.extend({
   tagName: 'ul',
   classNames: ['nav', 'side-nav-menu', 'nav-pills', 'nav-stacked'],
 
-  views: function () {
-    return App.router.get('mainViewsController.ambariViews');
-  }.property('App.router.mainViewsController.ambariViews'),
+  views: Em.computed.alias('App.router.mainViewsController.ambariViews'),
 
   didInsertElement: function() {
     $('[data-toggle="collapse-side-nav"]').on('click', () => {
@@ -211,14 +209,6 @@ App.SideNavServiceMenuView = Em.CollectionView.extend({
     restartRequiredMessage: null,
 
     shouldBeRestarted: Em.computed.someBy('content.hostComponents', 'staleConfigs', true),
-
-    alertsCountDisplay: function () {
-      return this.get('content.alertsCount') > 99 ? "99+" : this.get('content.alertsCount');
-    }.property('content.alertsCount'),
-
-    noAlerts: Em.computed.equal('content.alertsCount', 0),
-
-    hasCriticalAlerts: Em.computed.alias('content.hasCriticalAlerts'),
 
     isMasterDown: function() {
       return this.get('content.hostComponents').filterProperty('isMaster').some((component) => {

@@ -80,6 +80,7 @@ describe('App.clusterController', function () {
         return {
           then: function (successCallback) {
             App.set('clusterName', 'clusterNameFromServer');
+            App.set('clusterId', 1);
             App.set('currentStackVersion', 'HDP-2.0.5');
             successCallback();
           }
@@ -93,6 +94,7 @@ describe('App.clusterController', function () {
 
     it('if clusterName is "mycluster" and reload is false then clusterName stays the same', function () {
       App.set('clusterName', 'mycluster');
+      App.set('clusterId', 1);
       controller.loadClusterName(false);
       expect(this.args).to.not.exists;
       expect(App.get('clusterName')).to.equal('mycluster');
@@ -103,6 +105,7 @@ describe('App.clusterController', function () {
       expect(this.args).to.exists;
       expect(App.get('clusterName')).to.equal('clusterNameFromServer');
       expect(App.get('currentStackVersion')).to.equal('HDP-2.0.5');
+      expect(App.get('clusterId')).to.equal(1);
     });
 
     it('reload is false and clusterName is empty', function () {
@@ -110,6 +113,17 @@ describe('App.clusterController', function () {
       controller.loadClusterName(false);
       expect(this.args).to.exists;
       expect(App.get('clusterName')).to.equal('clusterNameFromServer');
+      expect(App.get('currentStackVersion')).to.equal('HDP-2.0.5');
+      expect(App.get('clusterId')).to.equal(1);
+    });
+  
+    it('reload is false and clusterName is set and clusterId is null', function () {
+      App.set('clusterName', 'c1');
+      App.set('clusterId', null);
+      controller.loadClusterName(false);
+      expect(this.args).to.exists;
+      expect(App.get('clusterName')).to.equal('clusterNameFromServer');
+      expect(App.get('clusterId')).to.equal(1);
       expect(App.get('currentStackVersion')).to.equal('HDP-2.0.5');
     });
 
@@ -618,15 +632,6 @@ describe('App.clusterController', function () {
 
     it('should return true when status is ABORTED', function() {
       expect(controller.isSuspendedState('ABORTED')).to.be.true;
-    });
-  });
-
-  describe('#loadRootService()', function() {
-
-    it('App.ajax.send should be called', function() {
-      controller.loadRootService();
-      var args = testHelpers.findAjaxRequest('name', 'service.ambari');
-      expect(args).to.exist;
     });
   });
 

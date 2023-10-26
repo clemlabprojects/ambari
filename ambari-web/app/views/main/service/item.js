@@ -35,7 +35,7 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
   mastersExcludedCommands: {
     'NAMENODE': ['DECOMMISSION', 'REBALANCEHDFS'],
     'RESOURCEMANAGER': ['DECOMMISSION', 'REFRESHQUEUES'],
-    'HBASE_MASTER': ['DECOMMISSION'],
+    'HBASE_MASTER': ['DECOMMISSION', 'UPDATE_REPLICATION', 'STOP_REPLICATION'],
     'KNOX_GATEWAY': ['STARTDEMOLDAP','STOPDEMOLDAP'],
     'HAWQMASTER': ['IMMEDIATE_STOP_HAWQ_SERVICE', 'RUN_HAWQ_CHECK', 'HAWQ_CLEAR_CACHE', 'REMOVE_HAWQ_STANDBY', 'RESYNC_HAWQ_STANDBY'],
     'HAWQSEGMENT': ['IMMEDIATE_STOP_HAWQ_SEGMENT'],
@@ -158,13 +158,14 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
     var allMasters = service.get('hostComponents').filterProperty('isMaster').mapProperty('componentName').uniq();
     var allSlaves = service.get('slaveComponents').rejectProperty('totalCount', 0).mapProperty('componentName');
     var actionMap = App.HostComponentActionMap.getMap(this);
-    var serviceCheckSupported = App.get('services.supportsServiceCheck').contains(service.get('serviceName'));
+    var serviceName = service.get('serviceName');
+    var hasClient = App.StackService.find(serviceName).get('hasClient') ? service.get('installedClients') > 0 : true;
+    var serviceCheckSupported = App.get('services.supportsServiceCheck').contains(serviceName) && hasClient;
     var hasConfigTab = this.get('hasConfigTab');
     var excludedCommands = this.get('mastersExcludedCommands');
-    var serviceName = service.get('serviceName');
     var hasMultipleMasterComponentGroups = this.get('service.hasMultipleMasterComponentGroups');
 
-    if (App.isAuthorized('SERVICE.START_STOP')) {
+    if (App.isAuthorized('SERVICE.START_STOP') && this.get('hasMasterOrSlaveComponent')) {
       options.push(actionMap.START_ALL);
       options.push(actionMap.STOP_ALL);
     }
@@ -180,10 +181,16 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
         if (this.get('serviceName') === 'FLUME') {
           options.push(actionMap.REFRESH_CONFIGS);
         }
-        if (this.get('serviceName') === 'YARN') {
+        if (this.get('serviceName') === 'YARN' && this.get('hasMasterOrSlaveComponent')) {
           options.push(actionMap.REFRESHQUEUES);
         }
-        options.push(actionMap.RESTART_ALL);
+        if (this.get('hasMasterOrSlaveComponent')) {
+          options.push(actionMap.RESTART_ALL);
+        }
+        //currently adding it as experimental property as it is ongoing development
+        if (App.get('supports.enableNewServiceRestartOptions')) {
+          options.push(actionMap.RESTART_SERVICE);
+        }
         if (hasMultipleMasterComponentGroups && this.get('serviceName') === 'HDFS') {
           options.push(actionMap.RESTART_NAMENODES);
         }
@@ -211,7 +218,7 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
           && (App.router.get('mainHostController.totalCount') > JNCount || JNCount > 3)) {
           options.push(actionMap.MANAGE_JN);
         }
-        if (service.get('serviceTypes').contains('HA_MODE') && App.isAuthorized('SERVICE.ENABLE_HA')) {
+        if (service.get('serviceTypes').contains('HA_MODE') && App.isAuthorized('SERVICE.ENABLE_HA') && this.get('hasMasterOrSlaveComponent')) {
           switch (service.get('serviceName')) {
             case 'HDFS':
               options.push(actionMap.TOGGLE_NN_HA);
@@ -227,7 +234,7 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
               break;
           }
         }
-        if (service.get('serviceTypes').contains('FEDERATION') && App.isAuthorized('SERVICE.ENABLE_HA')) {
+        if (service.get('serviceTypes').contains('FEDERATION') && App.isAuthorized('SERVICE.ENABLE_HA') && this.get('hasMasterOrSlaveComponent')) {
           switch (service.get('serviceName')) {
             case 'HDFS':
               options.push(actionMap.TOGGLE_NN_FEDERATION);
@@ -240,7 +247,7 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
         options.push(actionMap.TOGGLE_PASSIVE);
         var nnComponent = App.StackServiceComponent.find().findProperty('componentName', 'NAMENODE');
         var knoxGatewayComponent = App.StackServiceComponent.find().findProperty('componentName', 'KNOX_GATEWAY');
-        if (serviceName === 'HDFS' && nnComponent) {
+        if (serviceName === 'HDFS' && nnComponent && this.get('hasMasterOrSlaveComponent')) {
           var namenodeCustomCommands = nnComponent.get('customCommands');
           if (namenodeCustomCommands && namenodeCustomCommands.contains('REBALANCEHDFS')) {
             options.push(actionMap.REBALANCEHDFS);
@@ -268,6 +275,18 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
             });
           }
         }
+
+        const hMasterComponent = App.StackServiceComponent.find().findProperty('componentName', 'HBASE_MASTER');
+        if (serviceName === 'HBASE' && hMasterComponent) {
+          const hMasterCustomCommands = hMasterComponent.get('customCommands');
+          if (hMasterCustomCommands && hMasterCustomCommands.contains('UPDATE_REPLICATION')) {
+            options.push(actionMap.UPDATE_REPLICATION);
+          }
+          if (hMasterCustomCommands && hMasterCustomCommands.contains('STOP_REPLICATION')) {
+            options.push(actionMap.STOP_REPLICATION);
+          }
+        }
+
 
         /**
          * Display all custom commands of Master and StandBy on Service page.
@@ -378,22 +397,33 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
   hasConfigTab: function() {
     return App.havePermissions('CLUSTER.VIEW_CONFIGS') && !App.get('services.noConfigTypes').contains(this.get('controller.content.serviceName'));
   }.property('controller.content.serviceName','App.services.noConfigTypes'),
+  
+  hasMasterOrSlaveComponent: Em.computed.alias('controller.content.hasMasterOrSlaveComponent'),
 
   hasHeatmapTab: function() {
-    return App.get('services.servicesWithHeatmapTab').contains(this.get('controller.content.serviceName'));
-  }.property('controller.content.serviceName', 'App.services.servicesWithHeatmapTab'),
+    return App.StackService.find(this.get('controller.content.serviceName')).get('hasHeatmapSection')
+      && this.get('hasMasterOrSlaveComponent');
+  }.property('controller.content.serviceName', 'App.services.servicesWithHeatmapTab', 'hasMasterOrSlaveComponent'),
 
   hasMetricTab: function() {
     let serviceName = this.get('controller.content.serviceName');
     let graphs = require('data/service_graph_config')[serviceName.toLowerCase()];
-    return graphs || App.StackService.find(serviceName).get('isServiceWithWidgets');
-  }.property('controller.content.serviceName'),
+    return (graphs || App.StackService.find(serviceName).get('isServiceWithWidgets'))
+      && this.get('hasMasterOrSlaveComponent');
+  }.property('controller.content.serviceName', 'hasMasterOrSlaveComponent'),
 
   didInsertElement: function () {
     this.get('controller').setStartStopState();
   },
 
-  maintenanceObsFields: ['isStopDisabled', 'isClientsOnlyService', 'content.isRestartRequired', 'isServicesInfoLoaded', 'isServiceConfigsLoaded'],
+  maintenanceObsFields: [
+    'isStopDisabled',
+    'isClientsOnlyService',
+    'content.isRestartRequired',
+    'isServicesInfoLoaded',
+    'isServiceConfigsLoaded',
+    'content.hasMasterOrSlaveComponent'
+  ],
 
   willInsertElement: function () {
     var self = this;

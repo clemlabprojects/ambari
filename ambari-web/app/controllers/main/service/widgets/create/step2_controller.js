@@ -182,11 +182,12 @@ App.WidgetWizardStep2Controller = Em.Controller.extend({
     }
     return isComplete && isMetricsIncluded;
   },
+
   /**
-    * if label is valid
-    * @param dataset
-    * @returns {boolean} isValid
-    */
+   * if label is valid
+   * @param dataset
+   * @returns {boolean} isValid
+   */
   checkIfIsLabelValid: function(dataset) {
     var label = dataset.get('label');
     var isValid = label.trim() !== '' && validator.isValidChartWidgetDatasetLabel(label);

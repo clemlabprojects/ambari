@@ -178,7 +178,7 @@ a [class*=" icon-"] {
 .icon-flag {
   *zoom: expression( this.runtimeStyle['zoom'] = '1', this.innerHTML = '&#xf024;');
 }
-.icon-heaodpones {
+.icon-headphones {
   *zoom: expression( this.runtimeStyle['zoom'] = '1', this.innerHTML = '&#xf025;');
 }
 .icon-volume-off {

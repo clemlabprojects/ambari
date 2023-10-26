@@ -540,6 +540,7 @@ describe('App.MainServiceItemView', function () {
             ];
         }
       });
+      sinon.stub(App.router, 'get').returns(0);
       /*eslint-enable complexity */
     });
 
@@ -547,6 +548,7 @@ describe('App.MainServiceItemView', function () {
       App.get.restore();
       App.HostComponent.find.restore();
       App.StackServiceComponent.find.restore();
+      App.router.get.restore();
     });
 
     testCases.forEach(function (testCase) {
@@ -563,7 +565,9 @@ describe('App.MainServiceItemView', function () {
                 serviceName: testCase.serviceName,
                 displayName: testCase.displayName,
                 serviceTypes: testCase.serviceTypes,
-                passiveState: 'OFF'
+                installedClients: 1,
+                passiveState: 'OFF',
+                hasMasterOrSlaveComponent: true
               }),
               isSeveralClients: false,
               clientComponents: [],
@@ -664,18 +668,24 @@ describe('App.MainServiceItemView', function () {
 
   describe('#hasHeatmapTab', function() {
     beforeEach(function() {
-      sinon.stub(App, 'get').returns(['S1']);
+      sinon.stub(App.StackService, 'find').returns(Em.Object.create({
+        hasHeatmapSection: true
+      }));
     });
     afterEach(function() {
-      App.get.restore();
+      App.StackService.find.restore();
     });
 
     it('should return false when service does not have heatmaps', function() {
-      view.set('controller.content.serviceName', 'S2');
+      view.reopen({
+        hasMasterOrSlaveComponent: false
+      });
       expect(view.get('hasHeatmapTab')).to.be.false;
     });
     it('should return true when service has heatmaps', function() {
-      view.set('controller.content.serviceName', 'S1');
+      view.reopen({
+        hasMasterOrSlaveComponent: true
+      });
       expect(view.get('hasHeatmapTab')).to.be.true;
     });
   });

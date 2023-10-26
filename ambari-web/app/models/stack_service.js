@@ -75,9 +75,24 @@ App.FileSystem = Ember.ObjectProxy.extend({
   content: null,
   services: [],
 
+  //special case for HDFS and OZONE. They can be selected together
+  shouldAllSelectionBeCleared: function () {
+    const dfsNames = this.get('services').mapProperty('serviceName');
+    const coExistingDfs = ['HDFS', 'OZONE'],
+      selectedServices = this.get('services').filterProperty('isSelected');
+    for (let i = 0; i < selectedServices.length; i++) {
+      if (!coExistingDfs.includes(selectedServices[i].get('serviceName'))) {
+        return true;
+      }
+    }
+    return !(dfsNames.includes('HDFS') && dfsNames.includes('OZONE') && coExistingDfs.includes(this.get('content.serviceName')));
+  },
+
   isSelected: function(key, aBoolean) {
     if (arguments.length > 1) {
-      this.clearAllSelection();
+      if (this.shouldAllSelectionBeCleared()) {
+        this.clearAllSelection();
+      }
       this.get('content').set('isSelected', aBoolean);
     }
     return this.get('content.isSelected');
@@ -176,7 +191,7 @@ App.StackService = DS.Model.extend({
 
   // Is the service a distributed filesystem
   isDFS: function () {
-    return this.get('serviceType') === 'HCFS' || ['HDFS', 'GLUSTERFS', 'OZONE'].contains(this.get('serviceName'));
+    return this.get('serviceType') === 'HCFS' || ['HDFS', 'GLUSTERFS'].contains(this.get('serviceName'));
   }.property('serviceName', 'serviceType'),
 
   // Primary DFS. used if there is more than one DFS in a stack.
@@ -206,9 +221,8 @@ App.StackService = DS.Model.extend({
   }.property('coSelectedServices', 'serviceName'),
 
   isHiddenOnSelectServicePage: function () {
-    var hiddenServices = ['MAPREDUCE2'];
-    return hiddenServices.contains(this.get('serviceName')) || !this.get('isInstallable') || this.get('doNotShowAndInstall');
-  }.property('serviceName', 'isInstallable'),
+    return !this.get('isInstallable') || this.get('doNotShowAndInstall');
+  }.property('isInstallable', 'doNotShowAndInstall'),
 
   doNotShowAndInstall: function () {
     var skipServices = [];
@@ -269,7 +283,7 @@ App.StackService = DS.Model.extend({
     var configTypes = this.get('configTypes');
     var serviceComponents = this.get('serviceComponents');
     if (configTypes && Object.keys(configTypes).length) {
-      var pattern = ["General", "ResourceType", "CapacityScheduler", "ContainerExecutor", "Registry", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson","OZONE.*"];
+      var pattern = ["General", "ResourceType", "CapacityScheduler", "ContainerExecutor", "Registry", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson"];
       configCategories = App.StackService.configCategories.call(this).filter(function (_configCategory) {
         var serviceComponentName = _configCategory.get('name');
         var isServiceComponent = serviceComponents.someProperty('componentName', serviceComponentName);
@@ -341,9 +355,7 @@ App.StackService.componentsOrderForService = {
 };
 
 //@TODO: Write unit test for no two keys in the object should have any intersecting elements in their values
-App.StackService.coSelected = {
-  'YARN': ['MAPREDUCE2']
-};
+App.StackService.coSelected = {};
 
 
 App.StackService.reviewPageHandlers = {

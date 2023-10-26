@@ -308,28 +308,28 @@ describe('App.ManageJournalNodeWizardController', function () {
     });
   });
 
-  describe('#saveNameServiceIds', function() {
+  describe('#saveNameServiceId', function() {
 
     beforeEach(function() {
       sinon.stub(controller, 'setDBProperty');
     });
 
     it('nameServiceId should be set', function() {
-      controller.saveNameServiceIds(['id0', 'id1']);
-      expect(controller.setDBProperty.calledWith('nameServiceIds', ['id0', 'id1'])).to.be.true;
-      expect(controller.get('content.nameServiceIds')).to.eql(['id0', 'id1']);
+      controller.saveNameServiceId('id1');
+      expect(controller.setDBProperty.calledWith('nameServiceId', 'id1')).to.be.true;
+      expect(controller.get('content.nameServiceId')).to.be.equal('id1');
     });
   });
 
-  describe('#loadNameServiceIds', function() {
+  describe('#loadNameServiceId', function() {
 
     beforeEach(function() {
-      sinon.stub(controller, 'getDBProperty').returns(['id0', 'id1']);
+      sinon.stub(controller, 'getDBProperty').returns('id1');
     });
 
     it('nameServiceId should be set', function() {
-      controller.loadNameServiceIds();
-      expect(controller.get('content.nameServiceIds')).to.eql(['id0', 'id1']);
+      controller.loadNameServiceId();
+      expect(controller.get('content.nameServiceId')).to.be.equal('id1');
     });
   });
 

@@ -120,7 +120,7 @@ module.exports = App.WizardRoute.extend({
       var stepController = router.get('manageJournalNodeWizardStep2Controller');
       controller.saveServiceConfigProperties(stepController);
       controller.saveConfigTag(stepController.get("hdfsSiteTag"));
-      controller.saveNameServiceIds(stepController.get('content.nameServiceIds'));
+      controller.saveNameServiceId(stepController.get('content.nameServiceId'));
       App.set('router.nextBtnClickInProgress', false);
       if (controller.get('isDeleteOnly')) {
         router.transitionTo('step4');

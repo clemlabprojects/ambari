@@ -134,7 +134,6 @@ App.serviceMetricsMapper = App.QuickDataMapper.create({
     active_resource_manager_id: 'active_resource_manager_id'
   },
   mapReduce2Config: {
-    map_reduce2_clients: 'map_reduce2_clients',
     job_history_server_id: 'job_history_server_id'
   },
   hbaseConfig: {
@@ -316,19 +315,16 @@ App.serviceMetricsMapper = App.QuickDataMapper.create({
     var self = this;
     App.router.get('configurationController').getCurrentConfigsBySites(['hive-site', 'hive-interactive-site']).done(function (configs) {
       var hiveWebUiPort = configs.findProperty('type', 'hive-interactive-site').properties['hive.server2.webui.port'];
-      var hiveWebUiProtoFlag = configs.findProperty('type', 'hive-interactive-site').properties['hive.server2.webui.use.ssl'];
-      var hiveWebUiProto = hiveWebUiProtoFlag ? 'https' : 'http';
       var hostNames = hiveInteractiveServers.mapProperty('host_name');
-      var useIps = configs.findProperty('type', 'hive-interactive-site').properties['hive.server2.leadertest.use.ip'];
       var notDefinedHostIp = hostNames.find(function (hostName) {
         return !self.get('hostNameIpMap')[hostName];
       });
-      if (useIps && notDefinedHostIp) {
+      if (notDefinedHostIp) {
         self.getHostNameIpMap(hostNames).done(function () {
-          self.getHiveServersInteractiveStatus(hiveInteractiveServers, hiveWebUiPort, hiveWebUiProto, useIps);
+          self.getHiveServersInteractiveStatus(hiveInteractiveServers, hiveWebUiPort);
         });
       } else {
-        self.getHiveServersInteractiveStatus(hiveInteractiveServers, hiveWebUiPort, hiveWebUiProto, useIps);
+        self.getHiveServersInteractiveStatus(hiveInteractiveServers, hiveWebUiPort);
       }
     });
   },
@@ -350,15 +346,14 @@ App.serviceMetricsMapper = App.QuickDataMapper.create({
     });
   },
 
-  getHiveServersInteractiveStatus: function(hiveInteractiveServers, hiveWebUiPort, hiveWebUiProto, useIps) {
+  getHiveServersInteractiveStatus: function(hiveInteractiveServers, hiveWebUiPort) {
     var self = this;
     hiveInteractiveServers.forEach(function (hiveInteractiveServer) {
       App.ajax.send({
         name: 'hiveServerInteractive.getStatus',
         data: {
-          hsiHost: useIps ? self.hostNameIpMap[hiveInteractiveServer.host_name] : hiveInteractiveServer.host_name,
-          port: hiveWebUiPort,
-          proto: hiveWebUiProto
+          hsiHost: self.hostNameIpMap[hiveInteractiveServer.host_name],
+          port: hiveWebUiPort
         },
         sender: self
       }).success(function (isActive) {
