@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -68,10 +68,9 @@ class Emitter(threading.Thread):
 
     if self.is_collector_https_enabled:
       self.ca_certs = config.get_ca_certs()
-
     # TimedRoundRobinSet
     if config.get_failover_strategy() == ROUND_ROBIN_FAILOVER_STRATEGY:
-      self.active_collector_hosts = BlacklistedSet(self.all_metrics_collector_hosts, float(config.get_failover_strategy_blacklisted_interval_seconds()))
+      self.active_collector_hosts = BlacklistedSet(self.all_metrics_collector_hosts, int(config.get_failover_strategy_blacklisted_interval_seconds()))
     else:
       raise Exception(-1, "Uknown failover strategy {0}".format(config.get_failover_strategy()))
 
@@ -80,7 +79,7 @@ class Emitter(threading.Thread):
     while True:
       try:
         self.submit_metrics()
-      except Exception, e:
+      except Exception as e:
         logger.warn('Unable to emit events. %s' % str(e))
         self.cookie_cached = {}
       pass
@@ -107,6 +106,7 @@ class Emitter(threading.Thread):
       success = self.try_with_collector(self.inmemory_aggregation_protocol, "localhost", self.inmemory_aggregation_port, data)
       if not success:
         logger.warning("Failed to submit metrics to local aggregator. Trying to post them to collector...")
+
     while not success and self.active_collector_hosts.get_actual_size() > 0:
       collector_host = self.get_collector_host_shard()
       success = self.try_with_collector(self.collector_protocol, collector_host, self.collector_port, data)
@@ -129,7 +129,7 @@ class Emitter(threading.Thread):
       if self.cookie_cached[connection.host]:
         headers["Cookie"] = self.cookie_cached[connection.host]
         logger.debug("Cookie: %s" % self.cookie_cached[connection.host])
-    except Exception, e:
+    except Exception as e:
       self.cookie_cached = {}
     pass
 
@@ -197,7 +197,7 @@ class Emitter(threading.Thread):
                      .format(response.status, response.reason))
         logger.debug(str(response.read()))
       return response
-    except Exception, e:
+    except Exception as e:
       logger.warn('Error sending metrics to server. %s' % str(e))
       self.cookie_cached = {}
       return None
@@ -213,7 +213,7 @@ class Emitter(threading.Thread):
   def compute_hash(self, hostname):
     hash = 11987
     length = len(hostname)
-    for i in xrange(0, length - 1):
+    for i in range(0, length - 1):
       hash = 31*hash + ord(hostname[i])
     return hash
 

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -113,7 +113,7 @@ class Controller(threading.Thread):
     pass
 
     if host_metrics_groups:
-      for name, properties in host_metrics_groups.iteritems():
+      for name, properties in host_metrics_groups.items():
         event = HostMetricCollectEvent(properties, name)
         logger.info('Adding event to cache, {0} : {1}'.format(name, properties))
         self.events_cache.append(event)
@@ -121,7 +121,7 @@ class Controller(threading.Thread):
     pass
 
     # if process_metrics_groups:
-    #   for name, properties in process_metrics_groups.iteritems():
+    #   for name, properties in process_metrics_groups.items():
     #     event = ProcessMetricCollectEvent(properties, name)
     #     logger.info('Adding event to cache, {0} : {1}'.format(name, properties))
     #     #self.events_cache.append(event)

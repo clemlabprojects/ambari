@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -86,7 +86,7 @@ class AggregatorWatchdog(threading.Thread):
         self.set_is_ok(True)
       except (KeyboardInterrupt, SystemExit):
         raise
-      except Exception, e:
+      except Exception as e:
         self.set_is_ok(False)
         continue
       if conn.code != 200:

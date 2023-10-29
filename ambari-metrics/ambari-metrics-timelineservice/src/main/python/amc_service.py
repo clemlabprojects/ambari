@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one

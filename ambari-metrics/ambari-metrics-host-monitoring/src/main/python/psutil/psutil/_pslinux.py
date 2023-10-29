@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 # Copyright (c) 2009, Giampaolo Rodola'. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -458,7 +458,7 @@ class Connections:
             # old version - let's keep it, just in case...
             # ip = ip.decode('hex')
             # return socket.inet_ntop(socket.AF_INET6,
-            #          ''.join(ip[i:i+4][::-1] for i in xrange(0, 16, 4)))
+            #          ''.join(ip[i:i+4][::-1] for i in range(0, 16, 4)))
             ip = base64.b16decode(ip)
             # see: http://code.google.com/p/psutil/issues/detail?id=201
             if sys.byteorder == 'little':
@@ -1061,7 +1061,7 @@ class Process(object):
 
     @wrap_exceptions
     def cpu_affinity_get(self):
-        from_bitmask = lambda x: [i for i in xrange(64) if (1 << i) & x]
+        from_bitmask = lambda x: [i for i in range(64) if (1 << i) & x]
         bitmask = cext.proc_cpu_affinity_get(self.pid)
         return from_bitmask(bitmask)
 

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -99,9 +99,8 @@ class TestEmitter(TestCase):
     application_metric_map.put_metric("APP1", {"metric1":1}, 1)
     emitter = Emitter(config, application_metric_map, stop_handler)
     emitter.submit_metrics()
-
-
     self.assertEqual(request_mock.call_count, 1)
+
   def assertUrlData(self, request_mock):
     self.assertEqual(len(request_mock.call_args), 2)
     data = request_mock.call_args[0][2]
@@ -115,7 +114,7 @@ class TestEmitter(TestCase):
 
   def test_blacklisted_set(self):
     hosts = ["1", "2", "3", "4"]
-    sleep_time = 1
+    sleep_time = 5
     bs = BlacklistedSet(hosts, sleep_time)
     bs.blacklist("4")
     counter = 0

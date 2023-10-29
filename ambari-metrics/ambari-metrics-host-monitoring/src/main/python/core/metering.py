@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -50,7 +50,7 @@ class MeteringMetricHandler:
   def get_metering_metrics(self, metrics):
     metering_metrics = {}
     curr_time = int(round(time.time() * 1000))
-    for metric_name, value in metrics.iteritems():
+    for metric_name, value in metrics.items():
       if metric_name in self.metering_metric_list:
         end_time_metric_key = self.metering_metric_key_prefix + "~" + metric_name + "~" + str(value) + "~" + self.METERING_ALIVE_TIME_METRIC_SUFFIX
         metering_metrics[end_time_metric_key] = curr_time

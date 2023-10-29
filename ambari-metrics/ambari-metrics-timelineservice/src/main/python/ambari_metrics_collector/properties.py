@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -114,7 +114,7 @@ class Properties(object):
     oldvalue = self.unescape(oldvalue)
     value = self.unescape(value)
     self._props[key] = None if value is None else value.strip()
-    if self._keymap.has_key(key):
+    if key in self._keymap:
       oldkey = self._keymap.get(key)
       self._origprops[oldkey] = None if oldvalue is None else oldvalue.strip()
     else:
@@ -129,12 +129,12 @@ class Properties(object):
     return newvalue
 
   def removeOldProp(self, key):
-    if self._origprops.has_key(key):
+    if key in self._origprops:
       del self._origprops[key]
     pass
 
   def removeProp(self, key):
-    if self._props.has_key(key):
+    if key in self._props:
       del self._props[key]
     pass
 
@@ -171,7 +171,7 @@ class Properties(object):
 
   def sort_props(self):
     tmp_props = {}
-    for key in sorted(self._props.iterkeys()):
+    for key in sorted(self._props.keys()):
       tmp_props[key] = self._props[key]
     self._props = tmp_props
     pass
@@ -179,7 +179,7 @@ class Properties(object):
   def sort_origprops(self):
     tmp_props = self._origprops.copy()
     self._origprops.clear()
-    for key in sorted(tmp_props.iterkeys()):
+    for key in sorted(tmp_props.keys()):
       self._origprops[key] = tmp_props[key]
     pass
 
@@ -214,7 +214,7 @@ class Properties(object):
       tstamp = time.strftime('%a %b %d %H:%M:%S %Z %Y', time.localtime())
       out.write(''.join(('#', tstamp, '\n')))
       # Write properties from the pristine dictionary
-      for key in sorted(self._origprops.iterkeys()):
+      for key in sorted(self._origprops.keys()):
         val = self._origprops[key]
         if val is not None:
           out.write(''.join((key, '=', val, '\n')))
