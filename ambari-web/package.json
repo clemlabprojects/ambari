@@ -1,12 +1,13 @@
 {
   "name": "Ambari",
   "description": "Front-end package for the Apache Ambari Project",
-  "version": "2.4.0",
-  "homepage": "http://ambari.apache.org/",
+  "version": "2.7.8",
+  "homepage": "https://ambari.apache.org/",
   "repository": {
     "type": "git",
     "url": "https://gitbox.apache.org/repos/asf/ambari/repo?p=ambari.git;a=summary"
   },
+  "license": "Apache-2.0",
   "dependencies": {
     "assetsmanager-brunch": "~1.8.1",
     "babel-brunch": "6.0.0",
@@ -36,7 +37,7 @@
     "karma-mocha": "0.1.1",
     "karma-sinon": "~1.0.2",
     "mocha": "2.5.3",
-    "phantomjs": "~2.1.0",
+    "phantomjs-prebuilt": "~2.1.7",
     "sinon": "=1.7.3",
     "sinon-chai": "~2.8.0"
   },
