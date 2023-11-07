@@ -162,13 +162,17 @@ class MapReduce2ServiceCheckDefault(MapReduce2ServiceCheck):
       kinit_cmd = format("{kinit_path_local} -kt {smoke_user_keytab} {smokeuser_principal};")
       Execute(kinit_cmd, user=params.smokeuser)
 
+    # set 'PATH' env using os
+    os.environ['PATH'] = params.mapreduce_check_execute_path + os.pathsep + os.environ['PATH']
     ExecuteHadoop(run_wordcount_job,
                   tries=1,
                   try_sleep=5,
                   user=params.smokeuser,
-                  bin_dir=params.execute_path,
+                  bin_dir=params.mapreduce_check_execute_path,
                   conf_dir=params.hadoop_conf_dir,
-                  logoutput=True)
+                  logoutput=True,
+                  environment={'PATH': params.mapreduce_check_execute_path}
+                  )
 
     # the ticket may have expired, so re-initialize
     if params.security_enabled:
@@ -177,7 +181,7 @@ class MapReduce2ServiceCheckDefault(MapReduce2ServiceCheck):
 
     ExecuteHadoop(test_cmd,
                   user=params.smokeuser,
-                  bin_dir=params.execute_path,
+                  bin_dir=params.mapreduce_check_execute_path,
                   conf_dir=params.hadoop_conf_dir)
 
 

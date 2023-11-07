@@ -195,6 +195,7 @@ mapred_user_nofile_limit = default("/configurations/mapred-env/mapred_user_nofil
 mapred_user_nproc_limit = default("/configurations/mapred-env/mapred_user_nproc_limit", "65536")
 
 execute_path = os.environ['PATH'] + os.pathsep + hadoop_bin_dir + os.pathsep + yarn_bin
+mapreduce_check_execute_path = hadoop_bin_dir + os.pathsep + yarn_bin + os.pathsep + os.environ['PATH']
 
 ulimit_cmd = "ulimit -c unlimited;"
 
