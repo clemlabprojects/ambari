@@ -79,6 +79,8 @@ class TezServiceCheckLinux(TezServiceCheck):
               user=params.smokeuser
       )
 
+    # set 'PATH' env using os
+    os.environ['PATH'] = params.hadoop_bin_dir + os.pathsep + os.environ['PATH']
     ExecuteHadoop(wordcount_command,
       tries = 3,
       try_sleep = 5,
