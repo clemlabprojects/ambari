@@ -99,8 +99,8 @@ def seed_current_data_directory():
   HDP stack example:
 
   Knox uses "versioned" data directories in some stacks:
-  /usr/hdp/2.2.0.0-1234/knox/data -> /var/lib/knox/data
-  /usr/hdp/2.3.0.0-4567/knox/data -> /var/lib/knox/data-2.3.0.0-4567
+  /usr/odp/2.2.0.0-1234/knox/data -> /var/lib/knox/data
+  /usr/odp/2.3.0.0-4567/knox/data -> /var/lib/knox/data-2.3.0.0-4567
 
   If the stack being upgraded to supports versioned data directories for Knox, then we should
   seed the data from the prior version. This is mainly because Knox keeps things like keystores
@@ -108,7 +108,7 @@ def seed_current_data_directory():
   versions. This side-effect behavior causes loss of service in clusters where Knox is using
   custom keystores.
 
-  cp -R -p -f /usr/hdp/<old>/knox-server/data/. /usr/odp/current/knox-server/data
+  cp -R -p -f /usr/odp/<old>/knox-server/data/. /usr/odp/current/knox-server/data
   :return:
   """
   import params

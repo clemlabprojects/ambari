@@ -181,7 +181,7 @@ class Script(object):
     Logger.info("stack_upgrade_save_new_config(): Checking if can write new client configs to new config version folder.")
 
     if check_stack_feature(StackFeature.CONFIG_VERSIONING, params.version):
-      # Even though hdp-select has not yet been called, write new configs to the new config directory.
+      # Even though odp-select has not yet been called, write new configs to the new config directory.
       config_path = os.path.join(params.stack_root, params.version, conf_select_name, "conf")
       return os.path.realpath(config_path)
     return None
@@ -665,7 +665,7 @@ class Script(object):
     from resource_management.libraries.functions.default import default
     stack_name = default("/clusterLevelParams/stack_name", None)
     if stack_name is None:
-      stack_name = default("/configurations/cluster-env/stack_name", "HDP")
+      stack_name = default("/configurations/cluster-env/stack_name", "ODP")
 
     return stack_name
 
@@ -858,7 +858,7 @@ class Script(object):
       #TODO hacky install of windows msi, remove it or move to old(2.1) stack definition when component based install will be implemented
       hadoop_user = config["configurations"]["cluster-env"]["hadoop.user.name"]
       install_windows_msi(config['ambariLevelParams']['jdk_location'],
-                          config["agentLevelParams"]["agentCacheDir"], ["hdp-2.3.0.0.winpkg.msi", "hdp-2.3.0.0.cab", "hdp-2.3.0.0-01.cab"],
+                          config["agentLevelParams"]["agentCacheDir"], ["odp-2.3.0.0.winpkg.msi", "odp-2.3.0.0.cab", "odp-2.3.0.0-01.cab"],
                           hadoop_user, self.get_password(hadoop_user),
                           str(config['clusterLevelParams']['stack_version']))
       reload_windows_env()
