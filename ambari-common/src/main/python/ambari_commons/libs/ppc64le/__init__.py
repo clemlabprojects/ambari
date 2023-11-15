@@ -1,5 +1,6 @@
-#!/usr/bin/python2
-"""
+#!/usr/bin/env python3
+
+'''
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
 distributed with this work for additional information
@@ -15,15 +16,4 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
-"""
-
-from resource_management import *
-import sys, os
-
-config = Script.get_config()
-
-nifi_pid_dir=config['configurations']['nifi-env']['nifi_pid_dir']
-#nifi_master_pid_file=nifi_pid_dir + '/nifi-master.pid'
-nifi_node_pid_file=nifi_pid_dir + '/nifi.pid'
-nifi_ca_pid_file=nifi_pid_dir + '/nifi-ca.pid'
+'''

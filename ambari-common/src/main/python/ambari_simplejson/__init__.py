@@ -156,7 +156,6 @@ _default_encoder = JSONEncoder(
     allow_nan=True,
     indent=None,
     separators=None,
-    encoding='utf-8',
     default=None,
     use_decimal=True,
     namedtuple_as_object=True,

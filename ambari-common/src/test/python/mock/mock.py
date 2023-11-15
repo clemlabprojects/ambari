@@ -33,6 +33,12 @@ import pprint
 import sys
 
 try:
+    import platform.linux_distribution
+except ImportError:
+    import distro
+
+
+try:
     import inspect
 except ImportError:
     # for alternative platforms that

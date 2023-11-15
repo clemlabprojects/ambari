@@ -26,6 +26,7 @@ import time
 import glob
 import subprocess
 import logging
+import distro
 import platform
 import xml.etree.ElementTree as ET
 

@@ -25,6 +25,7 @@ from ambari_commons.exceptions import FatalException
 from mock.mock import patch, MagicMock
 from unittest import TestCase
 from ambari_server.properties import Properties
+import distro
 import platform
 
 from ambari_commons import os_utils
@@ -33,7 +34,7 @@ import shutil
 project_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)),os.path.normpath("../../../../"))
 shutil.copyfile(project_dir+"/ambari-server/conf/unix/ambari.properties", "/tmp/ambari.properties")
 
-with patch.object(platform, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
+with patch.object(distro, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
   with patch("os.path.isdir", return_value = MagicMock(return_value=True)):
     with patch("os.access", return_value = MagicMock(return_value=True)):
       with patch.object(os_utils, "parse_log4j_file", return_value={'ambari.log.dir': '/var/log/ambari-server'}):
@@ -41,7 +42,7 @@ with patch.object(platform, "linux_distribution", return_value = MagicMock(retur
         from ambari_server.serverConfiguration import get_conf_dir
         from ambari_server.serverClassPath import ServerClassPath, AMBARI_SERVER_LIB, SERVER_CLASSPATH_KEY, JDBC_DRIVER_PATH_PROPERTY
 
-@patch.object(platform, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
+@patch.object(distro, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
 @patch("os.path.isdir", new = MagicMock(return_value=True))
 @patch("os.access", new = MagicMock(return_value=True))
 @patch("ambari_server.serverConfiguration.search_file", new=MagicMock(return_value="/tmp/ambari.properties"))

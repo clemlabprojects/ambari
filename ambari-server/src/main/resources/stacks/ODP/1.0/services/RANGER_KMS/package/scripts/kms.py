@@ -392,8 +392,8 @@ def copy_jdbc_connector(kms_home):
       path=["/bin", "/usr/bin/"],
       sudo=True)
 
-    File(os.path.join(kms_home, 'ews', 'lib', params.jdbc_jar_name), mode=0644)
-
+    File(os.path.join(kms_home, 'ews', 'lib', params.jdbc_jar_name), mode=0o644)
+    
   ModifyPropertiesFile(format("{kms_home}/install.properties"),
     properties = params.config['configurations']['kms-properties'],
     owner = params.kms_user
@@ -609,7 +609,7 @@ def check_ranger_service():
 def create_repo(url, data, usernamepassword):
   try:
     base_url = url + '/service/public/v2/api/service'
-    base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+    base64string = base64.('{0}'.format(usernamepassword)).replace('\n', '')
     headers = {
       'Accept': 'application/json',
       "Content-Type": "application/json"

@@ -33,7 +33,7 @@ shutil.copyfile(project_dir+"/ambari-server/conf/unix/ambari.properties", "/tmp/
 
 _search_file = os_utils.search_file
 os_utils.search_file = MagicMock(return_value="/tmp/ambari.properties")
-with patch.object(platform, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
+with patch.object(distro, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
   with patch("os.path.isdir", return_value = MagicMock(return_value=True)):
     with patch("os.access", return_value = MagicMock(return_value=True)):
       with patch.object(os_utils, "parse_log4j_file", return_value={'ambari.log.dir': '/var/log/ambari-server'}):
@@ -42,7 +42,7 @@ with patch.object(platform, "linux_distribution", return_value = MagicMock(retur
 
 os_utils.search_file = _search_file
 
-@patch.object(platform, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
+@patch.object(distro, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
 @patch("os.path.isdir", new = MagicMock(return_value=True))
 @patch("os.access", new = MagicMock(return_value=True))
 class TestServerUpgrade(TestCase):

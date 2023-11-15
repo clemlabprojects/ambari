@@ -295,7 +295,7 @@ class YumManager(GenericManager):
       package_list = yb.rpmdb.simplePkgList()
 
     for package in package_list:
-      if regex.match(package[0]):
+      if regex.match(package[0].decode()):
         return True
 
     return False
@@ -350,7 +350,7 @@ class YumManager(GenericManager):
     name_regex = re.escape(name).replace("\\?", ".").replace("\\*", ".*") + '$'
     regex = re.compile(name_regex)
     
-    return any(regex.match(package) for package in packages)
+    return any(regex.match(package.decode()) for package in packages)
 
   def get_installed_package_version(self, package_name):
     version = None
