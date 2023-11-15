@@ -29,6 +29,7 @@ from resource_management.core.shell import as_user
 from resource_management.core.logger import Logger
 from resource_management.core.resources.service import Service
 from resource_management.core.resources.system import Execute, File, Directory
+from resource_management.core.source import DownloadSource
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.libraries.providers.hdfs_resource import WebHDFSUtil
@@ -59,6 +60,8 @@ def oozie_service(action = 'start', upgrade_type=None):
   :return:
   """
   import params
+
+  oozie_home = params.oozie_home
 
   environment={'OOZIE_CONFIG': params.conf_dir}
 
@@ -96,6 +99,8 @@ def oozie_service(action = 'start', upgrade_type=None):
       db_connection_check_command = None
 
     if upgrade_type is None:
+      copy_jdbc_connector(oozie_home)
+      print(path_to_jdbc)
       if not os.path.isfile(path_to_jdbc) and params.jdbc_driver_name == "org.postgresql.Driver":
         print format("ERROR: jdbc file {target} is unavailable. Please, follow next steps:\n" \
           "1) Download postgresql-9.0-801.jdbc4.jar.\n2) Create needed directory: mkdir -p {oozie_home}/libserver/\n" \
@@ -190,3 +195,29 @@ def oozie_service(action = 'start', upgrade_type=None):
       raise
 
     File(params.pid_file, action = "delete")
+
+def copy_jdbc_connector(oozie_home):
+  import params
+
+  if params.jdbc_driver_jar is None and params.driver_curl_source.endswith("/None"):
+    error_message = format("{db_flavor} jdbc driver cannot be downloaded from {jdk_location}\nPlease run 'ambari-server setup --jdbc-db={db_flavor} --jdbc-driver={{path_to_jdbc}}' on ambari-server host.")
+    raise Fail(error_message)
+
+  if params.driver_curl_source and not params.driver_curl_source.endswith("/None"):
+    if params.previous_jdbc_jar and os.path.isfile(params.previous_jdbc_jar):
+      File(params.previous_jdbc_jar, action='delete')
+
+  print(params.driver_curl_source)
+  print(params.downloaded_custom_connector)
+  File(params.downloaded_custom_connector,
+    content = DownloadSource(params.driver_curl_source),
+    mode = 0644
+  )
+
+  driver_curl_target = format("{oozie_home}/lib/{jdbc_driver_jar}")
+
+  Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(oozie_home, 'lib')),
+    path=["/bin", "/usr/bin/"],
+    sudo=True)
+
+  File(os.path.join(oozie_home, 'lib',params.jdbc_driver_jar), mode=0644)
