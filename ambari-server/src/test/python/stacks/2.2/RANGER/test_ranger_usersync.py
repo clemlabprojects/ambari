@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -176,7 +176,7 @@ class TestRangerUsersync(RMFTestCase):
         owner = 'ranger',
     )
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/ranger-usersync-services.sh',
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/log/ranger/usersync',
         owner = custom_config['unix_user'],
@@ -205,7 +205,7 @@ class TestRangerUsersync(RMFTestCase):
         owner = 'ranger',
     )
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/ranger-usersync-services.sh',
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/log/ranger/usersync',
         owner = custom_config['unix_user'],

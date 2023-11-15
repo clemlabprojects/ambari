@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -38,7 +38,7 @@ class MysqlServer(Script):
     mysql_service(daemon_name=params.daemon_name, action='start')
 
     File(params.mysql_adduser_path,
-         mode=0755,
+         mode=0o755,
          content=StaticFile('addMysqlUser.sh')
     )
 

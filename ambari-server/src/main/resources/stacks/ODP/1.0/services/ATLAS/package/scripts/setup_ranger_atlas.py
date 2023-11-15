@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -36,7 +36,7 @@ def setup_ranger_atlas(upgrade_type=None):
                             action="create_on_execute",
                             owner=params.metadata_user,
                             group=params.user_group,
-                            mode=0755,
+                            mode=0o755,
                             recursive_chmod=True
         )
         params.HdfsResource("/ranger/audit/atlas",
@@ -44,7 +44,7 @@ def setup_ranger_atlas(upgrade_type=None):
                             action="create_on_execute",
                             owner=params.metadata_user,
                             group=params.user_group,
-                            mode=0700,
+                            mode=0o700,
                             recursive_chmod=True
         )
         params.HdfsResource(None, action="execute")
@@ -55,7 +55,7 @@ def setup_ranger_atlas(upgrade_type=None):
                                                         configuration_attributes = params.config['configurationAttributes']['ssl-client'], file_name='ssl-client.xml')
         else:
           Logger.info('Ranger KMS is not ssl enabled, skipping ssl-client for hdfs audits.')
-      except Exception, err:
+      except Exception as err:
         Logger.exception("Audit directory creation in HDFS for ATLAS Ranger plugin failed with error:\n{0}".format(err))
 
     # cred_lib_path_override  = format('{params.stack_root}/{params.stack_version}/ranger-atlas-plugin/libext/li/*')

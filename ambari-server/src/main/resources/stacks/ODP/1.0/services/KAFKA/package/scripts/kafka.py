@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -92,7 +92,7 @@ def kafka(upgrade_type=None):
       i=i+1
 
     Directory(kafka_data_dirs,
-              mode=0755,
+              mode=0o755,
               cd_access='a',
               owner=params.kafka_user,
               group=params.user_group,
@@ -115,7 +115,7 @@ def kafka(upgrade_type=None):
 
     if (params.log4j_props != None):
         File(format("{conf_dir}/log4j.properties"),
-             mode=0644,
+             mode=0o644,
              group=params.user_group,
              owner=params.kafka_user,
              content=InlineTemplate(params.log4j_props)
@@ -150,14 +150,14 @@ def kafka(upgrade_type=None):
     File(os.path.join(params.limits_conf_dir, 'kafka.conf'),
          owner='root',
          group='root',
-         mode=0644,
+         mode=0o644,
          content=Template("kafka.conf.j2")
     )
 
     File(os.path.join(params.conf_dir, 'tools-log4j.properties'),
          owner='root',
          group='root',
-         mode=0644,
+         mode=0o644,
          content=Template("tools-log4j.properties.j2")
          )
 
@@ -169,7 +169,7 @@ def kafka(upgrade_type=None):
 
 def mutable_config_dict(kafka_broker_config):
     kafka_server_config = {}
-    for key, value in kafka_broker_config.iteritems():
+    for key, value in kafka_broker_config.items():
         kafka_server_config[key] = value
     return kafka_server_config
 
@@ -202,7 +202,7 @@ def setup_symlink(kafka_managed_dir, kafka_ambari_managed_dir):
          action="delete")
 
     Directory(kafka_managed_dir,
-              mode=0755,
+              mode=0o755,
               cd_access='a',
               owner=params.kafka_user,
               group=params.user_group,
@@ -234,7 +234,7 @@ def backup_dir_contents(dir_path, backup_folder_suffix):
   import params
   backup_destination_path = params.tmp_dir + os.path.normpath(dir_path)+backup_folder_suffix
   Directory(backup_destination_path,
-            mode=0755,
+            mode=0o755,
             cd_access='a',
             owner=params.kafka_user,
             group=params.user_group,
@@ -258,7 +258,7 @@ def backup_dir_contents(dir_path, backup_folder_suffix):
 def ensure_base_directories():
   import params
   Directory([params.kafka_log_dir, params.kafka_pid_dir, params.conf_dir],
-            mode=0755,
+            mode=0o755,
             cd_access='a',
             owner=params.kafka_user,
             group=params.user_group,

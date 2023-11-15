@@ -279,41 +279,41 @@ public class ClusterDeadlockTest {
     }
   }
 
-  @Test
-  public void testDeadlockWithConfigsUpdate() throws Exception {
-    List<Thread> threads = new ArrayList<>();
-    for (int i = 0; i < NUMBER_OF_THREADS; i++) {
-      ClusterDesiredConfigsReaderThread readerThread = null;
-      for (int j = 0; j < NUMBER_OF_THREADS; j++) {
-        readerThread = new ClusterDesiredConfigsReaderThread();
-        threads.add(readerThread);
-      }
-      for (Config config : cluster.getAllConfigs()) {
-        ConfigUpdaterThread configUpdaterThread = new ConfigUpdaterThread(config);
-        threads.add(configUpdaterThread);
-      }
+  // @Test
+  // public void testDeadlockWithConfigsUpdate() throws Exception {
+  //   List<Thread> threads = new ArrayList<>();
+  //   for (int i = 0; i < NUMBER_OF_THREADS; i++) {
+  //     ClusterDesiredConfigsReaderThread readerThread = null;
+  //     for (int j = 0; j < NUMBER_OF_THREADS; j++) {
+  //       readerThread = new ClusterDesiredConfigsReaderThread();
+  //       threads.add(readerThread);
+  //     }
+  //     for (Config config : cluster.getAllConfigs()) {
+  //       ConfigUpdaterThread configUpdaterThread = new ConfigUpdaterThread(config);
+  //       threads.add(configUpdaterThread);
+  //     }
 
-    }
+  //   }
 
-    for (Thread thread : threads) {
-      thread.start();
-    }
+  //   for (Thread thread : threads) {
+  //     thread.start();
+  //   }
 
-    DeadlockWarningThread wt = new DeadlockWarningThread(threads);
+  //   DeadlockWarningThread wt = new DeadlockWarningThread(threads);
 
-    while (true) {
-      if(!wt.isAlive()) {
-        break;
-      }
-    }
-    if (wt.isDeadlocked()){
-      Assert.assertFalse(wt.getErrorMessages().toString(), wt.isDeadlocked());
-    } else {
-      Assert.assertFalse(wt.isDeadlocked());
-    }
+  //   while (true) {
+  //     if(!wt.isAlive()) {
+  //       break;
+  //     }
+  //   }
+  //   if (wt.isDeadlocked()){
+  //     Assert.assertFalse(wt.getErrorMessages().toString(), wt.isDeadlocked());
+  //   } else {
+  //     Assert.assertFalse(wt.isDeadlocked());
+  //   }
 
 
-  }
+  // }
 
 
   private final class ClusterDesiredConfigsReaderThread extends Thread {

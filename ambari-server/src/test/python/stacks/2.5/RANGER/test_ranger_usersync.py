@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -91,7 +91,7 @@ class TestRangerUsersync(RMFTestCase):
 
   def assert_configure_default(self):
     self.assertResourceCalled('Directory', '/var/run/ranger',
-      mode=0755,
+      mode=0o755,
       owner = 'ranger',
       group = 'hadoop',
       cd_access = "a",
@@ -102,7 +102,7 @@ class TestRangerUsersync(RMFTestCase):
       content = 'export USERSYNC_PID_DIR_PATH=/var/run/ranger\nexport UNIX_USERSYNC_USER=ranger',
       owner = 'ranger',
       group = 'ranger',
-      mode = 0755
+      mode = 0o755
     )
 
     self.assertResourceCalled('Directory', '/var/log/ranger/usersync',
@@ -110,7 +110,7 @@ class TestRangerUsersync(RMFTestCase):
       group='ranger',
       create_parents = True,
       cd_access = 'a',
-      mode = 0755,
+      mode = 0o755,
       recursive_ownership = True
     )
 
@@ -118,7 +118,7 @@ class TestRangerUsersync(RMFTestCase):
       content = 'export logdir=/var/log/ranger/usersync',
       owner = 'ranger',
       group = 'ranger',
-      mode = 0755
+      mode = 0o755
     )
 
     self.assertResourceCalled('Directory', '/usr/hdp/current/ranger-usersync/conf/',
@@ -129,7 +129,7 @@ class TestRangerUsersync(RMFTestCase):
       owner = 'ranger',
       group = 'ranger',
       content = InlineTemplate(self.getConfig()['configurations']['usersync-log4j']['content']),
-      mode = 0644
+      mode = 0o644
     )
 
     ranger_ugsync_site_copy = {}
@@ -144,7 +144,7 @@ class TestRangerUsersync(RMFTestCase):
       conf_dir = '/usr/hdp/current/ranger-usersync/conf',
       configurations = ranger_ugsync_site_copy,
       configuration_attributes = self.getConfig()['configurationAttributes']['ranger-ugsync-site'],
-      mode = 0644
+      mode = 0o644
     )
 
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/conf/ranger-ugsync-default.xml',
@@ -178,14 +178,14 @@ class TestRangerUsersync(RMFTestCase):
       owner = 'ranger',
       group = 'ranger',
       only_if = 'test -e /usr/hdp/current/ranger-usersync/conf/ugsync.jceks',
-      mode = 0640
+      mode = 0o640
     )
 
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/conf/.ugsync.jceks.crc',
       owner = 'ranger',
       group = 'ranger',
       only_if = 'test -e /usr/hdp/current/ranger-usersync/conf/.ugsync.jceks.crc',
-      mode = 0640
+      mode = 0o640
     )
 
     self.assertResourceCalled('File', '/usr/bin/ranger-usersync-start',
@@ -199,7 +199,7 @@ class TestRangerUsersync(RMFTestCase):
     )
 
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/ranger-usersync-services.sh',
-      mode = 0755
+      mode = 0o755
     )
 
     self.assertResourceCalled('Execute', ('ln', '-sf', '/usr/hdp/current/ranger-usersync/ranger-usersync-services.sh', '/usr/bin/ranger-usersync'),
@@ -214,5 +214,5 @@ class TestRangerUsersync(RMFTestCase):
       conf_dir = '/usr/hdp/current/ranger-usersync/conf',
       configurations = self.getConfig()['configurations']['core-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-      mode = 0644
+      mode = 0o644
     )

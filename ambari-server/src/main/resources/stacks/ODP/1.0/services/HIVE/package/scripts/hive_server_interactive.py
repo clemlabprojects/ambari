@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,7 @@ import os
 import re
 import subprocess
 import time
-import urllib2
+import urllib.request, urllib.error
 
 # Local Imports
 from hive_service_interactive import hive_service_interactive
@@ -163,13 +163,13 @@ class HiveServerInteractive(Script):
         if hive_server_interactive_host != params.hostname:
           url = format("{hive_server_interactive_webui_protocol}://{hive_server_interactive_host}:{hive_server_interactive_webui_port}/leader")
           Logger.info(format("Checking if there is another HSI instance running by trying to open {url}"))
-          req = urllib2.Request(url)
+          req = urllib.request.Request(url)
           try:
-            resp = urllib2.urlopen(req)
+            resp = urllib.request.urlopen(req)
             running = True
-          except urllib2.URLError, e:
+          except urllib.error.URLError as e:
             pass
-          except urllib2.HTTPError, e:
+          except urllib.error.HTTPError as e:
             if e.code < 400:
               running = True
           except socket.error, e:
@@ -273,7 +273,7 @@ class HiveServerInteractive(Script):
       # starts containers one by one and excludes the nodes it gets (adding a delay of ~2sec./machine). When the LLAP
       # container memory size configuration is more than half of YARN node memory, AA is implicit and should be avoided.
       slider_placement = 4
-      if long(params.llap_daemon_container_size) > (0.5 * long(params.yarn_nm_mem)):
+      if int(params.llap_daemon_container_size) > (0.5 * int(params.yarn_nm_mem)):
         slider_placement = 0
         Logger.info("Setting slider_placement : 0, as llap_daemon_container_size : {0} > 0.5 * "
                     "YARN NodeManager Memory({1})".format(params.llap_daemon_container_size, params.yarn_nm_mem))

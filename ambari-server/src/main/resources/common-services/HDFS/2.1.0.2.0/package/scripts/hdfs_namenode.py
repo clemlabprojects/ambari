@@ -288,7 +288,7 @@ def create_name_dirs(directories):
 
   dirs = directories.split(",")
   Directory(dirs,
-            mode=0755,
+            mode=0o755,
             owner=params.hdfs_user,
             group=params.user_group,
             create_parents = True,
@@ -305,7 +305,7 @@ def create_hdfs_directories(name_service):
                        type="directory",
                        action="create_on_execute",
                        owner=params.hdfs_user,
-                       mode=0777,
+                       mode=0o777,
                        nameservices=name_services,
   )
   params.HdfsResource(params.smoke_hdfs_user_dir,

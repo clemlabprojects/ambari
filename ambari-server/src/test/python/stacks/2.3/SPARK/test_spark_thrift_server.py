@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -85,14 +85,14 @@ class TestSparkThriftServer(RMFTestCase):
         owner = 'spark',
         group = 'hadoop',
         create_parents = True,
-        mode = 0775,
+        mode = 0o775,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/spark',
         owner = 'spark',
         group = 'hadoop',
         create_parents = True,
-        mode = 0775,
+        mode = 0o775,
         cd_access = 'a',
     )
     self.assertResourceCalled('HdfsResource', '/user/spark',
@@ -110,7 +110,7 @@ class TestSparkThriftServer(RMFTestCase):
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
         dfs_type = '',
-        mode = 0775,
+        mode = 0o775,
     )
     self.assertResourceCalled('HdfsResource', None,
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -131,43 +131,43 @@ class TestSparkThriftServer(RMFTestCase):
         key_value_delimiter = ' ',
         group = 'spark',
         properties = self.getConfig()['configurations']['spark-defaults'],
-        mode = 0644
+        mode = 0o644
     )
     self.assertResourceCalled('File', '/usr/hdp/current/spark-client/conf/spark-env.sh',
         content = InlineTemplate(self.getConfig()['configurations']['spark-env']['content']),
         owner = 'spark',
         group = 'spark',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/spark-client/conf/log4j.properties',
         content = '\n# Set everything to be logged to the console\nlog4j.rootCategory=INFO, console\nlog4j.appender.console=org.apache.log4j.ConsoleAppender\nlog4j.appender.console.target=System.err\nlog4j.appender.console.layout=org.apache.log4j.PatternLayout\nlog4j.appender.console.layout.ConversionPattern=%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n\n\n# Settings to quiet third party logs that are too verbose\nlog4j.logger.org.eclipse.jetty=WARN\nlog4j.logger.org.eclipse.jetty.util.component.AbstractLifeCycle=ERROR\nlog4j.logger.org.apache.spark.repl.SparkIMain$exprTyper=INFO\nlog4j.logger.org.apache.spark.repl.SparkILoop$SparkILoopInterpreter=INFO',
         owner = 'spark',
         group = 'spark',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/spark-client/conf/metrics.properties',
         content = InlineTemplate(self.getConfig()['configurations']['spark-metrics-properties']['content']),
         owner = 'spark',
         group = 'spark',
-        mode = 0644
+        mode = 0o644
     )
     self.assertResourceCalled('Directory', '/usr/hdp/current/spark-client/logs',
         owner = 'spark',
         group = 'spark',
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('PropertiesFile', '/usr/hdp/current/spark-client/conf/spark-thrift-sparkconf.conf',
         key_value_delimiter = ' ',
         owner = 'hive',
         group = 'hadoop',
         properties = self.getConfig()['configurations']['spark-thrift-sparkconf'],
-        mode = 0644
+        mode = 0o644
     )
     self.assertResourceCalled('File', '/usr/hdp/current/spark-client/conf/java-opts',
         content = InlineTemplate('  -Dhdp.version=None'),
         owner = 'spark',
         group = 'spark',
-        mode = 0644
+        mode = 0o644
     )
 
   @patch("resource_management.libraries.functions.copy_tarball.copy_to_hdfs")

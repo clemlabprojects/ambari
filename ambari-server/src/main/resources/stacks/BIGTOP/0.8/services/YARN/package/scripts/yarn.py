@@ -34,7 +34,7 @@ def yarn(name = None):
                            action="create_delayed",
                            owner=params.yarn_user,
                            group=params.user_group,
-                           mode=0777,
+                           mode=0o777,
                            recursive_chmod=True
       )
     params.HdfsDirectory("/mapred",
@@ -49,7 +49,7 @@ def yarn(name = None):
                          action="create_delayed",
                          owner=params.mapred_user,
                          group=params.user_group,
-                         mode=0777
+                         mode=0o777
     )
 
     params.HdfsDirectory(params.mapreduce_jobhistory_done_dir,
@@ -90,7 +90,7 @@ def yarn(name = None):
             configuration_attributes=params.config['configurationAttributes']['core-site'],
             owner=params.hdfs_user,
             group=params.user_group,
-            mode=0644
+            mode=0o644
   )
 
   XmlConfig("mapred-site.xml",
@@ -99,7 +99,7 @@ def yarn(name = None):
             configuration_attributes=params.config['configurationAttributes']['mapred-site'],
             owner=params.yarn_user,
             group=params.user_group,
-            mode=0644
+            mode=0o644
   )
 
   XmlConfig("yarn-site.xml",
@@ -108,7 +108,7 @@ def yarn(name = None):
             configuration_attributes=params.config['configurationAttributes']['yarn-site'],
             owner=params.yarn_user,
             group=params.user_group,
-            mode=0644
+            mode=0o644
   )
 
   XmlConfig("capacity-scheduler.xml",
@@ -117,7 +117,7 @@ def yarn(name = None):
             configuration_attributes=params.config['configurationAttributes']['capacity-scheduler'],
             owner=params.yarn_user,
             group=params.user_group,
-            mode=0644
+            mode=0o644
   )
 
   if name == 'resourcemanager':
@@ -138,19 +138,19 @@ def yarn(name = None):
   )
 
   File(format("{limits_conf_dir}/yarn.conf"),
-       mode=0644,
+       mode=0o644,
        content=Template('yarn.conf.j2')
   )
 
   File(format("{limits_conf_dir}/mapreduce.conf"),
-       mode=0644,
+       mode=0o644,
        content=Template('mapreduce.conf.j2')
   )
 
   File(format("{hadoop_conf_dir}/yarn-env.sh"),
        owner=params.yarn_user,
        group=params.user_group,
-       mode=0755,
+       mode=0o755,
        content=InlineTemplate(params.yarn_env_sh_template)
   )
 
@@ -163,13 +163,13 @@ def yarn(name = None):
 
     File(format("{hadoop_conf_dir}/container-executor.cfg"),
          group=params.user_group,
-         mode=0644,
+         mode=0o644,
          content=Template('container-executor.cfg.j2')
     )
 
 
   if params.security_enabled:
-    tc_mode = 0644
+    tc_mode = 0o644
     tc_owner = "root"
   else:
     tc_mode = None

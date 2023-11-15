@@ -51,7 +51,7 @@ def hdfs(name=None):
   File(os.path.join(params.limits_conf_dir, 'hdfs.conf'),
        owner='root',
        group='root',
-       mode=0644,
+       mode=0o644,
        content=Template("hdfs.conf.j2")
   )
 
@@ -59,24 +59,24 @@ def hdfs(name=None):
     File(os.path.join(params.hadoop_conf_dir, 'hdfs_dn_jaas.conf'),
          owner=params.hdfs_user,
          group=params.user_group,
-         mode=0644,
+         mode=0o644,
          content=Template("hdfs_dn_jaas.conf.j2")
     )
     File(os.path.join(params.hadoop_conf_dir, 'hdfs_nn_jaas.conf'),
          owner=params.hdfs_user,
          group=params.user_group,
-         mode=0644,
+         mode=0o644,
          content=Template("hdfs_nn_jaas.conf.j2")
     )
     if params.dfs_ha_enabled:
       File(os.path.join(params.hadoop_conf_dir, 'hdfs_jn_jaas.conf'),
            owner=params.hdfs_user,
            group=params.user_group,
-           mode=0644,
+           mode=0o644,
            content=Template("hdfs_jn_jaas.conf.j2")
       )
 
-    tc_mode = 0644
+    tc_mode = 0o644
     tc_owner = "root"
   else:
     tc_mode = None
@@ -86,7 +86,7 @@ def hdfs(name=None):
     XmlConfig("hadoop-policy.xml",
               conf_dir=params.hadoop_conf_dir,
               configurations=params.config['configurations']['hadoop-policy'],
-              mode=0644,
+              mode=0o644,
               configuration_attributes=params.config['configurationAttributes']['hadoop-policy'],
               owner=params.hdfs_user,
               group=params.user_group
@@ -97,7 +97,7 @@ def hdfs(name=None):
               conf_dir=params.hadoop_conf_dir,
               configurations=params.config['configurations']['ssl-client'],
               configuration_attributes=params.config['configurationAttributes']['ssl-client'],
-              mode=0644,
+              mode=0o644,
               owner=params.hdfs_user,
               group=params.user_group
     )
@@ -113,7 +113,7 @@ def hdfs(name=None):
               conf_dir=params.hadoop_conf_secure_dir,
               configurations=params.config['configurations']['ssl-client'],
               configuration_attributes=params.config['configurationAttributes']['ssl-client'],
-              mode=0644,
+              mode=0o644,
               owner=params.hdfs_user,
               group=params.user_group
     )
@@ -123,7 +123,7 @@ def hdfs(name=None):
               conf_dir=params.hadoop_conf_dir,
               configurations=params.config['configurations']['ssl-server'],
               configuration_attributes=params.config['configurationAttributes']['ssl-server'],
-              mode=0644,
+              mode=0o644,
               owner=params.hdfs_user,
               group=params.user_group
     )
@@ -132,7 +132,7 @@ def hdfs(name=None):
             conf_dir=params.hadoop_conf_dir,
             configurations=params.config['configurations']['hdfs-site'],
             configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
-            mode=0644,
+            mode=0o644,
             owner=params.hdfs_user,
             group=params.user_group
   )
@@ -143,7 +143,7 @@ def hdfs(name=None):
             configuration_attributes=params.config['configurationAttributes']['core-site'],
             owner=params.hdfs_user,
             group=params.user_group,
-            mode=0644,
+            mode=0o644,
             xml_include_file=params.mount_table_xml_inclusion_file_full_path
   )
 
@@ -152,7 +152,7 @@ def hdfs(name=None):
           owner=params.hdfs_user,
           group=params.user_group,
           content=params.mount_table_content,
-          mode=0644
+          mode=0o644
      )
 
   File(os.path.join(params.hadoop_conf_dir, 'slaves'),
@@ -250,7 +250,7 @@ def hdfs(component=None):
          mode="f",
          )
       pass
-  if params.service_map.has_key(component):
+  if component in params.service_map:
     service_name = params.service_map[component]
     ServiceConfig(service_name,
                   action="change_user",

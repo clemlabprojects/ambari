@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -229,19 +229,19 @@ def bootstrap_server(env=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   Directory( params.ozone_manager_ha_dirs,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   Directory( params.ozone_om_snapshot_dirs,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -19,7 +19,7 @@ limitations under the License.
 '''
 
 import optparse
-from ambari_commons import subprocess32
+import subprocess
 import json
 
 RESOURCEMANAGER = 'rm'
@@ -43,7 +43,7 @@ def getResponse(path, address, ssl_enabled):
 
   command_with_flags = [command,httpGssnegotiate,userpswd,insecure,url]
 
-  proc = subprocess32.Popen(command_with_flags, stdout=subprocess32.PIPE, stderr=subprocess32.PIPE)
+  proc = subprocess.Popen(command_with_flags, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   (stdout, stderr) = proc.communicate()
   response = json.loads(stdout)
   if response == None:
@@ -117,7 +117,7 @@ def validateAbilityResponse(component, response):
   try:
     if component == RESOURCEMANAGER:
       nodes = []
-      if response.has_key('nodes') and not response['nodes'] == None and response['nodes'].has_key('node'):
+      if 'nodes' in response and not response['nodes'] == None and 'node' in response['nodes']:
         nodes = response['nodes']['node']
       connected_nodes_count = len(nodes)
       if connected_nodes_count == 0:

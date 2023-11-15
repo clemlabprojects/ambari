@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -20,7 +20,7 @@ limitations under the License.
 
 import socket
 import status_params
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 from ambari_commons.constants import AMBARI_SUDO_BINARY
 

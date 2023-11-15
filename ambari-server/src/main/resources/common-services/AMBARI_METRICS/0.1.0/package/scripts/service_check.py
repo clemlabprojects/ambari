@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -28,7 +28,7 @@ from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons.parallel_processing import PrallelProcessResult, execute_in_parallel, SUCCESS
 
-import httplib
+import http.client
 import ambari_commons.network as network
 import urllib
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
@@ -208,7 +208,7 @@ def call_curl_krb_request(tmp_dir, user_keytab, user_princ, uri, kinit_path, use
                                                        kinit_path, False, "AMS Service Check", user,
                                                        connection_timeout=connection_timeout, kinit_timer_ms=0,
                                                        method=method, body=metric_json, header=header)
-    except Exception, exception:
+    except Exception as exception:
       if i < tries - 1:  #range/xrange returns items from start to end-1
         time.sleep(connection_timeout)
         Logger.info("Connection failed for %s. Next retry in %s seconds."
@@ -275,7 +275,7 @@ def post_metrics_to_collector(ams_metrics_post_url, metric_collector_host, metri
 
       response = conn.getresponse()
       Logger.info("Http response for host %s: %s %s" % (metric_collector_host, response.status, response.reason))
-    except (httplib.HTTPException, socket.error) as ex:
+    except (http.client.HTTPException, socket.error) as ex:
       if i < tries - 1:  #range/xrange returns items from start to end-1
         time.sleep(connect_timeout)
         Logger.info("Connection failed for host %s. Next retry in %s seconds."

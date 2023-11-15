@@ -35,7 +35,7 @@ def create_dirs(data_dir):
   Directory(data_dir,
             create_parents = True,
             cd_access="a",
-            mode=0755,
+            mode=0o755,
             owner=params.hdfs_user,
             group=params.user_group,
             ignore_failures=True
@@ -47,7 +47,7 @@ def datanode(action=None):
     import params
     Directory(params.dfs_domain_socket_dir,
               create_parents = True,
-              mode=0751,
+              mode=0o751,
               owner=params.hdfs_user,
               group=params.user_group)
 
@@ -57,7 +57,7 @@ def datanode(action=None):
     File(params.data_dir_mount_file,
          owner=params.hdfs_user,
          group=params.user_group,
-         mode=0644,
+         mode=0o644,
          content=data_dir_to_mount_file_content
     )
     generate_logfeeder_input_config('hdfs', Template("input.config-hdfs.json.j2", extra_imports=[default]))

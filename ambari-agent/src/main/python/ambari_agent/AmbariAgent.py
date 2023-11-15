@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -20,7 +20,7 @@ limitations under the License.
 
 import os
 import sys
-from ambari_commons import subprocess32
+import subprocess
 import signal
 
 AGENT_AUTO_RESTART_EXIT_CODE = 77
@@ -51,7 +51,7 @@ def main():
   mergedArgs = [PYTHON, AGENT_SCRIPT] + args
 
   while status == AGENT_AUTO_RESTART_EXIT_CODE:
-    mainProcess = subprocess32.Popen(mergedArgs)
+    mainProcess = subprocess.Popen(merged_args)
     mainProcess.communicate()
     status = mainProcess.returncode
     if os.path.isfile(AGENT_PID_FILE) and status == AGENT_AUTO_RESTART_EXIT_CODE:

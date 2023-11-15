@@ -316,7 +316,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
 
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
     hdfs_site_desired_values = self.getDesiredHDFSSiteValues(False)
-    for property, value in hdfs_site_desired_values.iteritems():
+    for property, value in hdfs_site_desired_values.items():
       self.assertEquals(configurations["hdfs-site"]["properties"][property], value)
     self.assertEquals(configurations["core-site"]["properties"]["ipc.server.listen.queue.size"], "3300")
 
@@ -327,7 +327,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
 
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
     hdfs_site_desired_values = self.getDesiredHDFSSiteValues(True)
-    for property, value in hdfs_site_desired_values.iteritems():
+    for property, value in hdfs_site_desired_values.items():
       self.assertEquals(configurations["hdfs-site"]["properties"][property], value)
     self.assertEquals(configurations["core-site"]["properties"]["ipc.server.listen.queue.size"], "3300")
 
@@ -585,7 +585,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
       "hawq_rm_yarn_address": "true"
     }
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
-    for property, status in properties_visibility.iteritems():
+    for property, status in properties_visibility.items():
       self.assertEqual(configurations["hawq-site"]["property_attributes"][property]["visible"], status)
 
     # Case 2: When hawq_global_rm_type is none
@@ -600,7 +600,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
       "hawq_rm_yarn_address": "false"
     }
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
-    for property, status in properties_visibility.iteritems():
+    for property, status in properties_visibility.items():
       self.assertEqual(configurations["hawq-site"]["property_attributes"][property]["visible"], status)
 
     ## Test if maximum range of default_hash_table_bucket_number is set correctly

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -48,7 +48,7 @@ def create_dirs(data_dir):
   Directory(data_dir,
             create_parents = True,
             cd_access="a",
-            mode=0755,
+            mode=0o755,
             owner=params.ozone_user,
             group=params.user_group,
             ignore_failures=True
@@ -65,7 +65,7 @@ def ozone(name=None):
   conf_dir = ozone_env_dict['ozone_conf_dir']
 
   Directory( params.etc_prefix_dir,
-      mode=0755
+      mode=0o755
   )
   Directory(ozone_env_dict['ozone_conf_dir'],
       group = params.user_group,
@@ -74,7 +74,7 @@ def ozone(name=None):
    
   Directory(params.java_io_tmpdir,
       create_parents = True,
-      mode=0777
+      mode=0o777
   )
   
   if name == "ozone-manager":
@@ -105,13 +105,13 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
     )
     Directory (params.log_dir,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
     )
     # On some OS this folder could be not exists, so we will create it before pushing there files
     Directory(params.limits_conf_dir,
@@ -129,7 +129,7 @@ def ozone(name=None):
     File(os.path.join(params.limits_conf_dir, 'ozone.conf'),
         owner='root',
         group='root',
-        mode=0644,
+        mode=0o644,
         content=Template("ozone.conf.j2")
         )
     ## ssl properties
@@ -248,7 +248,7 @@ def ozone(name=None):
       File(params.data_dir_mount_file,
           owner=params.ozone_user,
           group=params.user_group,
-          mode=0644,
+          mode=0o644,
           content=data_dir_to_mount_file_content
       )
       generate_logfeeder_input_config('ozone', Template("input.config-ozone.json.j2", extra_imports=[default]))
@@ -316,7 +316,7 @@ def ozone(name=None):
   )
   # render specific configuration files
   File(format("{conf_dir}/log4j.properties"),
-        mode=0644,
+        mode=0o644,
         group=params.user_group,
         owner=params.ozone_user,
         content=content_log4j_env

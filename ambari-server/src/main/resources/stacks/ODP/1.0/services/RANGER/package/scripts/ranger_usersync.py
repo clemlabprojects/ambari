@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -46,7 +46,7 @@ class RangerUsersync(Script):
       File(params.ugsync_policymgr_keystore,
         owner = params.unix_user,
         group = params.unix_group,
-        mode = 0640
+        mode = 0o640
       )
 
   def configure(self, env, upgrade_type=None):

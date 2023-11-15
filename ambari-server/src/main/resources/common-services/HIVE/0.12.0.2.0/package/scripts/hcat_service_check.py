@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -50,7 +50,7 @@ def hcat_service_check():
 
     File(format("{tmp_dir}/hcatSmoke.sh"),
          content=StaticFile("hcatSmoke.sh"),
-         mode=0755
+         mode=0o755
     )
 
     prepare_cmd = format("{kinit_cmd}env JAVA_HOME={java64_home} {tmp_dir}/hcatSmoke.sh hcatsmoke{unique} prepare {purge_tables}")

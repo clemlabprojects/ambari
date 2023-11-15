@@ -62,6 +62,9 @@ class TestVersion(TestCase):
     versions = range(1000, 3000, 7)
     versions = [".".join(list(str(elem))) for elem in versions]
 
+    def cmp(a, b):
+      return (a > b) - (a < b)
+
     for idx, x in enumerate(versions):
       for idy, y in enumerate(versions):
         # Expected value will either be -1, 0, 1, and it relies on the fact

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -171,7 +171,7 @@ class HiveMetastoreDefault(HiveMetastore):
           Execute(('cp', params.source_jdbc_file, target_directory),
             path=["/bin", "/usr/bin/"], sudo = True)
 
-      File(target_directory_and_filename, mode = 0644)
+      File(target_directory_and_filename, mode = 0o644)
 
     # build the schema tool command
     binary = format("{hive_schematool_ver_bin}/schematool")

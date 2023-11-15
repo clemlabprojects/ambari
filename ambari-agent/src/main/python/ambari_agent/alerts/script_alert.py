@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -54,7 +54,7 @@ class ScriptAlert(BaseAlert):
     self.parameters = {}
 
     # will force a kinit even if klist says there are valid tickets (4 hour default)
-    self.kinit_timeout = long(config.get('agent', 'alert_kinit_timeout', BaseAlert._DEFAULT_KINIT_TIMEOUT))
+    self.kinit_timeout = int(config.get('agent', 'alert_kinit_timeout', BaseAlert._DEFAULT_KINIT_TIMEOUT))
 
     if 'path' in alert_source_meta:
       self.path = alert_source_meta['path']

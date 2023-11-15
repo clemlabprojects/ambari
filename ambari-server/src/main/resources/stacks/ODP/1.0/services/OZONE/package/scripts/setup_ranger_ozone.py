@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -42,7 +42,7 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
                            action="create_on_execute",
                            owner=params.ozone_user,
                            group=params.ozone_user,
-                           mode=0755,
+                           mode=0o755,
                            recursive_chmod=True
         )
         params.HdfsResource("/ranger/audit/ozoneManager",
@@ -50,11 +50,11 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
                            action="create_on_execute",
                            owner=params.ozone_user,
                            group=params.ozone_user,
-                           mode=0700,
+                           mode=0o700,
                            recursive_chmod=True
         )
         params.HdfsResource(None, action="execute")
-      except Exception, err:
+      except Exception as err:
         Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
 
     api_version = 'v2'

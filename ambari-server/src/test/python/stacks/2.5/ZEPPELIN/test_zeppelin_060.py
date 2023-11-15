@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -37,21 +37,21 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/zeppelin',
         owner = 'zeppelin',
         create_parents = True,
         group = 'zeppelin',
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/usr/hdp/current/zeppelin-server',
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Execute', ('chown', '-R', u'zeppelin:zeppelin', '/var/run/zeppelin'), sudo = True)
@@ -80,7 +80,7 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
 
@@ -89,21 +89,21 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/zeppelin',
         owner = 'zeppelin',
         create_parents = True,
         group = 'zeppelin',
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/usr/hdp/current/zeppelin-server',
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Execute', ('chown', '-R', u'zeppelin:zeppelin', '/var/run/zeppelin'), sudo = True)
@@ -132,7 +132,7 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
 
@@ -170,7 +170,7 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Execute', ('chown', '-R', u'zeppelin:zeppelin', '/var/run/zeppelin'),
@@ -193,7 +193,7 @@ class TestZeppelin060(RMFTestCase):
         owner = 'zeppelin',
         group = 'zeppelin',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
         cd_access = 'a',
     )
     self.assertResourceCalled('Execute', ('chown', '-R', u'zeppelin:zeppelin', '/var/run/zeppelin'),
@@ -307,7 +307,7 @@ class TestZeppelin060(RMFTestCase):
         hadoop_conf_dir = '/usr/hdp/2.2.1.0-2067/hadoop/conf',
         type = 'file',
         action = ['create_on_execute'],
-        mode = 0444,
+        mode = 0o444,
         dfs_type='',
     )
     self.assertResourceCalled('HdfsResource', None,

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -91,7 +91,7 @@ class TestRangerTagsync(RMFTestCase):
     )
 
     self.assertResourceCalled('Directory', '/var/run/ranger',
-      mode=0755,
+      mode=0o755,
       owner = 'ranger',
       group = 'hadoop',
       cd_access = "a",
@@ -102,14 +102,14 @@ class TestRangerTagsync(RMFTestCase):
       content = 'export TAGSYNC_PID_DIR_PATH=/var/run/ranger\nexport UNIX_TAGSYNC_USER=ranger',
       owner = 'ranger',
       group = 'ranger',
-      mode = 0755
+      mode = 0o755
     )
 
     self.assertResourceCalled('Directory', '/var/log/ranger/tagsync',
       owner = 'ranger',
       group = 'ranger',
       cd_access = "a",
-      mode=0755,
+      mode=0o755,
       create_parents = True
     )
 
@@ -118,7 +118,7 @@ class TestRangerTagsync(RMFTestCase):
       owner = 'ranger',
       content = 'export RANGER_TAGSYNC_LOG_DIR=/var/log/ranger/tagsync',
       group = 'ranger',
-      mode=0755
+      mode=0o755
     )
 
     self.assertResourceCalled('XmlConfig', 'ranger-tagsync-site.xml',
@@ -127,12 +127,12 @@ class TestRangerTagsync(RMFTestCase):
       conf_dir = '/usr/hdp/current/ranger-tagsync/conf',
       configurations = self.getConfig()['configurations']['ranger-tagsync-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['ranger-tagsync-site'],
-      mode=0644
+      mode=0o644
     )
 
     self.assertResourceCalled('PropertiesFile', '/usr/hdp/current/ranger-tagsync/conf/atlas-application.properties',
       properties = self.getConfig()['configurations']['tagsync-application-properties'],
-      mode=0755,
+      mode=0o755,
       owner='ranger',
       group='ranger'
     )
@@ -141,11 +141,11 @@ class TestRangerTagsync(RMFTestCase):
       owner = 'ranger',
       group = 'ranger',
       content = InlineTemplate(self.getConfig()['configurations']['tagsync-log4j']['content']),
-      mode = 0644
+      mode = 0o644
     )
 
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-tagsync/ranger-tagsync-services.sh',
-      mode = 0755,
+      mode = 0o755,
     )
 
     self.assertResourceCalled('Execute', ('ln', '-sf', '/usr/hdp/current/ranger-tagsync/ranger-tagsync-services.sh', '/usr/bin/ranger-tagsync'),
@@ -160,5 +160,5 @@ class TestRangerTagsync(RMFTestCase):
       conf_dir = '/usr/hdp/current/ranger-tagsync/conf',
       configurations = self.getConfig()['configurations']['core-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-      mode = 0644
+      mode = 0o644
     )

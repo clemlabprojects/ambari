@@ -214,7 +214,7 @@ def main(argv = None):
       if services:
         services = str(services).split(',')
       pass
-    except Exception, ex:
+    except Exception as ex:
       sys.stderr.write(str(ex))
       sys.stderr.write("\nUsage: Expected items not found in input. Found "
                       " ams-hbase-site => {0}, ams-hbase-env => {1},"

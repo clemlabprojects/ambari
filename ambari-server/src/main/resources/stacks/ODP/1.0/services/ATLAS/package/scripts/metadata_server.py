@@ -225,7 +225,7 @@ class MetadataServer(Script):
         group=params.user_group,
         owner=params.metadata_user,
         only_if=format("test -e {atlas_simple_auth_policy_file_target}"),
-        mode=0644
+        mode=0o644
       )
   def update_atlas_simple_authz(self,env):
     import params
@@ -268,7 +268,7 @@ class MetadataServer(Script):
         group=params.user_group,
         owner=params.metadata_user,
         only_if=format("test -e {atlas_simple_auth_policy_file}"),
-        mode=0644
+        mode=0o644
       )
 
 

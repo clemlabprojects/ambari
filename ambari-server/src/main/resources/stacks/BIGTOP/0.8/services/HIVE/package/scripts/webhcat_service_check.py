@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,7 @@ def webhcat_service_check():
   import params
   File(format("{tmp_dir}/templetonSmoke.sh"),
        content= StaticFile('templetonSmoke.sh'),
-       mode=0755
+       mode=0o755
   )
 
   cmd = format("{tmp_dir}/templetonSmoke.sh {webhcat_server_host[0]} {smokeuser} {smokeuser_keytab}"

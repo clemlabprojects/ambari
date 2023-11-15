@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -181,7 +181,7 @@ else:
 # This can be None, True, or False
 is_atlas_ha_enabled = default("/configurations/application-properties/atlas.server.ha.enabled", None)
 additional_ha_props = configs_for_ha(atlas_hosts, metadata_port, is_atlas_ha_enabled, metadata_protocol)
-for k,v in additional_ha_props.iteritems():
+for k,v in additional_ha_props.items():
   application_properties[k] = v
 
 

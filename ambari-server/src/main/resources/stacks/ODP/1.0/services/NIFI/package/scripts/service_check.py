@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -19,8 +19,8 @@ limitations under the License.
 """
 
 import os
-import urllib2
-import httplib
+import urllib.request, urllib.error
+import http.client
 import nifi_toolkit_util_common
 from resource_management.core import shell
 
@@ -57,15 +57,15 @@ class NifiServiceCheck(Script):
   @retry(times=30, sleep_time=5, max_sleep_time=20, backoff_factor=2, err_class=Fail)
   def check_nifi_portal_with_python(url):
     try:
-      request = urllib2.Request(url)
+      request = urllib.request.Request(url)
       result = openurl(request, timeout=20)
       response_code = result.getcode()
       if response_code == 200 or response_code == 401:
         Logger.info("Nifi portal {0} is up. Response code {1}".format(url, response_code))
       else:
         raise Fail("Error connecting to {0}. Response code {1}".format(url, response_code))
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
         if e.code == 401:
           Logger.info("Nifi portal {0} is up. Response code {1}".format(url, e.code))
         else:
@@ -75,7 +75,7 @@ class NifiServiceCheck(Script):
         pass
       else:
         raise Fail("Error connecting to {0}. Reason - {1}.".format(url, e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Error connecting to {0}. Reason - Not Reachable".format(url))
     except TimeoutError:
       raise Fail("Error connecting to {0}. Reason - Timeout".format(url))
@@ -85,7 +85,7 @@ class NifiServiceCheck(Script):
   def check_nifi_portal_with_toolkit(urls,jdk64_home,nifi_dir,nifi_bootstrap,toolkit_tmp_dir,stack_version_buildnum):
 
     node_manager_script = nifi_toolkit_util_common.get_toolkit_script('node-manager.sh', toolkit_tmp_dir, stack_version_buildnum)
-    File(node_manager_script, mode=0755)
+    File(node_manager_script, mode=0o755)
     command =  'ambari-sudo.sh JAVA_HOME='+jdk64_home+' '+ node_manager_script + ' -d ' + nifi_dir +' -b ' + nifi_bootstrap +' -o status -u "' + ','.join(urls) + '"'
     code, out = shell.call(command,quiet=True,logoutput=False)
 

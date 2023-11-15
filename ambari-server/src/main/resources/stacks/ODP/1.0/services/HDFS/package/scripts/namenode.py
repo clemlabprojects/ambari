@@ -178,7 +178,7 @@ class NameNodeDefault(NameNode):
     """
     Restore the snapshot during a Downgrade.
     """
-    print "TODO AMBARI-12698"
+    print("TODO AMBARI-12698")
     pass
 
   def prepare_express_upgrade(self, env):

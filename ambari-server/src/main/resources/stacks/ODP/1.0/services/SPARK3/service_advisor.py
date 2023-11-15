@@ -249,7 +249,7 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
             if superusers:
               _superusers = superusers.split(',')
               _superusers = [x.strip() for x in _superusers]
-              _superusers = filter(None, _superusers)  # Removes empty string elements from array
+              _superusers = list(filter(None, _superusers))  # Removes empty string elements from array
             else:
               _superusers = []
 

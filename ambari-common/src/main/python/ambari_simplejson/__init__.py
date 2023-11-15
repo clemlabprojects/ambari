@@ -105,8 +105,8 @@ __all__ = [
 
 __author__ = 'Bob Ippolito <bob@redivi.com>'
 
-from decoder import JSONDecoder
-from encoder import JSONEncoder
+from json import JSONDecoder
+from json import JSONEncoder
 
 _default_encoder = JSONEncoder(
     skipkeys=False,
@@ -115,7 +115,6 @@ _default_encoder = JSONEncoder(
     allow_nan=True,
     indent=None,
     separators=None,
-    encoding='utf-8',
     default=None,
 )
 
@@ -237,7 +236,7 @@ def dumps(obj, skipkeys=False, ensure_ascii=True, check_circular=True,
         **kw).encode(obj)
 
 
-_default_decoder = JSONDecoder(encoding=None, object_hook=None)
+_default_decoder = JSONDecoder(object_hook=None)
 
 
 def load(fp, encoding=None, cls=None, object_hook=None, parse_float=None,

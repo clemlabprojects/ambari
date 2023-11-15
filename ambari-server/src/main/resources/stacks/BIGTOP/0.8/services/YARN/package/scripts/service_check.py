@@ -48,7 +48,7 @@ class ServiceCheck(Script):
 
     File(validateStatusFilePath,
          content=StaticFile(validateStatusFileName),
-         mode=0755
+         mode=0o755
     )
 
     Execute(smoke_cmd,

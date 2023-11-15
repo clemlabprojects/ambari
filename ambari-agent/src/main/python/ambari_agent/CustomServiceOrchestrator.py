@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -20,7 +20,7 @@ limitations under the License.
 
 import logging
 import os
-from ConfigParser import NoOptionError
+from configparser import NoOptionError
 
 import ambari_simplejson as json
 import sys
@@ -31,8 +31,9 @@ from ambari_commons import shell
 import threading
 from collections import defaultdict
 
-from AgentException import AgentException
-from PythonExecutor import PythonExecutor
+from ambari_agent.AgentException import AgentException
+from ambari_agent.PythonExecutor import PythonExecutor
+import subprocess
 from resource_management.libraries.functions.log_process_information import log_process_information
 from resource_management.core.utils import PasswordString
 from ambari_commons import subprocess32
@@ -282,7 +283,7 @@ class CustomServiceOrchestrator(object):
     else:
       commandJson['credentialStoreEnabled'] = "true"
 
-    for config_type, credentials in configtype_credentials.items():
+    for config_type, credentials in list(configtype_credentials.items()):
       config = commandJson['configurations'][config_type]
       if 'role' in commandJson and commandJson['role']:
         roleName = commandJson['role']
@@ -300,9 +301,9 @@ class CustomServiceOrchestrator(object):
         cmd = (java_bin, '-cp', cs_lib_path, self.credential_shell_cmd, 'create',
                alias, '-value', protected_pwd, '-provider', provider_path)
         logger.info(cmd)
-        cmd_result = subprocess32.call(cmd)
+        cmd_result = subprocess.call(cmd)
         logger.info('cmd_result = {0}'.format(cmd_result))
-        os.chmod(file_path, 0644) # group and others should have read access so that the service user can read
+        os.chmod(file_path, 0o644) # group and others should have read access so that the service user can read
       # Add JCEKS provider path instead
       config[self.CREDENTIAL_PROVIDER_PROPERTY_NAME] = provider_path
       config[self.CREDENTIAL_STORE_CLASS_PATH_NAME] = cs_lib_path
@@ -483,7 +484,7 @@ class CustomServiceOrchestrator(object):
       if task_id in self.commands_in_progress:
         logger.debug('Pop with taskId %s', task_id)
         pid = self.commands_in_progress.pop(task_id)
-        if not isinstance(pid, (int, long)):
+        if not isinstance(pid, int):
           reason = pid
           if reason:
             return "\nCommand aborted. Reason: '{0}'".format(reason)
@@ -606,7 +607,7 @@ class CustomServiceOrchestrator(object):
     racks = self.convert_mapped_range_to_list(racks)
     ipv4_addresses = self.convert_mapped_range_to_list(ipv4_addresses)
 
-    ping_ports = map(str, ping_ports)
+    ping_ports = list(map(str, ping_ports))
 
     decompressed_map[self.PING_PORTS_KEY] = ping_ports
     decompressed_map[self.HOSTS_LIST_KEY] = hosts_list
@@ -636,7 +637,7 @@ class CustomServiceOrchestrator(object):
           if not range_bounds[0] or not range_bounds[1]:
             raise AgentException("Broken data in given range, expected - ""m-n"" or ""m"", got: " + str(r))
 
-          result_list.extend(range(int(range_bounds[0]), int(range_bounds[1]) + 1))
+          result_list.extend(list(range(int(range_bounds[0]), int(range_bounds[1]) + 1)))
         elif len(range_bounds) == 1:
           result_list.append((int(range_bounds[0])))
         else:
@@ -677,7 +678,7 @@ class CustomServiceOrchestrator(object):
           index = int(range_indexes[0])
           result_dict[index] = value if not value.isdigit() else int(value)
 
-    return dict(sorted(result_dict.items())).values()
+    return list(dict(sorted(result_dict.items())).values())
 
   def conditionally_remove_command_file(self, command_json_path, command_result):
     """

@@ -17,7 +17,6 @@ limitations under the License.
 
 """
 
-from ambari_commons import subprocess32
 
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import Fail

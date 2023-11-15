@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 '''
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -19,7 +19,7 @@ limitations under the License.
 
 import sys, os
 from string import join
-import ConfigParser
+import configparser
 
 
 DEFAULT_RACK = "/default-rack"
@@ -31,17 +31,17 @@ class TopologyScript():
   def load_rack_map(self):
     try:
       #RACK_MAP contains both host name vs rack and ip vs rack mappings
-      mappings = ConfigParser.ConfigParser()
+      mappings = configparser.ConfigParser()
       mappings.read(DATA_FILE_NAME)
       return dict(mappings.items(SECTION_NAME))
-    except ConfigParser.NoSectionError:
+    except configparser.NoSectionError:
       return {}
 
   def get_racks(self, rack_map, args):
     if len(args) == 1:
       return DEFAULT_RACK
     else:
-      return join([self.lookup_by_hostname_or_ip(input_argument, rack_map) for input_argument in args[1:]],)
+      return ' '.join([self.lookup_by_hostname_or_ip(input_argument, rack_map) for input_argument in args[1:]],)
 
   def lookup_by_hostname_or_ip(self, hostname_or_ip, rack_map):
     #try looking up by hostname

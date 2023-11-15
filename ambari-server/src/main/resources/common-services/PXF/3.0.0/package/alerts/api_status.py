@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -21,7 +21,7 @@ limitations under the License.
 import logging
 import json
 import socket
-import urllib2
+import urllib.request, urllib.error
 import urllib
 
 from resource_management.core import shell
@@ -97,12 +97,12 @@ def _makeHTTPCall(url, header={}, body=None):
     data = None
     if body:
       data = urllib.urlencode(body)
-    req = urllib2.Request(url, data, header)
+    req = urllib.request.Request(url, data, header)
 
-    response = urllib2.urlopen(req)
+    response = urllib.request.urlopen(req)
     responseContent = response.read()
     return responseContent
-  except urllib2.URLError as e:
+  except urllib.error.URLError as e:
     if hasattr(e, 'reason'):
       logger.error( 'Reason: ' + str(e.reason))
     if hasattr(e, 'code'):

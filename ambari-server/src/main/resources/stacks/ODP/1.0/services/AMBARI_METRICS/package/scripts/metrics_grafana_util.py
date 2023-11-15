@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -17,7 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-import httplib
+import http.client
 
 from ambari_commons.parallel_processing import PrallelProcessResult, execute_in_parallel, SUCCESS
 from service_check import post_metrics_to_collector
@@ -26,7 +26,7 @@ from resource_management.core.base import Fail
 from resource_management.libraries.script.script import Script
 from resource_management import Template
 from collections import namedtuple
-from urlparse import urlparse
+from urllib.parse import urlparse
 from base64 import b64encode
 import random
 import time
@@ -72,7 +72,7 @@ def perform_grafana_get_call(url, server):
       response = conn.getresponse()
       Logger.info("Http response: %s %s" % (response.status, response.reason))
       break
-    except (httplib.HTTPException, socket.error) as ex:
+    except (http.client.HTTPException, socket.error) as ex:
       if i < GRAFANA_CONNECT_TRIES - 1:
         time.sleep(GRAFANA_CONNECT_TIMEOUT)
         Logger.info("Connection to Grafana failed. Next retry in %s seconds."
@@ -112,7 +112,7 @@ def perform_grafana_put_call(url, id, payload, server):
       Logger.info("Http data: %s" % data)
       conn.close()
       break
-    except (httplib.HTTPException, socket.error) as ex:
+    except (http.client.HTTPException, socket.error) as ex:
       if i < GRAFANA_CONNECT_TRIES - 1:
         time.sleep(GRAFANA_CONNECT_TIMEOUT)
         Logger.info("Connection to Grafana failed. Next retry in %s seconds."
@@ -162,7 +162,7 @@ def perform_grafana_post_call(url, payload, server):
       Logger.info("Http data: %s" % data)
       conn.close()
       break
-    except (httplib.HTTPException, socket.error) as ex:
+    except (http.client.HTTPException, socket.error) as ex:
       if i < GRAFANA_CONNECT_TRIES - 1:
         time.sleep(GRAFANA_CONNECT_TIMEOUT)
         Logger.info("Connection to Grafana failed. Next retry in %s seconds."
@@ -201,7 +201,7 @@ def perform_grafana_delete_call(url, server):
       response = conn.getresponse()
       Logger.info("Http response: %s %s" % (response.status, response.reason))
       break
-    except (httplib.HTTPException, socket.error) as ex:
+    except (http.client.HTTPException, socket.error) as ex:
       if i < GRAFANA_CONNECT_TRIES - 1:
         time.sleep(GRAFANA_CONNECT_TIMEOUT)
         Logger.info("Connection to Grafana failed. Next retry in %s seconds."
@@ -425,7 +425,7 @@ def create_ams_dashboards():
       try:
         with open(dashboard_file, 'r') as file:
           dashboard_def = json.load(file)
-      except Exception, e:
+      except Exception as e:
         Logger.error('Unable to load dashboard json file %s' % dashboard_file)
         Logger.error(str(e))
         continue

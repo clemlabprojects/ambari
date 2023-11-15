@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -262,7 +262,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_bin_dir = '/usr/bin',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name=UnknownConfigurationMock(), default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 01777,
+        mode = 0o1777,
     )
     self.assertResourceCalled('HdfsResource', '/tmp',
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -279,7 +279,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777
+        mode = 0o777
       )
 
     self.assertResourceCalled('HdfsResource', '/tmp/entity-file-history/active',
@@ -339,7 +339,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_bin_dir = '/usr/bin',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name=UnknownConfigurationMock(), default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0777,
+        mode = 0o777,
     )
     self.assertResourceCalled('HdfsResource', None,
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -362,7 +362,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'core-site.xml',
       owner = 'hdfs',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['core-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['core-site']
@@ -370,7 +370,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
       owner = 'hdfs',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['hdfs-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-site']
@@ -378,7 +378,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['mapred-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['mapred-site']
@@ -386,7 +386,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'yarn-site.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['yarn-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['yarn-site']
@@ -394,24 +394,24 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'capacity-scheduler.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['capacity-scheduler'],
       configuration_attributes = self.getConfig()['configurationAttributes']['capacity-scheduler']
     )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
       content = Template('yarn.conf.j2'),
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('File', '/etc/security/limits.d/mapreduce.conf',
       content = Template('mapreduce.conf.j2'),
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/yarn-env.sh',
       content = InlineTemplate(self.getConfig()['configurations']['yarn-env']['content']),
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/usr/lib/hadoop-yarn/bin/container-executor',
                               group = 'hadoop',
@@ -420,17 +420,17 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('File', '/etc/hadoop/conf/container-executor.cfg',
                               content = InlineTemplate(self.getConfig()['configurations']['container-executor']['content']),
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
-                              mode = 0755,
+                              mode = 0o755,
                               owner = 'hdfs',
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/taskcontroller.cfg',
@@ -529,7 +529,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_bin_dir = '/usr/bin',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name='hdfs', default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 01777,
+        mode = 0o1777,
     )
 
     self.assertResourceCalled('HdfsResource', '/tmp',
@@ -547,7 +547,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777
+        mode = 0o777
     )
     self.assertResourceCalled('HdfsResource', '/tmp/entity-file-history/active',
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -606,7 +606,7 @@ class TestHistoryServer(RMFTestCase):
         hadoop_bin_dir = '/usr/bin',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name='hdfs', default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0777,
+        mode = 0o777,
     )
     self.assertResourceCalled('HdfsResource', None,
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -629,7 +629,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'core-site.xml',
       owner = 'hdfs',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['core-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['core-site']
@@ -637,7 +637,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
       owner = 'hdfs',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['hdfs-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-site']
@@ -645,7 +645,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['mapred-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['mapred-site']
@@ -653,7 +653,7 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'yarn-site.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['yarn-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['yarn-site']
@@ -661,55 +661,55 @@ class TestHistoryServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'capacity-scheduler.xml',
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/etc/hadoop/conf',
       configurations = self.getConfig()['configurations']['capacity-scheduler'],
       configuration_attributes = self.getConfig()['configurationAttributes']['capacity-scheduler']
     )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
       content = Template('yarn.conf.j2'),
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('File', '/etc/security/limits.d/mapreduce.conf',
       content = Template('mapreduce.conf.j2'),
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/yarn-env.sh',
       content = InlineTemplate(self.getConfig()['configurations']['yarn-env']['content']),
       owner = 'yarn',
       group = 'hadoop',
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/usr/lib/hadoop-yarn/bin/container-executor',
       group = 'hadoop',
-      mode = 06050,
+      mode = 0o6050,
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/container-executor.cfg',
       content = InlineTemplate(self.getConfig()['configurations']['container-executor']['content']),
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
-                              mode = 0755,
+                              mode = 0o755,
                               owner = 'root',
                               )
     self.assertResourceCalled('File', '/usr/lib/hadoop/sbin/task-controller',
                               owner = 'root',
                               group = 'hadoop',
-                              mode = 06050,
+                              mode = 0o6050,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/taskcontroller.cfg',
                               content = Template('taskcontroller.cfg.j2'),
                               owner = 'root',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/yarn_jaas.conf',
                               content = Template('yarn_jaas.conf.j2'),

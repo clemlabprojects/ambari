@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -207,13 +207,13 @@ class TestWebHCatServer(RMFTestCase):
                               owner = 'hcat',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/var/log/webhcat',
                               owner = 'hcat',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/hdp/current/hive-webhcat/etc/webhcat',
                               owner = 'hcat',
@@ -241,7 +241,7 @@ class TestWebHCatServer(RMFTestCase):
                               content = InlineTemplate('log4jproperties\nline2'),
                               owner = 'hcat',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
 
   def assert_configure_secured(self):
@@ -249,13 +249,13 @@ class TestWebHCatServer(RMFTestCase):
                               owner = 'hcat',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/var/log/webhcat',
                               owner = 'hcat',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/hdp/current/hive-webhcat/etc/webhcat',
                               owner = 'hcat',
@@ -284,7 +284,7 @@ class TestWebHCatServer(RMFTestCase):
                               content = InlineTemplate('log4jproperties\nline2'),
                               owner = 'hcat',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
 
   @patch("resource_management.core.sudo.path_isdir", new = MagicMock(return_value = True))
@@ -364,13 +364,13 @@ class TestWebHCatServer(RMFTestCase):
       owner = 'hcat',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('Directory', '/var/log/webhcat',
       owner = 'hcat',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('Directory', '/usr/hdp/current/hive-webhcat/etc/webhcat',
       owner = 'hcat',
@@ -417,7 +417,7 @@ class TestWebHCatServer(RMFTestCase):
                               content = InlineTemplate('log4jproperties\nline2'),
                               owner = 'hcat',
                               group = 'hadoop',
-                              mode = 0644)
+                              mode = 0o644)
 
     self.assertNoMoreResources()
 

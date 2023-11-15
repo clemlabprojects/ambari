@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -21,7 +21,7 @@ limitations under the License.
 # Python Imports
 import os
 import glob
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 # Resource Management and Common Imports
 from resource_management.libraries.script.script import Script
@@ -106,7 +106,7 @@ def hive_interactive(name=None):
       params.HdfsResource(None, action="execute")
 
   Directory(params.hive_interactive_etc_dir_prefix,
-            mode=0755
+            mode=0o755
             )
 
   Logger.info("Directories to fill with configs: %s" % str(params.hive_conf_dirs_list))
@@ -130,7 +130,7 @@ def hive_interactive(name=None):
   '''
   if 'hive.llap.io.memory.size' in merged_hive_interactive_site.keys():
     hive_llap_io_mem_size_in_mb = merged_hive_interactive_site.get("hive.llap.io.memory.size")
-    hive_llap_io_mem_size_in_bytes = long(hive_llap_io_mem_size_in_mb) * MB_TO_BYTES
+    hive_llap_io_mem_size_in_bytes = int(hive_llap_io_mem_size_in_mb) * MB_TO_BYTES
     merged_hive_interactive_site['hive.llap.io.memory.size'] = hive_llap_io_mem_size_in_bytes
     Logger.info("Converted 'hive.llap.io.memory.size' value from '{0} MB' to '{1} Bytes' before writing "
                 "it to config file.".format(hive_llap_io_mem_size_in_mb, hive_llap_io_mem_size_in_bytes))
@@ -170,7 +170,7 @@ def hive_interactive(name=None):
             configuration_attributes=params.config['configurationAttributes']['tez-interactive-site'],
             owner = params.tez_interactive_user,
             group = params.user_group,
-            mode = 0664)
+            mode = 0o664)
 
   '''
   Merge properties from hiveserver2-interactive-site into hiveserver2-site
@@ -204,7 +204,7 @@ def hive_interactive(name=None):
       del merged_hive_interactive_site_copy[item]
 
   for conf_dir in hive2_conf_dirs_list:
-      mode_identified = 0644 if conf_dir == hive2_client_conf_path else 0600
+      mode_identified = 0o644 if conf_dir == hive2_client_conf_path else 0o600
       if conf_dir == hive2_client_conf_path:
         XmlConfig("hive-site.xml",
                   conf_dir=conf_dir,
@@ -212,7 +212,7 @@ def hive_interactive(name=None):
                   configuration_attributes=params.config['configurationAttributes']['hive-interactive-site'],
                   owner=params.hive_user,
                   group=params.user_group,
-                  mode=0644)
+                  mode=0o644)
       else:
         merged_hive_interactive_site = update_credential_provider_path(merged_hive_interactive_site,
                                                                   'hive-site',
@@ -226,7 +226,7 @@ def hive_interactive(name=None):
                   configuration_attributes=params.config['configurationAttributes']['hive-interactive-site'],
                   owner=params.hive_user,
                   group=params.user_group,
-                  mode=0600)
+                  mode=0o600)
       XmlConfig("hiveserver2-site.xml",
                 conf_dir=conf_dir,
                 configurations=merged_hiveserver2_interactive_site,
@@ -307,7 +307,7 @@ def hive_interactive(name=None):
   File(os.path.join(params.limits_conf_dir, 'hive.conf'),
        owner='root',
        group='root',
-       mode=0644,
+       mode=0o644,
        content=Template("hive.conf.j2"))
 
   if not os.path.exists(params.target_hive_interactive):
@@ -315,9 +315,9 @@ def hive_interactive(name=None):
 
   File(format("/usr/lib/ambari-agent/{check_db_connection_jar_name}"),
        content = DownloadSource(format("{jdk_location}/{check_db_connection_jar_name}")),
-       mode = 0644)
+       mode = 0o644)
   File(params.start_hiveserver2_interactive_path,
-       mode=0755,
+       mode=0o755,
        content=Template(format('{start_hiveserver2_interactive_script}')))
 
   Directory(params.hive_pid_dir,
@@ -325,19 +325,19 @@ def hive_interactive(name=None):
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
   Directory(params.hive_log_dir,
             create_parents=True,
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
   Directory(params.hive_interactive_var_lib,
             create_parents=True,
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
 
 """
 Remove 'org.apache.atlas.hive.hook.HiveHook' value from Hive2/hive-site.xml config 'hive.exec.post.hooks', if exists.

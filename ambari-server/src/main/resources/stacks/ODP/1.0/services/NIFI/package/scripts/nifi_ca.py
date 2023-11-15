@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -120,8 +120,8 @@ class CertificateAuthority(Script):
         recursive_ownership=True
     )
 
-    File(ca_server_script, mode=0755)
-    File(run_ca_script, mode=0755)
+    File(ca_server_script, mode=0o755)
+    File(run_ca_script, mode=0o755)
     Execute(
       (
         run_ca_script,
@@ -147,8 +147,8 @@ class CertificateAuthority(Script):
     nifi_toolkit_util_common.copy_toolkit_scripts(params.toolkit_files_dir, params.toolkit_tmp_dir, params.nifi_user, params.nifi_group, upgrade_type, service=nifi_toolkit_util_common.NIFI)
     run_ca_script = os.path.join(params.toolkit_tmp_dir, 'run_ca.sh')
     ca_server_script = nifi_toolkit_util_common.get_toolkit_script('tls-toolkit.sh',params.toolkit_tmp_dir, params.stack_version_buildnum)
-    File(ca_server_script, mode=0755)
-    File(run_ca_script, mode=0755)
+    File(ca_server_script, mode=0o755)
+    File(run_ca_script, mode=0o755)
 
     if path_isfile(status_params.nifi_ca_pid_file):
       Execute(

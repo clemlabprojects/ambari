@@ -94,14 +94,14 @@ HdfsResource = functools.partial(HdfsResource,
 File = functools.partial(File,
                          owner=hawq_constants.hawq_user,
                          group=hawq_constants.hawq_group,
-                         mode=0644)
+                         mode=0o644)
 
 # XMLConfig partial function
 XmlConfig = functools.partial(XmlConfig,
                               conf_dir=hawq_constants.hawq_config_dir,
                               owner=hawq_constants.hawq_user,
                               group=hawq_constants.hawq_group,
-                              mode=0644)
+                              mode=0o644)
 
 # For service Check
 is_pxf_installed = __get_component_host("pxf_hosts") is not None

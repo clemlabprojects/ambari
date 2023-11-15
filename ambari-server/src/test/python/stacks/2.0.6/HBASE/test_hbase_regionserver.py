@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -133,7 +133,7 @@ class TestHbaseRegionServer(RMFTestCase):
 
   def assert_configure_default(self):
     self.assertResourceCalled('Directory', '/etc/hbase',
-      mode = 0755
+      mode = 0o755
     )
     self.assertResourceCalled('Directory', '/etc/hbase/conf',
       owner = 'hbase',
@@ -142,7 +142,7 @@ class TestHbaseRegionServer(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/tmp',
       create_parents = True,
-      mode = 0777
+      mode = 0o777
     )
     self.assertResourceCalled('Directory', '/hadoop',
       create_parents = True,
@@ -190,7 +190,7 @@ class TestHbaseRegionServer(RMFTestCase):
       content = Template('hbase.conf.j2'),
       owner = 'root',
       group = 'root',
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('TemplateConfig', '/etc/hbase/conf/hadoop-metrics2-hbase.properties',
       owner = 'hbase',
@@ -203,18 +203,18 @@ class TestHbaseRegionServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
     self.assertResourceCalled('File',
                               '/etc/hbase/conf/log4j.properties',
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='hbase',
                               content=InlineTemplate('log4jproperties\nline2')
@@ -222,7 +222,7 @@ class TestHbaseRegionServer(RMFTestCase):
 
   def assert_configure_secured(self):
     self.assertResourceCalled('Directory', '/etc/hbase',
-      mode = 0755
+      mode = 0o755
     )
     self.assertResourceCalled('Directory', '/etc/hbase/conf',
       owner = 'hbase',
@@ -231,7 +231,7 @@ class TestHbaseRegionServer(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/tmp',
       create_parents = True,
-      mode = 0777
+      mode = 0o777
     )
     self.assertResourceCalled('Directory', '/hadoop',
                               create_parents = True,
@@ -279,7 +279,7 @@ class TestHbaseRegionServer(RMFTestCase):
         content = Template('hbase.conf.j2'),
         owner = 'root',
         group = 'root',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('TemplateConfig', '/etc/hbase/conf/hadoop-metrics2-hbase.properties',
       owner = 'hbase',
@@ -296,18 +296,18 @@ class TestHbaseRegionServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
     self.assertResourceCalled('File',
                               '/etc/hbase/conf/log4j.properties',
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='hbase',
                               content=InlineTemplate('log4jproperties\nline2')
@@ -322,7 +322,7 @@ class TestHbaseRegionServer(RMFTestCase):
                    target = RMFTestCase.TARGET_COMMON_SERVICES)
 
     self.assertResourceCalled('Directory', '/etc/hbase',
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('Directory', '/usr/hdp/current/hbase-regionserver/conf',
       owner = 'hbase',
@@ -330,7 +330,7 @@ class TestHbaseRegionServer(RMFTestCase):
       create_parents = True)
     self.assertResourceCalled('Directory', '/tmp',
       create_parents = True,
-      mode = 0777
+      mode = 0o777
     )
 
     self.assertResourceCalled('Directory', '/hadoop',
@@ -383,7 +383,7 @@ class TestHbaseRegionServer(RMFTestCase):
       content = Template('hbase.conf.j2'),
       owner = 'root',
       group = 'root',
-      mode = 0644,
+      mode = 0o644,
     )
 
     self.assertResourceCalled('TemplateConfig', '/usr/hdp/current/hbase-regionserver/conf/hadoop-metrics2-hbase.properties',
@@ -397,20 +397,20 @@ class TestHbaseRegionServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
 
     self.assertResourceCalled('Directory', '/var/log/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
 
     self.assertResourceCalled('File',
                               '/usr/hdp/current/hbase-regionserver/conf/log4j.properties',
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='hbase',
                               content=InlineTemplate('log4jproperties\nline2'))
@@ -429,7 +429,7 @@ class TestHbaseRegionServer(RMFTestCase):
                    target = RMFTestCase.TARGET_COMMON_SERVICES)
 
     self.assertResourceCalled('Directory', '/etc/hbase',
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('Directory', '/usr/hdp/current/hbase-regionserver/conf',
       owner = 'hbase',
@@ -437,7 +437,7 @@ class TestHbaseRegionServer(RMFTestCase):
       create_parents = True)
     self.assertResourceCalled('Directory', '/tmp',
       create_parents = True,
-      mode = 0777
+      mode = 0o777
     )
 
     self.assertResourceCalled('Directory', '/hadoop',
@@ -492,7 +492,7 @@ class TestHbaseRegionServer(RMFTestCase):
       content = Template('hbase.conf.j2'),
       owner = 'root',
       group = 'root',
-      mode = 0644,
+      mode = 0o644,
     )
 
     self.assertResourceCalled('TemplateConfig', '/usr/hdp/current/hbase-regionserver/conf/hadoop-metrics2-hbase.properties',
@@ -506,20 +506,20 @@ class TestHbaseRegionServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
 
     self.assertResourceCalled('Directory', '/var/log/hbase',
       owner = 'hbase',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
       cd_access = 'a',
     )
 
     self.assertResourceCalled('File',
                               '/usr/hdp/current/hbase-regionserver/conf/log4j.properties',
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='hbase',
                               content=InlineTemplate('log4jproperties\nline2'))

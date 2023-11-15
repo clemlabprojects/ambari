@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -46,7 +46,7 @@ class RangerTagsync(Script):
       owner = params.unix_user,
       group = params.unix_group,
       only_if = format("test -e {tagsync_jceks_path}"),
-      mode = 0640
+      mode = 0o640
     )
 
     setup_ranger_xml.update_dot_jceks_crc_ownership(credential_provider_path = params.tagsync_jceks_path, user = params.unix_user, group = params.unix_group)
@@ -124,7 +124,7 @@ class RangerTagsync(Script):
       owner = params.unix_user,
       group = params.unix_group,
       only_if = format("test -e {atlas_tagsync_jceks_path}"),
-      mode = 0640
+      mode = 0o640
     )
 
     setup_ranger_xml.update_dot_jceks_crc_ownership(credential_provider_path = params.atlas_tagsync_jceks_path, user = params.unix_user, group = params.unix_group)

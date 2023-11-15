@@ -40,7 +40,7 @@ def tez(config_dir):
   # ensure that matching LZO libraries are installed for Tez
   lzo_utils.install_lzo_if_needed()
 
-  Directory(params.tez_etc_dir, mode=0755)
+  Directory(params.tez_etc_dir, mode=0o755)
 
   Directory(config_dir,
             owner = params.tez_user,
@@ -53,7 +53,7 @@ def tez(config_dir):
              configuration_attributes=params.config['configurationAttributes']['tez-site'],
              owner = params.tez_user,
              group = params.user_group,
-             mode = 0664)
+             mode = 0o664)
 
   tez_env_file_path = os.path.join(config_dir, "tez-env.sh")
   File(tez_env_file_path,

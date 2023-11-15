@@ -20,7 +20,7 @@ limitations under the License.
 # Python Imports
 import math
 from math import floor
-from urlparse import urlparse
+from urllib.parse import urlparse
 import os
 import fnmatch
 import socket
@@ -831,7 +831,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
       rangerClass = 'org.apache.ranger.authorization.hbase.RangerAuthorizationCoprocessor'
 
     nonRangerClass = 'org.apache.hadoop.hbase.security.access.AccessController'
-    hbaseClassConfigs =  hbaseCoProcessorConfigs.keys()
+    hbaseClassConfigs =  list(hbaseCoProcessorConfigs.keys())
 
     for item in range(len(hbaseClassConfigs)):
       if 'hbase-site' in services['configurations']:
