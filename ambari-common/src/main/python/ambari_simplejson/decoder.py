@@ -5,6 +5,7 @@ import sys
 import struct
 
 from ambari_simplejson.scanner import make_scanner
+
 try:
     from ambari_simplejson._speedups import scanstring as c_scanstring
 except ImportError:
@@ -56,8 +57,8 @@ _CONSTANTS = {
 
 STRINGCHUNK = re.compile(r'(.*?)(["\\\x00-\x1f])', FLAGS)
 BACKSLASH = {
-    '"': u'"', '\\': u'\\', '/': u'/',
-    'b': u'\b', 'f': u'\f', 'n': u'\n', 'r': u'\r', 't': u'\t',
+    '"': '"', '\\': '\\', '/': '/',
+    'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t',
 }
 
 DEFAULT_ENCODING = "utf-8"
@@ -85,8 +86,8 @@ def py_scanstring(s, end, encoding=None, strict=True, _b=BACKSLASH, _m=STRINGCHU
         content, terminator = chunk.groups()
         # Content is contains zero or more unescaped string characters
         if content:
-            if not isinstance(content, unicode):
-                content = unicode(content, encoding)
+            if not isinstance(content, str):
+                content = str(content, encoding)
             _append(content)
         # Terminator is the end of string, a literal control character,
         # or a backslash denoting that an escape sequence follows
@@ -105,7 +106,7 @@ def py_scanstring(s, end, encoding=None, strict=True, _b=BACKSLASH, _m=STRINGCHU
         except IndexError:
             raise ValueError(
                 errmsg("Unterminated string starting at", s, begin))
-        # If not a unicode escape sequence, must be in the lookup table
+        # If not a str escape sequence, must be in the lookup table
         if esc != 'u':
             try:
                 char = _b[esc]
@@ -132,11 +133,11 @@ def py_scanstring(s, end, encoding=None, strict=True, _b=BACKSLASH, _m=STRINGCHU
                 uni2 = int(esc2, 16)
                 uni = 0x10000 + (((uni - 0xd800) << 10) | (uni2 - 0xdc00))
                 next_end += 6
-            char = unichr(uni)
+            char = chr(uni)
             end = next_end
         # Append the unescaped character
         _append(char)
-    return u''.join(chunks), end
+    return ''.join(chunks), end
 
 
 # Use speedup if available

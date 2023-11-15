@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -64,25 +64,25 @@ class TestZookeeperClient(RMFTestCase):
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/log/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/hadoop/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
       cd_access='a',
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File',
                               '/etc/zookeeper/conf/log4j.properties',
                               content=InlineTemplate(self.getConfig()['configurations']['zookeeper-log4j']['content']),
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='zookeeper'
     )
@@ -127,25 +127,25 @@ class TestZookeeperClient(RMFTestCase):
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/log/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/hadoop/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
       create_parents = True,
       cd_access='a',
-      mode = 0755
+      mode = 0o755
     )
     self.assertResourceCalled('File',
                               '/etc/zookeeper/conf/log4j.properties',
                               content=InlineTemplate(self.getConfig()['configurations']['zookeeper-log4j']['content']),
-                              mode=0644,
+                              mode=0o644,
                               group='hadoop',
                               owner='zookeeper'
     )

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -49,7 +49,7 @@ class TestMahoutClient(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'yarn-site.xml',
       owner = "yarn",
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
       conf_dir = '/usr/hdp/2.2.1.0-2067/hadoop/conf',
       configurations = self.getConfig()['configurations']['yarn-site'],
       configuration_attributes = self.getConfig()['configurationAttributes']['yarn-site']
@@ -60,7 +60,7 @@ class TestMahoutClient(RMFTestCase):
       content = self.getConfig()['configurations']['mahout-log4j']['content'],
       owner = 'mahout',
       group = 'hadoop',
-      mode = 0644 )
+      mode = 0o644 )
 
     self.assertNoMoreResources()
 

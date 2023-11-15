@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -156,7 +156,7 @@ class TestHookBeforeInstall(RMFTestCase):
     self.assertResourceCalled('Directory', '/tmp/hbase-hbase',
                               owner = 'hbase',
                               create_parents = True,
-                              mode = 0775,
+                              mode = 0o775,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('File', '/tmp/changeUid.sh',
@@ -183,7 +183,7 @@ class TestHookBeforeInstall(RMFTestCase):
                               groups = [u'hadoop', u'hdfs', u'test_group'],
                               )
     self.assertResourceCalled('Directory', '/etc/hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/hadoop-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['hadoop-env']['content']),
@@ -193,7 +193,7 @@ class TestHookBeforeInstall(RMFTestCase):
     self.assertResourceCalled('Directory', '/tmp/hadoop_java_io_tmpdir',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 01777,
+                              mode = 0o1777,
                               )
     self.assertResourceCalled('Directory', '/tmp/AMBARI-artifacts/',
                               create_parents = True,
@@ -203,7 +203,7 @@ class TestHookBeforeInstall(RMFTestCase):
                               not_if = 'test -f /tmp/jdk-7u67-linux-x64.tar.gz',
                               )
     self.assertResourceCalled('File', '/tmp/jdk-7u67-linux-x64.tar.gz',
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/jdk64',)
     self.assertResourceCalled('Execute', ('chmod', 'a+x', u'/usr/jdk64'),
@@ -214,7 +214,7 @@ class TestHookBeforeInstall(RMFTestCase):
                               action = ['delete'],
                               )
     self.assertResourceCalled('File', '/usr/jdk64/jdk1.7.0_45/bin/java',
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Execute', ('chmod', '-R', '755', u'/usr/jdk64/jdk1.7.0_45'),

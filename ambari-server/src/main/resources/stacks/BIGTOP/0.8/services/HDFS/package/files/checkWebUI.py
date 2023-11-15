@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -19,7 +19,7 @@ limitations under the License.
 '''
 
 import optparse
-import httplib
+import http.client
 
 #
 # Main.
@@ -36,7 +36,7 @@ def main():
 
   for host in hosts:
     try:
-      conn = httplib.HTTPConnection(host, port)
+      conn = http.client.HTTPConnection(host, port)
       # This can be modified to get a partial url part to be sent with request
       conn.request("GET", "/")
       httpCode = conn.getresponse().status

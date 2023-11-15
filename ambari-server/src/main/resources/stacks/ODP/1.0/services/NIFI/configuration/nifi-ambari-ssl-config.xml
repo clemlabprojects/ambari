@@ -104,8 +104,8 @@
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
+    <display-name>NiFi JAVA Keystore Type</display-name>
     <on-ambari-upgrade add="true"/>
-    <display-name>Keystore type</display-name>
     <description>The keystore type. It is blank by default but required if nifi.node.ssl.isenabled=true. e.g. jks</description>
   </property>
   <property>
@@ -169,11 +169,9 @@
     <value>false</value>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-    <value-attributes>
       <type>boolean</type>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
     <display-name>Clients need to authenticate?</display-name>
     <description>Specifies whether or not connecting clients must authenticate themselves. Specifically this property is used by the NiFi cluster protocol. If the Truststore properties are not set, this must be false. Otherwise, a value of true indicates that nodes in the cluster will be authenticated and must have certificates that are trusted by the Truststores.</description>
   </property>

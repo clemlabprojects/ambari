@@ -64,6 +64,6 @@ kerberos.removeRealmFromPrincipal=true
 {% if zoo_cfg_properties_map_length > 0 %}
 # Custom properties
 {% endif %}
-{% for key, value in zoo_cfg_properties_map.iteritems() %}
+{% for key, value in zoo_cfg_properties_map.items() %}
 {{key}}={{value}}
 {% endfor %}

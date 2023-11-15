@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -29,7 +29,7 @@ def setup_ranger_nifi(upgrade_type=None):
         File(format('{stack_root}/{stack_version}/{service_name}/ext/ranger/scripts/ranger_credential_helper.py'),
              owner=params.nifi_user,
              group=params.nifi_group,
-             mode=0750
+             mode=0o750
              )
 
         cred_lib_prefix_path = format('{stack_root}/{stack_version}/{service_name}/ext/ranger/install/lib/*')
@@ -47,7 +47,7 @@ def setup_ranger_nifi(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.hdfs_user,
                                 group=params.hdfs_user,
-                                mode=0755,
+                                mode=0o755,
                                 recursive_chmod=True
                                 )
             params.HdfsResource("/ranger/audit/nifi",
@@ -55,7 +55,7 @@ def setup_ranger_nifi(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.nifi_user,
                                 group=params.nifi_group,
-                                mode=0750,
+                                mode=0o750,
                                 recursive_chmod=True
                                 )
             params.HdfsResource(None, action="execute")

@@ -601,20 +601,14 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
     <value></value>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
+      <type>password</type>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The keystore password. It is blank by default.</description>
-    <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
-      <type>password</type>
-    </value-attributes>
   </property>
   <property>
     <name>nifi.security.keyPasswd</name>
     <value></value>
-    <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
-    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <description>The key password. It is blank by default.</description>
     <value-attributes>

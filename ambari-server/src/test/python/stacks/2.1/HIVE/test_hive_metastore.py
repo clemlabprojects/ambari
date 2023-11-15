@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -202,18 +202,18 @@ class TestHiveMetastore(RMFTestCase):
 
   def assert_configure_default(self):
     self.assertResourceCalled('Directory', '/etc/hive',
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/hdp/current/hive-server2/conf',
                               owner = 'hive',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
                               group = 'hadoop',
                               conf_dir = '/usr/hdp/current/hive-server2/conf',
-                              mode = 0644,
+                              mode = 0o644,
                               configuration_attributes = {u'final': {u'mapred.healthChecker.script.path': u'true',
                                                                      u'mapreduce.jobtracker.staging.root.dir': u'true'}},
                               owner = 'hive',
@@ -222,17 +222,17 @@ class TestHiveMetastore(RMFTestCase):
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/hive-default.xml.template',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/hive-env.sh.template',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hive-site.xml',
                               group = 'hadoop',
                               conf_dir = '/usr/hdp/current/hive-server2/conf/conf.server',
-                              mode = 0600,
+                              mode = 0o600,
                               configuration_attributes = {u'final': {u'hive.optimize.bucketmapjoin.sortedmerge': u'true',
                                                                      u'javax.jdo.option.ConnectionDriverName': u'true',
                                                                      u'javax.jdo.option.ConnectionPassword': u'true'}},
@@ -243,7 +243,7 @@ class TestHiveMetastore(RMFTestCase):
                               content = InlineTemplate(self.getConfig()['configurations']['hive-env']['content']),
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0600,
+                              mode = 0o600,
                               )
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
@@ -254,30 +254,30 @@ class TestHiveMetastore(RMFTestCase):
                               content = Template('hive.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/usr/lib/ambari-agent/DBConnectionVerification.jar',
         content = DownloadSource('http://c6401.ambari.apache.org:8080/resources/DBConnectionVerification.jar'),
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Directory', '/var/run/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Directory', '/var/log/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Directory', '/var/lib/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
@@ -293,17 +293,17 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/conf.server/hadoop-metrics2-hivemetastore.properties',
                               owner = 'hive',
                               group = 'hadoop',
                               content = Template('hadoop-metrics2-hivemetastore.properties.j2'),
-                              mode = 0600,
+                              mode = 0o600,
                               )
     self.assertResourceCalled('File', '/tmp/start_metastore_script',
                               content = StaticFile('startMetastore.sh'),
-                              mode = 0755,
+                              mode = 0o755,
                               )
 
   def assert_init_schema(self, password):
@@ -314,18 +314,18 @@ class TestHiveMetastore(RMFTestCase):
 
   def assert_configure_secured(self):
     self.assertResourceCalled('Directory', '/etc/hive',
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/hdp/current/hive-server2/conf',
                               owner = 'hive',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
                               group = 'hadoop',
                               conf_dir = '/usr/hdp/current/hive-server2/conf',
-                              mode = 0644,
+                              mode = 0o644,
                               configuration_attributes = {u'final': {u'mapred.healthChecker.script.path': u'true',
                                                                      u'mapreduce.jobtracker.staging.root.dir': u'true'}},
                               owner = 'hive',
@@ -334,17 +334,17 @@ class TestHiveMetastore(RMFTestCase):
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/hive-default.xml.template',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/hive-env.sh.template',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hive-site.xml',
                               group = 'hadoop',
                               conf_dir = '/usr/hdp/current/hive-server2/conf/conf.server',
-                              mode = 0600,
+                              mode = 0o600,
                               configuration_attributes = {u'final': {u'hive.optimize.bucketmapjoin.sortedmerge': u'true',
                                                                      u'javax.jdo.option.ConnectionDriverName': u'true',
                                                                      u'javax.jdo.option.ConnectionPassword': u'true'}},
@@ -355,7 +355,7 @@ class TestHiveMetastore(RMFTestCase):
                               content = InlineTemplate(self.getConfig()['configurations']['hive-env']['content']),
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0600,
+                              mode = 0o600,
                               )
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
@@ -366,7 +366,7 @@ class TestHiveMetastore(RMFTestCase):
                               content = Template('hive.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/conf.server/zkmigrator_jaas.conf',
                               content = Template('zkmigrator_jaas.conf.j2'),
@@ -375,26 +375,26 @@ class TestHiveMetastore(RMFTestCase):
                               )
     self.assertResourceCalled('File', '/usr/lib/ambari-agent/DBConnectionVerification.jar',
         content = DownloadSource('http://c6401.ambari.apache.org:8080/resources/DBConnectionVerification.jar'),
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Directory', '/var/run/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Directory', '/var/log/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Directory', '/var/lib/hive',
                               owner = 'hive',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True,
                               cd_access = 'a',
                               )
@@ -410,18 +410,18 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-server2/conf/conf.server/hadoop-metrics2-hivemetastore.properties',
                               owner = 'hive',
                               group = 'hadoop',
                               content = Template('hadoop-metrics2-hivemetastore.properties.j2'),
-                              mode = 0600,
+                              mode = 0o600,
                               )
 
     self.assertResourceCalled('File', '/tmp/start_metastore_script',
                               content = StaticFile('startMetastore.sh'),
-                              mode = 0755,
+                              mode = 0o755,
                               )
 
   def test_pre_upgrade_restart(self):
@@ -591,7 +591,7 @@ class TestHiveMetastore(RMFTestCase):
     # we don't care about configure here - the strings are different anyway because this
     # is an upgrade, so just pop those resources off of the call stack
     self.assertResourceCalledIgnoreEarlier('Directory', '/var/lib/hive', owner = 'hive', group = 'hadoop',
-      mode = 0755, create_parents = True, cd_access = 'a')
+      mode = 0o755, create_parents = True, cd_access = 'a')
 
 
     self.assertResourceCalledIgnoreEarlier('Execute', ('rm', '-f', '/usr/hdp/current/hive-metastore/lib/ojdbc6.jar'),
@@ -609,16 +609,16 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True)
 
     self.assertResourceCalled('File', '/usr/hdp/2.4.0.0-1234/hive/lib/mysql-connector-java.jar',
-        mode = 0644)
+        mode = 0o644)
     self.assertResourceCalled('File', '/usr/hdp/current/hive-metastore/conf/conf.server/hadoop-metrics2-hivemetastore.properties',
         content = Template('hadoop-metrics2-hivemetastore.properties.j2'),
         owner = 'hive',
         group = 'hadoop',
-        mode = 0600
+        mode = 0o600
     )
     self.assertResourceCalled('File', '/tmp/start_metastore_script',
         content = StaticFile('startMetastore.sh'),
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Execute', ('rm', '-f', '/usr/hdp/current/hive-metastore/lib/ojdbc6.jar'),
         path = ['/bin', '/usr/bin/'],
@@ -635,7 +635,7 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/2.4.0.0-1234/hive/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Execute', ('cp',
      '/usr/hdp/2.3.7.0-1234/hive/lib/mysql-connector-java.jar',
@@ -644,7 +644,7 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True)
 
     self.assertResourceCalled('File', '/usr/hdp/2.4.0.0-1234/hive/lib/mysql-connector-java.jar',
-        mode = 0644)
+        mode = 0o644)
 
     self.assertResourceCalled('Execute', '/usr/hdp/2.4.0.0-1234/hive/bin/schematool -dbType mysql -upgradeSchema',
          logoutput = True,
@@ -691,7 +691,7 @@ class TestHiveMetastore(RMFTestCase):
     # we don't care about configure here - the strings are different anyway because this
     # is an upgrade, so just pop those resources off of the call stack
     self.assertResourceCalledIgnoreEarlier('Directory', '/var/lib/hive', owner = 'hive', group = 'hadoop',
-      mode = 0755, create_parents = True, cd_access = 'a')
+      mode = 0o755, create_parents = True, cd_access = 'a')
 
     self.assertResourceCalled('File',
                               '/tmp/mysql-connector-java.jar',
@@ -705,23 +705,23 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/2.3.2.0-2950/hive/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-metastore/conf/conf.server/hadoop-metrics2-hivemetastore.properties',
         content = Template('hadoop-metrics2-hivemetastore.properties.j2'),
         owner = 'hive',
         group = 'hadoop',
-        mode = 0600
+        mode = 0o600
     )
     self.assertResourceCalled('File', '/tmp/start_metastore_script',
         content = StaticFile('startMetastore.sh'),
-        mode = 0755,
+        mode = 0o755,
     )
 
     self.assertResourceCalled('Directory', '/tmp/hive',
                               owner = 'hive',
                               create_parents = True,
-                              mode=0777
+                              mode=0o777
                               )
 
     self.assertResourceCalled('File',
@@ -736,7 +736,7 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/2.3.2.0-2950/hive/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Execute', ('cp',
      '/usr/hdp/2.3.0.0-2557/hive/lib/mysql-connector-java.jar',
@@ -745,7 +745,7 @@ class TestHiveMetastore(RMFTestCase):
         sudo = True,
     )
     self.assertResourceCalled('File', '/usr/hdp/2.3.2.0-2950/hive/lib/mysql-connector-java.jar',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Execute', '/usr/hdp/2.3.2.0-2950/hive/bin/schematool -dbType mysql -upgradeSchema',
         logoutput = True,
@@ -804,7 +804,7 @@ class TestHiveMetastore(RMFTestCase):
     # we don't care about configure here - the strings are different anyway because this
     # is an upgrade, so just pop those resources off of the call stack
     self.assertResourceCalledIgnoreEarlier('Directory', '/var/lib/hive', owner = 'hive', group = 'hadoop',
-      mode = 0755, create_parents = True, cd_access = 'a')
+      mode = 0o755, create_parents = True, cd_access = 'a')
 
     self.assertResourceCalled('Execute',
                               ('rm', '-f', '/usr/hdp/current/hive-metastore/lib/ojdbc6.jar'),
@@ -834,17 +834,17 @@ class TestHiveMetastore(RMFTestCase):
                               ('ambari-sudo.sh chown -R hive:hadoop /usr/hdp/current/hive-metastore/lib/*'))
 
     self.assertResourceCalled('File', '/usr/hdp/2.3.0.0-1234/hive/lib/sqla-client-jdbc.tar.gz',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/usr/hdp/current/hive-metastore/conf/conf.server/hadoop-metrics2-hivemetastore.properties',
         content = Template('hadoop-metrics2-hivemetastore.properties.j2'),
         owner = 'hive',
         group = 'hadoop',
-        mode = 0600
+        mode = 0o600
     )
     self.assertResourceCalled('File', '/tmp/start_metastore_script',
         content = StaticFile('startMetastore.sh'),
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Execute', ('rm', '-f', '/usr/hdp/current/hive-metastore/lib/ojdbc6.jar'),
         path = ['/bin', '/usr/bin/'],
@@ -863,7 +863,7 @@ class TestHiveMetastore(RMFTestCase):
     self.assertResourceCalled('Execute', 'yes | ambari-sudo.sh cp /tmp/sqla-client-jdbc/native/lib64/* /usr/hdp/current/hive-metastore/lib/native/lib64',)
     self.assertResourceCalled('Execute', 'ambari-sudo.sh chown -R hive:hadoop /usr/hdp/current/hive-metastore/lib/*',)
     self.assertResourceCalled('File', '/usr/hdp/2.3.0.0-1234/hive/lib/sqla-client-jdbc.tar.gz',
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('Execute',
                               ('yes | ambari-sudo.sh cp /usr/hdp/current/hive-metastore/lib/*.jar /usr/hdp/2.3.0.0-1234/hive/lib'))
@@ -879,7 +879,7 @@ class TestHiveMetastore(RMFTestCase):
                               ('ambari-sudo.sh chown -R hive:hadoop /usr/hdp/current/hive-metastore/lib/*'))
 
     self.assertResourceCalled('File', '/usr/hdp/2.3.0.0-1234/hive/lib/sqla-client-jdbc.tar.gz',
-                              mode = 0644,
+                              mode = 0o644,
                               )
 
     self.assertResourceCalled('Execute', "/usr/hdp/2.3.0.0-1234/hive/bin/schematool -dbType sqlanywhere -upgradeSchema",

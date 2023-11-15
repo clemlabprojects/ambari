@@ -47,7 +47,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', use_cases.get_krb5_conf_dir(json_data),
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     file_path = (use_cases.get_krb5_conf_dir(json_data) +
@@ -57,7 +57,7 @@ class TestKerberosClient(RMFTestCase):
                               content=InlineTemplate(use_cases.get_krb5_conf_template(json_data)),
                               owner='root',
                               group='root',
-                              mode=0644)
+                              mode=0o644)
 
   def test_configure_unmanaged_kdc(self):
     json_data = use_cases.get_unmanged_kdc_use_case()
@@ -73,7 +73,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', use_cases.get_krb5_conf_dir(json_data),
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     file_path = (use_cases.get_krb5_conf_dir(json_data) +
@@ -83,7 +83,7 @@ class TestKerberosClient(RMFTestCase):
                               content=InlineTemplate(use_cases.get_krb5_conf_template(json_data)),
                               owner='root',
                               group='root',
-                              mode=0644)
+                              mode=0o644)
 
   def test_configure_unmanaged_ad(self):
     json_data = use_cases.get_unmanged_ad_use_case()
@@ -99,7 +99,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', use_cases.get_krb5_conf_dir(json_data),
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     file_path = (use_cases.get_krb5_conf_dir(json_data) +
@@ -109,7 +109,7 @@ class TestKerberosClient(RMFTestCase):
                               content=InlineTemplate(use_cases.get_krb5_conf_template(json_data)),
                               owner='root',
                               group='root',
-                              mode=0644)
+                              mode=0o644)
 
   def test_configure_cross_realm_trust(self):
     json_data = use_cases.get_cross_realm_use_case()
@@ -125,7 +125,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', use_cases.get_krb5_conf_dir(json_data),
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     file_path = (use_cases.get_krb5_conf_dir(json_data) +
@@ -135,7 +135,7 @@ class TestKerberosClient(RMFTestCase):
                               content=InlineTemplate(use_cases.get_krb5_conf_template(json_data)),
                               owner='root',
                               group='root',
-                              mode=0644)
+                              mode=0o644)
 
 
   def test_get_property(self):
@@ -259,7 +259,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', "/etc/security/keytabs",
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     self.assertResourceCalled('File', "/etc/security/keytabs/spnego.service.keytab",
@@ -284,7 +284,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('Directory', "/etc/security/keytabs",
                               owner='root',
                               group='root',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True)
 
     self.assertResourceCalled('File', "/etc/security/keytabs/smokeuser.headless.keytab",

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -39,18 +39,18 @@ class OzoneServiceCheckDefault(OzoneServiceCheck):
     env.set_params(params)
 
     File( format("{exec_tmp_dir}/ozone-smoke-init.sh"),
-      mode = 0755,
+      mode = 0o755,
       content = Template('ozone-smoke-init.sh.j2')
     )
 
     File( format("{exec_tmp_dir}/ozone-smoke-verify.sh"),
       content = StaticFile("ozone-smoke-verify.sh"),
-      mode = 0755
+      mode = 0o755
     )
 
     File( format("{exec_tmp_dir}/ozone-smoke-cleanup.sh"),
       content = StaticFile("ozone-smoke-cleanup.sh"),
-      mode = 0755
+      mode = 0o755
     )
   
 

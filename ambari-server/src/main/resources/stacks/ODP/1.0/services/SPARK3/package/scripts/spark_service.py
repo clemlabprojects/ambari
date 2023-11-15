@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -79,7 +79,7 @@ def spark_service(name, upgrade_type=None, action=None):
                           action="create_on_execute",
                           owner=params.spark_user,
                           group=params.user_group,
-                          mode=0777,
+                          mode=0o777,
                           recursive_chmod=True
                           )
       params.HdfsResource(None, action="execute")

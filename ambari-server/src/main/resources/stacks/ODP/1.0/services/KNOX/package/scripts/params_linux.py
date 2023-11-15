@@ -107,7 +107,7 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
   knox_data_dir = format('{stack_root}/current/knox-server/data/')
 
 knox_group = default("/configurations/knox-env/knox_group", "knox")
-mode = 0644
+mode = 0o644
 
 stack_version_unformatted = config['clusterLevelParams']['stack_version']
 stack_version_formatted = format_stack_version(stack_version_unformatted)

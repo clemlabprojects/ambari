@@ -52,15 +52,15 @@ def flume(action = None):
 
       PropertiesFile(flume_agent_conf_file,
         properties=flume_agents[agent],
-        mode = 0644)
+        mode = 0o644)
 
       File(flume_agent_log4j_file,
         content=Template('log4j.properties.j2', agent_name = agent),
-        mode = 0644)
+        mode = 0o644)
 
       File(flume_agent_meta_file,
         content = json.dumps(ambari_meta(agent, flume_agents[agent])),
-        mode = 0644)
+        mode = 0o644)
 
   elif action == 'start':
     # desired state for service should be STARTED
@@ -148,7 +148,7 @@ def build_flume_topology(content):
       if lhs.endswith(".sources"):
         agent_names.append(part0)
 
-      if not result.has_key(part0):
+      if not part0 in result:
         result[part0] = {}
 
       result[part0][lhs] = rhs

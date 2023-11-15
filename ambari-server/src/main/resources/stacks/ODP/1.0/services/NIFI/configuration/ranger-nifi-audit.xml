@@ -20,17 +20,20 @@
     <property>
         <name>xasecure.audit.is.enabled</name>
         <value>true</value>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <!-- Log4j audit provider configuration -->
     <property>
         <name>xasecure.audit.destination.log4j</name>
         <value>false</value>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
         <name>xasecure.audit.destination.log4j.logger</name>
         <value>ranger_audit_logger</value>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <!-- Solr audit provider configuration -->

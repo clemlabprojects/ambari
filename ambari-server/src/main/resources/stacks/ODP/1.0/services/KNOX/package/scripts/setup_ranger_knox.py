@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -46,7 +46,7 @@ def setup_ranger_knox(upgrade_type=None):
                              action="create_on_execute",
                              owner=params.hdfs_user,
                              group=params.hdfs_user,
-                             mode=0755,
+                             mode=0o755,
                              recursive_chmod=True
           )
           params.HdfsResource("/ranger/audit/knox",
@@ -54,11 +54,11 @@ def setup_ranger_knox(upgrade_type=None):
                              action="create_on_execute",
                              owner=params.knox_user,
                              group=params.knox_user,
-                             mode=0700,
+                             mode=0o700,
                              recursive_chmod=True
           )
           params.HdfsResource(None, action="execute")
-        except Exception, err:
+        except Exception as err:
           Logger.exception("Audit directory creation in HDFS for KNOX Ranger plugin failed with error:\n{0}".format(err))
 
         if params.namenode_hosts is not None and len(params.namenode_hosts) > 1:
@@ -69,7 +69,7 @@ def setup_ranger_knox(upgrade_type=None):
             configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
             owner=params.knox_user,
             group=params.knox_group,
-            mode=0644
+            mode=0o644
           )
         else:
           File(format('{knox_conf_dir}/hdfs-site.xml'), action="delete")

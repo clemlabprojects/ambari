@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -96,7 +96,7 @@ def create_hbase_package():
     Logger.info("Executing hbase package creation script file '" + file_path +"'")
     try:
         File( file_path,
-              mode    = 0755,
+              mode    = 0o755,
               content = Template('yarn_hbase_package_preparation.j2')
               )
         Execute( file_path,
@@ -128,7 +128,7 @@ def copy_hbase_package_to_hdfs():
                             source=format("{yarn_hbase_user_tmp}/hbase.tar.gz"),
                             owner=params.hdfs_user,
                             group=params.user_group,
-                            mode=0444,
+                            mode=0o444,
                             )
         params.HdfsResource(None, action="execute")
     except:
@@ -154,7 +154,7 @@ def createTables():
             File( format("{yarn_hbase_grant_premissions_file}"),
                   owner   = params.yarn_hbase_user,
                   group   = params.user_group,
-                  mode    = 0644,
+                  mode    = 0o644,
                   content = Template('yarn_hbase_grant_permissions.j2')
                   )
             Execute( format("{yarn_hbase_table_grant_premission_cmd}"),

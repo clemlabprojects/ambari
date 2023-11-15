@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -272,9 +272,7 @@ logsearch_properties['logsearch.auth.simple.enabled'] = 'false'
 
 # load config values
 
-logsearch_properties = dict(logsearch_properties.items() +\
-                       dict(config['configurations']['logsearch-common-properties']).items() +\
-                       dict(config['configurations']['logsearch-properties']).items())
+logsearch_properties = {**logsearch_properties, **config['configurations']['logsearch-common-properties'], **config['configurations']['logsearch-properties']}
 
 # load derivated values
 

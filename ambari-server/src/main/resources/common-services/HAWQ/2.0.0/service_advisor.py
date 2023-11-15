@@ -137,7 +137,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
       hdfs_site = services["configurations"]["hdfs-site"]["properties"]
       putHdfsSiteProperty = self.putProperty(configurations, "hdfs-site", services)
 
-      for property, desired_value in self.getHDFSSiteDesiredValues(self.isSecurityEnabled(services)).iteritems():
+      for property, desired_value in self.getHDFSSiteDesiredValues(self.isSecurityEnabled(services)).items():
         if property not in hdfs_site or hdfs_site[property] != desired_value:
           putHdfsSiteProperty(property, desired_value)
 
@@ -146,7 +146,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
       core_site = services["configurations"]["core-site"]["properties"]
       putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
 
-      for property, desired_value in self.getCORESiteDesiredValues().iteritems():
+      for property, desired_value in self.getCORESiteDesiredValues().items():
         if property not in core_site or core_site[property] != desired_value:
           putCoreSiteProperty(property, desired_value)
 
@@ -251,7 +251,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
         "hawq_rm_yarn_address": True
       }
 
-      for property, visibility in yarn_mode_properties_visibility.iteritems():
+      for property, visibility in yarn_mode_properties_visibility.items():
         putHawqSitePropertyAttribute(property, "visible", str(visibility if YARN_MODE else not visibility).lower())
 
       putHawqSitePropertyAttribute("default_hash_table_bucket_number", "maximum", numSegments * 16 if numSegments * 16 < 10000 else 10000)
@@ -330,7 +330,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
                     'hawq_segment_directory': 'HAWQ Segment directory',
                     'hawq_segment_temp_directory': 'HAWQ Segment temp directory'
                   }
-    for property_name, display_name in directories.iteritems():
+    for property_name, display_name in directories.items():
       self.validateIfRootDir(properties, validationItems, property_name, display_name)
 
     # 2.1 Check if any master or segment directories has multiple values
@@ -338,7 +338,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
                     'hawq_master_directory': 'HAWQ Master directory',
                     'hawq_segment_directory': 'HAWQ Segment directory'
                   }
-    for property_name, display_name in directories.iteritems():
+    for property_name, display_name in directories.items():
       self.checkForMultipleDirs(properties, validationItems, property_name, display_name)
 
     # 3. Check YARN RM address properties
@@ -401,7 +401,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
   def validateHDFSSiteConfigurations(self, properties, recommendedDefaults, configurations, services, hosts):
     hdfs_site = properties
     validationItems = []
-    for property, desired_value in self.getHDFSSiteDesiredValues(self.isSecurityEnabled(services)).iteritems():
+    for property, desired_value in self.getHDFSSiteDesiredValues(self.isSecurityEnabled(services)).items():
       if property not in hdfs_site or hdfs_site[property] != desired_value:
         message = "HAWQ requires this property to be set to the recommended value of " + desired_value
         item = self.getErrorItem(message) if property == "dfs.allow.truncate" else self.getWarnItem(message)
@@ -411,7 +411,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
   def validateCORESiteConfigurations(self, properties, recommendedDefaults, configurations, services, hosts):
     core_site = properties
     validationItems = []
-    for property, desired_value in self.getCORESiteDesiredValues().iteritems():
+    for property, desired_value in self.getCORESiteDesiredValues().items():
       if property not in core_site or core_site[property] != desired_value:
         message = "HAWQ requires this property to be set to the recommended value of " + desired_value
         validationItems.append({"config-name": property, "item": self.getWarnItem(message)})

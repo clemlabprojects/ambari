@@ -763,7 +763,7 @@ class TestHDP25StackAdvisor(TestCase):
       hosts["items"].append(nextHost)
     return hosts
 
-  @patch('__builtin__.open')
+  @patch('builtins.open')
   @patch('os.path.exists')
   def get_system_min_uid_magic(self, exists_mock, open_mock):
     class MagicFile(object):

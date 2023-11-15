@@ -126,11 +126,9 @@
         <value>false</value>
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
-        </value-attributes>
-        <on-ambari-upgrade add="true"/>
-        <value-attributes>
             <type>boolean</type>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
         <display-name>Clients need to authenticate?</display-name>
         <description>Specifies whether or not connecting clients must authenticate themselves. Specifically this property is used by the NiFi cluster protocol. If the Truststore properties are not set, this must be false. Otherwise, a value of true indicates that nodes in the cluster will be authenticated and must have certificates that are trusted by the Truststores.</description>
     </property>
@@ -141,7 +139,6 @@
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
-        <on-ambari-upgrade add="true"/>
         <display-name>Initial Admin Identity</display-name>
         <description>
             The identity of an initial admin user that will be granted access to the UI and
@@ -153,6 +150,7 @@
             are no other users, groups, and policies defined. If this property is specified then a Legacy Authorized
             Users File can not be specified.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>

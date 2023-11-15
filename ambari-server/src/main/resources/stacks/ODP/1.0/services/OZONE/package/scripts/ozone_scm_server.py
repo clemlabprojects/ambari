@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -66,7 +66,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     File(os.path.join(params.ozone_topology_file),
         owner='root',
         group='root',
-        mode=0755,
+        mode=0o755,
         content=Template("ozone_topology_script.py")
     )
     if params.scm_ssl_enabled:
@@ -200,7 +200,7 @@ def format_scm(force=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   if params.ozone_scm_ha_enabled:

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -21,7 +21,7 @@ limitations under the License.
 import optparse
 import subprocess
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
-import urllib2
+import urllib.request
 
 RESOURCEMANAGER = 'rm'
 NODEMANAGER = 'nm'
@@ -38,7 +38,7 @@ def getResponse(path, address, ssl_enabled):
     url = 'http://' + address + path
 
   try:
-    handle = urllib2.urlopen(url)
+    handle = urllib.request.urlopen(url)
     output = handle.read()
     handle.close()
     response = json.loads(output)
@@ -108,7 +108,7 @@ def validateAbilityResponse(component, response):
   try:
     if component == RESOURCEMANAGER:
       nodes = []
-      if response.has_key('nodes') and not response['nodes'] == None and response['nodes'].has_key('node'):
+      if 'nodes' in response and not response['nodes'] == None and 'node' in response['nodes']:
         nodes = response['nodes']['node']
       connected_nodes_count = len(nodes)
       if connected_nodes_count == 0:

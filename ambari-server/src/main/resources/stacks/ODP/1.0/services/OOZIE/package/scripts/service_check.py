@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -57,11 +57,11 @@ class OozieServiceCheckDefault(OozieServiceCheck):
 
     File(format("{tmp_dir}/{file_name}"),
          content=StaticFile(file_name),
-         mode=0755
+         mode=0o755
     )
     File(format("{tmp_dir}/{prepare_hdfs_file_name}"),
          content=StaticFile(prepare_hdfs_file_name),
-         mode=0755
+         mode=0o755
     )
 
     os_family = System.get_instance().os_family

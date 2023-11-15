@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -64,7 +64,7 @@ def setup_symlink(target_hbase_jna_dir = '/tmp/hbase',src_hbase_jna_dir = '/run/
   backup_folder_suffix = "_tmp"
   if not os.path.exists(target_hbase_jna_dir):
     Directory(target_hbase_jna_dir,
-              mode=0750,
+              mode=0o750,
               cd_access='a',
               owner=params.hbase_user,
               group=params.user_group,
@@ -93,7 +93,7 @@ def backup_dir_contents(dir_path, backup_folder_suffix):
   import params
   backup_destination_path = params.tmp_dir + os.path.normpath(dir_path)+backup_folder_suffix
   Directory(backup_destination_path,
-            mode=0754,
+            mode=0o754,
             cd_access='a',
             owner=params.hbase_user,
             group=params.user_group,

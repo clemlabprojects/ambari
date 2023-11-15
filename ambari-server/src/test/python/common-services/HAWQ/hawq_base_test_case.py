@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -75,7 +75,7 @@ class HawqBaseTestCase(RMFTestCase):
         configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-client'],
         group = self.GPADMIN,
         owner = self.GPADMIN,
-        mode = 0644
+        mode = 0o644
         )
 
     self.assertResourceCalled('XmlConfig', 'yarn-client.xml',
@@ -84,7 +84,7 @@ class HawqBaseTestCase(RMFTestCase):
         configuration_attributes = self.getConfig()['configurationAttributes']['yarn-client'],
         group = self.GPADMIN,
         owner = self.GPADMIN,
-        mode = 0644
+        mode = 0o644
         )
 
     self.assertResourceCalled('XmlConfig', 'hawq-site.xml',
@@ -93,7 +93,7 @@ class HawqBaseTestCase(RMFTestCase):
         configuration_attributes = self.getConfig()['configurationAttributes']['hawq-site'],
         group = self.GPADMIN,
         owner = self.GPADMIN,
-        mode = 0644
+        mode = 0o644
         )
 
     if self.COMPONENT_TYPE == 'master':
@@ -101,14 +101,14 @@ class HawqBaseTestCase(RMFTestCase):
             content = self.getConfig()['configurations']['hawq-check-env']['content'],
             owner = self.GPADMIN,
             group = self.GPADMIN,
-            mode = 0644
+            mode = 0o644
             )
 
         self.assertResourceCalled('File', self.CONF_DIR + 'slaves',
             content = InlineTemplate('c6401.ambari.apache.org\nc6402.ambari.apache.org\nc6403.ambari.apache.org\n\n'),
             group = self.GPADMIN,
             owner = self.GPADMIN,
-            mode = 0644
+            mode = 0o644
             )
 
     self.assertResourceCalled('Directory', '/data/hawq/' + self.COMPONENT_TYPE,

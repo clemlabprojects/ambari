@@ -85,15 +85,18 @@ limitations under the License.
     <name>gateway.dispatch.whitelist.services</name>
     <value>DATANODE,HBASEUI,HDFSUI,JOBHISTORYUI,NODEUI,YARNUI</value>
     <description>The comma-delimited list of service roles for which the gateway.dispatch.whitelist should be applied.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>gateway.dispatch.whitelist</name>
     <value>DEFAULT</value>
     <description>The whitelist to be applied for dispatches associated with the service roles specified by gateway.dispatch.whitelist.services. If the value is DEFAULT, a domain-based whitelist will be derived from the Knox host.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>gateway.read.only.override.topologies</name>
     <value>admin,knoxsso,default</value>
     <description>Since Ambari manages these topologies let's make them read-only in the Knox Admin UI so that they don't get overwritten by Ambari on restart.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

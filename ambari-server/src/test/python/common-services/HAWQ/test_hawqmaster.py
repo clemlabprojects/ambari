@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -174,7 +174,7 @@ class TestHawqMaster(HawqBaseTestCase):
         content = InlineTemplate("{% for host in hawq_all_hosts %}{{host}}\n{% endfor %}"),
         group = self.GPADMIN,
         owner = self.GPADMIN,
-        mode = 0644
+        mode = 0o644
         )
 
     self.assertResourceCalled('Execute', expectedCommand,

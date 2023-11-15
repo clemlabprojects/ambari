@@ -22,7 +22,7 @@ import math
 import os
 import re
 import sys
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 # Local Imports
 

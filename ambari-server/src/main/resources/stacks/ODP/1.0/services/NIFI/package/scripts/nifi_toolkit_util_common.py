@@ -149,7 +149,7 @@ def dump(config_json, config_dict, user, group):
 
 
 def overlay(config_dict, overlay_dict):
-  for k, v in overlay_dict.iteritems():
+  for k, v in overlay_dict.items():
     if (k not in config_dict) or not (overlay_dict[k] == config_dict[k]):
       config_dict[k] = v
 
@@ -194,7 +194,7 @@ def copy_toolkit_scripts(toolkit_files_dir, toolkit_tmp_dir, user, group, upgrad
     new_run_ca_tmp_script = StaticFile("run_ca.sh")
 
     if not sudo.path_isfile(run_ca_tmp_script) or sudo.read_file(run_ca_tmp_script) != new_run_ca_tmp_script:
-      File(format(run_ca_tmp_script), content=new_run_ca_tmp_script, mode=0755, owner=user, group=group)
+      File(format(run_ca_tmp_script), content=new_run_ca_tmp_script, mode=0o755, owner=user, group=group)
 
   if not params.stack_support_nifi_toolkit_package:
     nifiToolkitDirFilesPath = None
@@ -211,13 +211,13 @@ def copy_toolkit_scripts(toolkit_files_dir, toolkit_tmp_dir, user, group, upgrad
     if not sudo.path_isdir(nifiToolkitDirTmpPath) or not (upgrade_type is None):
       os.system("\cp -r " + nifiToolkitDirFilesPath + " " + toolkit_tmp_dir)
       Directory(nifiToolkitDirTmpPath, owner=user, group=group, create_parents=False, recursive_ownership=True,
-                cd_access="a", mode=0755)
+                cd_access="a", mode=0o755)
       os.system("\/var/lib/ambari-agent/ambari-sudo.sh chmod -R 755 " + nifiToolkitDirTmpPath)
   else:
     Logger.info("Changing owner of package files")
     package_toolkit_dir = os.path.join(params.stack_root, 'current', 'nifi-toolkit')
     Directory(package_toolkit_dir, owner=user, group=group, create_parents=False, recursive_ownership=True,
-              cd_access="a", mode=0755,
+              cd_access="a", mode=0o755,
               recursion_follow_links=True)
 
 
@@ -473,7 +473,7 @@ def run_toolkit_client(ca_client_dict, config_dir, jdk64_home, java_options, use
   import params
   Logger.info("Generating NiFi Keystore and Truststore")
   ca_client_script = get_toolkit_script('tls-toolkit.sh', toolkit_tmp_dir, stack_version_buildnum)
-  File(ca_client_script, mode=0755)
+  File(ca_client_script, mode=0o755)
   if no_client_file:
     ca_client_json_dump = json.dumps(ca_client_dict)
     cert_command = (
@@ -549,7 +549,7 @@ def encrypt_sensitive_properties(
   encrypt_config_script = get_toolkit_script('encrypt-config.sh', toolkit_tmp_dir, stack_version_buildnum)
   encrypt_config_command = (encrypt_config_script,)
   environment = {'JAVA_HOME': jdk64_home, 'JAVA_OPTS': java_options}
-  File(encrypt_config_script, mode=0755)
+  File(encrypt_config_script, mode=0o755)
 
   if is_starting:
     if service == NIFI:

@@ -167,11 +167,9 @@
   <property>
     <name>nifi.security.needClientAuth</name>
     <value>false</value>
-    <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
-    </value-attributes>
     <on-ambari-upgrade add="true"/>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <type>boolean</type>
     </value-attributes>
     <display-name>Clients need to authenticate?</display-name>
@@ -197,7 +195,6 @@
             Users File can not be specified.
     </description>
   </property>
-
   <property>
     <name>content</name>
     <display-name>Node Identities</display-name>

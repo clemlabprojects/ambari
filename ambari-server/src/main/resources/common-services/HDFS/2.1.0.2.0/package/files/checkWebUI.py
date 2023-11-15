@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -19,17 +19,17 @@ limitations under the License.
 '''
 
 import optparse
-import httplib
+import http.client
 import socket
 import ssl
 
-class ForcedProtocolHTTPSConnection(httplib.HTTPSConnection):
+class ForcedProtocolHTTPSConnection(http.client.HTTPSConnection):
   """
   Some of python implementations does not work correctly with sslv3 but trying to use it, we need to change protocol to
   tls1.
   """
   def __init__(self, host, port, force_protocol, **kwargs):
-    httplib.HTTPSConnection.__init__(self, host, port, **kwargs)
+    http.client.HTTPSConnection.__init__(self, host, port, **kwargs)
     self.force_protocol = force_protocol
 
   def connect(self):
@@ -41,7 +41,7 @@ class ForcedProtocolHTTPSConnection(httplib.HTTPSConnection):
 
 def make_connection(host, port, https, force_protocol=None):
   try:
-    conn = httplib.HTTPConnection(host, port) if not https else httplib.HTTPSConnection(host, port)
+    conn = http.client.HTTPConnection(host, port) if not https else http.client.HTTPSConnection(host, port)
     conn.request("GET", "/")
     return conn.getresponse().status
   except ssl.SSLError:

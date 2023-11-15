@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -38,15 +38,15 @@ class TestServiceCheck(RMFTestCase):
     )
     self.assertResourceCalled('File', '/tmp/hbaseSmokeVerify.sh',
       content = StaticFile('hbaseSmokeVerify.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke-cleanup.sh',
       content = StaticFile('hbase-smoke-cleanup.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke.sh',
       content = Template('hbase-smoke.sh.j2'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Execute', ' /usr/lib/hbase/bin/hbase --config /etc/hbase/conf shell /tmp/hbase-smoke.sh && /tmp/hbaseSmokeVerify.sh /etc/hbase/conf  /usr/lib/hbase/bin/hbase &&  /usr/lib/hbase/bin/hbase --config /etc/hbase/conf shell /tmp/hbase-smoke-cleanup.sh',
       logoutput = True,
@@ -67,21 +67,21 @@ class TestServiceCheck(RMFTestCase):
     )
     self.assertResourceCalled('File', '/tmp/hbaseSmokeVerify.sh',
       content = StaticFile('hbaseSmokeVerify.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke-cleanup.sh',
       content = StaticFile('hbase-smoke-cleanup.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke.sh',
       content = Template('hbase-smoke.sh.j2'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase_grant_permissions.sh',
       content = Template('hbase_grant_permissions.j2'),
       owner = 'hbase',
       group = 'hadoop',
-      mode = 0644,
+      mode = 0o644,
     )
     self.assertResourceCalled('Execute', '/usr/bin/kinit -kt /etc/security/keytabs/hbase.headless.keytab hbase; /usr/lib/hbase/bin/hbase shell /tmp/hbase_grant_permissions.sh',
       user = 'hbase',
@@ -105,15 +105,15 @@ class TestServiceCheck(RMFTestCase):
     )
     self.assertResourceCalled('File', '/tmp/hbaseSmokeVerify.sh',
       content = StaticFile('hbaseSmokeVerify.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke-cleanup.sh',
       content = StaticFile('hbase-smoke-cleanup.sh'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/hbase-smoke.sh',
       content = Template('hbase-smoke.sh.j2'),
-      mode = 0755,
+      mode = 0o755,
     )
     self.assertResourceCalled('Execute',  ' /usr/hdp/current/hbase-client/bin/hbase --config /usr/hdp/current/hbase-client/conf shell /tmp/hbase-smoke.sh && /tmp/hbaseSmokeVerify.sh /usr/hdp/current/hbase-client/conf  /usr/hdp/current/hbase-client/bin/hbase &&  /usr/hdp/current/hbase-client/bin/hbase --config /usr/hdp/current/hbase-client/conf shell /tmp/hbase-smoke-cleanup.sh',
       logoutput = True,

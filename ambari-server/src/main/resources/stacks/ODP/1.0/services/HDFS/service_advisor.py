@@ -240,15 +240,15 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
     # dfs.datanode.du.reserved should be set to 10-15% of volume size
     # For each host selects maximum size of the volume. Then gets minimum for all hosts.
     # This ensures that each host will have at least one data dir with available space.
-    reservedSizeRecommendation = 0l #kBytes
+    reservedSizeRecommendation = int(0) #kBytes
     for host in hosts["items"]:
       mountPoints = []
       mountPointDiskAvailableSpace = [] #kBytes
       for diskInfo in host["Hosts"]["disk_info"]:
         mountPoints.append(diskInfo["mountpoint"])
-        mountPointDiskAvailableSpace.append(long(diskInfo["size"]))
+        mountPointDiskAvailableSpace.append(int(diskInfo["size"]))
 
-      maxFreeVolumeSizeForHost = 0l #kBytes
+      maxFreeVolumeSizeForHost = int(0) #kBytes
       for dataDir in dataDirs:
         mp = HDFSRecommender.getMountPointForDir(dataDir, mountPoints)
         for i in range(len(mountPoints)):
