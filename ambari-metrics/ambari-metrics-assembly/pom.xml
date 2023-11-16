@@ -184,6 +184,8 @@
               <defineStatements>
                 <defineStatement>__arch_install_post %{nil}</defineStatement>
                 <defineStatement>__os_install_post %{nil}</defineStatement>
+                <defineStatement>debug_package %{nil}</defineStatement>
+                <defineStatement>__brp_mangle_shebangs %{nil}</defineStatement>
               </defineStatements>
             </configuration>
             <executions>
