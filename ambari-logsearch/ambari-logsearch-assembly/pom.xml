@@ -70,6 +70,10 @@
 
               <defaultUsername>root</defaultUsername>
               <defaultGroupname>root</defaultGroupname>
+              <defineStatements>
+                <defineStatement>debug_package %{nil}</defineStatement>
+                <defineStatement>__brp_mangle_shebangs %{nil}</defineStatement>
+              </defineStatements>
             </configuration>
             <executions>
               <execution>
