@@ -180,7 +180,7 @@
           <osFamily>redhat8</osFamily>
           <packages>
             <package>
-              <name>python2-kerberos</name>
+              <name>python3-kerberos</name>
             </package>
           </packages>
         </osSpecific>
