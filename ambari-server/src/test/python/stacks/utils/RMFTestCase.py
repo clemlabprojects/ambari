@@ -28,10 +28,9 @@ import sys
 import pprint
 import itertools
 from mock.mock import MagicMock, patch
-import distro
 import re
 
-with patch("distro.linux_distribution", return_value = ('Suse','11','Final')):
+with patch("platform.linux_distribution", return_value = ('Suse','11','Final')):
   with patch("os.geteuid", return_value=45000):  # required to mock sudo and run tests with right scenario
     from resource_management.core import sudo
     from resource_management.core.environment import Environment
@@ -122,7 +121,7 @@ class RMFTestCase(TestCase):
     
     # get method to execute
     try:
-      with patch.object(distro, 'linux_distribution', return_value=os_type):
+      with patch.object(platform, 'linux_distribution', return_value=os_type):
         script_module = imp.load_source(classname, script_path)
         Script.instance = None
         script_class_inst = RMFTestCase._get_attr(script_module, classname)()
@@ -154,7 +153,7 @@ class RMFTestCase(TestCase):
             with patch.object(Script, 'get_tmp_dir', return_value="/tmp") as mocks_dict['get_tmp_dir']:
               with patch.object(Script, 'post_start') as mocks_dict['post_start']:
                 with patch('resource_management.libraries.functions.get_kinit_path', return_value=kinit_path_local) as mocks_dict['get_kinit_path']:
-                  with patch.object(distro, 'linux_distribution', return_value=os_type) as mocks_dict['linux_distribution']:
+                  with patch.object(platform, 'linux_distribution', return_value=os_type) as mocks_dict['linux_distribution']:
                     with patch('resource_management.libraries.functions.stack_select.is_package_supported', return_value=True):
                       with patch('resource_management.libraries.functions.stack_select.get_supported_packages', return_value=MagicMock()):
                         with patch.object(os, "environ", new=os_env) as mocks_dict['environ']:

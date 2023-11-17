@@ -19,7 +19,6 @@ import os
 import sys
 from mock.mock import patch, MagicMock, call
 import importlib
-import distro
 
 with patch.object(os, "geteuid", new=MagicMock(return_value=0)):
   from resource_management.core import sudo
@@ -29,7 +28,6 @@ import datetime
 import json
 import operator
 import subprocess
-import distro
 import platform
 import socket
 import re
@@ -64,11 +62,11 @@ def search_file_proxy(filename, searchpatch, pathsep=os.pathsep):
 
 
 os_utils.search_file = search_file_proxy
-with patch.object(distro, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
+with patch.object(platform, "linux_distribution", return_value = MagicMock(return_value=('Redhat', '6.4', 'Final'))):
   with patch("os.path.isdir", return_value = MagicMock(return_value=True)):
     with patch("os.access", return_value = MagicMock(return_value=True)):
       with patch.object(os_utils, "parse_log4j_file", return_value={'ambari.log.dir': '/var/log/ambari-server'}):
-        with patch("distro.linux_distribution", return_value = os_distro_value):
+        with patch("platform.linux_distribution", return_value = os_distro_value):
           with patch("os.symlink"):
             with patch.object(os_utils, "is_service_exist", return_value = True):
               with patch("glob.glob", return_value = ['/etc/init.d/postgresql-9.3']):
@@ -3077,7 +3075,7 @@ class TestAmbariServer(TestCase):
     self.assertEqual(0, retcode)
     pass
 
-  @patch("distro.linux_distribution")
+  @patch("platform.linux_distribution")
   @patch("platform.system")
   @patch("ambari_commons.logging_utils.print_info_msg")
   @patch("ambari_commons.logging_utils.print_error_msg")
