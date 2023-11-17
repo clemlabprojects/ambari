@@ -36,7 +36,6 @@ from ambari_agent.PythonExecutor import PythonExecutor
 import subprocess
 from resource_management.libraries.functions.log_process_information import log_process_information
 from resource_management.core.utils import PasswordString
-from ambari_commons import subprocess32
 from ambari_agent.Utils import Utils
 from ambari_commons.constants import AGENT_TMP_DIR
 

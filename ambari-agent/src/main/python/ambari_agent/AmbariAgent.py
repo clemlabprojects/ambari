@@ -51,7 +51,7 @@ def main():
   mergedArgs = [PYTHON, AGENT_SCRIPT] + args
 
   while status == AGENT_AUTO_RESTART_EXIT_CODE:
-    mainProcess = subprocess.Popen(merged_args)
+    mainProcess = subprocess.Popen(mergedArgs)
     mainProcess.communicate()
     status = mainProcess.returncode
     if os.path.isfile(AGENT_PID_FILE) and status == AGENT_AUTO_RESTART_EXIT_CODE:

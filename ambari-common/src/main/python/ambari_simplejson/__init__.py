@@ -14,15 +14,15 @@ Encoding basic Python object hierarchies::
     >>> import simplejson as json
     >>> json.dumps(['foo', {'bar': ('baz', None, 1.0, 2)}])
     '["foo", {"bar": ["baz", null, 1.0, 2]}]'
-    >>> print json.dumps("\"foo\bar")
+    >>> print(json.dumps("\"foo\bar"))
     "\"foo\bar"
-    >>> print json.dumps(u'\u1234')
+    >>> print(json.dumps('\u1234'))
     "\u1234"
-    >>> print json.dumps('\\')
+    >>> print(json.dumps('\\'))
     "\\"
-    >>> print json.dumps({"c": 0, "b": 0, "a": 0}, sort_keys=True)
+    >>> print(json.dumps({"c": 0, "b": 0, "a": 0}, sort_keys=True))
     {"a": 0, "b": 0, "c": 0}
-    >>> from StringIO import StringIO
+    >>> from io import StringIO
     >>> io = StringIO()
     >>> json.dump(['streaming API'], io)
     >>> io.getvalue()
@@ -38,7 +38,7 @@ Pretty printing::
 
     >>> import simplejson as json
     >>> s = json.dumps({'4': 5, '6': 7}, sort_keys=True, indent=4)
-    >>> print '\n'.join([l.rstrip() for l in  s.splitlines()])
+    >>> print('\n'.join([l.rstrip() for l in  s.splitlines()]))
     {
         "4": 5,
         "6": 7
@@ -47,12 +47,12 @@ Pretty printing::
 Decoding JSON::
 
     >>> import simplejson as json
-    >>> obj = [u'foo', {u'bar': [u'baz', None, 1.0, 2]}]
+    >>> obj = ['foo', {'bar': ['baz', None, 1.0, 2]}]
     >>> json.loads('["foo", {"bar":["baz", null, 1.0, 2]}]') == obj
     True
-    >>> json.loads('"\\"foo\\bar"') == u'"foo\x08ar'
+    >>> json.loads('"\\"foo\\bar"') == '"foo\x08ar'
     True
-    >>> from StringIO import StringIO
+    >>> from io import StringIO
     >>> io = StringIO('["streaming API"]')
     >>> json.load(io)[0] == 'streaming API'
     True
@@ -120,18 +120,18 @@ _default_encoder = JSONEncoder(
 
 def dump(obj, fp, skipkeys=False, ensure_ascii=True, check_circular=True,
         allow_nan=True, cls=None, indent=None, separators=None,
-        encoding='utf-8', default=None, **kw):
+        default=None, **kw):
     """Serialize ``obj`` as a JSON formatted stream to ``fp`` (a
     ``.write()``-supporting file-like object).
 
     If ``skipkeys`` is true then ``dict`` keys that are not basic types
-    (``str``, ``unicode``, ``int``, ``long``, ``float``, ``bool``, ``None``)
+    (``str``, ``int``, ``float``, ``bool``, ``None``)
     will be skipped instead of raising a ``TypeError``.
 
     If ``ensure_ascii`` is false, then the some chunks written to ``fp``
-    may be ``unicode`` instances, subject to normal Python ``str`` to
-    ``unicode`` coercion rules. Unless ``fp.write()`` explicitly
-    understands ``unicode`` (as in ``codecs.getwriter()``) this is likely
+    may be ``str`` instances, subject to normal Python ``str`` to
+    ``str`` coercion rules. Unless ``fp.write()`` explicitly
+    understands ``str`` (as in ``codecs.getwriter()``) this is likely
     to cause an error.
 
     If ``check_circular`` is false, then the circular reference check
@@ -151,8 +151,6 @@ def dump(obj, fp, skipkeys=False, ensure_ascii=True, check_circular=True,
     then it will be used instead of the default ``(', ', ': ')`` separators.
     ``(',', ':')`` is the most compact JSON representation.
 
-    ``encoding`` is the character encoding for str instances, default is UTF-8.
-
     ``default(obj)`` is a function that should return a serializable version
     of obj or raise TypeError. The default simply raises TypeError.
 
@@ -165,32 +163,31 @@ def dump(obj, fp, skipkeys=False, ensure_ascii=True, check_circular=True,
     if (not skipkeys and ensure_ascii and
         check_circular and allow_nan and
         cls is None and indent is None and separators is None and
-        encoding == 'utf-8' and default is None and not kw):
+        default is None and not kw):
         iterable = _default_encoder.iterencode(obj)
     else:
         if cls is None:
             cls = JSONEncoder
         iterable = cls(skipkeys=skipkeys, ensure_ascii=ensure_ascii,
             check_circular=check_circular, allow_nan=allow_nan, indent=indent,
-            separators=separators, encoding=encoding,
+            separators=separators,
             default=default, **kw).iterencode(obj)
     # could accelerate with writelines in some versions of Python, at
     # a debuggability cost
     for chunk in iterable:
         fp.write(chunk)
 
-
 def dumps(obj, skipkeys=False, ensure_ascii=True, check_circular=True,
         allow_nan=True, cls=None, indent=None, separators=None,
-        encoding='utf-8', default=None, **kw):
+        default=None, **kw):
     """Serialize ``obj`` to a JSON formatted ``str``.
 
     If ``skipkeys`` is false then ``dict`` keys that are not basic types
-    (``str``, ``unicode``, ``int``, ``long``, ``float``, ``bool``, ``None``)
+    (``str``, ``int``, ``float``, ``bool``, ``None``)
     will be skipped instead of raising a ``TypeError``.
 
     If ``ensure_ascii`` is false, then the return value will be a
-    ``unicode`` instance subject to normal Python ``str`` to ``unicode``
+    ``str`` instance subject to normal Python ``str`` to ``str``
     coercion rules instead of being escaped to an ASCII ``str``.
 
     If ``check_circular`` is false, then the circular reference check
@@ -211,8 +208,6 @@ def dumps(obj, skipkeys=False, ensure_ascii=True, check_circular=True,
     then it will be used instead of the default ``(', ', ': ')`` separators.
     ``(',', ':')`` is the most compact JSON representation.
 
-    ``encoding`` is the character encoding for str instances, default is UTF-8.
-
     ``default(obj)`` is a function that should return a serializable version
     of obj or raise TypeError. The default simply raises TypeError.
 
@@ -225,31 +220,23 @@ def dumps(obj, skipkeys=False, ensure_ascii=True, check_circular=True,
     if (not skipkeys and ensure_ascii and
         check_circular and allow_nan and
         cls is None and indent is None and separators is None and
-        encoding == 'utf-8' and default is None and not kw):
+        default is None and not kw):
         return _default_encoder.encode(obj)
     if cls is None:
         cls = JSONEncoder
     return cls(
         skipkeys=skipkeys, ensure_ascii=ensure_ascii,
         check_circular=check_circular, allow_nan=allow_nan, indent=indent,
-        separators=separators, encoding=encoding, default=default,
+        separators=separators, default=default,
         **kw).encode(obj)
-
 
 _default_decoder = JSONDecoder(object_hook=None)
 
 
-def load(fp, encoding=None, cls=None, object_hook=None, parse_float=None,
+def load(fp, cls=None, object_hook=None, parse_float=None,
         parse_int=None, parse_constant=None, **kw):
     """Deserialize ``fp`` (a ``.read()``-supporting file-like object containing
     a JSON document) to a Python object.
-
-    If the contents of ``fp`` is encoded with an ASCII based encoding other
-    than utf-8 (e.g. latin-1), then an appropriate ``encoding`` name must
-    be specified. Encodings that are not ASCII based (such as UCS-2) are
-    not allowed, and should be wrapped with
-    ``codecs.getreader(fp)(encoding)``, or simply decoded to a ``unicode``
-    object and passed to ``loads()``
 
     ``object_hook`` is an optional function that will be called with the
     result of any object literal decode (a ``dict``). The return value of
@@ -261,20 +248,15 @@ def load(fp, encoding=None, cls=None, object_hook=None, parse_float=None,
 
     """
     return loads(fp.read(),
-        encoding=encoding, cls=cls, object_hook=object_hook,
+        cls=cls, object_hook=object_hook,
         parse_float=parse_float, parse_int=parse_int,
         parse_constant=parse_constant, **kw)
 
 
-def loads(s, encoding=None, cls=None, object_hook=None, parse_float=None,
+def loads(s, cls=None, object_hook=None, parse_float=None,
         parse_int=None, parse_constant=None, **kw):
-    """Deserialize ``s`` (a ``str`` or ``unicode`` instance containing a JSON
+    """Deserialize ``s`` (a ``str`` instance containing a JSON
     document) to a Python object.
-
-    If ``s`` is a ``str`` instance and is encoded with an ASCII based encoding
-    other than utf-8 (e.g. latin-1) then an appropriate ``encoding`` name
-    must be specified. Encodings that are not ASCII based (such as UCS-2)
-    are not allowed and should be decoded to ``unicode`` first.
 
     ``object_hook`` is an optional function that will be called with the
     result of any object literal decode (a ``dict``). The return value of
@@ -300,7 +282,7 @@ def loads(s, encoding=None, cls=None, object_hook=None, parse_float=None,
     kwarg.
 
     """
-    if (cls is None and encoding is None and object_hook is None and
+    if (cls is None and object_hook is None and
             parse_int is None and parse_float is None and
             parse_constant is None and not kw):
         return _default_decoder.decode(s)
@@ -314,4 +296,4 @@ def loads(s, encoding=None, cls=None, object_hook=None, parse_float=None,
         kw['parse_int'] = parse_int
     if parse_constant is not None:
         kw['parse_constant'] = parse_constant
-    return cls(encoding=encoding, **kw).decode(s)
+    return cls(**kw).decode(s)
