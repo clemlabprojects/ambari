@@ -1,0 +1,30 @@
+@@ -79,7 +79,7 @@
+       local_metric_map = {}
+   
+       if application_id:
+-        if self.app_metric_map.has_key(application_id):
++        if application_id in self.app_metric_map:
+           local_metric_map = { application_id : self.app_metric_map[application_id] }
+         else:
+           logger.info("application_id: {0}, not present in the map.".format(application_id))
+@@ -116,14 +116,14 @@
+ 
+   def get_start_time(self, app_id, metric_id):
+     with self.lock:
+-      if self.cached_metric_map.has_key(app_id):
+-        if self.cached_metric_map.get(app_id).has_key(metric_id):
++      if app_id in self.cached_metric_map:
++        if metric_id in self.cached_metric_map.get(app_id):
+           metrics = self.cached_metric_map.get(app_id).get(metric_id)
+-          return min(metrics.iterkeys())
+-      if self.app_metric_map.has_key(app_id):
+-        if self.app_metric_map.get(app_id).has_key(metric_id):
++          return min(metrics.keys())
++      if app_id in self.app_metric_map:
++        if metric_id in self.app_metric_map.get(app_id):
+           metrics = self.app_metric_map.get(app_id).get(metric_id)
+-          return min(metrics.iterkeys())
++          return min(metrics.keys())
+   pass
+ 
+   def format_app_id(self, app_id, instance_id = None):

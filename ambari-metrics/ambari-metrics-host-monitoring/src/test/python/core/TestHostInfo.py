@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -81,11 +81,11 @@ class TestHostInfo(TestCase):
     
     mem = hostinfo.get_mem_info()
     
-    self.assertAlmostEqual(mem['mem_free'], 2257)
-    self.assertAlmostEqual(mem['mem_shared'], 1)
-    self.assertAlmostEqual(mem['mem_buffered'], 22)
-    self.assertAlmostEqual(mem['mem_cached'], 22)
-    self.assertAlmostEqual(mem['swap_free'], 2286)
+    self.assertAlmostEqual(int(mem['mem_free']), 2257)
+    self.assertAlmostEqual(int(mem['mem_shared']), 1)
+    self.assertAlmostEqual(int(mem['mem_buffered']), 22)
+    self.assertAlmostEqual(int(mem['mem_cached']), 22)
+    self.assertAlmostEqual(int(mem['swap_free']), 2286)
 
 
   @patch("psutil.process_iter")
