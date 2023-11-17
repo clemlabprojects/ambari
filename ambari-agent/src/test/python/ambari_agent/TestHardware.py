@@ -23,7 +23,6 @@ main.MEMORY_LEAK_DEBUG_FILEPATH = "/tmp/memory_leak_debug.out"
 from unittest import TestCase
 from mock.mock import patch, MagicMock, Mock
 import unittest
-import distro
 import socket
 import subprocess
 from only_for_platform import not_for_platform, PLATFORM_WINDOWS
@@ -35,7 +34,7 @@ from ambari_commons import OSCheck
 
 
 @not_for_platform(PLATFORM_WINDOWS)
-@patch.object(distro, "linux_distribution", new=MagicMock(return_value=('Suse', '11', 'Final')))
+@patch.object(platform, "linux_distribution", new=MagicMock(return_value=('Suse', '11', 'Final')))
 @patch.object(socket, "getfqdn", new=MagicMock(return_value="ambari.apache.org"))
 @patch.object(socket, "gethostbyname", new=MagicMock(return_value="192.168.1.1"))
 @patch.object(FacterLinux, "setDataIfConfigShortOutput", new=MagicMock(return_value='''Iface   MTU Met    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg
@@ -469,7 +468,7 @@ SwapFree:        1598676 kB
     self.assertEqual(expected_mounts_left, mounts_left)
 
 @not_for_platform(PLATFORM_WINDOWS)
-@patch.object(distro, "linux_distribution", new=MagicMock(return_value=('Suse', '11', 'Final')))
+@patch.object(platform, "linux_distribution", new=MagicMock(return_value=('Suse', '11', 'Final')))
 @patch.object(socket, "getfqdn", new=MagicMock(return_value="ambari.apache.org"))
 @patch.object(socket, "gethostbyname", new=MagicMock(return_value="192.168.1.1"))
 @patch.object(FacterLinux, "setDataIfConfigShortOutput", new=MagicMock(return_value=''))

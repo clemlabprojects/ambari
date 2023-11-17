@@ -26,7 +26,6 @@ import os
 import sys
 import ssl
 import logging
-import distro as platform
 import inspect
 import tarfile
 import traceback

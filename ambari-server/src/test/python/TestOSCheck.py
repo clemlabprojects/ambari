@@ -18,7 +18,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import distro
 import platform
 import datetime
 import os
@@ -47,7 +46,7 @@ utils = __import__('ambari_server.utils').utils
 with patch("os.path.isdir", return_value = MagicMock(return_value=True)):
   with patch("os.access", return_value = MagicMock(return_value=True)):
     with patch.object(os_utils, "parse_log4j_file", return_value={'ambari.log.dir': '/var/log/ambari-server'}):
-      with patch("distro.linux_distribution", return_value = os_distro_value_linux):
+      with patch("platform.linux_distribution", return_value = os_distro_value_linux):
         with patch.object(OSCheck, "os_distribution", return_value = os_distro_value):
           with patch.object(os_utils, "is_service_exist", return_value = True):
             with patch.object(utils, "get_postgre_hba_dir"):
@@ -56,7 +55,7 @@ with patch("os.path.isdir", return_value = MagicMock(return_value=True)):
 
               from ambari_server.serverConfiguration import update_ambari_properties, configDefaults
 
-@patch.object(distro, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
+@patch.object(platform, "linux_distribution", new = MagicMock(return_value=('Redhat', '6.4', 'Final')))
 class TestOSCheck(TestCase):
   @patch.object(OSCheck, "os_distribution")
   @patch("ambari_commons.os_check._is_oracle_linux")
