@@ -142,15 +142,16 @@ if os.geteuid() == 0:
     """
     if content is None, create empty file
     """
-    with open(filename, "wb") as fp:
+    mode = "wb" if isinstance(content, bytes) else "w"
+    with open(filename, mode) as fp:
       if content:
         content = content if content else ""
         fp.write(content)
       
   def read_file(filename, encoding=None):
-    with open(filename, 'rb', encoding=encoding) as fp:
+    with open(filename, 'r', encoding=encoding) as fp:
       content = fp.read()
-        
+  
     return content
       
   def path_exists(path):
@@ -245,9 +246,9 @@ else:
         mode = "wb" if isinstance(content, bytes) else "w"
         with open(tmpf_name, mode) as fp:
             fp.write(content)
-        shell.checked_call(["cp", "-f", tmpf_name, filename], sudo=True)
+        shutil.copy(tmpf_name, filename)
     finally:
-        os.unlink(tmpf_name)
+        os.remove(tmpf_name)
       
   # fp.read replacement
   def read_file(filename, encoding=None):

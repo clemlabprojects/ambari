@@ -66,9 +66,9 @@ class RedisJobStore(JobStore):
             job_state = {}
             try:
                 job = Job.__new__(Job)
-                job_state = pickle.loads(job_dict['job_state'.encode()])
-                job_state['runs'] = int(job_dict['runs'.encode()])
-                dateval = job_dict['next_run_time'.encode()].decode()
+                job_state = pickle.loads(job_dict[b'job_state'])
+                job_state['runs'] = int(job_dict[b'runs'])
+                dateval = job_dict[b'next_run_time'].decode()
                 job_state['next_run_time'] = datetime.strptime(
                     dateval, '%Y-%m-%dT%H:%M:%S')
                 job.__setstate__(job_state)
