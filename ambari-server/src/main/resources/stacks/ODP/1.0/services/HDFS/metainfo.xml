@@ -329,9 +329,6 @@
               <name>snappy</name>
             </package>
             <package>
-              <name>snappy-devel</name>
-            </package>
-            <package>
               <name>hadoop_${stack_version}-libhdfs</name>
             </package>
           </packages>
@@ -353,26 +350,6 @@
           </packages>
         </osSpecific>
 
-        <osSpecific>
-          <osFamily>suse12</osFamily>
-          <packages>
-            <package>
-              <name>hadoop_${stack_version}</name>
-            </package>
-            <package>
-              <name>hadoop_${stack_version}-client</name>
-            </package>
-            <package>
-              <name>snappy</name>
-            </package>
-            <package>
-              <name>snappy-devel</name>
-            </package>
-            <package>
-              <name>hadoop_${stack_version}-libhdfs</name>
-            </package>
-          </packages>
-        </osSpecific>
 
         <osSpecific>
           <osFamily>debian7,ubuntu12,ubuntu14</osFamily>
