@@ -180,7 +180,7 @@
         </component>
         <component>
           <name>LIVY2_SERVER</name>
-          <displayName>Livy for Spark3 Server</displayName>
+          <displayName>Livy for Spark3 Server (Deprecated)</displayName>
           <category>SLAVE</category>
           <cardinality>0+</cardinality>
           <versionAdvertised>true</versionAdvertised>
