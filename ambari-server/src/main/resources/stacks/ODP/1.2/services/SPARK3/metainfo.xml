@@ -213,6 +213,9 @@
             <package>
               <name>livy2_${stack_version}</name>
             </package>
+            <package>
+              <name>spark3-livy2_${stack_version}</name>
+            </package>
           </packages>
         </osSpecific>
         <osSpecific>
