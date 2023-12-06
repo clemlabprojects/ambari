@@ -259,6 +259,9 @@
               <name>spark2_${stack_version}-python</name>
             </package>
             <package>
+              <name>livy2_${stack_version}</name>
+            </package>
+            <package>
               <name>spark2-livy2_${stack_version}</name>
             </package>
           </packages>
