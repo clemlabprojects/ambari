@@ -22,6 +22,7 @@ import glob
 from .generic_manager import GenericManagerProperties, GenericManager
 from .yum_parser import YumParser
 from ambari_commons import shell
+from ambari_commons import OSCheck
 from resource_management.core.logger import Logger
 from resource_management.core.utils import suppress_stdout
 from resource_management.core import sudo
@@ -46,8 +47,11 @@ class YumManagerProperties(GenericManagerProperties):
   available_packages_cmd = [repo_manager_bin, "list", "available", "--showduplicates"]
   installed_packages_cmd = [repo_manager_bin, "list", "installed", "--showduplicates"]
   all_packages_cmd = [repo_manager_bin, "list", "all", "--showduplicates"]
-
   yum_lib_dir = "/var/lib/yum"
+
+  if OSCheck.get_os_major_version >= 8:
+    yum_lib_dir = "/var/lib/dnf"
+
   yum_tr_prefix = "transaction-"
 
   repo_definition_location = "/etc/yum.repos.d"
