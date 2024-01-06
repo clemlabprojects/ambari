@@ -162,7 +162,7 @@ def check_fs_root(conf_dir, execution_path):
 
   metatool_cmd = format("hive --config {conf_dir} --service metatool")
   cmd = as_user(format("{metatool_cmd} -listFSRoot", env={'PATH': execution_path}), params.hive_user) \
-        + format(" 2>/dev/null | grep hdfs:// | cut -f1,2,3 -d '/' | grep -v '{fs_root}' | head -1")
+        + format(" 2>&1 /dev/null | grep hdfs:// | cut -f1,2,3 -d '/' | | grep -v '[main] | grep -v '{fs_root}' | head -1")
   code, out = shell.call(cmd)
 
   if code == 0 and out.strip() != "" and params.fs_root.strip() != out.strip():
