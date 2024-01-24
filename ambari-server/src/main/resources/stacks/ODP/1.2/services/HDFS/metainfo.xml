@@ -20,7 +20,7 @@
   <services>
     <service>
       <name>HDFS</name>
-      <version>3.3.4</version>
+      <version>3.3.6</version>
     </service>
   </services>
 </metainfo>

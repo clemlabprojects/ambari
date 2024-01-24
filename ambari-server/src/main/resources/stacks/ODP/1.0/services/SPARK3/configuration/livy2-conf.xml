@@ -72,7 +72,7 @@
     </property>
     <property>
         <name>livy.spark.master</name>
-        <value>yarn-cluster</value>
+        <value>yarn</value>
         <description>
             spark.master property for spark engine
         </description>
