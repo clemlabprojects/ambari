@@ -964,7 +964,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   public void upgradeSchema() throws AmbariException, SQLException {
     DatabaseType databaseType = configuration.getDatabaseType();
     Boolean enableChangeSearchPath = configuration.getProperty("server.jdbc.postgres.enableChangeSearchPath") != null;
-    System.out.println("enableChangeSearchPath"+ enableChangeSearchPath);
+
     if (databaseType == DatabaseType.POSTGRES && enableChangeSearchPath) {
       changePostgresSearchPath();
     }
