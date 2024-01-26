@@ -22,6 +22,7 @@ Ambari Agent
 import sys
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import re
+import os
 import subprocess
 from ambari_commons import os_utils
 from ambari_commons import OSConst
@@ -116,8 +117,9 @@ class ServiceCheckDefault(ServiceCheck):
     else:
       smoke_cmd = yarn_distrubuted_shell_check_cmd
 
+    os.environ['PATH'] = params.mapreduce_check_execute_path + os.pathsep + os.environ['PATH']
     return_code, out = shell.checked_call(smoke_cmd,
-                                          path='/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin',
+                                          path=format('{params.mapreduce_check_execute_path}:/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin'),
                                           user=params.smokeuser,
                                           )
 
