@@ -357,7 +357,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>amazonlinux2,redhat7,redhat8,almalinux8</osFamily>
+          <osFamily>amazonlinux2,redhat7,redhat8,redhat9,almalinux8</osFamily>
           <packages>
             <package>
               <name>zookeeper_${stack_version}</name>
