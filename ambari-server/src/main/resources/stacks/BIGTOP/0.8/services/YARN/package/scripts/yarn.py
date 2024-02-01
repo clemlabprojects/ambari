@@ -56,7 +56,7 @@ def yarn(name = None):
                          action="create_delayed",
                          owner=params.mapred_user,
                          group=params.user_group,
-                         mode=01777
+                         mode=0o1777
     )
     params.HdfsDirectory(None, action="create")
 
@@ -158,7 +158,7 @@ def yarn(name = None):
     container_executor = format("{yarn_container_bin}/container-executor")
     File(container_executor,
          group=params.yarn_executor_container_group,
-         mode=06050
+         mode=0o6050
     )
 
     File(format("{hadoop_conf_dir}/container-executor.cfg"),
@@ -184,7 +184,7 @@ def yarn(name = None):
     File(os.path.join(params.hadoop_bin, "task-controller"),
          owner="root",
          group=params.mapred_tt_group,
-         mode=06050
+         mode=0o6050
     )
     File(os.path.join(params.hadoop_conf_dir, 'taskcontroller.cfg'),
          owner = tc_owner,

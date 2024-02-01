@@ -143,7 +143,7 @@ def dump(config_json, config_dict, user, group):
   File(config_json,
        owner=user,
        group=group,
-       mode=0640,
+       mode=0o640,
        content=PasswordString(json.dumps(config_dict, sort_keys=True, indent=4))
        )
 

@@ -108,7 +108,6 @@ class RecoveryManager:
       self.on_config_update()
 
     if len(self.initializer_module.host_level_params_cache):
-      self.cluster_id = self.initializer_module.host_level_params_cache.keys()[0]
       self.cluster_id = list(self.initializer_module.host_level_params_cache.keys())[0]
 
   def on_execution_command_start(self):

@@ -192,7 +192,7 @@ def setup_hiveserver2():
                           type = "directory",
                           action = "create_on_execute",
                           owner = params.hive_user,
-                          mode = 01755
+                          mode = 0o1755
                           )
 
     if not is_empty(params.hive_hook_proto_base_directory):

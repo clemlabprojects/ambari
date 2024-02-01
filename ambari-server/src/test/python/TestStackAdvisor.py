@@ -22,7 +22,7 @@ import os
 class TestStackAdvisorInitialization(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
 
     self.test_directory = os.path.dirname(os.path.abspath(__file__))
     resources_path = os.path.join(self.test_directory, '../../main/resources')
@@ -30,7 +30,9 @@ class TestStackAdvisorInitialization(TestCase):
 
     ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
     with open(ambari_configuration_path, 'rb') as fp:
-      imp.load_module('ambari_configuration', fp, ambari_configuration_path, ('.py', 'rb', imp.PY_SOURCE))
+      spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+      ambari_configuration = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(ambari_configuration)
 
     with open(stack_advisor_path, 'rb') as fp:
       self.stack_advisor = imp.load_module( 'stack_advisor', fp, stack_advisor_path, ('.py', 'rb', imp.PY_SOURCE) )

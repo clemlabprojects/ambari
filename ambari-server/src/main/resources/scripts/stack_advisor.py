@@ -147,13 +147,16 @@ def main(argv=None):
 
 def instantiateStackAdvisor(stackName, stackVersion, parentVersions):
   """Instantiates StackAdvisor implementation for the specified Stack"""
-  import imp
+  import importlib.util
+  from importlib.machinery import SourceFileLoader
 
   with open(AMBARI_CONFIGURATION_PATH, 'r') as fp:
-    imp.load_module('ambari_configuration', fp, AMBARI_CONFIGURATION_PATH, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    ambari_configuration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ambari_configuration)
 
   with open(STACK_ADVISOR_PATH, 'r') as fp:
-    default_stack_advisor = imp.load_module('stack_advisor', fp, STACK_ADVISOR_PATH, ('.py', 'rb', imp.PY_SOURCE))
+    default_stack_advisor = SourceFileLoader('stack_advisor', STACK_ADVISOR_PATH).load_module()
   className = STACK_ADVISOR_DEFAULT_IMPL_CLASS
   stack_advisor = default_stack_advisor
 
@@ -168,7 +171,7 @@ def instantiateStackAdvisor(stackName, stackVersion, parentVersions):
 
       if os.path.isfile(path):
         with open(path, 'r') as fp:
-          stack_advisor = imp.load_module('stack_advisor_impl', fp, path, ('.py', 'rb', imp.PY_SOURCE))
+          stack_advisor = SourceFileLoader('stack_advisor_impl', path).load_module()
         className = STACK_ADVISOR_IMPL_CLASS_TEMPLATE.format(stackName, version.replace('.', ''))
         print("StackAdvisor implementation for stack {0}, version {1} was loaded".format(stackName, version))
     except IOError: # file not found

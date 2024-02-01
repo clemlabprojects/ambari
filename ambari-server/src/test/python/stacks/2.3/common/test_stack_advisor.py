@@ -26,7 +26,7 @@ import unittest
 class TestHDP23StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.maxDiff = None
     if 'util' in dir(unittest): unittest.util._MAX_LENGTH=2000
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))

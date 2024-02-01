@@ -24,7 +24,7 @@ from unittest import TestCase
 class TestHDP21StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
 
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))
 

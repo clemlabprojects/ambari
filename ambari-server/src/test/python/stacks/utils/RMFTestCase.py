@@ -23,7 +23,7 @@ __all__ = ["RMFTestCase", "Template", "StaticFile", "InlineTemplate", "DownloadS
 from unittest import TestCase
 import json
 import os
-import imp
+import importlib.util
 import sys
 import pprint
 import itertools

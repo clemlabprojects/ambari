@@ -417,7 +417,7 @@ if stack_supports_atlas_ranger_plugin and enable_ranger_atlas:
 
   atlas_repository_configuration = {
     'username' : config['configurations']['ranger-atlas-plugin-properties']['REPOSITORY_CONFIG_USERNAME'],
-    'password' : unicode(config['configurations']['ranger-atlas-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']),
+    'password' : config['configurations']['ranger-atlas-plugin-properties']['REPOSITORY_CONFIG_PASSWORD'],
     'atlas.rest.address' : metadata_server_url,
     'commonNameForCertificate' : config['configurations']['ranger-atlas-plugin-properties']['common.name.for.certificate'],
     'ambari.service.check.user' : policy_user

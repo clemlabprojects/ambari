@@ -242,7 +242,7 @@ def yarn(name=None, config_dir=None):
     File(os.path.join(params.hadoop_bin, "task-controller"),
          owner="root",
          group=params.mapred_tt_group,
-         mode=06050
+         mode=0o6050
     )
     File(os.path.join(config_dir, 'taskcontroller.cfg'),
          owner = params.tc_owner,
@@ -380,7 +380,7 @@ def setup_historyserver():
                          type="directory",
                          owner=params.yarn_user,
                          group=params.user_group,
-                         mode=01777,
+                         mode=0o1777,
                          recursive_chmod=True
     )
 
@@ -765,14 +765,14 @@ def setup_system_services(config_dir=None):
                         action="create_on_execute",
                         owner=params.yarn_hbase_user,
                         group=params.user_group,
-                        mode=0770,
+                        mode=0o770,
                         )
     params.HdfsResource(format("{yarn_hbase_user_version_home}"),
                         type="directory",
                         action="create_on_execute",
                         owner=params.yarn_hbase_user,
                         group=params.user_group,
-                        mode=0770,
+                        mode=0o770,
                         )
     params.HdfsResource(format("{yarn_hbase_user_version_home}/core-site.xml"),
                         type="file",
@@ -821,7 +821,7 @@ def setup_system_services(config_dir=None):
                         action="create_on_execute",
                         owner=params.yarn_user,
                         group=params.user_group,
-                        mode=0555,
+                        mode=0o555,
                         )
     params.HdfsResource(format("{yarn_service_app_hdfs_path}/service-dep.tar.gz"),
                     type="file",

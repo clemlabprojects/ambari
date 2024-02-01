@@ -566,8 +566,8 @@ class Environment(object):
             log_function = lambda x: None
 
         if py_compile:
-            import imp, struct, marshal
-            py_header = imp.get_magic() + \
+            import importlib.util, struct, marshal
+            py_header = importlib.util.MAGIC_NUMBER + \
                 '\xff\xff\xff\xff'.encode('iso-8859-15')
 
         def write_file(filename, data, mode):

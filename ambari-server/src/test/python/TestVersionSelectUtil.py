@@ -27,7 +27,7 @@ class TestVersionSelectUtil(TestCase):
   Class that tests the method of the version_select_util.py file.
   """
   def setUp(self):
-    import imp
+    import importlib.util
 
     Logger.logger = MagicMock()
 

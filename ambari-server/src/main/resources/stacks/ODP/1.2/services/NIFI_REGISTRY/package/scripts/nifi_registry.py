@@ -32,8 +32,6 @@ from setup_ranger_nifi_registry import setup_ranger_nifi_registry
 
 import config_utils
 
-reload(sys)
-sys.setdefaultencoding('utf8')
 
 class Master(Script):
     def get_component_name(self):
@@ -255,7 +253,7 @@ class Master(Script):
              content=logback_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0400)
+             mode=0o400)
 
         #write out authorizers file
 
@@ -283,7 +281,7 @@ class Master(Script):
              content=providers_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0400)
+             mode=0o400)
 
         #write out nifi-env in bin as 0755 (see BUG-61769)
         env_content=InlineTemplate(params.nifi_registry_env_content)

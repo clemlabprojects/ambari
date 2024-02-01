@@ -16,7 +16,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import imp
+import importlib.util
 import math
 import os
 import re
@@ -31,10 +31,12 @@ if "BASE_SERVICE_ADVISOR" in os.environ:
 
 try:
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
 

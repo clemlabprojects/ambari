@@ -19,7 +19,7 @@ limitations under the License.
 import json
 import os
 import time
-import imp
+import importlib.util
 from unittest import TestCase
 from mock.mock import patch
 

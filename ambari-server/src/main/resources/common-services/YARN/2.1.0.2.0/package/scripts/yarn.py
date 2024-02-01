@@ -182,7 +182,7 @@ def yarn(name=None, config_dir=None):
     File(os.path.join(params.hadoop_bin, "task-controller"),
          owner="root",
          group=params.mapred_tt_group,
-         mode=06050
+         mode=0o6050
     )
     File(os.path.join(config_dir, 'taskcontroller.cfg'),
          owner = params.tc_owner,
@@ -296,7 +296,7 @@ def setup_historyserver():
                          type="directory",
                          owner=params.yarn_user,
                          group=params.user_group,
-                         mode=01777,
+                         mode=0o1777,
                          recursive_chmod=True
     )
 

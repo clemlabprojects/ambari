@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import imp
+import types
 import ambari_simplejson as json
 import logging
 import re
@@ -291,7 +291,7 @@ def f(args):
     if 'value' in jmx_info:
       realcode = re.sub('(\{(\d+)\})', 'args[\g<2>]', jmx_info['value'])
 
-      self.custom_module =  imp.new_module(str(uuid.uuid4()))
+      self.custom_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_TEMPLATE.format(realcode)
       exec(code, self.custom_module.__dict__)
 

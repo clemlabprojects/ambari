@@ -37,9 +37,6 @@ from resource_management.core.source import Template
 import nifi_cli
 import config_utils
 
-reload(sys)
-sys.setdefaultencoding('utf8')
-
 class Master(Script):
   def get_component_name(self):
     stack_name = default("/clusterLevelParams/stack_name", None)
@@ -277,11 +274,11 @@ class Master(Script):
 
     #write out logback.xml
     logback_content=InlineTemplate(params.nifi_node_logback_content)
-    File(format("{params.nifi_config_dir}/logback.xml"), content=logback_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/logback.xml"), content=logback_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #write out state-management.xml
     statemgmt_content=InlineTemplate(params.nifi_state_management_content)
-    File(format("{params.nifi_config_dir}/state-management.xml"), content=statemgmt_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/state-management.xml"), content=statemgmt_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #write out authorizers file
     authorizers_content=config_utils.append_xml_content(params.nifi_authorizers_content, params.nifi_authorizers_dict)
@@ -297,11 +294,11 @@ class Master(Script):
 
     #write out bootstrap-notification-services.xml
     boostrap_notification_content=config_utils.append_xml_content(params.nifi_boostrap_notification_content, params.nifi_boostrap_notification_dict)
-    File(format("{params.nifi_config_dir}/bootstrap-notification-services.xml"), content=boostrap_notification_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/bootstrap-notification-services.xml"), content=boostrap_notification_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #if security is enabled for kerberos create the nifi_jaas.conf file
     if params.security_enabled and params.stack_support_nifi_jaas:
-      File(params.nifi_jaas_conf, content=InlineTemplate(params.nifi_jaas_conf_template), owner=params.nifi_user, group=params.nifi_group, mode=0400)
+      File(params.nifi_jaas_conf, content=InlineTemplate(params.nifi_jaas_conf_template), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
 
 if __name__ == "__main__":

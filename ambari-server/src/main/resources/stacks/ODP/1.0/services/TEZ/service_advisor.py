@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+import importlib.util
 import os
 import traceback
 import re
@@ -35,10 +35,13 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
+
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class TezServiceAdvisor(service_advisor.ServiceAdvisor):
 
@@ -327,6 +330,7 @@ class TezRecommender(service_advisor.ServiceAdvisor):
 
   def __getJdkMajorVersion(self, javaHome):
     jdkVersion = subprocess.check_output([javaHome + "/bin/java", "-version"], stderr=subprocess.STDOUT)
+    jdkVersion = jdkVersion.decode()  # decode bytes to string
     pattern = '\"(\d+\.\d+).*\"'
     majorVersionString = re.search(pattern, jdkVersion).groups()[0]
     if majorVersionString:

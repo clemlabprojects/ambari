@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+from importlib.machinery import SourceFileLoader
 import os
 import traceback
 import re
@@ -34,7 +34,7 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, "rb") as fp:
-    service_advisor = imp.load_module("service_advisor", fp, PARENT_FILE, (".py", "rb", imp.PY_SOURCE))
+    service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
 except Exception as e:
   traceback.print_exc()
 
@@ -542,7 +542,7 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
       try:
         if ozone_site['ozone.acl.authorizer.class'].lower() != 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer'.lower():
           raise ValueError()
-      except (KeyError, ValueError), e:
+      except (KeyError, ValueError) as e:
         message = "ozone.acl.authorizer.class needs to be set to 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer' if Ranger Ozone Plugin is enabled."
         validationItems.append({"config-name": 'ozone.acl.authorizer.class',
                                 "item": self.getWarnItem(message)})

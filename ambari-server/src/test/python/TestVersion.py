@@ -26,7 +26,7 @@ class TestVersion(TestCase):
   of both Ambari (which use 3 digits separated by dots) and stacks (which use 4 digits separated by dots).
   """
   def setUp(self):
-    import imp
+    import importlib.util
 
     self.test_directory = os.path.dirname(os.path.abspath(__file__))
     test_file_path = os.path.join(self.test_directory, '../../../../ambari-common/src/main/python/resource_management/libraries/functions/version.py')

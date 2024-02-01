@@ -73,7 +73,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
         group=params.flink_group,
         mode=0o644
       )
-      File(format("{params.flink_restserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0400)
+      File(format("{params.flink_restserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0o400)
 
     # Configuring HistoryServer
     elif type == 'historyserver':

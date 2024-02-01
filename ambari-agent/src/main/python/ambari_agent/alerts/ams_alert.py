@@ -19,7 +19,7 @@ limitations under the License.
 """
 import http.client
 
-import imp
+import types
 import time
 import urllib.request, urllib.parse, urllib.error
 from alerts.metric_alert import MetricAlert
@@ -214,13 +214,13 @@ def f(args):
     if 'value' in metric_info:
       realcode = re.sub('(\{(\d+)\})', 'args[\g<2>][k]', metric_info['value'])
 
-      self.custom_value_module =  imp.new_module(str(uuid.uuid4()))
+      self.custom_value_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_VALUE_TEMPLATE.format(realcode)
       exec(code, self.custom_value_module.__dict__)
 
     if 'compute' in metric_info:
       realcode = metric_info['compute']
-      self.custom_compute_module =  imp.new_module(str(uuid.uuid4()))
+      self.custom_compute_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_COMPUTE_TEMPLATE.format(realcode)
       exec(code, self.custom_compute_module.__dict__)
 

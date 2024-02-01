@@ -25,7 +25,7 @@ from mock.mock import patch, MagicMock
 class TestHDP25StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.maxDiff = None
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))
 

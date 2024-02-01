@@ -17,7 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import os
-import imp
+import importlib.util
 import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,10 +26,12 @@ PARENT_FILE = os.path.join(SERVICE_DIR, 'service_advisor.py')
 
 try:
     with open(PARENT_FILE, 'rb') as fp:
-        service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+        spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+        service_advisor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(service_advisor)
 except Exception as e:
     traceback.print_exc()
-    print "Failed to load parent"
+    print("Failed to load parent")
 
 class NIFI170ServiceAdvisor(service_advisor.NIFI110ServiceAdvisor):
 

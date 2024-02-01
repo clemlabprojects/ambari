@@ -94,9 +94,9 @@ def setup_ranger_nifi_registry(upgrade_type=None):
                             cred_lib_path_override=cred_lib_prefix_path,
                             cred_setup_prefix_override=cred_setup_prefix_path)
                             
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-audit.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-security.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-audit.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-security.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
 
     else:
         Logger.info('Skipping Ranger integration for NiFi Registry setup.')

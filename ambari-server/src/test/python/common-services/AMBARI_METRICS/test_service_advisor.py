@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import imp
+import importlib.util
 import json
 import os
 from unittest import TestCase
@@ -31,11 +31,15 @@ class TestAMBARI_METRICS010ServiceAdvisor(TestCase):
 
   ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
   with open(ambari_configuration_path, 'rb') as fp:
-    imp.load_module('ambari_configuration', fp, ambari_configuration_path, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    ambari_configuration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ambari_configuration)
 
   stack_advisor_path = os.path.join(resources_path, 'stacks/stack_advisor.py')
   with open(stack_advisor_path, 'rb') as fp:
-    imp.load_module('stack_advisor', fp, stack_advisor_path, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('stack_advisor', stack_advisor_path)
+    stack_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stack_advisor)
 
   ambariMetrics010ServiceAdvisorPath = os.path.join(resources_path, 'common-services/AMBARI_METRICS/0.1.0/service_advisor.py')
   with open(ambariMetrics010ServiceAdvisorPath, 'rb') as fp:

@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+import importlib.util
 import os
 import traceback
 import inspect
@@ -35,10 +35,12 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent."
+  print("Failed to load parent")
 
 
 class HDFSServiceAdvisor(service_advisor.ServiceAdvisor):
@@ -870,7 +872,7 @@ class HDFSValidator(service_advisor.ServiceAdvisor):
       try:
         if hdfs_site['dfs.namenode.inode.attributes.provider.class'].lower() != 'org.apache.ranger.authorization.hadoop.RangerHdfsAuthorizer'.lower():
           raise ValueError()
-      except (KeyError, ValueError), e:
+      except (KeyError, ValueError) as e:
         message = "dfs.namenode.inode.attributes.provider.class needs to be set to 'org.apache.ranger.authorization.hadoop.RangerHdfsAuthorizer' if Ranger HDFS Plugin is enabled."
         validationItems.append({"config-name": 'dfs.namenode.inode.attributes.provider.class',
                                 "item": self.getWarnItem(message)})

@@ -22,7 +22,7 @@ import sys
 import fileinput
 import os
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
-import urllib.request , urllib.error, base64, httplib
+import urllib.request , urllib.error, base64
 from datetime import datetime
 from resource_management.core.resources.system import File, Directory, Execute
 from resource_management.libraries.resources.xml_config import XmlConfig
@@ -609,7 +609,7 @@ def check_ranger_service():
 def create_repo(url, data, usernamepassword):
   try:
     base_url = url + '/service/public/v2/api/service'
-    base64string = base64.('{0}'.format(usernamepassword)).replace('\n', '')
+    base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
     headers = {
       'Accept': 'application/json',
       "Content-Type": "application/json"

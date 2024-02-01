@@ -63,7 +63,7 @@ def tez(config_dir):
   File(tez_env_file_path,
        owner=params.tez_user,
        content=InlineTemplate(params.tez_env_sh_template),
-       mode=0555)
+       mode=0o555)
 
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)

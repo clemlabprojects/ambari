@@ -767,7 +767,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
       elif 'hbase-site' in services['configurations'] and key in services['configurations']["hbase-site"]["properties"]:
         hbase_coprocessor_classes = services['configurations']["hbase-site"]["properties"][key].strip()
       if hbase_coprocessor_classes:
-        hbaseCoProcessorConfigs[key] = hbase_coprocessor_classes.split(',')
+        hbaseCoProcessorConfigs[key] = list(hbase_coprocessor_classes.split(','))
 
     # If configurations has it - it has priority as it is calculated. Then, the service's configurations will be used.
     hbase_security_authorization = None

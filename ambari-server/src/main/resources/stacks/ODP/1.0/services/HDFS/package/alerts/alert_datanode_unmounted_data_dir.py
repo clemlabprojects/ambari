@@ -20,7 +20,7 @@ limitations under the License.
 
 import os
 import logging
-import urlparse
+from urllib.parse import urlparse
 
 from resource_management.libraries.functions import file_system
 from resource_management.libraries.functions import mounted_dirs_helper

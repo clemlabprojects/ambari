@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python Imports
-import imp
+import importlib.util
 import os
 import random
 import re
@@ -32,7 +32,11 @@ from math import ceil, floor
 from urllib.parse import urlparse
 
 # Local imports
-from ambari_configuration import AmbariConfiguration
+AMBARI_CONFIGURATION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ambari_configuration.py')
+with open(AMBARI_CONFIGURATION_PATH, 'r') as fp:
+  spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+  ambari_configuration = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(ambari_configuration)
 from resource_management.libraries.functions.data_structure_utils import get_from_dict
 from resource_management.core.exceptions import Fail
 
@@ -711,7 +715,8 @@ class DefaultStackAdvisor(StackAdvisor):
     if path is not None and os.path.exists(path) and class_name is not None:
       try:
         with open(path, 'r') as fp:
-          service_advisor = imp.load_module('service_advisor_impl', fp, path, ('.py', 'rb', imp.PY_SOURCE))
+          from importlib.machinery import SourceFileLoader
+          service_advisor = SourceFileLoader('service_advisor_impl', path).load_module()
 
           # Find the class name by reading from all of the available attributes of the python file.
           attributes = dir(service_advisor)
@@ -1901,7 +1906,7 @@ class DefaultStackAdvisor(StackAdvisor):
     :param services: the services structure containing the "ambari-server-configurations" block
     :return: an AmbariConfiguration
     """
-    return AmbariConfiguration(services)
+    return ambari_configuration.AmbariConfiguration(services)
 
   def is_secured_cluster(self, services):
     """
