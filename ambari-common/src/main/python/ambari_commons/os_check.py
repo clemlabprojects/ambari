@@ -22,6 +22,7 @@ import re
 import os
 import sys
 import platform
+import distro
 
 def _get_windows_version():
   """
@@ -193,7 +194,7 @@ class OSCheck:
         distribution = ("", "","")
     else:
       # linux distribution
-      distribution = platform.dist()
+      distribution = distro.linux_distribution()
         
     
 
