@@ -590,7 +590,7 @@ def check_ranger_service():
     policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
   ranger_adm_obj = Rangeradmin(url=policymgr_mgr_url)
   ambari_username_password_for_ranger = format("{ambari_ranger_admin}:{ambari_ranger_password}")
-  response_code = ranger_adm_obj.check_ranger_login_urllib2(policymgr_mgr_url)
+  response_code = ranger_adm_obj.check_ranger_login_urllib2(policymgr_mgr_url, ambari_username_password_for_ranger)
 
   if response_code is not None and response_code == 200:
     user_resp_code = ranger_adm_obj.create_ambari_admin_user(params.ambari_ranger_admin, params.ambari_ranger_password, params.admin_uname_password)
