@@ -100,6 +100,9 @@ def zookeeper(type = None, upgrade_type=None):
          owner=params.zk_user
     )
 
+  if(params.logback_support):
+    configFile("logback.xml", template_name="logback.xml.j2")
+
   if params.security_enabled:
     if type == "server":
       configFile("zookeeper_jaas.conf", template_name="zookeeper_jaas.conf.j2")
