@@ -109,3 +109,8 @@ if ('zookeeper-log4j' in config['configurations']) and ('content' in config['con
   log4j_props = config['configurations']['zookeeper-log4j']['content']
 else:
   log4j_props = None
+
+logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version):
+if logback_support:
+  zookeeper_log_level = str(default('configurations/zookeeper-log4j/zookeeper_log_level', "INFO"))
+  zookeeper_filename = format('zookeeper-{zk_user}-server-{hostname}.log')
