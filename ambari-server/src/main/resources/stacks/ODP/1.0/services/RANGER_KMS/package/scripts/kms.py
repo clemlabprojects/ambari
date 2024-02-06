@@ -95,7 +95,7 @@ def setup_java_patch():
 
     Execute(setup_java_patch, environment=env_dict, logoutput=True, user=params.kms_user, tries=5, try_sleep=10)
 
-    kms_lib_path = format('{kms_home}/ews/webapp/lib/')
+    kms_lib_path = format('{kms_home}/ews/lib/')
     files = os.listdir(kms_lib_path)
     hadoop_jar_files = []
 
@@ -105,10 +105,10 @@ def setup_java_patch():
 
     if len(hadoop_jar_files) != 0:
       for f in hadoop_jar_files:
-        Execute((format('{java_home}/bin/jar'),'-uf', format('{kms_home}/ews/webapp/lib/{f}'), format('{kms_home}/ews/webapp/META-INF/services/org.apache.hadoop.crypto.key.KeyProviderFactory')),
+        Execute((format('{java_home}/bin/jar'),'-uf', format('{kms_home}/ews/lib/{f}'), format('{kms_home}/ews/webapp/WEB-INF/classes/META-INF/services/org.apache.hadoop.crypto.key.KeyProviderFactory')),
           user=params.kms_user)
 
-        File(format('{kms_home}/ews/webapp/lib/{f}'), owner=params.kms_user, group=params.kms_group)
+        File(format('{kms_home}/ews/lib/{f}'), owner=params.kms_user, group=params.kms_group)
 
 def do_keystore_setup(cred_provider_path, credential_alias, credential_password):
   import params
@@ -169,14 +169,14 @@ def kms(upgrade_type=None):
 
     cp = format("{check_db_connection_jar}")
     if params.db_flavor.lower() == 'sqla':
-      cp = cp + os.pathsep + format("{kms_home}/ews/webapp/lib/sajdbc4.jar")
+      cp = cp + os.pathsep + format("{kms_home}/ews/lib/sajdbc4.jar")
     else:
-      path_to_jdbc = format("{kms_home}/ews/webapp/lib/{jdbc_jar_name}")
+      path_to_jdbc = format("{kms_home}/ews/lib/{jdbc_jar_name}")
       if not os.path.isfile(path_to_jdbc):
-        path_to_jdbc = format("{kms_home}/ews/webapp/lib/") + \
+        path_to_jdbc = format("{kms_home}/ews/lib/") + \
                        params.default_connectors_map[params.db_flavor.lower()] if params.db_flavor.lower() in params.default_connectors_map else None
         if not os.path.isfile(path_to_jdbc):
-          path_to_jdbc = format("{kms_home}/ews/webapp/lib/") + "*"
+          path_to_jdbc = format("{kms_home}/ews/lib/") + "*"
           error_message = "Error! Sorry, but we can't find jdbc driver with default name " + params.default_connectors_map[params.db_flavor] + \
                 " in ranger kms lib dir. So, db connection check can fail. Please run 'ambari-server setup --jdbc-db={db_name} --jdbc-driver={path_to_jdbc} on server host.'"
           Logger.error(error_message)
@@ -362,7 +362,7 @@ def copy_jdbc_connector(kms_home):
     if params.previous_jdbc_jar and os.path.isfile(params.previous_jdbc_jar):
       File(params.previous_jdbc_jar, action='delete')
 
-  driver_curl_target = format("{kms_home}/ews/webapp/lib/{jdbc_jar_name}")
+  driver_curl_target = format("{kms_home}/ews/lib/{jdbc_jar_name}")
 
   File(params.downloaded_custom_connector,
     content = DownloadSource(params.driver_curl_source),
@@ -376,7 +376,7 @@ def copy_jdbc_connector(kms_home):
   if params.db_flavor.lower() == 'sqla':
     Execute(('tar', '-xvf', params.downloaded_custom_connector, '-C', params.tmp_dir), sudo = True)
 
-    Execute(('cp', '--remove-destination', params.jar_path_in_archive, os.path.join(kms_home, 'ews', 'webapp', 'lib')),
+    Execute(('cp', '--remove-destination', params.jar_path_in_archive, os.path.join(kms_home, 'ews', 'lib')),
       path=["/bin", "/usr/bin/"],
       sudo=True)
 
@@ -389,11 +389,11 @@ def copy_jdbc_connector(kms_home):
 
     File(os.path.join(kms_home, 'ews', 'webapp', 'WEB-INF', 'lib', 'sajdbc4.jar'), mode=0644)
   else:
-    Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(kms_home, 'ews', 'webapp', 'lib')),
+    Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(kms_home, 'ews', 'lib')),
       path=["/bin", "/usr/bin/"],
       sudo=True)
 
-    File(os.path.join(kms_home, 'ews', 'webapp', 'lib', params.jdbc_jar_name), mode=0644)
+    File(os.path.join(kms_home, 'ews', 'lib', params.jdbc_jar_name), mode=0644)
 
   ModifyPropertiesFile(format("{kms_home}/install.properties"),
     properties = params.config['configurations']['kms-properties'],
@@ -402,7 +402,7 @@ def copy_jdbc_connector(kms_home):
 
   if params.db_flavor.lower() == 'sqla':
     ModifyPropertiesFile(format("{kms_home}/install.properties"),
-      properties = {'SQL_CONNECTOR_JAR': format('{kms_home}/ews/webapp/lib/sajdbc4.jar')},
+      properties = {'SQL_CONNECTOR_JAR': format('{kms_home}/ews/lib/sajdbc4.jar')},
       owner = params.kms_user,
     )
   else:
