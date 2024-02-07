@@ -159,6 +159,13 @@ def hdfs(name=None):
        owner=tc_owner,
        content=Template("slaves.j2")
   )
+  if(params.logback_support):
+    File(os.path.join(params.hadoop_conf_dir, "logback.xml"),
+      owner=params.hdfs_user,
+      group=params.user_group,
+      content=Template("zookeeper-logback.xml.j2"),
+      mode=0644
+    )
   
   install_lzo_if_needed()
       
