@@ -31,6 +31,7 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <final.name>${project.artifactId}-${project.version}</final.name>
+    <ambari.arch>x86_64</ambari.arch>
     <package.release>1</package.release>
     <package.prefix>/usr</package.prefix>
     <package.log.dir>/var/log/ambari-agent</package.log.dir>
@@ -343,7 +344,7 @@
             <fileEncoding>utf-8</fileEncoding>
           </postremoveScriptlet>
 
-          <needarch>x86_64</needarch>
+          <needarch>${ambari.arch}</needarch>
           <autoRequires>false</autoRequires>
           <mappings combine.children="append">
             <mapping>
