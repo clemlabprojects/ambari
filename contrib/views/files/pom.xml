@@ -188,10 +188,10 @@
       <plugin>
         <groupId>com.github.eirslett</groupId>
         <artifactId>frontend-maven-plugin</artifactId>
-        <version>1.4</version>
+        <version>1.15.0</version>
         <configuration>
-          <nodeVersion>v4.5.0</nodeVersion>
-          <yarnVersion>v0.23.2</yarnVersion>
+          <nodeVersion>v16.20.2</nodeVersion>
+          <yarnVersion>v1.22.19</yarnVersion>
           <workingDirectory>src/main/resources/ui/</workingDirectory>
           <npmInheritsProxyConfigFromMaven>false</npmInheritsProxyConfigFromMaven>
           <!-- setting npm_config_tmp environment variable is a workaround for 
