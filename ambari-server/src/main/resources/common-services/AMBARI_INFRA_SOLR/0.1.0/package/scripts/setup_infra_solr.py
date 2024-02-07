@@ -78,7 +78,7 @@ def setup_infra_solr(name = None):
          content=InlineTemplate(params.infra_solr_security_json_content),
          owner=params.infra_solr_user,
          group=params.user_group,
-         mode=0640
+         mode=0o640
          )
 
     if params.security_enabled:
@@ -90,7 +90,7 @@ def setup_infra_solr(name = None):
            content=Template("infra-solr-security.json.j2"),
            owner=params.infra_solr_user,
            group=params.user_group,
-           mode=0640)
+           mode=0o640)
     if os.path.exists(params.limits_conf_dir):
       File(os.path.join(params.limits_conf_dir, 'infra-solr.conf'),
            owner='root',

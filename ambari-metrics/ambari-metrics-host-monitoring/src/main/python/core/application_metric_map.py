@@ -117,13 +117,13 @@ class ApplicationMetricMap:
   def get_start_time(self, app_id, metric_id):
     with self.lock:
       if app_id in self.cached_metric_map:
-        if self.cached_metric_map.get(app_id).has_key(metric_id):
+        if metric_id in self.cached_metric_map.get(app_id):
           metrics = self.cached_metric_map.get(app_id).get(metric_id)
-          return min(metrics.iterkeys())
-      if self.app_metric_map.has_key(app_id):
-        if self.app_metric_map.get(app_id).has_key(metric_id):
+          return min(metrics.keys())
+      if app_id in self.app_metric_map:
+        if metric_id in self.app_metric_map.get(app_id):
           metrics = self.app_metric_map.get(app_id).get(metric_id)
-          return min(metrics.iterkeys())
+          return min(metrics.keys())
   pass
 
   def format_app_id(self, app_id, instance_id = None):

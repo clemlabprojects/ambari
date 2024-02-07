@@ -299,6 +299,9 @@
             <package>
               <name>hive_${stack_version}-hcatalog</name>
             </package>
+            <package>
+              <name>atlas_${stack_version}-hive-hook</name>
+            </package> 
           </packages>
         </osSpecific>
         <osSpecific>

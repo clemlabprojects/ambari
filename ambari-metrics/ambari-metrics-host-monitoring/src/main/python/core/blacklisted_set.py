@@ -26,19 +26,20 @@ class BlacklistedSet(set):
   def __init__(self, items=[], blacklist_timeout=BLACKLIST_TIMEOUT):
     self.__dict = {}
     self.__blacklist_timeout = blacklist_timeout
-    # Python 3 add method does not user instance override but class override
     for item in items:
-      self.__dict[item] = time.time()
       set.add(self, item)
 
+  def add(self, item):
+    self.__dict[item] = time.time()
+    set.add(self, item)
+
   def __contains__(self, item):
-    return set.__contains__(self, item) and (item not in self.__dict or time.time() < self.__dict.get(item))
+    return item in self.__dict and time.time() > self.__dict.get(item)
 
   def __iter__(self):
-    for item in super().__iter__():
-      if self.__dict.get(item) is not None:
-        if time.time() > self.__dict.get(item):
-            yield item
+    for item in set.__iter__(self):
+      if time.time() > self.__dict.get(item, 0):
+        yield item
 
   def get_actual_size(self):
     size = 0

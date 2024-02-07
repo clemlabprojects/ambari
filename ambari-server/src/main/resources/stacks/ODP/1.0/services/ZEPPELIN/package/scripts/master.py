@@ -669,7 +669,7 @@ class Master(Script):
            content=interpreter_json,
            owner=params.zeppelin_user,
            group=params.zeppelin_group,
-           mode=0664)
+           mode=0o664)
 
       if params.conf_stored_in_hdfs:
         params.HdfsResource(self.get_zeppelin_conf_FS(params),

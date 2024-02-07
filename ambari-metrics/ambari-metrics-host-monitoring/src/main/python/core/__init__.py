@@ -26,13 +26,13 @@ path = os.path.join(os.path.dirname(os.path.dirname(path)), "psutil", "build")
 IS_WINDOWS = platform.system() == "Windows"
 
 if not IS_WINDOWS:
-    # Use os.scandir() instead of os.walk() for efficiency
-    with os.scandir(path) as it:
-        for entry in it:
-            if entry.is_dir() and 'lib' in entry.name:
-                sys.path.insert(1, os.path.join(path, entry.name))
+  for root, dirs, files in os.walk(path):
+    for dir in dirs:
+      if 'lib' in dir:
+        sys.path.insert(1, os.path.join(path, dir))
 
 try:
   import psutil
 except ImportError:
-  print("psutil binaries need to be built by running, psutil/build.py \n manually or by running a, mvn clean package, command.")
+  print('psutil binaries need to be built by running, psutil/build.py ' \
+        'manually or by running a, mvn clean package, command.')

@@ -65,8 +65,8 @@ def server_process_main(stop_handler, scmStatus=None):
   logger.info('Starting Server RPC Thread: %s' % ' '.join(sys.argv))
   controller.start()
 
-  print "Server out at: " + main_config.ams_monitor_out_file()
-  print "Server log at: " + main_config.ams_monitor_log_file()
+  print("Server out at: " + main_config.ams_monitor_out_file()) 
+  print("Server log at: " + main_config.ams_monitor_log_file())
 
   save_pid(os.getpid(), PID_OUT_FILE)
 

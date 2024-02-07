@@ -56,7 +56,7 @@ class RangeradminV2:
     if self.skip_if_rangeradmin_down:
       Logger.info("RangeradminV2: Skip ranger admin if it's down !")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def get_repository_by_name_urllib2(self, name, component, status, usernamepassword):
     """
     :param name: name of the component, from which, function will search in list of repositories
@@ -68,13 +68,13 @@ class RangeradminV2:
     try:
       search_repo_url = self.url_repos_pub + "?name=" + name + "&type=" + component + "&status=" + status
       request = urllib.request.Request(search_repo_url)
-      base_64_string = base64.encodestring(usernamepassword).replace('\n', '')
+      base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(result.read().decode())
       if response_code == 200 and len(response) > 0:
         for repo in response:
           repo_dump = json.loads(json.JSONEncoder().encode(repo))
@@ -150,7 +150,7 @@ class RangeradminV2:
           break
 
     if not is_stack_supports_ranger_kerberos or not is_security_enabled:
-      repo_data = json.dumps(repo_properties)
+      repo_data = json.dumps(repo_properties).encode('utf-8')
       retryCount = 0
       while retryCount <= 5:
         repo = self.get_repository_by_name_urllib2(repo_name, component, 'true', ambari_username_password_for_ranger)
@@ -175,7 +175,7 @@ class RangeradminV2:
 
       if response and response[0] == 200:
         retryCount = 0
-        repo_data = json.dumps(repo_properties)
+        repo_data = json.dumps(repo_properties).encode('utf-8')
         while retryCount <= 5:
           response = self.get_repository_by_name_curl(component_user,component_user_keytab,component_user_principal,repo_name, component, 'true')
           if response is not None:
@@ -196,7 +196,7 @@ class RangeradminV2:
       else:
         Logger.error("Connection failed to Ranger Admin !")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_repository_urllib2(self, data, usernamepassword):
     """
     :param data: json object to create repository
@@ -205,7 +205,7 @@ class RangeradminV2:
     """
     try:
       search_repo_url = self.url_repos_pub
-      base_64_string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+      base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       headers = {
         'Accept': 'application/json',
         "Content-Type": "application/json"
@@ -231,7 +231,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_policy_urllib2(self, data, ambari_ranger_admin, ambari_ranger_password):
     """
     :param data: json object to create policy
@@ -239,20 +239,20 @@ class RangeradminV2:
     :password: ambari_ranger_password ranger admin password
     :return: Returns created Ranger reposipolicytory object
     """
-    policy_data = json.dumps(data)
-    ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
+    policy_data = json.dumps(data).encode('utf-8')
+    ambari_username_password_for_ranger = f'{ambari_ranger_admin}:{ambari_ranger_password}'
     try:
       search_policy_url = self.url_policies
-      base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
+      base_64_string = base64.b64encode(ambari_username_password_for_ranger.encode()).decode().replace('\n', '')
       headers = {
-        'Accept': 'application/json',
-        "Content-Type": "application/json"
+          'Accept': 'application/json',
+          "Content-Type": "application/json"
       }
       request = urllib.request.Request(search_policy_url, policy_data, headers)
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
-      result = openurl(request, timeout=20)
+      result = urllib.request.urlopen(request, timeout=20)  # Use urlopen
       response_code = result.getcode()
-      response = json.loads(json.JSONEncoder().encode(result.read()))
+      response = json.loads(result.read().decode('utf-8'))  # Decode bytes to string
 
       if response_code == 200:
         Logger.info('Policy created Successfully')
@@ -264,11 +264,11 @@ class RangeradminV2:
         raise Fail('Policy creation failed')
     except urllib.error.URLError as e:
       if isinstance(e, urllib.error.HTTPError):
-        return_message = e.read()
+        return_message = e.read().decode()
         if "Another policy already exists for this name" in return_message:
           Logger.info('Policy already exists')
         else:
-          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating policy. Reason - {0}.".format(e.reason))
     except http.client.BadStatusLine:
@@ -276,7 +276,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1, err_class=Fail, return_on_fail=None)
   def check_ranger_login_urllib2(self, url, ambari_username_password_for_ranger, user_login_check="admin"):
     """
     :param url: ranger admin host url
@@ -286,7 +286,7 @@ class RangeradminV2:
     try:
       login_url = format('{url}/service/users/1') if user_login_check is 'admin' else format('{url}/service/xusers/users/userName/{user_login_check}')
       search_policy_url = self.url_policies
-      base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
+      base_64_string = base64.b64encode(ambari_username_password_for_ranger.encode()).decode().replace('\n', '')
       headers = {
         "Content-Type": "application/json"
       }
@@ -297,7 +297,7 @@ class RangeradminV2:
       return response_code
     except urllib.error.URLError as e:
       if isinstance(e, urllib.error.HTTPError):
-        raise Fail("Connection failed to Ranger Admin. Http status code - {0}. \n {1}".format(e.code, e.read()))
+        raise Fail("Connection failed to Ranger Admin. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Connection failed to Ranger Admin. Reason - {0}.".format(e.reason))
     except http.client.BadStatusLine as e:
@@ -305,7 +305,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection failed to Ranger Admin. Reason - timeout")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_ambari_admin_user(self, ambari_admin_username, ambari_admin_password, usernamepassword):
     """
     :param ambari_admin_username: username of user to be created
@@ -320,13 +320,13 @@ class RangeradminV2:
     try:
       url =  self.url_users + '?name=' + str(ambari_admin_username)
       request = urllib.request.Request(url)
-      base_64_string = base64.encodestring(usernamepassword).replace('\n', '')
+      base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(result.read().decode())
       if response_code == 200 and len(response['vXUsers']) >= 0:
         for vxuser in response['vXUsers']:
           if vxuser['name'] == ambari_admin_username:
@@ -348,8 +348,8 @@ class RangeradminV2:
           admin_user['password'] = ambari_admin_password
           admin_user['description'] = ambari_admin_username
           admin_user['firstName'] = ambari_admin_username
-          data =  json.dumps(admin_user)
-          base_64_string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+          data =  json.dumps(admin_user).encode('utf-8')
+          base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
           headers = {
             'Accept': 'application/json',
             "Content-Type": "application/json"
@@ -358,7 +358,7 @@ class RangeradminV2:
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
-          response = json.loads(json.JSONEncoder().encode(result.read()))
+          response = json.loads(result.read().decode())
           if response_code == 200 and response is not None:
             Logger.info('Ambari admin user creation successful.')
             return response_code
@@ -369,7 +369,7 @@ class RangeradminV2:
         return None
     except urllib.error.URLError as e:
       if isinstance(e, urllib.error.HTTPError):
-        raise Fail("Error creating ambari admin user. Http status code - {0}. \n {1}".format(e.code, e.read()))
+        raise Fail("Error creating ambari admin user. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating ambari admin user. Reason - {0}.".format(e.reason))
     except http.client.BadStatusLine:
@@ -377,7 +377,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_rangerlookup_user(self, ranger_admin_username, ranger_admin_password, ranger_lookup_password, usernamepassword):
     """
     :param ranger_admin_username: admin username
@@ -393,7 +393,7 @@ class RangeradminV2:
       Logger.info('Cheking if rangerlookup user already exists')
       url =  self.url_users + '?name=' + str('rangerlookup')
       request = urllib.request.Request(url)
-      base_64_string = base64.encodestring(usernamepassword).replace('\n', '')
+      base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
@@ -421,8 +421,8 @@ class RangeradminV2:
           rangerlookup_user['password'] = ranger_lookup_password
           rangerlookup_user['description'] = 'rangerlookup user needed for repository creation'
           rangerlookup_user['firstName'] = 'rangerlookup'
-          data =  json.dumps(rangerlookup_user)
-          base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+          data =  json.dumps(rangerlookup_user).encode('utf-8')
+          base_64_string = base64.b64encode(f"{ranger_admin_username}:{ranger_admin_password}".encode()).decode().replace('\n', '')
           headers = {
             'Accept': 'application/json',
             "Content-Type": "application/json"
@@ -442,7 +442,7 @@ class RangeradminV2:
         return None
     except urllib.error.URLError as e:
       if isinstance(e, urllib.error.HTTPError):
-        raise Fail("Error creating rangerlookup user. Http status code - {0}. \n {1}".format(e.code, e.read()))
+        raise Fail("Error creating rangerlookup user. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating rangerlookup user. Reason - {0}.".format(e.reason))
     except http.client.BadStatusLine:
@@ -470,7 +470,7 @@ class RangeradminV2:
 
     return response, error_msg, time_millis
 
-  @safe_retry(times=75, sleep_time=8, backoff_factor=1, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=75, sleep_time=1, backoff_factor=1, err_class=Fail, return_on_fail=None)
   def check_ranger_login_curl(self, component_user,component_user_keytab,component_user_principal,base_url,Boolean_True):
     """
     :param url: ranger admin host url
@@ -487,7 +487,7 @@ class RangeradminV2:
 
     return response, error_msg,time_millis
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def get_repository_by_name_curl(self, component_user, component_user_keytab, component_user_principal, name, component, status, is_keyadmin = False):
     """
     :param component_user: service user for which call is to be made
@@ -516,7 +516,7 @@ class RangeradminV2:
     except Exception as err:
       raise Fail('Error in call for getting Ranger service:\n {0}'.format(err))
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def create_repository_curl(self, component_user, component_user_keytab, component_user_principal, name, data, policy_user, is_keyadmin = False):
     """
     :param component_user: service user for which call is to be made
@@ -551,7 +551,7 @@ class RangeradminV2:
     except Exception as err:
       raise Fail('Error in call for creating Ranger service:\n {0}'.format(err))
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def update_repository_urllib2(self, component, repo_name, repo_properties, admin_user, admin_password, force_rename = False):
     """
     param component: name of service supported by Ranger Admin
@@ -565,9 +565,9 @@ class RangeradminV2:
       update_repo_url = self.url_repos_pub + "/name/" + repo_name
       if force_rename:
         update_repo_url = update_repo_url + "?forceRename=true"
-      repo_update_data = json.dumps(repo_properties)
+      repo_update_data = json.dumps(repo_properties).encode('utf-8')
       usernamepassword = admin_user + ":" + admin_password
-      base_64_string = base64.encodestring("{0}".format(usernamepassword)).replace("\n", "")
+      base_64_string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json'
@@ -594,7 +594,7 @@ class RangeradminV2:
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
 
-  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
   def update_repository_curl(self, component, repo_name, repo_properties, component_user, component_user_principal, component_user_keytab, force_rename = False):
     """
     param component: name of service supported by Ranger Admin
@@ -609,7 +609,7 @@ class RangeradminV2:
       update_repo_url = self.url_repos_pub + "/name/" + repo_name
       if force_rename:
         update_repo_url = update_repo_url + "?forceRename=true"
-      repo_update_data = json.dumps(repo_properties)
+      repo_update_data = json.dumps(repo_properties).encode('utf-8')
       header = "Content-Type: application/json"
       method = "PUT"
 

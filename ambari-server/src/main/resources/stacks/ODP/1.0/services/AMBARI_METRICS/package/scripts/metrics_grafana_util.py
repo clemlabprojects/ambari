@@ -53,7 +53,7 @@ def perform_grafana_get_call(url, server):
     import params
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, GRAFANA_CONNECT_TRIES):
+  for i in range(0, GRAFANA_CONNECT_TRIES):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -63,7 +63,7 @@ def perform_grafana_get_call(url, server):
         ssl_version=Script.get_force_https_protocol_value()
       )
 
-      userAndPass = b64encode('{0}:{1}'.format(server.user, server.password))
+      userAndPass = b64encode(f'{server.user}:{server.password}'.encode()).decode()
       headers = { 'Authorization' : 'Basic %s' %  userAndPass }
 
       Logger.info("Connecting (GET) to %s:%s%s" % (server.host, server.port, url))
@@ -87,7 +87,7 @@ def perform_grafana_get_call(url, server):
 def perform_grafana_put_call(url, id, payload, server):
   response = None
   data = None
-  userAndPass = b64encode('{0}:{1}'.format(server.user, server.password))
+  userAndPass = b64encode(f'{server.user}:{server.password}'.encode()).decode()
   headers = {"Content-Type": "application/json",
              'Authorization' : 'Basic %s' %  userAndPass }
   grafana_https_enabled = server.protocol.lower() == 'https'
@@ -97,7 +97,7 @@ def perform_grafana_put_call(url, id, payload, server):
     import params
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, GRAFANA_CONNECT_TRIES):
+  for i in range(0, GRAFANA_CONNECT_TRIES):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -127,7 +127,7 @@ def perform_grafana_put_call(url, id, payload, server):
 def perform_grafana_post_call(url, payload, server):
   response = None
   data = None
-  userAndPass = b64encode('{0}:{1}'.format(server.user, server.password))
+  userAndPass = b64encode(f'{server.user}:{server.password}'.encode()).decode()
   Logger.debug('POST payload: %s' % payload)
   headers = {"Content-Type": "application/json", "Content-Length" : len(payload),
              'Authorization' : 'Basic %s' %  userAndPass}
@@ -138,7 +138,7 @@ def perform_grafana_post_call(url, payload, server):
     import params
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, GRAFANA_CONNECT_TRIES):
+  for i in range(0, GRAFANA_CONNECT_TRIES):
     try:
       Logger.info("Connecting (POST) to %s:%s%s" % (server.host, server.port, url))
       conn = network.get_http_connection(
@@ -183,7 +183,7 @@ def perform_grafana_delete_call(url, server):
     import params
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, GRAFANA_CONNECT_TRIES):
+  for i in range(0, GRAFANA_CONNECT_TRIES):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -192,7 +192,7 @@ def perform_grafana_delete_call(url, server):
         ssl_version=Script.get_force_https_protocol_value()
       )
 
-      userAndPass = b64encode('{0}:{1}'.format(server.user, server.password))
+      userAndPass = b64encode(f'{server.user}:{server.password}'.encode()).decode()
       headers = { 'Authorization' : 'Basic %s' %  userAndPass }
 
       Logger.info("Connecting (DELETE) to %s:%s%s" % (server.host, server.port, url))
@@ -321,7 +321,7 @@ def create_ams_datasource():
   if response and response.status == 200:
     datasources = response.read()
     datasources_json = json.loads(datasources)
-    for i in xrange(0, len(datasources_json)):
+    for i in range(0, len(datasources_json)):
       datasource_name = datasources_json[i]["name"]
       if datasource_name == METRICS_GRAFANA_DATASOURCE_NAME:
         create_datasource = False # datasource already exists

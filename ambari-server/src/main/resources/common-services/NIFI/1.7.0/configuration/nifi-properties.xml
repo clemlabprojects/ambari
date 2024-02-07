@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+
+    <property>
+      <name>nifi.version</name>
+      <value>1.7.0.{{stack_version_buildnum}}</value>
+      <on-ambari-upgrade add="true" update="true" delete="false"/>
+      <description>The version number of the current release.</description>
+    </property>
+
+    <!-- write ahead log impl -->
+
+    <property>
+        <name>nifi.flowfile.repository.wal.implementation</name>
+        <value>org.apache.nifi.wali.SequentialAccessWriteAheadLog</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>
+            If the repository implementation is configured to use the `WriteAheadFlowFileRepository`, this property can be used to specify which implementation of the
+            Write-Ahead Log should be used. The default value is `org.apache.nifi.wali.SequentialAccessWriteAheadLog`. This version of the write-ahead log was added in
+            version 1.6.0 of Apache NiFi and was developed in order to address an issue that exists in the older implementation. In the event of power loss or an
+            operating system crash, the old implementation was susceptible to recovering FlowFiles incorrectly. This could potentially lead to the wrong attributes or
+            content being assigned to a FlowFile upon restart, following the power loss or OS crash. However, one can still choose to opt into using the previous
+            implementation and accept that risk, if desired (for example, if the new implementation were to exhibit some unexpected error). To do so, set the value of
+            this property to `org.wali.MinimalLockingWriteAheadLog`. If the value of this property is changed, upon restart, NiFi will still recover the records written
+            using the previously configured repository and delete the files written by the previously configured implementation.
+        </description>
+    </property>
+
+    <!-- default backpressure config -->
+
+    <property>
+        <name>nifi.queue.backpressure.count</name>
+        <value>10000</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>When drawing a new connection between two components, this is the default value for that connection's back pressure object threshold. The default is `10000` and the value must be an integer.</description>
+    </property>
+
+    <property>
+        <name>nifi.queue.backpressure.size</name>
+        <value>1 GB</value>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>When drawing a new connection between two components, this is the default value for that connection's back pressure data size threshold. The default is `1 GB` and the value must be a data size including the unit of measure.</description>
+    </property>
+
+    <!-- dn example identity mapping transform -->
+
+    <property>
+        <name>nifi.security.identity.mapping.transform.dn</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Transform to apply to mapped identity for this mapping. Valid options are NONE, UPPER, and LOWER and defaults to NONE if not specified.</description>
+    </property>
+
+    <!-- kerb example identity mapping transform -->
+
+    <property>
+        <name>nifi.security.identity.mapping.transform.kerb</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Transform to apply to mapped identity for this mapping. Valid options are NONE, UPPER, and LOWER and defaults to NONE if not specified.</description>
+    </property>
+
+    <!-- any group example name mapping and transform -->
+
+    <property>
+        <name>nifi.security.group.mapping.pattern.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Sample pattern property to demonstrate normalizing group names. Create your own patterns using nifi.security.group.mapping.pattern.XXX convention. Sample pattern: ^(.*)$</description>
+    </property>
+
+    <property>
+        <name>nifi.security.group.mapping.value.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Sample value property to demonstrate normalizing and transforming group names. Set values for your own patterns using nifi.security.group.mapping.value.XXX convention. Sample value: $1</description>
+    </property>
+
+    <property>
+        <name>nifi.security.group.mapping.transform.anygroup</name>
+        <value/>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+        <description>Transform to apply to mapped group name for this mapping. Valid options are NONE, UPPER, and LOWER and defaults to NONE if not specified.</description>
+    </property>
+
+</configuration>

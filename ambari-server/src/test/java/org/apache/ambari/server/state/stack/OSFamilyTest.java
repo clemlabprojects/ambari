@@ -65,7 +65,7 @@ public class OSFamilyTest {
            "oraclelinux6", "win2008server6", "oraclelinux7", "oraclelinux8",
            "sled11", "centos8", "win2012server6", "centos6", "centos7", "centos5", "fedora7",
            "almalinux7", "fedora8", "almalinux8", "fedora5", "almalinux5", "fedora6", "almalinux6", "redhat5", "redhat7", "win2008serverr26"
-           , "redhat6", "redhat8", "redhat9" "win2012serverr26", "debian12", "opensuse11", "suse11", "sles11",
+           , "redhat6", "redhat8", "redhat9", "win2012serverr26", "debian12", "opensuse11", "suse11", "sles11",
            "oraclelinux5", "ubuntu12"
    ));
 

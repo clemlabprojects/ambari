@@ -276,7 +276,7 @@ def kms(upgrade_type=None):
     do_keystore_setup(params.credential_provider_path, params.jdbc_alias, params.db_password)
     do_keystore_setup(params.credential_provider_path, params.masterkey_alias, params.kms_master_key_password)
     if params.stack_support_kms_hsm and params.enable_kms_hsm:
-      do_keystore_setup(params.credential_provider_path, params.hms_partition_alias, unicode(params.hms_partition_passwd))
+      do_keystore_setup(params.credential_provider_path, params.hms_partition_alias, params.hms_partition_passwd)
     if params.stack_supports_ranger_kms_ssl and params.ranger_kms_ssl_enabled:
       do_keystore_setup(params.ranger_kms_cred_ssl_path, params.ranger_kms_ssl_keystore_alias, params.ranger_kms_ssl_passwd)
 

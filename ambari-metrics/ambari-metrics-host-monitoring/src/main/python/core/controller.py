@@ -20,15 +20,15 @@ limitations under the License.
 
 import logging
 import threading
-from Queue import Queue
+from queue import Queue
 from threading import Timer
-from application_metric_map import ApplicationMetricMap
-from event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
-from metric_collector import MetricsCollector
-from emitter import Emitter
-from host_info import HostInfo
-from aggregator import Aggregator
-from aggregator import AggregatorWatchdog
+from resource_monitoring.core.application_metric_map import ApplicationMetricMap
+from resource_monitoring.core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
+from resource_monitoring.core.metric_collector import MetricsCollector
+from resource_monitoring.core.emitter import Emitter
+from resource_monitoring.core.host_info import HostInfo
+from resource_monitoring.core.aggregator import Aggregator
+from resource_monitoring.core.aggregator import AggregatorWatchdog
 
 
 logger = logging.getLogger()
@@ -107,7 +107,7 @@ class Controller(threading.Thread):
     try:
       host_metrics_groups = self.metrics_config['host_metric_groups']
       process_metrics_groups = self.metrics_config['process_metric_groups']
-    except KeyError, ke:
+    except KeyError as ke:
       logger.warn('Error loading metric groups.')
       raise ke
     pass
@@ -121,7 +121,7 @@ class Controller(threading.Thread):
     pass
 
     # if process_metrics_groups:
-    #   for name, properties in process_metrics_groups.items():
+    #   for name, properties in process_metrics_groups.iteritems():
     #     event = ProcessMetricCollectEvent(properties, name)
     #     logger.info('Adding event to cache, {0} : {1}'.format(name, properties))
     #     #self.events_cache.append(event)

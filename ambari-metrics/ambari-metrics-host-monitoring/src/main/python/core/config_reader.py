@@ -19,7 +19,7 @@ limitations under the License.
 '''
 
 import configparser
-from io import StringIO
+import io
 import json
 import os
 
@@ -151,7 +151,7 @@ class Configuration:
     if os.path.exists(CONFIG_FILE_PATH):
       self.config.read(CONFIG_FILE_PATH)
     else:
-      self.config.readfp(StringIO(config_content))
+      self.config.readfp(io.StringIO(config_content))
     pass
     if os.path.exists(METRIC_FILE_PATH):
       with open(METRIC_FILE_PATH, 'r') as f:

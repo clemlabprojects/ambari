@@ -21,10 +21,10 @@ limitations under the License.
 import logging
 import threading
 
-from security import CachedHTTPSConnection, CachedHTTPConnection
-from blacklisted_set import BlacklistedSet
-from config_reader import ROUND_ROBIN_FAILOVER_STRATEGY
-from spnego_kerberos_auth import SPNEGOKerberosAuth
+from resource_monitoring.core.security import CachedHTTPSConnection, CachedHTTPConnection
+from resource_monitoring.core.blacklisted_set import BlacklistedSet
+from resource_monitoring.core.config_reader import ROUND_ROBIN_FAILOVER_STRATEGY
+from resource_monitoring.core.spnego_kerberos_auth import SPNEGOKerberosAuth
 
 logger = logging.getLogger()
 
@@ -68,9 +68,10 @@ class Emitter(threading.Thread):
 
     if self.is_collector_https_enabled:
       self.ca_certs = config.get_ca_certs()
+
     # TimedRoundRobinSet
     if config.get_failover_strategy() == ROUND_ROBIN_FAILOVER_STRATEGY:
-      self.active_collector_hosts = BlacklistedSet(self.all_metrics_collector_hosts, int(config.get_failover_strategy_blacklisted_interval_seconds()))
+      self.active_collector_hosts = BlacklistedSet(self.all_metrics_collector_hosts, float(config.get_failover_strategy_blacklisted_interval_seconds()))
     else:
       raise Exception(-1, "Uknown failover strategy {0}".format(config.get_failover_strategy()))
 
@@ -106,7 +107,6 @@ class Emitter(threading.Thread):
       success = self.try_with_collector(self.inmemory_aggregation_protocol, "localhost", self.inmemory_aggregation_port, data)
       if not success:
         logger.warning("Failed to submit metrics to local aggregator. Trying to post them to collector...")
-
     while not success and self.active_collector_hosts.get_actual_size() > 0:
       collector_host = self.get_collector_host_shard()
       success = self.try_with_collector(self.collector_protocol, collector_host, self.collector_port, data)

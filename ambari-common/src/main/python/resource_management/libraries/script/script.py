@@ -427,7 +427,7 @@ class Script(object):
 
       pids.append(sudo.read_file(pid_file).strip())
 
-    Logger.info("Component has started with pid(s): {0}".format(', '.join([x.decode('utf-8') for x in pids])))
+    Logger.info("Component has started with pid(s): {0}".format(', '.join([str(x) for x in pids])))
 
   def post_stop(self, env):
     """

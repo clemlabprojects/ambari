@@ -269,7 +269,7 @@ class WebHDFSUtil:
         raise Fail(format("File {file_to_put} is not found."))
 
       if file_to_put:
-        cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
+        cmd += ["-T", file_to_put, "-H", "Content-Type: application/octet-stream"]
       else:
         cmd += ["-d", "", "-H", "Content-Length: 0"]
 

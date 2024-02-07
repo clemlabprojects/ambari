@@ -117,7 +117,7 @@ def svcstatus(options):
   options.exit_message = None
 
   statusStr = AMHostMonitoringService.QueryStatus()
-  print "Ambari Metrics Collector is " + statusStr
+  print("Ambari Metrics Collector is " + statusStr)
 
 
 def init_options_parser():
@@ -141,7 +141,7 @@ def win_main():
     sys.frozen = 'windows_exe' # Fake py2exe so we can debug
 
   if len(args) == 0:
-    print parser.print_help()
+    print(parser.print_help())
     parser.error("No action entered")
 
   action = args[0]
@@ -177,7 +177,7 @@ def win_main():
       print_warning_msg(e.reason)
 
   if options.exit_message is not None:
-    print options.exit_message
+    print(options.exit_message)
 
   sys.exit(0)
 

@@ -26,7 +26,7 @@ logger = logging.getLogger()
 try:
   import kerberos
 except ImportError:
-  import krberr as kerberos
+  from resource_monitoring.core import krberr as kerberos
   logger.warn('import kerberos exception: %s' % str(ImportError))
 pass
 

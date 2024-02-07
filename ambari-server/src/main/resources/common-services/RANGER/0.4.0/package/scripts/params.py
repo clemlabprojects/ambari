@@ -159,11 +159,11 @@ ranger_auditdb_name = default('/configurations/admin-properties/audit_db_name', 
 
 sql_command_invoker = config['configurations']['admin-properties']['SQL_COMMAND_INVOKER']
 db_root_user = config['configurations']['admin-properties']['db_root_user']
-db_root_password = unicode(config['configurations']['admin-properties']['db_root_password'])
+db_root_password = config['configurations']['admin-properties']['db_root_password']
 db_host =  config['configurations']['admin-properties']['db_host']
 ranger_db_user = config['configurations']['admin-properties']['db_user']
 ranger_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
-ranger_db_password = unicode(config['configurations']['admin-properties']['db_password'])
+ranger_db_password = config['configurations']['admin-properties']['db_password']
 
 #ranger-env properties
 oracle_home = default("/configurations/ranger-env/oracle_home", "-")

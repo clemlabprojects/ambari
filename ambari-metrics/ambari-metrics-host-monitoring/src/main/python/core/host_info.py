@@ -122,17 +122,17 @@ class HostInfo():
     bytes2kilobytes = lambda x: x / 1024
 
     return {
-      'mem_total': bytes2kilobytes(int(mem_total)) if mem_total else 0,
-      'mem_used': bytes2kilobytes(int(mem_stats.used - mem_stats.cached)) if hasattr(mem_stats, 'used') and hasattr(mem_stats, 'cached') else 0, # Used memory w/o cached
-      'mem_free': bytes2kilobytes(int(mem_stats.available)) if hasattr(mem_stats, 'available') else 0, # the actual amount of available memory
-      'mem_shared': bytes2kilobytes(int(mem_stats.shared)) if hasattr(mem_stats, 'shared') else 0,
-      'mem_buffered': bytes2kilobytes(int(mem_stats.buffers)) if hasattr(mem_stats, 'buffers') else 0,
-      'mem_cached': bytes2kilobytes(int(mem_stats.cached)) if hasattr(mem_stats, 'cached') else 0,
-      'swap_free': bytes2kilobytes(int(swap_stats.free)) if hasattr(swap_stats, 'free') else 0,
-      'swap_used': bytes2kilobytes(int(swap_stats.used)) if hasattr(swap_stats, 'used') else 0,
-      'swap_total': bytes2kilobytes(int(swap_total)) if swap_total else 0,
-      'swap_in': bytes2kilobytes(int(swap_stats.sin)) if hasattr(swap_stats, 'sin') else 0,
-      'swap_out': bytes2kilobytes(int(swap_stats.sout)) if hasattr(swap_stats, 'sout') else 0,
+      'mem_total': bytes2kilobytes(mem_total) if mem_total else 0,
+      'mem_used': bytes2kilobytes(mem_stats.used - mem_stats.cached) if hasattr(mem_stats, 'used') and hasattr(mem_stats, 'cached') else 0, # Used memory w/o cached
+      'mem_free': bytes2kilobytes(mem_stats.available) if hasattr(mem_stats, 'available') else 0, # the actual amount of available memory
+      'mem_shared': bytes2kilobytes(mem_stats.shared) if hasattr(mem_stats, 'shared') else 0,
+      'mem_buffered': bytes2kilobytes(mem_stats.buffers) if hasattr(mem_stats, 'buffers') else 0,
+      'mem_cached': bytes2kilobytes(mem_stats.cached) if hasattr(mem_stats, 'cached') else 0,
+      'swap_free': bytes2kilobytes(swap_stats.free) if hasattr(swap_stats, 'free') else 0,
+      'swap_used': bytes2kilobytes(swap_stats.used) if hasattr(swap_stats, 'used') else 0,
+      'swap_total': bytes2kilobytes(swap_total) if swap_total else 0,
+      'swap_in': bytes2kilobytes(swap_stats.sin) if hasattr(swap_stats, 'sin') else 0,
+      'swap_out': bytes2kilobytes(swap_stats.sout) if hasattr(swap_stats, 'sout') else 0,
       # todo: cannot send string
       #'part_max_used' : disk_usage.get("max_part_used")[0],
     }
@@ -158,21 +158,22 @@ class HostInfo():
     skip_network_patterns = self.__config.get_network_interfaces_skip_pattern()
     skip_network_patterns_list = skip_network_patterns.split(',') if skip_network_patterns and skip_network_patterns != 'None' else []
     for interface, values in net_stats.items():
-      if interface != 'lo' and interface not in skip_virtual_interfaces:
-          ignore_network = any(re.match(p, interface) for p in skip_network_patterns_list)
-          if not ignore_network:
-              new_net_stats = {
-                  'bytes_out': new_net_stats.get('bytes_out', 0) + values.bytes_sent,
-                  'bytes_in': new_net_stats.get('bytes_in', 0) + values.bytes_recv,
-                  'pkts_out': new_net_stats.get('pkts_out', 0) + values.packets_sent,
-                  'pkts_in': new_net_stats.get('pkts_in', 0) + values.packets_recv
-              }
+      if interface != 'lo' and not interface in skip_virtual_interfaces:
+        ignore_network = False
+        for p in skip_network_patterns_list:
+          if re.match(p, interface):
+            ignore_network = True
+        if not ignore_network:
+          new_net_stats = {'bytes_out': new_net_stats.get('bytes_out', 0) + values.bytes_sent,
+                           'bytes_in': new_net_stats.get('bytes_in', 0) + values.bytes_recv,
+                           'pkts_out': new_net_stats.get('pkts_out', 0) + values.packets_sent,
+                           'pkts_in': new_net_stats.get('pkts_in', 0) + values.packets_recv
+          }
 
     with self.__last_network_lock:
-      result = {k: (v - self.__last_network_data.get(k, 0)) / delta for k, v in new_net_stats.items()}
-      result = {k: 0 if v < 0 else v for k, v in result.items()}
+      result = dict((k, (v - self.__last_network_data.get(k, 0)) / delta) for k, v in new_net_stats.items())
+      result = dict((k, 0 if v < 0 else v) for k, v in result.items())
       self.__last_network_data = new_net_stats
-
 
     return result
   pass
@@ -276,14 +277,14 @@ class HostInfo():
       if not rawdict:
         raise RuntimeError("Couldn't find any physical disk")
       trimmed_dict = {}
-      for disk, fields in rawdict.items():
+      for disk, fields in list(rawdict.items()):
         ignore_disk = False
         for p in skip_disk_pattern_list:
           if re.match(p, disk):
             ignore_disk = True
         if not ignore_disk:
           trimmed_dict[disk] = sdiskio(*fields)
-      io_counters = sdiskio(*[sum(x) for x in zip(*trimmed_dict.values())])
+      io_counters = sdiskio(*[sum(x) for x in zip(*list(trimmed_dict.values()))])
 
     new_disk_stats = {
         'read_count' : io_counters.read_count if hasattr(io_counters, 'read_count') else 0,
@@ -308,7 +309,7 @@ class HostInfo():
     disk_io_counters = psutil.disk_io_counters(True)
     per_disk_io_counters = {}
 
-    sortByKey = lambda x: sorted(x.items(), key=operator.itemgetter(0))
+    sortByKey = lambda x: sorted(list(x.items()), key=operator.itemgetter(0))
 
     disk_counter = 0
     if disk_io_counters:

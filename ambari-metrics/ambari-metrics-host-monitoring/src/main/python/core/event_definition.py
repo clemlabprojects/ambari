@@ -48,17 +48,16 @@ class EmmitEvent(Event):
 class HostMetricCollectEvent(Event):
 
   def __init__(self, group_config, group_name):
-      Event.__init__(self)
-      self.group_config = group_config
-      self.group_name = group_name
-      try:
-          self.group_interval = group_config['collect_every']
-          self.metrics = group_config['metrics']
-      except KeyError as ex:
-          logger.warn('Unable to create event from metric group. {0}'.format(
-              group_config))
-          raise ex
-
+    Event.__init__(self)
+    self.group_config = group_config
+    self.group_name = group_name
+    try:
+      self.group_interval = group_config['collect_every']
+      self.metrics = group_config['metrics']
+    except KeyError as ex:
+      logger.warn('Unable to create event from metric group. {0}'.format(
+        group_config))
+      raise ex
 
   def get_metric_value_thresholds(self):
     metric_value_thresholds = {}

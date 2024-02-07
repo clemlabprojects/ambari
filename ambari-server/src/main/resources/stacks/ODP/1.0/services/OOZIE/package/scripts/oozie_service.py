@@ -212,7 +212,7 @@ def copy_jdbc_connector(oozie_home):
   print(params.downloaded_custom_connector)
   File(params.downloaded_custom_connector,
     content = DownloadSource(params.driver_curl_source),
-    mode = 0644
+    mode = 0o644
   )
 
   driver_curl_target = format("{oozie_home}/lib/{jdbc_driver_jar}")
@@ -221,4 +221,4 @@ def copy_jdbc_connector(oozie_home):
     path=["/bin", "/usr/bin/"],
     sudo=True)
 
-  File(os.path.join(oozie_home, 'lib',params.jdbc_driver_jar), mode=0644)
+  File(os.path.join(oozie_home, 'lib',params.jdbc_driver_jar), mode=0o644)
