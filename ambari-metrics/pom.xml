@@ -52,11 +52,12 @@
     <hbase.folder>hbase-${hbase.version}</hbase.folder>
     <hadoop.tar>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/${odp.release.stack}-${odp.release.number}/tars/hadoop/hadoop-${hadoop.version}.tar.gz</hadoop.tar>
     <hadoop.folder>hadoop-${hadoop.version}</hadoop.folder>
+    <ambari.grafana.arch>x86_64</ambari.grafana.arch>
     <grafana.folder>grafana-10.1.1</grafana.folder>
-    <grafana.tar>https://dl.grafana.com/oss/release/grafana-10.1.1.linux-amd64.tar.gz</grafana.tar>
+    <grafana.tar>https://dl.grafana.com/oss/release/grafana-10.1.1.linux-${ambari.grafana.arch}.tar.gz</grafana.tar>
     <phoenix.tar>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/${odp.release.stack}-${odp.release.number}/tars/phoenix/phoenix-hbase-${phoenix.hbase.compat}-${phoenix.version}-bin.tar.gz</phoenix.tar>
     <phoenix.folder>phoenix-hbase-${phoenix.hbase.compat}-${phoenix.version}-bin</phoenix.folder>
-    <resmonitor.install.dir>/usr/lib/python2.6/site-packages/resource_monitoring</resmonitor.install.dir>
+    <resmonitor.install.dir>/usr/lib/python3.9/site-packages/resource_monitoring</resmonitor.install.dir>
     <powermock.version>1.6.2</powermock.version>
     <distMgmtSnapshotsId>apache.snapshots.https</distMgmtSnapshotsId>
     <distMgmtSnapshotsName>Apache Development Snapshot Repository</distMgmtSnapshotsName>

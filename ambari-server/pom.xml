@@ -26,6 +26,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <python.ver>python &gt;= 2.6</python.ver>
     <!-- On centos the python xml's are inside python package -->
+    <ambari.arch>x86_64</ambari.arch>
     <deb.architecture>amd64</deb.architecture>
     <custom.tests>false</custom.tests>
     <python.test.mask>[Tt]est*.py</python.test.mask>
@@ -568,7 +569,7 @@
             <scriptFile>src/main/package/rpm/postremove.sh</scriptFile>
             <fileEncoding>utf-8</fileEncoding>
           </postremoveScriptlet>
-          <needarch>x86_64</needarch>
+          <needarch>${ambari.arch}</needarch>
           <mappings>
             <mapping>
               <directory>/etc</directory>
