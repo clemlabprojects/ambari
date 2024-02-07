@@ -573,6 +573,14 @@ def fill_conf_dir(component_conf_dir):
       content = params.parquet_logging_properties)
 
 
+  if(params.logback_support):
+    File(os.path.join(component_conf_dir, "logback.xml"),
+      owner=params.hive_user,
+      group=params.user_group,
+      content=Template("zookeeper-logback.xml.j2"),
+      mode=0644
+    )
+
 def jdbc_connector(target, hive_previous_jdbc_jar):
   """
   Shared by Hive Batch, Hive Metastore, and Hive Interactive
