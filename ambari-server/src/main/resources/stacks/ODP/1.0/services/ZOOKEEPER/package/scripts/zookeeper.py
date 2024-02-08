@@ -101,7 +101,7 @@ def zookeeper(type = None, upgrade_type=None):
     )
 
   if(params.logback_support):
-    configFile("logback.xml", template_name="logback.xml.j2")
+    configFile("logback.xml", template_name="zookeeper-logback.xml.j2")
 
   if params.security_enabled:
     if type == "server":
