@@ -838,6 +838,6 @@ if has_hive_interactive:
   beeline_site_config['beeline.hs2.jdbc.url.llap'] = hsi_jdbc_url
 
 # logback support for zookeeper client
-logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version):
+logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version)
 if logback_support:
   zookeeper_log_level = hive_log_level
