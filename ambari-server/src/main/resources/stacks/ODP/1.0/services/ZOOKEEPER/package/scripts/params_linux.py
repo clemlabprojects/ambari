@@ -29,6 +29,8 @@ from resource_management.libraries.functions import get_kinit_path
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.expect import expect
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
+
 
 # server configurations
 config = Script.get_config()
@@ -42,6 +44,9 @@ component_directory = status_params.component_directory
 
 # New Cluster Stack Version that is defined during the RESTART of a Rolling Upgrade
 version = default("/commandParams/version", None)
+
+# get the correct version to use for checking stack features
+version_for_stack_feature_checks = get_stack_feature_version(config)
 
 # default parameters
 zk_home = "/usr"
@@ -110,7 +115,11 @@ if ('zookeeper-log4j' in config['configurations']) and ('content' in config['con
 else:
   log4j_props = None
 
+<<<<<<< HEAD
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version):
+=======
+logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
+>>>>>>> 148701557c (follow up on previous commit)
 if logback_support:
   zookeeper_log_level = str(default('configurations/zookeeper-log4j/zookeeper_log_level', "INFO"))
   zookeeper_filename = format('zookeeper-{zk_user}-server-{hostname}.log')
