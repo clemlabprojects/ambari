@@ -469,14 +469,14 @@ class RangeradminV2:
     try:
       Logger.info(format('Cheking if {policy_user} user already exists'))
       url =  self.url_users + '?name=' + policy_user
-      request = urllib2.Request(url)
+      request = urllib.request.Request(url)
       base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(json.JSONEncoder().encode(result.read()))
       if response_code == 200 and len(response['vXUsers']) >= 0:
         for vxuser in response['vXUsers']:
           if vxuser['name'] == policy_user:
@@ -500,12 +500,12 @@ class RangeradminV2:
           policy_user_dict['firstName'] = str(policy_user)
           policy_user_dict['userSource'] = 0
           data =  json.dumps(policy_user_dict)
-          base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+          base_64_string = base64.b64encode(f"{ranger_admin_username}:{ranger_admin_password}".encode()).decode().replace('\n', '')
           headers = {
             'Accept': 'application/json',
             "Content-Type": "application/json"
           }
-          request = urllib2.Request(url, data, headers)
+          request = urllib.request.Request(url, data, headers)
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
@@ -518,12 +518,12 @@ class RangeradminV2:
             return None
       else:
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
         raise Fail("Error creating {2} user. Http status code - {0}. \n {1}".format(e.code, e.read(), policy_user))
       else:
         raise Fail("Error creating {1} user. Reason - {0}.".format(e.reason, policy_user))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
