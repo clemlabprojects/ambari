@@ -51,6 +51,7 @@ class RangeradminV2:
     self.url_groups = self.base_url + '/service/xusers/groups'
     self.url_users = self.base_url + '/service/xusers/users'
     self.url_sec_users = self.base_url + '/service/xusers/secure/users'
+    self.url_external_user = self.base_url + '/service/xusers/users/external'
     self.skip_if_rangeradmin_down = skip_if_rangeradmin_down
 
     if self.skip_if_rangeradmin_down:
@@ -127,6 +128,7 @@ class RangeradminV2:
         Logger.error("Connection failed to Ranger Admin !")
         break
 
+    ## rangerlookup account creation
     if rangerlookup_password != None:
       Logger.info("Start Repository rangerlookup User Creation process")
       ranger_lookup_password = str(rangerlookup_password)
@@ -148,6 +150,11 @@ class RangeradminV2:
         elif not self.skip_if_rangeradmin_down:
           Logger.error("Connection failed to Ranger Admin !")
           break
+
+    ## Creates policy user so it does not prevent repo creation if it does not exists
+    if policy_user != None:
+      Logger.info(format('Starting {policy_user} User Creation process'))
+      self.create_policy_user(ambari_ranger_admin, ambari_ranger_password, policy_user)
 
     if not is_stack_supports_ranger_kerberos or not is_security_enabled:
       repo_data = json.dumps(repo_properties).encode('utf-8')
@@ -449,6 +456,78 @@ class RangeradminV2:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
+
+  @safe_retry(times=5, sleep_time=8, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
+  def create_policy_user(self, ranger_admin_username, ranger_admin_password, policy_user):
+    """
+    :param ranger_admin_username: admin username
+    :param ranger_admin_password: admin password
+    :param ranger_lookup_password: rangerlookup password to create.
+    :return: response code.
+    """
+    flag_policy_user_present = False
+    try:
+      Logger.info(format('Cheking if {policy_user} user already exists'))
+      url =  self.url_users + '?name=' + policy_user
+      request = urllib2.Request(url)
+      base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+      request.add_header("Content-Type", "application/json")
+      request.add_header("Accept", "application/json")
+      request.add_header("Authorization", "Basic {0}".format(base_64_string))
+      result = openurl(request, timeout=20)
+      response_code = result.getcode()
+      response = json.loads(result.read())
+      if response_code == 200 and len(response['vXUsers']) >= 0:
+        for vxuser in response['vXUsers']:
+          if vxuser['name'] == policy_user:
+            flag_policy_user_present = True
+            break
+          else:
+            flag_policy_user_present = False
+
+        if flag_policy_user_present:
+          Logger.info(format('{policy_user} user already exists.'))
+          return response_code
+        else:
+          Logger.info(format('{policy_user} user is not present, creating user using given configurations'))
+          url = self.url_external_user
+          policy_user_dict = dict()
+          policy_user_dict['status'] = 1
+          policy_user_dict['userRoleList'] = ['ROLE_USER']
+          policy_user_dict['name'] = policy_user
+          policy_user_dict['password'] = None
+          policy_user_dict['description'] = str(format('{policy_user} user needed for repository creation'))
+          policy_user_dict['firstName'] = str(policy_user)
+          policy_user_dict['userSource'] = 0
+          data =  json.dumps(policy_user_dict)
+          base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+          headers = {
+            'Accept': 'application/json',
+            "Content-Type": "application/json"
+          }
+          request = urllib2.Request(url, data, headers)
+          request.add_header("Authorization", "Basic {0}".format(base_64_string))
+          result = openurl(request, timeout=20)
+          response_code = result.getcode()
+          response = json.loads(json.JSONEncoder().encode(result.read()))
+          if response_code == 200 and response is not None:
+            Logger.info(format('{policy_user} user creation successful.'))
+            return response_code
+          else:
+            Logger.error(format('{policy_user} user creation failed.'))
+            return None
+      else:
+        return None
+    except urllib2.URLError, e:
+      if isinstance(e, urllib2.HTTPError):
+        raise Fail("Error creating {2} user. Http status code - {0}. \n {1}".format(e.code, e.read(), policy_user))
+      else:
+        raise Fail("Error creating {1} user. Reason - {0}.".format(e.reason, policy_user))
+    except httplib.BadStatusLine:
+      raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
+    except TimeoutError:
+      raise Fail("Connection to Ranger Admin failed. Reason - timeout")
+
 
   def call_curl_request(self,user,keytab,principal, url, flag_http_response, request_method='GET',request_body='',header=''):
     """
