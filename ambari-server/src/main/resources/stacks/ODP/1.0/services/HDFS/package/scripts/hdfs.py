@@ -164,7 +164,7 @@ def hdfs(name=None):
       owner=params.hdfs_user,
       group=params.user_group,
       content=Template("zookeeper-logback.xml.j2"),
-      mode=0644
+      mode=0o644
     )
   
   install_lzo_if_needed()

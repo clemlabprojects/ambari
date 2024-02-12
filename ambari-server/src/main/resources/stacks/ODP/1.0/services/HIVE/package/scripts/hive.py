@@ -578,7 +578,7 @@ def fill_conf_dir(component_conf_dir):
       owner=params.hive_user,
       group=params.user_group,
       content=Template("zookeeper-logback.xml.j2"),
-      mode=0644
+      mode=0o644
     )
 
 def jdbc_connector(target, hive_previous_jdbc_jar):
