@@ -202,10 +202,6 @@ else:
   def chmod(path, mode):
     linux_chmod_str = str(oct(mode))[2:]
     shell.checked_call(["chmod", linux_chmod_str, path], sudo=True)
-<<<<<<< HEAD
-=======
-
->>>>>>> 68e79a1eca (AMBARI-12 (clemlab): add AMBARI-26000: Make Ambari supports Python3 environment - follow up)
   def chmod_extended(path, mode):
     shell.checked_call(["chmod", mode, path], sudo=True)
 
@@ -247,10 +243,6 @@ else:
     with tmpf:
       with open(tmpf.name, 'rb') as fp:
         content = fp.read()
-<<<<<<< HEAD
-=======
-
->>>>>>> 68e79a1eca (AMBARI-12 (clemlab): add AMBARI-26000: Make Ambari supports Python3 environment - follow up)
     return content
 
   # os.path.exists
