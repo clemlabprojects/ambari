@@ -115,11 +115,7 @@ if ('zookeeper-log4j' in config['configurations']) and ('content' in config['con
 else:
   log4j_props = None
 
-<<<<<<< HEAD
-logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version):
-=======
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
->>>>>>> 148701557c (follow up on previous commit)
 if logback_support:
   zookeeper_log_level = str(default('configurations/zookeeper-log4j/zookeeper_log_level', "INFO"))
   zookeeper_filename = format('zookeeper-{zk_user}-server-{hostname}.log')
