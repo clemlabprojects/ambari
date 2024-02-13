@@ -71,6 +71,7 @@ version = default("/commandParams/version", None)
 # are started using different commands.
 desired_namenode_role = default("/commandParams/desired_namenode_role", None)
 
+effective_version = params.stack_version_formatted if upgrade_type is None else format_stack_version(params.version)
 # get the correct version to use for checking stack features
 version_for_stack_feature_checks = get_stack_feature_version(config)
 
@@ -614,10 +615,6 @@ cluster_name = config['clusterName']
 # ranger hdfs plugin section end
 
 # logback support for zookeeper client
-<<<<<<< HEAD
-logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, effective_version):
-=======
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
->>>>>>> 148701557c (follow up on previous commit)
 if logback_support:
   zookeeper_log_level = str(default('configurations/hdfs-log4j/zookeeper_log_level', "INFO"))
