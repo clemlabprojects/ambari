@@ -63,7 +63,7 @@ def oozie_service(action = 'start', upgrade_type=None):
 
   oozie_home = params.oozie_home
 
-  environment={'OOZIE_CONFIG': params.conf_dir}
+  environment={'OOZIE_CONFIG': params.conf_dir, 'JETTY_PID_FILE': '/var/run/oozie/oozie.pid'}
 
   if params.security_enabled:
     if params.oozie_principal is None:
