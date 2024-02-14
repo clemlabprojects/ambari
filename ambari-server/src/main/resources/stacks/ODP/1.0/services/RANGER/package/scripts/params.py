@@ -476,3 +476,38 @@ if 'viewfs-mount-table' in config['configurations']:
 
   if 'content' in mount_table and mount_table['content'].strip():
     mount_table_content = mount_table['content']
+
+## Ranger Policy User Creation
+namenode_hosts = default("/clusterHostInfo/namenode_hosts", None)
+rm_hosts = default("/clusterHostInfo/resourcemanager_hosts", None)
+hbase_master_hosts = default("/clusterHostInfo/hbase_master_hosts", None)
+hive_server_hosts = default("/clusterHostInfo/hive_server_hosts", None)
+hms_server_hosts = default("/clusterHostInfo/hive_metastore_hosts", None)
+om_server_hosts = default("/clusterHostInfo/ozone_manager_hosts", None)
+kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
+kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
+
+policy_users_to_create = []
+## ODP Hadoop based Policy user
+# TODO: check if need for nifi, nifi-registry
+if namenode_hosts != None:
+  if len(namenode_hosts) > 0 :
+    policy_users_to_create.append('hdfs')
+if rm_hosts != None:
+  if len(rm_hosts) > 0 :
+    policy_users_to_create.append('yarn')
+if hbase_master_hosts != None:
+  if len(hbase_master_hosts) > 0 :
+    policy_users_to_create.append('hbase')
+if hive_server_hosts != None:
+  if len(hive_server_hosts) > 0 :
+    policy_users_to_create.append('hive')
+if hms_server_hosts != None:
+  if len(hms_server_hosts) > 0 :
+    policy_users_to_create.append('hive')
+if om_server_hosts != None:
+  if len(om_server_hosts) > 0 :
+    policy_users_to_create.append('ozone')
+if kafka_server_hosts != None:
+  if len(kafka_server_hosts) > 0 :
+    policy_users_to_create.append('kafka')
