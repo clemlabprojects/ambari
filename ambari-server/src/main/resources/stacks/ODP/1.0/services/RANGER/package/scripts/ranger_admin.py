@@ -30,6 +30,7 @@ from resource_management.core.logger import Logger
 from resource_management.core import shell
 from ranger_service import ranger_service
 from resource_management.libraries.functions import solr_cloud_util
+from resource_management.libraries.functions import ranger_functions_v2
 from ambari_commons.constants import UPGRADE_TYPE_NON_ROLLING, UPGRADE_TYPE_ROLLING
 import upgrade
 import os, errno
@@ -102,6 +103,11 @@ class RangerAdmin(Script):
 
     setup_ranger_xml.update_password_configs()
     ranger_service('ranger_admin')
+    if len(params.policy_users_to_create) > 0 :
+      ranger_admin_v2_obj = ranger_functions_v2.RangeradminV2(url = params.ranger_external_url, skip_if_rangeradmin_down = False)
+      for policy_user in params.policy_users_to_create:
+        ranger_admin_v2_obj.create_policy_user(params.admin_username, params.admin_password, policy_user)
+
     # ## wait start
 
     #   response_code = self.check_ranger_login_urllib2(self.base_url)
