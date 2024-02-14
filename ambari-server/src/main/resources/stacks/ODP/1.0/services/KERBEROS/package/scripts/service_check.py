@@ -59,7 +59,7 @@ class KerberosServiceCheck(Script):
     if ((params.smoke_test_principal is not None) and
       (params.smoke_test_keytab_file is not None) and
       os.path.isfile(params.smoke_test_keytab_file)):
-      print "Performing kinit using %s" % params.smoke_test_principal
+      print("Performing kinit using %s" % params.smoke_test_principal)
 
       ccache_file_name = _md5("{0}|{1}".format(params.smoke_test_principal, params.smoke_test_keytab_file)).hexdigest()
       ccache_file_path = "{0}{1}kerberos_service_check_cc_{2}".format(params.tmp_dir, os.sep, ccache_file_name)
