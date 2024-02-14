@@ -327,18 +327,18 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
         nn_max_heapsize = min(int(namenodeHosts[0]["Hosts"]["total_mem"]),
                               int(namenodeHosts[1]["Hosts"]["total_mem"])) / 1024
         masters_at_host = max(
-          self.getHostComponentsByCategories(namenodeHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
-          self.getHostComponentsByCategories(namenodeHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts))
+          len(self.getHostComponentsByCategories(namenodeHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts)),
+          len(self.getHostComponentsByCategories(namenodeHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts)))
       else:
         nn_max_heapsize = int(namenodeHosts[0]["Hosts"]["total_mem"] / 1024)  # total_mem in kb
-        masters_at_host = self.getHostComponentsByCategories(namenodeHosts[0]["Hosts"]["host_name"], ["MASTER"],
-                                                             services, hosts)
+        masters_at_host = len(self.getHostComponentsByCategories(namenodeHosts[0]["Hosts"]["host_name"], ["MASTER"],
+                                                             services, hosts))
 
       putHdfsEnvPropertyAttribute('namenode_heapsize', 'maximum', max(nn_max_heapsize, 1024))
 
       nn_heapsize_limit = nn_max_heapsize
       nn_heapsize_limit -= clusterData["reservedRam"]
-      if len(masters_at_host) > 1:
+      if masters_at_host > 1:
         nn_heapsize_limit = int(nn_heapsize_limit / 2)
 
       putHdfsEnvProperty('namenode_heapsize', max(nn_heapsize_limit, 1024))
