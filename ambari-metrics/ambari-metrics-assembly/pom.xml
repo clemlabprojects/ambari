@@ -1272,10 +1272,10 @@
       </build>
     </profile>
     <profile>
-      <id>rpm-rhel9-aarch64</id>
+      <id>rpm-rhel9</id>
       <activation>
         <property>
-          <name>build-rpm-rhel9-aarch64</name>
+          <name>build-rpm-rhel9</name>
         </property>
       </activation>
       <build>
