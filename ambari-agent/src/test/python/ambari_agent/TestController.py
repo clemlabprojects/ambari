@@ -19,7 +19,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import StringIO
+import io
 import os
 import ssl
 import tempfile
@@ -94,7 +94,7 @@ class TestController:#(unittest.TestCase):
   def test_registerWithServer(self, LiveStatus_mock, randintMock, pformatMock, sleepMock,
                               dumpsMock):
 
-    out = StringIO.StringIO()
+    out = io.StringIO()
     sys.stdout = out
 
     LiveStatus_mock.SERVICES = ["foo"]
@@ -402,7 +402,7 @@ class TestController:#(unittest.TestCase):
     try:
       self.controller.sendRequest(url, data)
       self.fail("Should throw exception!")
-    except IOError, e: # Expected
+    except IOError as e: # Expected
       self.assertEquals('Response parsing failed! Request data: ' + data +
                         '; Response: {invalid_object}', str(e))
 
@@ -411,7 +411,7 @@ class TestController:#(unittest.TestCase):
     try:
       self.controller.sendRequest(url, data)
       self.fail("Should throw exception!")
-    except IOError, e: # Expected
+    except IOError as e: # Expected
       self.assertEquals('Request to ' + url + ' failed due to ' +
                         exceptionMessage, str(e))
 
@@ -431,7 +431,6 @@ class TestController:#(unittest.TestCase):
     self.assertEquals('11.2.13.10', version)
 
   @patch.object(ExitHelper, "exit")
-  @patch.object(threading._Event, "wait")
   @patch("time.sleep")
   @patch("ambari_simplejson.dumps")
   def test_heartbeatWithServer(self, dumpsMock, sleepMock, event_mock, exit_mock):
@@ -695,7 +694,6 @@ class TestController:#(unittest.TestCase):
     pass
 
   @patch.object(ExitHelper, "exit")
-  @patch.object(threading._Event, "wait")
   @patch("time.sleep")
   @patch("ambari_simplejson.dumps")
   def test_recoveryHbCmd(self, dumpsMock, sleepMock, event_mock, exit_mock):

@@ -407,13 +407,6 @@ def ams(name=None, action=None):
 
   elif name == 'monitor':
 
-    # TODO Uncomment when SPNEGO support has been added to AMS service check and Grafana.
-    if is_spnego_enabled(params) and is_redhat_centos_6_plus():
-      try:
-        import kerberos
-      except ImportError:
-        raise ImportError("python-kerberos package need to be installed to run AMS in SPNEGO mode")
-
     Directory(params.ams_monitor_conf_dir,
               owner=params.ams_user,
               group=params.user_group,
@@ -546,9 +539,9 @@ def is_spnego_enabled(params):
   return False
 
 def is_redhat_centos_6_plus():
-  import platform
+  import distro
 
-  if platform.dist()[0] in ['redhat', 'centos'] and platform.dist()[1] > '6.0':
+  if distro.id() in ['rhel', 'centos'] and distro.version() > '6.0':
     return True
   return False
 

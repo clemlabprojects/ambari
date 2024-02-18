@@ -243,15 +243,16 @@ def ams(name=None, action=None):
         else:
           continue
         if component_name in known_slave_components:
-          slave_components.append(component_name)
+          slave_components.insert(0, component_name)
         else:
-          master_components.append(component_name)
+          master_components.insert(0, component_name)
 
       if slave_components:
         new_ams_site['timeline.metrics.initial.configured.slave.components'] = ",".join(slave_components)
       if master_components:
         if 'ambari_server' not in master_components:
-          master_components.append('ambari_server')
+          master_components.insert(0, 'ambari_server')
+          master_components = sorted(master_components)
         new_ams_site['timeline.metrics.initial.configured.master.components'] = ",".join(master_components)
 
     hbase_total_heapsize_with_trailing_m = params.hbase_heapsize
@@ -446,13 +447,6 @@ def ams(name=None, action=None):
 
   elif name == 'monitor':
 
-    # TODO Uncomment when SPNEGO support has been added to AMS service check and Grafana.
-    if is_spnego_enabled(params) and is_redhat_centos_6_plus():
-      try:
-        import kerberos
-      except ImportError:
-        raise ImportError("python-kerberos package need to be installed to run AMS in SPNEGO mode")
-
     Directory(params.ams_monitor_conf_dir,
               owner=params.ams_user,
               group=params.user_group,
@@ -586,10 +580,10 @@ def is_spnego_enabled(params):
   return False
 
 def is_redhat_centos_6_plus():
-  import platform
+  import distro
 
-  if platform.dist()[0] in ['redhat', 'centos'] and platform.dist()[1] > '6.0':
-    return True
+  if distro.id() in ['rhel', 'centos'] and distro.version() > '6.0':
+      return True
   return False
 
 def export_ca_certs(dir_path):

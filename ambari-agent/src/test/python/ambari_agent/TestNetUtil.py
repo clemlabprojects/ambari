@@ -29,7 +29,7 @@ class TestNetUtil:#(unittest.TestCase):
 
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch("urlparse.urlparse")
-  @patch("httplib.HTTPSConnection")
+  @patch("http.client.HTTPSConnection")
   def test_checkURL(self, httpsConMock, parseMock):
 
     NetUtil.logger = MagicMock()

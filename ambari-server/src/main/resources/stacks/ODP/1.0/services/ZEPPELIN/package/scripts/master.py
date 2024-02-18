@@ -294,13 +294,13 @@ class Master(Script):
     interpreter_settings = config_data['interpreterSettings']
 
     if upgrade_type is not None:
-      current_interpreters_keys = interpreter_settings.keys()
+      current_interpreters_keys = list(interpreter_settings.keys())
       for key in current_interpreters_keys:
         interpreter_data = interpreter_settings[key]
         if interpreter_data["name"] == "sh" and interpreter_data["group"] == "sh":
           del interpreter_settings[key]
 
-    for setting_key in interpreter_json_template.keys():
+    for setting_key in list(interpreter_json_template.keys()):
       if setting_key not in interpreter_settings:
         interpreter_settings[setting_key] = interpreter_json_template[
           setting_key]
@@ -538,7 +538,7 @@ class Master(Script):
         del interpreter_settings[key]
 
     hive_interactive_properties_key = 'hive_interactive'
-    for setting_key in interpreter_settings.keys():
+    for setting_key in list(interpreter_settings.keys()):
       interpreter = interpreter_settings[setting_key]
       if interpreter['group'] == 'jdbc' and interpreter['name'] == 'jdbc' and ('jdbc' not in exclude_interpreter_autoconfig_list
                                                                or 'jdbc' in exclude_interpreter_property_groups_map.keys()):

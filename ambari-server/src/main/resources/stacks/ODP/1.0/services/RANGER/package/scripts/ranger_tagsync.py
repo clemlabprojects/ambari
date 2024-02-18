@@ -40,12 +40,12 @@ class RangerTagsync(Script):
     env.set_params(params)
 
     setup_ranger_xml.validate_user_password('rangertagsync_user_password')
-
+    
     setup_ranger_xml.ranger_credential_helper(params.tagsync_cred_lib, 'tagadmin.user.password', params.rangertagsync_user_password, params.tagsync_jceks_path)
     File(params.tagsync_jceks_path,
       owner = params.unix_user,
       group = params.unix_group,
-      only_if = format("test -e {tagsync_jceks_path}"),
+      only_if = format("test -e {params.tagsync_jceks_path}"),
       mode = 0o640
     )
 

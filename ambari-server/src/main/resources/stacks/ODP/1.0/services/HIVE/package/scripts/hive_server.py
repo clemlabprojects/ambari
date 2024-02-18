@@ -88,25 +88,25 @@ class HiveServer(Script):
       stack_select.select_packages(params.version)
 
       # Copy mapreduce.tar.gz and tez.tar.gz to HDFS
-      resource_created = copy_to_hdfs(
+      resource_created_mr = copy_to_hdfs(
         "mapreduce",
         params.user_group,
         params.hdfs_user,
         skip=params.sysprep_skip_copy_tarballs_hdfs)
 
-      resource_created = copy_to_hdfs(
+      resource_created_tez = copy_to_hdfs(
         "tez",
         params.user_group,
         params.hdfs_user,
-        skip=params.sysprep_skip_copy_tarballs_hdfs) or resource_created
+        skip=params.sysprep_skip_copy_tarballs_hdfs)
 
-      resource_created = copy_to_hdfs(
+      resource_created_yarn = copy_to_hdfs(
         "yarn",
         params.user_group,
         params.hdfs_user,
-        skip=params.sysprep_skip_copy_tarballs_hdfs) or resource_created
+        skip=params.sysprep_skip_copy_tarballs_hdfs)
 
-      if resource_created:
+      if resource_created_mr or resource_created_tez or resource_created_yarn:
         params.HdfsResource(None, action="execute")
 
   def _base_node(self, path):

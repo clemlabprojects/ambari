@@ -31,11 +31,7 @@ __version__ = '1.0.1'
 
 import pprint
 import sys
-
-try:
-    import platform.linux_distribution
-except ImportError:
-    import distro
+import distro
 
 
 try:

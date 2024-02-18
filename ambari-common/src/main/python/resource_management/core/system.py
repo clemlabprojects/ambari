@@ -24,6 +24,7 @@ __all__ = ["System"]
 
 import os
 import sys
+import distro
 from resource_management.core import shell
 from resource_management.core.utils import lazy_property
 from resource_management.core.exceptions import Fail

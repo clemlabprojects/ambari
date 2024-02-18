@@ -173,7 +173,10 @@ class ScriptAlert(BaseAlert):
 
       return None
 
-    return imp.load_source(self._get_alert_meta_value_safely('name'), self.path_to_script)
+    spec = importlib.util.spec_from_file_location(self._get_alert_meta_value_safely('name'), self.path_to_script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
   def _get_reporting_text(self, state):

@@ -202,6 +202,7 @@ else:
   def chmod(path, mode):
     linux_chmod_str = str(oct(mode))[2:]
     shell.checked_call(["chmod", linux_chmod_str, path], sudo=True)
+
   def chmod_extended(path, mode):
     shell.checked_call(["chmod", mode, path], sudo=True)
 
@@ -243,6 +244,7 @@ else:
     with tmpf:
       with open(tmpf.name, 'rb') as fp:
         content = fp.read()
+
     return content
 
   # os.path.exists
@@ -302,6 +304,7 @@ else:
   def listdir(path):
     if not path_isdir(path):
       raise Fail("{0} is not a directory. Cannot list files of it.".format(path))
+
     code, out, err = shell.checked_call(["ls", path], sudo=True, stderr=subprocess.PIPE)
     files = out.splitlines()
     return files

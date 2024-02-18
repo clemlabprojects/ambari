@@ -22,13 +22,13 @@ from unittest import TestCase
 import unittest
 import tempfile
 from mock.mock import patch, MagicMock, call
-import StringIO
+import io
 import sys
 import multiprocessing
 from ambari_agent.RecoveryManager import RecoveryManager
 
 
-with patch("platform.linux_distribution", return_value = ('Suse','11','Final')):
+with patch("distro.linux_distribution", return_value = ('Suse','11','Final')):
   from ambari_agent.Hardware import Hardware
   from ambari_agent.Heartbeat import Heartbeat
   from ambari_agent.ActionQueue import ActionQueue
@@ -43,7 +43,7 @@ class TestHeartbeat:#(TestCase):
 
   def setUp(self):
     # disable stdout
-    out = StringIO.StringIO()
+    out = io.StringIO()
     sys.stdout = out
 
 
@@ -62,18 +62,18 @@ class TestHeartbeat:#(TestCase):
     actionQueue = ActionQueue(config, dummy_controller)
     heartbeat = Heartbeat(actionQueue)
     result = heartbeat.build(100)
-    print "Heartbeat: " + str(result)
+    print("Heartbeat: " + str(result))
     self.assertEquals(result['hostname'] != '', True, "hostname should not be empty")
     self.assertEquals(result['responseId'], 100)
     self.assertEquals(result['componentStatus'] is not None, True, "Heartbeat should contain componentStatus")
     self.assertEquals(result['reports'] is not None, True, "Heartbeat should contain reports")
-    self.assertEquals(result['timestamp'] >= 1353679373880L, True)
+    self.assertEquals(result['timestamp'] >= int(1353679373880), True)
     self.assertEquals(result['recoveryTimestamp'], -1)
     self.assertEquals(len(result['nodeStatus']), 2)
     self.assertEquals(result['nodeStatus']['cause'], "NONE")
     self.assertEquals(result['nodeStatus']['status'], "HEALTHY")
     # result may or may NOT have an agentEnv structure in it
-    self.assertEquals((len(result) is 7) or (len(result) is 8), True)
+    self.assertEquals((len(result) == 7) or (len(result) == 8), True)
     self.assertEquals(not heartbeat.reports, True, "Heartbeat should not contain task in progress")
 
   @patch("subprocess.Popen")

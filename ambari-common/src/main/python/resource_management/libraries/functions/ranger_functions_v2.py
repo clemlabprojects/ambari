@@ -221,7 +221,7 @@ class RangeradminV2:
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(json.JSONEncoder().encode(result.read()))
+      response = json.loads(result.read().decode())
 
       if response_code == 200:
         Logger.info('Repository created Successfully')
@@ -291,7 +291,7 @@ class RangeradminV2:
     :return: Returns login check response
     """
     try:
-      login_url = format('{url}/service/users/1') if user_login_check is 'admin' else format('{url}/service/xusers/users/userName/{user_login_check}')
+      login_url = format('{url}/service/users/1') if user_login_check == 'admin' else format('{url}/service/xusers/users/userName/{user_login_check}')
       search_policy_url = self.url_policies
       base_64_string = base64.b64encode(ambari_username_password_for_ranger.encode()).decode().replace('\n', '')
       headers = {
@@ -438,7 +438,7 @@ class RangeradminV2:
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
-          response = json.loads(json.JSONEncoder().encode(result.read()))
+          response = json.loads(result.read())
           if response_code == 200 and response is not None:
             Logger.info('rangerlookup user creation successful.')
             return response_code
@@ -470,13 +470,13 @@ class RangeradminV2:
       Logger.info(format('Cheking if {policy_user} user already exists'))
       url =  self.url_users + '?name=' + policy_user
       request = urllib.request.Request(url)
-      base_64_string = base64.encodestring(format("{ranger_admin_username}:{ranger_admin_password}")).replace('\n', '')
+      base_64_string = base64.b64encode(f"{ranger_admin_username}:{ranger_admin_password}".encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(json.JSONEncoder().encode(result.read()))
+      response = json.loads(result.read())
       if response_code == 200 and len(response['vXUsers']) >= 0:
         for vxuser in response['vXUsers']:
           if vxuser['name'] == policy_user:
@@ -499,7 +499,7 @@ class RangeradminV2:
           policy_user_dict['description'] = str(format('{policy_user} user needed for repository creation'))
           policy_user_dict['firstName'] = str(policy_user)
           policy_user_dict['userSource'] = 0
-          data =  json.dumps(policy_user_dict)
+          data =  json.dumps(policy_user_dict).encode('utf-8')
           base_64_string = base64.b64encode(f"{ranger_admin_username}:{ranger_admin_password}".encode()).decode().replace('\n', '')
           headers = {
             'Accept': 'application/json',
@@ -509,8 +509,7 @@ class RangeradminV2:
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
-          response = json.loads(json.JSONEncoder().encode(result.read()))
-          if response_code == 200 and response is not None:
+          if response_code == 201:
             Logger.info(format('{policy_user} user creation successful.'))
             return response_code
           else:
@@ -611,8 +610,8 @@ class RangeradminV2:
         search_repo_url = '{0}?suser=keyadmin'.format(search_repo_url)
       header = 'Content-Type: application/json'
       method = 'POST'
+      response,error_message,time_in_millis = self.call_curl_request(component_user,component_user_keytab,component_user_principal,search_repo_url,False,method,data.decode('utf-8'),header)
 
-      response,error_message,time_in_millis = self.call_curl_request(component_user,component_user_keytab,component_user_principal,search_repo_url,False,method,data,header)
       if response and len(response) > 0:
         response_json = json.loads(response)
         if 'name' in response_json and response_json['name'].lower() == name.lower():
@@ -656,8 +655,7 @@ class RangeradminV2:
       request.get_method = lambda: 'PUT'
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(json.JSONEncoder().encode(result.read()))
-
+      response = json.loads(result.read())
       if response_code == 200:
         Logger.info("Service name {0} updated successfully on Ranger Admin for service {1}".format(repo_name, component))
         return response

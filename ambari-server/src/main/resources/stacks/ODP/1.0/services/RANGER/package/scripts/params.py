@@ -249,8 +249,8 @@ ranger_tagsync_hosts = default("/clusterHostInfo/ranger_tagsync_hosts", [])
 has_ranger_tagsync = len(ranger_tagsync_hosts) > 0
 
 tagsync_log_dir = default("/configurations/ranger-tagsync-site/ranger.tagsync.logdir", "/var/log/ranger/tagsync")
-tagsync_jceks_path = config["configurations"]["ranger-tagsync-site"]["ranger.tagsync.keystore.filename"]
-atlas_tagsync_jceks_path = config["configurations"]["ranger-tagsync-site"]["ranger.tagsync.source.atlasrest.keystore.filename"]
+tagsync_jceks_path = default("/configurations/ranger-tagsync-site/ranger.tagsync.keystore.filename", "/usr/odp/current/ranger-tagsync/conf/rangertagsync.jceks")
+atlas_tagsync_jceks_path = default("/configurations/ranger-tagsync-site/ranger.tagsync.source.atlasrest.keystore.filename", "/usr/odp/current/ranger-tagsync/conf/atlasuser.jceks")
 tagsync_application_properties = dict(config["configurations"]["tagsync-application-properties"]) if has_ranger_tagsync else None
 tagsync_pid_file = format('{ranger_pid_dir}/tagsync.pid')
 tagsync_cred_lib = os.path.join(ranger_tagsync_home, "lib", "*")

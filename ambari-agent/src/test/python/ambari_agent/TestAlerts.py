@@ -223,6 +223,33 @@ class TestAlerts(TestCase):
     self.assertTrue('(Unit Tests)' in alerts[0]['text'])
     self.assertTrue('response time on port 2181' in alerts[0]['text'])
 
+  @patch.object(ConfigurationBuilder, "get_configuration")
+  @patch.object(socket.socket,"connect")
+  def test_port_alert_socket_command(self, socket_connect_mock, get_configuration_mock):
+    definition_json = self._get_port_alert_socket_command_definition()
+
+    configuration = {'zoo.cfg' :
+      { 'clientPort': 'master21.clemlab.com:2181'}
+    }
+    initializer_module = self.create_initializer_module()
+    get_configuration_mock.return_value = {'configurations':configuration}
+
+    collector = AlertCollector()
+    cluster_configuration = self.__get_cluster_configuration()
+    self.__update_cluster_configuration(cluster_configuration, configuration)
+
+    alert = PortAlert(definition_json, definition_json['source'], self.config)
+    # use a URI that has commas to verify that we properly parse it
+    alert.set_helpers(collector, cluster_configuration, initializer_module.configuration_builder)
+    alert.set_cluster("c1", "0", "c6402.ambari.apache.org")
+
+    self.assertEqual(1, alert.interval())
+    alert.collect()
+
+    alerts = collector.alerts()
+    self.assertEqual('OK', alerts[0]['state'])
+    self.assertTrue('(Unit Tests)' in alerts[0]['text'])
+    self.assertTrue('response time on port 2181' in alerts[0]['text'])
 
   def test_port_alert_no_sub(self):
     definition_json = { "name": "namenode_process", 
@@ -295,7 +322,6 @@ class TestAlerts(TestCase):
 
     alerts = collector.alerts()
     self.assertEqual(0, len(collector.alerts()))
-
     self.assertEqual('WARNING', alerts[0]['state'])
     self.assertEqual('bar is rendered-bar, baz is rendered-baz', alerts[0]['text'])
 
@@ -1473,7 +1499,53 @@ class TestAlerts(TestCase):
         ]
       }
     }
-
+  def _get_port_alert_socket_command_definition(self):
+    return {
+      "definitionId": 1,
+      "name": "zookeeper_server_process",
+      "service": "ZOOKEEPER",
+      "component": "SERVER",
+      "label": "ZooKeeper Server Process",
+      "description": "This host-level alert is triggered if the ZooKeeper server process cannot be determined to be up and listening on the network.",
+      "interval": 1,
+      "scope": "ANY",
+      "source": {
+        "type": "PORT",
+        "uri": "{{zoo.cfg/clientPort}}",
+        "default_port": 2181,
+        "reporting": {
+          "ok": {
+            "text": "TCP OK - {0:.3f}s response on port {1}"
+          },
+          "warning": {
+            "text": "TCP OK - {0:.3f}s response on port {1}",
+            "value": 1.5
+          },
+          "critical": {
+            "text": "Connection failed: {0} to {1}:{2}",
+            "value": 5.0
+          }
+        },
+        "parameters": [
+          {
+            "name": "socket.command",
+            "display_name": "Socket Command",
+            "value": "ruok",
+            "description": "A socket command which queries ZooKeeper to respond with its state. The expected response is imok.",
+            "type": "STRING",
+            "visibility": "HIDDEN"
+          },
+          {
+            "name": "socket.command.response",
+            "display_name": "Expected Response",
+            "value": "imok",
+            "description": "The expected response to the socket command.",
+            "type": "STRING",
+            "visibility": "HIDDEN"
+          }
+        ]
+      }
+    }
   def _get_port_alert_definition(self):
     return { "name": "namenode_process",
       "definitionId": 1,

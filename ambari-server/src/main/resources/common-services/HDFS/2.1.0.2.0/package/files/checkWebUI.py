@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import optparse
+import argparse
 import http.client
 import socket
 import ssl
@@ -51,22 +51,22 @@ def make_connection(host, port, https, force_protocol=None):
       tls1_conn.request("GET", "/")
       return tls1_conn.getresponse().status
     except Exception as e:
-      print e
+      print(e)
     finally:
       tls1_conn.close()
   except Exception as e:
-    print e
+    print(e)
   finally:
     conn.close()
 #
 # Main.
 #
 def main():
-  parser = optparse.OptionParser(usage="usage: %prog [options] component ")
-  parser.add_option("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
-  parser.add_option("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
-  parser.add_option("-s", "--https", dest="https", help="\"True\" if value of dfs.http.policy is \"HTTPS_ONLY\"")
-  parser.add_option("-o", "--protocol", dest="protocol", help="Protocol to use when executing https request")
+  parser = argparse.ArgumentParser(usage="usage: %prog [options] component ")
+  parser.add_argument("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
+  parser.add_argument("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
+  parser.add_argument("-s", "--https", dest="https", help="\"True\" if value of dfs.http.policy is \"HTTPS_ONLY\"")
+  parser.add_argument("-o", "--protocol", dest="protocol", help="Protocol to use when executing https request")
 
   (options, args) = parser.parse_args()
   
@@ -79,7 +79,7 @@ def main():
     httpCode = make_connection(host, port, https.lower() == "true", protocol)
 
     if httpCode != 200:
-      print "Cannot access WEB UI on: http://" + host + ":" + port if not https.lower() == "true" else "Cannot access WEB UI on: https://" + host + ":" + port
+      print("Cannot access WEB UI on: http://" + host + ":" + port if not https.lower() == "true" else "Cannot access WEB UI on: https://" + host + ":" + port)
       exit(1)
 
 if __name__ == "__main__":
