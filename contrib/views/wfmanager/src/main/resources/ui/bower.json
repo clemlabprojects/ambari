@@ -15,7 +15,7 @@
     "handlebars": "~4.0.5",
     "spin.js": "~2.3.2",
     "typeahead.js": "~0.11.1",
-    "bootstrap-tagsinput": "~0.8.0",
+    "bootstrap-tagsinput": "https://github.com/clemlabprojects/bootstrap-tagsinput.git",
     "eonasdan-bootstrap-datetimepicker": "~4.17.37",
     "code-prettify": "*",
     "datatables": "~1.10.11",
