@@ -1309,7 +1309,7 @@
             <version>2.1.4</version>
             <configuration>
               <group>Development</group>
-              <needarch>aarch64</needarch>
+              <needarch>${ambari.arch}</needarch>
               <license>2012, Apache Software Foundation</license>
               <version>${project.version}</version>
               <release>${release.version}</release>
