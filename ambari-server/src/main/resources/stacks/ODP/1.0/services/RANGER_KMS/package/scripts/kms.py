@@ -609,7 +609,7 @@ def check_ranger_service():
 def create_repo(url, data, usernamepassword):
   try:
     base_url = url + '/service/public/v2/api/service'
-    base64string = base64.('{0}'.format(usernamepassword)).replace('\n', '')
+    base64string = base64.encodebytes(usernamepassword.encode()).decode().replace('\n', '')
     headers = {
       'Accept': 'application/json',
       "Content-Type": "application/json"
