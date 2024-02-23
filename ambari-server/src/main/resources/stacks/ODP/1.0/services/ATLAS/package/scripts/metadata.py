@@ -103,11 +103,11 @@ def metadata(type='server'):
            content=InlineTemplate(params.metadata_env_content)
       )
 
-      if not is_empty(params.atlas_admin_username) and not is_empty(params.atlas_admin_password):
-        psswd_output = hashlib.sha256(params.atlas_admin_password).hexdigest()
+      if params.atlas_admin_username and params.atlas_admin_password:
+        psswd_output = hashlib.sha256(params.atlas_admin_password.encode('utf-8')).hexdigest()
         ModifyPropertiesFile(format("{conf_dir}/users-credentials.properties"),
-            properties = {format('{atlas_admin_username}') : format('ROLE_ADMIN::{psswd_output}')},
-            owner = params.metadata_user
+          properties={format(params.atlas_admin_username): format(f'ROLE_ADMIN::{psswd_output}')},
+          owner=params.metadata_user
         )
 
       files_to_chown = [format("{conf_dir}/atlas-simple-authz-policy.json"), format("{conf_dir}/users-credentials.properties")]
