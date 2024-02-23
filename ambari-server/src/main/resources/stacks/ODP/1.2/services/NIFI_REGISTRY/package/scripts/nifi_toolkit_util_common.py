@@ -263,9 +263,9 @@ def store_exists(client_dict, key):
 
 def hash(value, master_key):
   m = hashlib.sha512()
-  m.update(master_key)
+  m.update(master_key.encode('utf-8'))
   derived_key = m.hexdigest()[0:32]
-  h = hmac.new(derived_key, value, hashlib.sha256)
+  h = hmac.new(derived_key.encode('utf-8'), value.encode('utf-8'), hashlib.sha256)
   return h.hexdigest()
 
 
@@ -297,7 +297,7 @@ def move_keystore_truststore(client_dict, service):
 def convert_properties_to_dict(prop_file):
   dict = {}
   if sudo.path_isfile(prop_file):
-    lines = sudo.read_file(prop_file).split('\n')
+    lines = sudo.read_file(prop_file).decode().split('\n')
     for line in lines:
       props = line.rstrip().split('=')
       if len(props) == 2:
