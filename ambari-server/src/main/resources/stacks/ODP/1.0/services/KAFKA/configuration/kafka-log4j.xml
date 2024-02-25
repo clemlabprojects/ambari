@@ -154,6 +154,13 @@ log4j.additivity.kafka.log.LogCleaner=false
 log4j.logger.state.change.logger=TRACE, stateChangeAppender
 log4j.additivity.state.change.logger=false
 
+log4j.logger.org.apache.ranger=INFO, rangerAppender
+log4j.appender.rangerAppender=org.apache.log4j.RollingFileAppender
+log4j.appender.rangerAppender.File=${kafka.logs.dir}/kafka-ranger-plugin.log
+log4j.appender.rangerAppender.layout=org.apache.log4j.PatternLayout
+log4j.appender.rangerAppender.layout.ConversionPattern=%d{ISO8601} %p [%t] %C{6} (%F:%L) - %m%n
+log4j.appender.rangerAppender.MaxFileSize=200MB
+log4j.appender.rangerAppender.MaxBackupIndex=10
    </value>
     <value-attributes>
       <type>content</type>
