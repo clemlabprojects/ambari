@@ -113,6 +113,12 @@ def ozone(name=None):
       cd_access = "a",
       mode = 0o755,
     )
+    Directory (params.ozone_http_dir,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0o754,
+    )
     # On some OS this folder could be not exists, so we will create it before pushing there files
     Directory(params.limits_conf_dir,
             create_parents = True,
