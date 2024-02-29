@@ -47,13 +47,13 @@
 
               &lt;flowPersistenceProvider&gt;
                   &lt;class&gt;org.apache.nifi.registry.provider.flow.FileSystemFlowPersistenceProvider&lt;/class&gt;
-                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;/usr/odp/current/nifi-registry/flow_storage&lt;/property&gt;
+                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;/var/lib/nifiregistry/flow_storage&lt;/property&gt;
               &lt;/flowPersistenceProvider&gt;
 
               &lt;!--
               &lt;flowPersistenceProvider&gt;
                   &lt;class&gt;org.apache.nifi.registry.provider.flow.git.GitFlowPersistenceProvider&lt;/class&gt;
-                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;/usr/odp/current/nifi-registry/flow_storage&lt;/property&gt;
+                  &lt;property name=&quot;Flow Storage Directory&quot;&gt;/var/lib/nifiregistry/flow_storage&lt;/property&gt;
                   &lt;property name=&quot;Remote To Push&quot;&gt;&lt;/property&gt;
                   &lt;property name=&quot;Remote Access User&quot;&gt;&lt;/property&gt;
                   &lt;property name=&quot;Remote Access Password&quot;&gt;&lt;/property&gt;
@@ -89,7 +89,7 @@
 
               &lt;extensionBundlePersistenceProvider&gt;
                   &lt;class&gt;org.apache.nifi.registry.provider.extension.FileSystemBundlePersistenceProvider&lt;/class&gt;
-                  &lt;property name=&quot;Extension Bundle Storage Directory&quot;&gt;/usr/odp/current/nifi-registry/extension_bundles&lt;/property&gt;
+                  &lt;property name=&quot;Extension Bundle Storage Directory&quot;&gt;/var/lib/nifiregistry/extension_bundles&lt;/property&gt;
               &lt;/extensionBundlePersistenceProvider&gt;
 
               &lt;!-- Example S3 Bundle Persistence Provider
