@@ -59,7 +59,7 @@
                     <osFamily>almalinux8,redhat8,redhat7,amazon2015,suse11,suse12,amazonlinux2</osFamily>
                     <packages>
                         <package>
-                            <name>nifi-registry_${stack_version}</name>
+                            <name>nifi_${stack_version}-registry</name>
                         </package>
                     </packages>
                 </osSpecific>
