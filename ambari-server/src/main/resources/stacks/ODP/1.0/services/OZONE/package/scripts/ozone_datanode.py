@@ -63,7 +63,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
     if params.dn_ssl_enabled:
       passwords =  [

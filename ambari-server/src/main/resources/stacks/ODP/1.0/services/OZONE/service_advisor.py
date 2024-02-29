@@ -506,7 +506,7 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
     validationItems = []
     defaultReplication = services["configurations"]["ozone-site"]["properties"]["ozone.replication"]
     dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
-    if defaultReplication < 2 :
+    if int(defaultReplication) < 2 :
       validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
     if int(dnHosts) < int(defaultReplication):
       validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher "+str(defaultReplication)+" than the number of Ozone Datanode Hosts " + str(dnHosts) )}])

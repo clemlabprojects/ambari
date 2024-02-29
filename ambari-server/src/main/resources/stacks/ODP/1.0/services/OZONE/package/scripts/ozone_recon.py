@@ -69,7 +69,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if os.path.isdir(params.ozone_recon_scm_metadata_dir):
       Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_scm_metadata_dir)
@@ -79,7 +79,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if os.path.isdir(params.ozone_recon_om_metadata_dir):
       Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_om_metadata_dir)
@@ -89,7 +89,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if params.recon_ssl_enabled:
       passwords =  [

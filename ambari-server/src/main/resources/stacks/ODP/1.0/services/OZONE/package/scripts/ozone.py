@@ -96,7 +96,7 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
 
   ## Servers side tasks
@@ -124,7 +124,7 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
     File(os.path.join(params.limits_conf_dir, 'ozone.conf'),
         owner='root',
