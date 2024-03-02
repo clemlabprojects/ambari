@@ -46,6 +46,8 @@ module.exports = {
     'knox',
     'logsearch',
     'mapreduce2',
+    'nifi',
+    'nifi_registry',
     'oozie',
     'ozone',
     'ranger',
