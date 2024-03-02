@@ -369,6 +369,7 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
     match = re.search(regex, nifi_registry_id_owner_for_certificate)
     common_name_for_certificate = match.group(2) if match else 'NONE'
 
+    nifi_ssl_get_default_context = default('/configurations/ranger-nifi-registry-plugin-properties/nifi.registry.ssl.use.default.context', False)
     if nifi_registry_authentication == 'SSL':
 
         nifi_registry_ranger_plugin_config = {
@@ -380,11 +381,12 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
             'nifi.registry.ssl.truststore': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststore'],
             'nifi.registry.ssl.truststoreType': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststoreType'],
             'nifi.registry.ssl.truststorePassword': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.truststorePassword'],
-            'nifi.registry.ssl.use.default.context': config['configurations']['ranger-nifi-registry-plugin-properties']['nifi.registry.ssl.use.default.context'],
+            'nifi.registry.ssl.use.default.context': nifi_ssl_get_default_context,
             'commonNameForCertificate': common_name_for_certificate
         }
     else:
         nifi_registry_ranger_plugin_config = {
+            'nifi.registry.ssl.use.default.context': nifi_ssl_get_default_context,
             'nifi.registry.authentication': nifi_registry_authentication,
             'nifi.registry.url': format("https://{nifi_registry_host_name}:{nifi_registry_port}/nifi-registry-api/policies/resources"),
             'commonNameForCertificate': common_name_for_certificate
