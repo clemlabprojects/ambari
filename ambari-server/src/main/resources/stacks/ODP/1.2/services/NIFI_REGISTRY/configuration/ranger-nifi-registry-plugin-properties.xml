@@ -155,4 +155,12 @@
             <type>password</type>
         </value-attributes>
     </property>
+    <property>
+        <name>nifi.registry.ssl.use.default.context</name>
+        <value>false</value>
+        <display-name>Nifi Registry Ranger plugin default ssl context use</display-name>
+        <property-type>boolean</property-type>
+        <description>Nifi Registry Ranger plugin default ssl context use</description>
+        <on-ambari-upgrade add="true"/>
+    </property>
 </configuration>
