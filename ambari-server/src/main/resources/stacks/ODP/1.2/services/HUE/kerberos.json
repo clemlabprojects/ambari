@@ -1,0 +1,44 @@
+{
+  "services": [
+    {
+      "name": "HUE",
+      "components": [
+        {
+          "name": "HUE_SERVER",
+          "identities": [
+            {
+              "name": "hue_principal",
+              "principal": {
+                "value": "${hue-env/hue_user}/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "hue-env/hue_principal",
+                "local_username": "${hue-env/hue_user}"
+
+              },
+              "keytab": {
+                "file": "${keytab_dir}/hue.service.keytab",
+                "owner": {
+                  "name": "${hue-env/hue_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "hue-ini-conf/hue_keytab"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "core-site": {
+                "hadoop.proxyuser.${hue-env/hue_user}.groups": "${hadoop-env/proxyuser_group}",
+                "hadoop.proxyuser.${hue-env/hue_user}.hosts": "${clusterHostInfo/hue_server_hosts}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

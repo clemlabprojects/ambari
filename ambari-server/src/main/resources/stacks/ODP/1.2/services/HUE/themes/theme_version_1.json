@@ -1,0 +1,287 @@
+{
+  "name": "default",
+  "description": "Default theme for Hue service",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "default",
+        "tabs": [
+          {
+            "name": "hue_database_settings",
+            "display-name": "HUE Database",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-hue-database",
+                  "display-name": "Hue Database",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "3",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "3",
+                  "subsections": [
+                    {
+                      "name": "subsection-hue-db-row1-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-hue-db-row1-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-hue-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "subsection-hue-db-root-user-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "hue-env/create_db_dbuser"
+                          ],
+                          "if": "${hue-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "subsection-hue-db-root-user-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs":[
+                            "hue-env/create_db_dbuser"
+                          ],
+                          "if": "${hue-env/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config": "hue-env/hue_database",
+          "subsection-name": "subsection-hue-db-row1-col1"
+        },
+        {
+          "config": "hue-ini-conf/hue_db_name",
+          "subsection-name": "subsection-hue-db-row1-col1"
+        },
+        {
+          "config": "hue-ini-conf/hue_db_username",
+          "subsection-name": "subsection-hue-db-row1-col1"
+        },
+        {
+          "config": "hue-ini-conf/hue.jpa.jdbc.url",
+          "subsection-name": "subsection-hue-db-row1-col1"
+        },
+        {
+          "config": "hue-ini-conf/hue_db_host",
+          "subsection-name": "subsection-hue-db-row1-col2"
+        },
+        {
+          "config": "hue-ini-conf/hue.jpa.jdbc.driver",
+          "subsection-name": "subsection-hue-db-row1-col2"
+        },
+        {
+          "config": "hue-ini-conf/hue_db_password",
+          "subsection-name": "subsection-hue-db-row1-col2"
+        },
+        {
+          "config": "hue-env/create_db_dbuser",
+          "subsection-name": "subsection-hue-db-row2"
+        },
+        {
+          "config": "hue-env/test_db_connection",
+          "subsection-name": "subsection-hue-db-row2",
+          "property_value_attributes": {
+            "ui_only_property": true
+          },
+          "depends-on": [
+            {
+              "configs":[
+                "hue-env/create_db_dbuser"
+              ],
+              "if": "${hue-env/create_db_dbuser}",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "hue-env/db_root_user",
+          "subsection-name": "subsection-hue-db-root-user-col1"
+        },
+        {
+          "config": "hue-env/hue_privelege_user_jdbc_url",
+          "subsection-name": "subsection-hue-db-root-user-col1"
+        },
+        {
+          "config": "hue-env/db_root_password",
+          "subsection-name": "subsection-hue-db-root-user-col2"
+        },
+        {
+          "config": "hue-env/test_root_db_connection",
+          "subsection-name": "subsection-hue-db-root-user-col1",
+          "property_value_attributes": {
+            "ui_only_property": true
+          }
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "hue-env/hue_database",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue_db_username",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue_db_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue.jpa.jdbc.url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue.jpa.jdbc.driver",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue_db_host",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue_db_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "hue-env/test_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "hue-ini-conf/hue.jpa.jdbc.driver",
+            "jdbc.driver.url": "hue-ini-conf/hue.jpa.jdbc.url",
+            "db.connection.source.host": "hue-ini-conf/hue_server_hosts",
+            "db.type": "hue-env/hue_database",
+            "db.connection.destination.host": "hue-ini-conf/hue_db_host",
+            "db.connection.user": "hue-ini-conf/hue_db_username",
+            "db.connection.password": "hue-ini-conf/hue_db_password"
+          }
+        }
+      },
+      {
+        "config": "hue-env/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "hue-env/hue_privelege_user_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-env/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-env/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "hue-env/test_root_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "hue-ini-conf/hue.jpa.jdbc.driver",
+            "jdbc.driver.url": "hue-env/hue_privelege_user_jdbc_url",
+            "db.connection.source.host": "hue-ini-conf/hue_server_hosts",
+            "db.type": "hue-env/hue_database",
+            "db.connection.destination.host": "hue-ini-conf/hue_db_host",
+            "db.connection.user": "hue-env/db_root_user",
+            "db.connection.password": "hue-env/db_root_password"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,197 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+  <property>
+    <name>hue_database</name>
+    <value>MYSQL</value>
+    <display-name>DB FLAVOR</display-name>
+    <description>The database type to be used (mysql/oracle)</description>
+    <value-attributes>
+      <overridable>true</overridable>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>MYSQL</value>
+          <label>MYSQL</label>
+        </entry>
+        <entry>
+          <value>ORACLE</value>
+          <label>ORACLE</label>
+        </entry>
+        <entry>
+          <value>POSTGRES</value>
+          <label>POSTGRES</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_pid_dir</name>
+    <display-name>Hue pid dir</display-name>
+    <value>/var/run/hue</value>
+    <description>Dir containing process ID file</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+      <editable-only-at-install>true</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_user</name>
+    <display-name>Hue User</display-name>
+    <value>hue</value>
+    <property-type>USER</property-type>
+    <description>User Hue daemon runs as</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>true</overridable>
+      <user-groups>
+        <property>
+          <type>hue-env</type>
+          <name>hue_group</name>
+        </property>
+      </user-groups>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_group</name>
+    <display-name>Hue Group</display-name>
+    <value>hue</value>
+    <property-type>GROUP</property-type>
+    <description>hue group</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_log_dir</name>
+    <display-name>hue log dir</display-name>
+    <value>/var/log/hue</value>
+    <description>Hue Log dir</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_ssl_enabled</name>
+    <display-name>TLS Hue Enabled</display-name>
+    <value>false</value>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <description>Enable/Disable TLS on Hue WEBUi</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_submit_to</name>
+    <display-name>Submit as end user</display-name>
+    <value>true</value>
+    <value-attributes>
+            <type>boolean</type>
+    </value-attributes>
+    <description>Impersonate user in yarn submission jobs</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>create_db_dbuser</name>
+    <value>false</value>
+    <display-name>Setup Database and Database User</display-name>
+    <description>If set to Yes, Ambari will create and setup Hue Database and Database User. This will require to specify Database Admin user and password</description>
+    <value-attributes>
+      <type>value-list</type>
+      <overridable>false</overridable>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>Yes</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>No</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+    <property>
+    <name>db_root_password</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>Database Administrator (DBA) password</display-name>
+    <description>Database password for the database admin username</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>db_root_user</name>
+    <value>root</value>
+    <display-name>Database Administrator (DBA) username</display-name>
+    <description>Database admin user. This user should have DBA permission to create the Ranger Database and Ranger Database User</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_privelege_user_jdbc_url</name>
+    <display-name>JDBC connect string for root user</display-name>
+    <description>JDBC connect string - auto populated based on other values. This is to be used by root user</description>
+    <value>jdbc:mysql://localhost</value>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>hue-env</type>
+        <name>hue_database</name>
+      </property>
+      <property>
+        <type>hue-ini-conf</type>
+        <name>db_host</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_admin_username</name>
+    <value>admin</value>
+    <display-name>Hue Admin username</display-name>
+    <description>This is the username for default admin in Hue</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hue_admin_password</name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <display-name>Hue Admin user's password</display-name>
+    <description>This is the password for default admin user in Hue. Unsupported special characters are &quot; &apos; &#92; &#96; &#180;.</description>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+</configuration>
