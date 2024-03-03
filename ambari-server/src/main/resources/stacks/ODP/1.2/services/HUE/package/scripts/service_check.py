@@ -52,7 +52,7 @@ class HueServiceCheckDefault(HueServiceCheck):
 
     File(validateHueFilePath,
          content=StaticFile(validateHueFileName),
-         mode=0755
+         mode=0o755
     )
 
     Execute(smoke_cmd,
