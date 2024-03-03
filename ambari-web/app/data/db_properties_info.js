@@ -50,6 +50,16 @@ module.exports = {
 
       user_name: 'oozie.service.JPAService.jdbc.username',
       password: 'oozie.service.JPAService.jdbc.password'
+    },
+    'HUE': {
+      db_selector: 'hue_database',
+      db_name: 'hue_db_name',
+
+      connection_url: 'hue.jpa.jdbc.url',
+      driver: 'hue.jpa.jdbc.driver',
+
+      user_name: 'hue_db_username',
+      password: 'hue_db_password'
     }
   },
 

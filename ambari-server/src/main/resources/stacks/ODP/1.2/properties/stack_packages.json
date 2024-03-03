@@ -241,6 +241,20 @@
           ]
         }
       },
+      "HUE": {
+        "HUE_SERVER": {
+          "STACK-SELECT-PACKAGE": "hue-server",
+          "INSTALL": [
+            "hue-server"
+          ],
+          "PATCH": [
+            "hue-server"
+          ],
+          "STANDARD": [
+            "hue-server"
+          ]
+        }
+      },
       "KAFKA": {
         "KAFKA_BROKER": {
           "STACK-SELECT-PACKAGE": "kafka-broker",

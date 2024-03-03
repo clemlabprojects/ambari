@@ -57,6 +57,9 @@ App.ComboConfigWidgetView = App.ConfigWidgetView.extend({
       serviceName: 'HIVE', dbConfigName: 'hive_database'
     },
     {
+      serviceName: 'HUE', dbConfigName: 'hue_database'
+    },
+    {
       serviceName: 'RANGER', dbConfigName: 'DB_FLAVOR'
     },
     {
