@@ -292,6 +292,7 @@ App.TestDbConnectionWidgetView = App.ConfigWidgetView.extend({
     var propertiesMap = {
       OOZIE: ['oozie.db.schema.name', 'oozie.service.JPAService.jdbc.username', 'oozie.service.JPAService.jdbc.password', 'oozie.service.JPAService.jdbc.driver', 'oozie.service.JPAService.jdbc.url'],
       HIVE: ['ambari.hive.db.schema.name', 'javax.jdo.option.ConnectionUserName', 'javax.jdo.option.ConnectionPassword', 'javax.jdo.option.ConnectionDriverName', 'javax.jdo.option.ConnectionURL'],
+      HUE: ['hue_db_name', 'hue_db_username', 'hue_db_password', 'hue.jpa.jdbc.driver', 'hue.jpa.jdbc.url'],
       KERBEROS: ['kdc_hosts'],
       RANGER: ranger && ranger.compareCurrentVersion('0.5') > -1 ?
         ['db_user', 'db_password', 'db_name', 'ranger.jpa.jdbc.url', 'ranger.jpa.jdbc.driver'] :
@@ -315,8 +316,8 @@ App.TestDbConnectionWidgetView = App.ConfigWidgetView.extend({
       db_connection_url: /jdbc\.url|connection_url|connectionurl|kdc_hosts/ig
     };
     if (this.get('parentView.service.serviceName') != "KERBEROS") {
-      patterns.user_name = /(username|dblogin|db_user)$/ig;
-      patterns.user_passwd = /(dbpassword|password|db_password)$/ig;
+      patterns.user_name = /(username|dblogin|db_user|hue_db_username)$/ig;
+      patterns.user_passwd = /(dbpassword|password|db_password|hue_db_password)$/ig;
     }
     return patterns;
   }.property('parentView.service.serviceName'),

@@ -1,0 +1,214 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+  <property>
+        <name>content</name>
+        <description>Hue Ini template file</description>
+        <value>
+[desktop]
+use_x_forwarded_host={{hue_use_x_forwarded_host}}
+app_blacklist={{hue_app_blacklist}}
+{% if hue_ssl_enabled %}
+ssl_certificate={{hue_ssl_certificate}}
+ssl_private_key={{hue_ssl_private_key}}
+ssl_cacerts={{hue_ssl_cert_chain}}
+{% endif %}
+log_redaction_file={{hue_log_redaction_file}}
+http_port={{hue_http_port}}
+time_zone={{hue_timezone}}
+django_debug_mode={{hue_django_debug_mode}}
+http_500_debug_mode={{hue_http_500_debug_mode}}
+cherrypy_server_threads={{hue_cherrypy_server_threads}}
+default_site_encoding={{hue_default_site_encoding}}
+collect_usage={{hue_default_collect_usage}}
+# desktop runtime configuration
+default_user={{hue_runtime_default_user}}
+default_hdfs_superuser={{hue_runtime_default_hdfs_superuser}}
+secret_key_script={{hue_runtime_secret_key_script}}
+http_host={{hue_runtime_http_host}}
+cluster_id={{hue_runtime_cluster_id}}
+hue_load_balancer={{hue_runtime_load_balancer}}
+[[metrics]]
+location={{hue_metrics_file}}
+collection_interval=30000
+[[custom]]
+[[auth]]
+idle_session_timeout={{hue_idle_session_timeout}}
+user_augmentor={{hue_user_augmentor}}
+backend={{hue_backend}}
+{% if ldap_auth %}
+[[ldap]]
+ldap_url={{hue_ldap_url}}
+search_bind_authentication={{hue_search_bind_authentication}}
+nt_domain={{hue_nt_domain}}
+create_users_on_login={{hue_create_users_on_login}}
+base_dn={{hue_base_dn}}
+bind_dn={{hue_bind_dn}}
+test_ldap_group={{hue_test_ldap_group}}
+# auth runtime configuration
+bind_password_script={{hue_runtime_bind_password_script}}
+[[[users]]]
+user_name_attr="{{hue_user_name_attr}}"
+[[[groups]]]
+group_name_attr="{{hue_group_name_attr}}"
+group_member_attr="{{hue_group_member_attr}}"
+{% endif %}
+
+[[database]]
+engine={{hue_db_engine}}
+host={{hue_db_host}}
+port={{hue_db_port}}
+user={{hue_db_username}}
+name={{hue_db_name}}
+password_script={{hue_runtime_database_password_script}}
+[[smtp]]
+host=localhost
+port=25
+user=
+password=
+tls=no
+[[knox]]
+knox_principal=knox
+knox_proxyhosts={{hue_generated_proxy_hosts}}
+{% if kerberos_enabled %}
+[[kerberos]]
+ccache_path={{hue_kerberos_ccache_path}}
+hue_keytab={{hue_keytab}}
+hue_principal={{hue_principal}}
+{% endif %}
+{% if atlas_is_enabled %}
+[metadata]
+[[catalog]]
+api_url={{hue_generated_urls}}
+interface=atlas
+kerberos_enabled={{hue_catalog_kerberos_enabled}}
+{% endif %}
+
+{% if has_namenode %}
+[hadoop]
+[[hdfs_clusters]]
+[[[default]]]
+fs_defaultfs={{hue_fs_default}}
+webhdfs_url={{hue_webhdfs_url}}
+hadoop_hdfs_home=/usr/odp/current/hadoop-hdfs
+hadoop_bin=/usr/odp/current/hadoop-client/bin/hadoop
+hadoop_conf_dir=/etc/hadoop/conf
+security_enabled={{hue_hdfs_kerberos_enabled}}
+temp_dir=/tmp
+{% endif %}
+
+{% if has_rm %}
+[[yarn_clusters]]
+  [[[default]]]
+  resourcemanager_host={{hue_resourcemanager_host}}
+  resourcemanager_api_url={{hue_resourcemanager_api_url}}
+  proxy_api_url={{hue_proxy_api_url}}
+  resourcemanager_port={{hue_resourcemanager_port}}
+  logical_name=yarnRM
+  history_server_api_url={{hue_history_server_api_url}}
+  security_enabled={{hue_yarn_kerberos_enabled}}
+  submit_to={{hue_submit_to}}
+  hadoop_mapred_home=/usr/odp/current/hadoop-mapreduce/
+  hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop
+  hadoop_conf_dir=/etc/hadoop/conf
+{% if yarn_ha_enabled %}
+  [[[ha]]]
+  resourcemanager_host={{hue_yarnha_resourcemanager_host}}
+  resourcemanager_api_url={{hue_yarnha_resourcemanager_api_url}}
+  proxy_api_url={{hue_yarnha_proxy_api_url}}
+  resourcemanager_port={{hue_yarnha_resourcemanager_port}}
+  logical_name=yarnRM
+  history_server_api_url={{hue_yarnha_history_server_api_url}}
+  security_enabled={{hue_yarnha_yarn_kerberos_enabled}}
+  submit_to={{hue_yarnha_submit_to}}
+  hadoop_mapred_home=/usr/odp/current/hadoop-mapreduce/
+  hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop
+  hadoop_conf_dir=/etc/hadoop/conf
+  {% endif %}
+{% endif %}
+
+{% if has_hive_hs2 %}
+[beeswax]
+hive_server_host={{hue_beeswax_hive_server_host}}
+hive_server_port={{hue_beeswax_hive_server_port}}
+server_conn_timeout={{hue_beeswax_server_conn_timeout}}
+hive_conf_dir=/etc/hive/conf
+  {% if has_hive_hs2_ssl %}
+  [[ssl]]
+  validate={{hue_ssl_validate}}
+  ssl_cacerts={{hue_ssl_cert_chain}}
+  {% endif %}
+{% endif %}
+
+{% if has_oozie %}
+[liboozie]
+remote_data_dir={{hue_remote_data_dir}}
+oozie_url={{hue_oozie_url}}
+security_enabled={{hue_oozie_kerberos_enabled}}
+{% endif %}
+[useradmin] 
+{% if has_hbase %}
+[hbase]
+hbase_clusters={{hue_hbase_clusters}}
+hbase_conf_dir=/etc/hbase/conf
+{% endif %}
+[proxy]
+whitelist=(localhost|127\.0\.0\.1):(50030|50070|50060|50075)
+[shell]
+[[ shelltypes ]]
+[[[ pig ]]]
+nice_name="Pig Shell (Grunt)"
+command="/usr/lib/pig/../../bin/pig -l /dev/null"
+help="The command-line interpreter for Pig"
+
+[[[[ environment ]]]]
+[[[[[ JAVA_HOME ]]]]]
+value="{{java_jdk}}"
+[[[[[ HADOOP_CONF_DIR ]]]]]
+value="/etc/hadoop/conf"
+[[[ hbase ]]]
+nice_name="HBase Shell"
+command="/usr/{{stack_name}}/{{stack_version_formatted}}/hbase/bin/hbase shell"
+help="The command-line HBase client interface."
+[[[[ environment ]]]]
+[[[[[ JAVA_HOME ]]]]]
+value="{{java_jdk}}"
+[[[[[ HADOOP_CONF_DIR ]]]]]
+value="/etc/hadoop/conf"
+[[[[[ HBASE_CONF_DIR ]]]]]
+value="/etc/hbase/conf"
+
+{% if has_zookeeper %}
+[zookeeper]
+[[clusters]]
+[[[default]]]
+host_ports={{hue_zookeeper_hosts}}
+[libzookeeper]
+ensemble={{hue_zookeeper_hosts}}
+principal_name=zookeeper
+{% endif %}
+        </value>
+        <value-attributes>
+            <type>content</type>
+            <show-property-name>false</show-property-name>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+</configuration>
+

@@ -1,0 +1,382 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_final="false" supports_adding_forbidden="true">
+    <property>
+      <name>hue_app_blacklist</name>
+        <display-name>App blacklist</display-name>
+        <value>spark,zookeeper,impala,search,pig,sqoop,security</value>
+        <description>Blacklisted App from Interface</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_use_x_forwarded_host</name>
+        <display-name>Use forward</display-name>
+        <value>true</value>
+          <value-attributes>
+            <type>boolean</type>
+          </value-attributes>
+        <description>Set HTTP header use forward</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_http_port</name>
+        <display-name>HTTP/HTTPS Port</display-name>
+        <value>8888</value>
+        <description>Hue HTTP Listening Port</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_log_redaction_file</name>
+        <display-name>Redaction Rules File Name</display-name>
+        <value>/etc/hue/conf/redaction-rules.json</value>
+        <description>Redaction rules to mask password</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_time_zone</name>
+        <display-name>Time Zone</display-name>
+        <value>America/Los_Angeles</value>
+        <description>Hue Time Zone</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_django_debug_mode</name>
+        <display-name>Verbose Mode</display-name>
+        <value>false</value>
+          <value-attributes>
+            <type>boolean</type>
+          </value-attributes>
+        <description>Django Verbose mode</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_http_500_debug_mode</name>
+        <display-name>HTTP Debug Mode</display-name>
+        <value>false</value>
+        <value-attributes>
+          <type>boolean</type>
+        </value-attributes>
+        <description>HTTP Debug Mode</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_cherrypy_server_threads</name>
+        <display-name>Server Threads</display-name>
+        <value>50</value>
+        <description>Hue Server Threads</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_default_site_encoding</name>
+        <display-name>Encoding</display-name>
+        <value>utf</value>
+        <description>Hue Configuration File Encoding</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_collect_usage</name>
+        <display-name>Collect Metric Usage</display-name>
+        <value>false</value>
+        <value-attributes>
+          <type>boolean</type>
+        </value-attributes>
+        <description>Hue Configuration File Encoding</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_idle_session_timeout</name>
+        <display-name>Session Timeout</display-name>
+        <value>-1</value>
+        <description>Idle Session Timeout</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_user_augmentor</name>
+        <display-name>User Augmentator</display-name>
+        <value>desktop.auth.backend.DefaultUserAugmentor</value>
+        <description>Defined User Additional method</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_backend</name>
+        <display-name>Hue Backend</display-name>
+        <value>desktop.auth.backend.AllowFirstUserDjangoBackend</value>
+        <description>Hue Authentication method</description>
+        <on-ambari-upgrade add="false"/>
+        <value-attributes>
+        <overridable>false</overridable>
+      </value-attributes>
+    </property>
+    <property>
+      <name>hue_search_bind_authentication</name>
+        <display-name>Enable bind Authentication</display-name>
+        <value>false</value>
+        <description>Use bind mecanism to authenticate use</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_ldap_url</name>
+        <display-name>Authentication LDAP Url</display-name>
+        <value>ldap://localhost:3339</value>
+        <description>LDAP Backend url</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_nt_domain</name>
+        <display-name>AD Domain Name</display-name>
+        <value>CLEMLAB.COM</value>
+        <description>Active Directory Domain Name</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_base_dn</name>
+        <display-name>AD/LDAP Base DN</display-name>
+        <value>dc=clemlab,dc=com</value>
+        <description>AD/LDAP Base dn search</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_create_users_on_login</name>
+        <display-name>Create User on Login</display-name>
+        <value>true</value>
+        <value-attributes>
+            <type>boolean</type>
+          </value-attributes>
+        <description>Create HDFS Home on first login</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_bind_dn</name>
+        <display-name>AD/LDAP Bind DN</display-name>
+        <value>cn=hue_search_dn,ou=user,dc=clemlab,dc=com</value>
+        <description>AD/LDAP Bind User to use</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_bind_password</name>
+        <display-name>AD/LDAP Bind Password</display-name>
+        <value>hue123</value>
+        <value-attributes>
+          <type>password</type>
+          <overridable>false</overridable>
+          <hidden>HIVE_CLIENT,CONFIG_DOWNLOAD</hidden>
+          <keystore>true</keystore>
+        </value-attributes>
+        <description>AD/LDAP Password</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_cookie_password</name>
+        <display-name>Hue Cookie Session secret</display-name>
+        <value>huecookie123</value>
+        <value-attributes>
+          <type>password</type>
+          <overridable>false</overridable>
+          <hidden>HIVE_CLIENT,CONFIG_DOWNLOAD</hidden>
+          <keystore>true</keystore>
+        </value-attributes>
+        <description>AD/LDAP Password</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_test_ldap_group</name>
+        <display-name>Test LDAP Group</display-name>
+        <value>users</value>
+        <description>Test Group used for AD/LDAP authentication</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_user_name_attr</name>
+        <display-name>AD/LDAP User Name Attribute</display-name>
+        <value>sAMAccountName</value>
+        <description>AD/LDAP User Name Attribute</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>p
+      <name>hue_group_name_attr</name>
+        <display-name>AD/LDAP Group Name Attribute</display-name>
+        <value>sAMAccountName</value>
+        <description>AD/LDAP Group Name Attribute</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_group_member_attr</name>
+        <display-name>AD/LDAP Group Member Attribute</display-name>
+        <value>member</value>
+        <description>AD/LDAP Group Member Attribute</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_db_host</name>
+        <display-name>Database host</display-name>
+        <value>localhost</value>
+        <description>Database Host</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_db_port</name>
+        <display-name>Database port</display-name>
+        <value>5432</value>
+        <description>Database Port</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_db_username</name>
+        <display-name>Database User</display-name>
+        <value>hue</value>
+        <description>Database User Name</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_db_name</name>
+        <display-name>Database Name</display-name>
+        <value>hue_db</value>
+        <description>Database Name</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_db_password</name>
+        <display-name>Database Password</display-name>
+        <value>hue123</value>
+        <description>Database Password</description>
+        <value-attributes>
+          <type>password</type>
+          <overridable>false</overridable>
+          <hidden>HIVE_CLIENT,CONFIG_DOWNLOAD</hidden>
+          <keystore>true</keystore>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_kerberos_ccache_path</name>
+        <display-name>KT Renewer Ticket Cache</display-name>
+        <value>/var/run/hue/hue_krb5_ccache</value>
+        <description>Hue Kerberos ccache</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>remote_data_dir</name>
+        <display-name>Oozie Remote Data Dir</display-name>
+        <value>/user/hue/jobsub</value>
+        <description>Oozie Remote HDFS Data Dir</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_beeswax_hive_server_host</name>
+        <display-name>Hive Server2 Host</display-name>
+        <value>localhost</value>
+        <description>Hive Server2 Host Name</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_beeswax_hive_server_port</name>
+        <display-name>Hive Server2 Port</display-name>
+        <value>10001</value>
+        <description>Hive Server2 Port</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_beeswax_server_conn_timeout</name>
+        <display-name>Hive Server2 Connection timeout</display-name>
+        <value>120</value>
+        <description>Time after the connection is closed in seconds</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_ssl_validate</name>
+        <display-name>Hive Server2 SSL Validation</display-name>
+        <value>true</value>
+          <value-attributes>
+            <type>boolean</type>
+          </value-attributes>
+        <description>Validate Hive Server Certificate</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_ssl_certificate</name>
+        <display-name>HUE SSL Public Certificate Location</display-name>
+        <value> </value>
+        <description>Location of the certificate containe Hue's public cert. Format is PEM</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_ssl_private_key</name>
+        <display-name>HUE SSL Private Key Location</display-name>
+        <value> </value>
+        <description>Location of the Private Key. Format is PEM</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_ssl_cert_chain</name>
+        <display-name>HUE SSL Full Chain Trust Location</display-name>
+        <value> </value>
+        <description>Location of certificate containing the full chain validation trust. Format is PEM</description>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue_remote_data_dir</name>
+        <display-name>Hue Oozie Storage in HDFS</display-name>
+        <value>/user/hue/jobsub</value>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <!-- added to construct ui -->
+    <property>
+      <name>hue.jpa.jdbc.driver</name>
+      <value>com.mysql.jdbc.Driver</value>
+      <display-name>Driver class name for a JDBC Hue database</display-name>
+      <description>JDBC driver class name. Example: For MySQL / MariaDB: com.mysql.jdbc.Driver, For Oracle: oracle.jdbc.OracleDriver</description>
+      <value-attributes>
+        <overridable>false</overridable>
+      </value-attributes>
+      <depends-on>
+        <property>
+          <type>hue-env</type>
+          <name>hue_database</name>
+        </property>
+      </depends-on>
+      <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hue.jpa.jdbc.url</name>
+    <value>jdbc:mysql://localhost</value>
+    <display-name>JDBC connect string for Hue database Connection Test</display-name>
+    <description>JDBC connect string</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>hue-env</type>
+        <name>hue_database</name>
+      </property>
+      <property>
+        <type>hue-ini-conf</type>
+        <name>hue_db_host</name>
+      </property>
+      <property>
+        <type>hue-ini-conf</type>
+        <name>hue_db_name</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>
