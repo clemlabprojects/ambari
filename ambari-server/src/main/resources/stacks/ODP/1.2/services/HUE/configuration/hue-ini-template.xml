@@ -22,6 +22,7 @@
         <description>Hue Ini template file</description>
         <value>
 [desktop]
+gunicorn_work_class=gthread
 use_x_forwarded_host={{hue_use_x_forwarded_host}}
 app_blacklist={{hue_app_blacklist}}
 {% if hue_ssl_enabled %}

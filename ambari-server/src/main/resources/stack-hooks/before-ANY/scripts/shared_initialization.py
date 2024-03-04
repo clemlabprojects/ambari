@@ -44,6 +44,9 @@ def setup_users():
       )
 
     for user in params.user_list:
+      if params.has_hue:
+        Logger.info('Skipping setting uid for hue user as unicorn need specific uid/gid')
+        continue
       User(user,
            uid = get_uid(user) if params.override_uid == "true" else None,
            gid = params.user_to_gid_dict[user],
