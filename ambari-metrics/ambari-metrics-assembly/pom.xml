@@ -42,11 +42,11 @@
     <flume-sink.dir>${project.basedir}/../ambari-metrics-flume-sink</flume-sink.dir>
     <kafka-sink.dir>${project.basedir}/../ambari-metrics-kafka-sink</kafka-sink.dir>
     <ambari.arch>x86_64</ambari.arch>
-    <python.ver>python &gt;= 2.6</python.ver>
-    <python.devel>python-devel</python.devel>
-    <python.rhel8.ver>python2 &gt;= 2.6</python.rhel8.ver>
-    <python.rhel8.devel>python2-devel</python.rhel8.devel>
-    <python.rhel9.ver>python &gt;= 3.6</python.rhel9.ver>
+    <python.ver>python3 &gt;= 3.0</python.ver>
+    <python.devel>python3-devel</python.devel>
+    <python.rhel8.ver>python3 &gt;= 3.0</python.rhel8.ver>
+    <python.rhel8.devel>python3-devel</python.rhel8.devel>
+    <python.rhel9.ver>python &gt;= 3.9</python.rhel9.ver>
     <python.rhel9.devel>python-devel</python.rhel9.devel>
     <deb.publisher>Clemlab</deb.publisher>
     <deb.section>universe/admin</deb.section>

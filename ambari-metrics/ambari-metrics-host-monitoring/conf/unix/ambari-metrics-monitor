@@ -30,6 +30,10 @@ OK=0
 NOTOK=1
 
 # checking for default Python 3
+if [ -a /usr/bin/python3 ] && [ -z "$PYTHON" ]; then
+  PYTHON=/usr/bin/python3
+fi
+
 if [ -a /usr/bin/python3.9 ] && [ -z "${PYTHON}" ]; then
   PYTHON=/usr/bin/python3.9
 fi
