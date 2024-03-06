@@ -19,20 +19,16 @@
 
 export PYTHONPATH=/usr/lib/python3.9/site-packages:$PYTHONPATH
 
-if [ -a /usr/bin/python3.8 ] && [ -z "$PYTHON" ]; then
-  PYTHON=/usr/bin/python3.8
+# checking for default Python 3
+if [ -a /usr/bin/python3 ] && [ -z "$PYTHON" ]; then
+  PYTHON=/usr/bin/python3
 fi
-
 
 if [ -a /usr/bin/python3.9 ] && [ -z "$PYTHON" ]; then
   PYTHON=/usr/bin/python3.9
 fi
 
-# if no preferable python versions found, try to use system one. Hoping it's Python 2
-if [[ -z "$PYTHON" ]]; then
-  PYTHON=/usr/bin/python
-fi
-
 # execute script
 $PYTHON "$@"
+#!/usr/bin/env bash
 #!/usr/bin/env bash
