@@ -30,6 +30,7 @@ from resource_management.libraries.functions.security_commons import build_expec
 from resource_management.libraries.functions.format import format
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Execute
+from resource_management.core.exceptions import Fail
 
 from yarn import yarn
 from service import service
@@ -38,6 +39,7 @@ from ambari_commons.os_family_impl import OsFamilyImpl
 from setup_ranger_yarn import setup_ranger_yarn
 
 
+import time
 class ApplicationTimelineServer(Script):
   def install(self, env):
     self.install_packages(env)
@@ -46,17 +48,13 @@ class ApplicationTimelineServer(Script):
     import params
     env.set_params(params)
     self.configure(env) # FOR SECURITY
-    service('timelineserver', action='start')
+    # setup security before start or YARN ATS will not start
     if params.enable_ranger_yarn and params.is_supported_yarn_ranger:
       setup_ranger_yarn() #Ranger Yarn Plugin related calls
 
-    if params.security_enabled:
-      Logger.info("Enable FastLaunch for YARN application with Kerberos")
-      yarn_enablefastlaunch_cmd = format("{rm_kinit_cmd} yarn app -enableFastLaunch")
-      Execute(yarn_enablefastlaunch_cmd)
-    else:
-      Logger.info("Enable FastLaunch for YARN application")
-      Execute("yarn app -enableFastLaunch", user=params.hdfs_user)
+    wait_yarn_fast_launch_acls()
+    service('timelineserver', action='start')
+
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -68,6 +66,28 @@ class ApplicationTimelineServer(Script):
     env.set_params(params)
     yarn(name='apptimelineserver')
 
+def wait_yarn_fast_launch_acls(afterwait_sleep=0, execute_kinit=True, retries=120, sleep_seconds=10):
+  """
+  Wait for Yarn to access right on Fast Launch directory
+  """
+  import params
+
+  sleep_minutes = int(sleep_seconds * retries / 60)
+
+  Logger.info("Waiting up to {0} minutes to HDFS to grant access ...".format(sleep_minutes))
+
+  if params.security_enabled and execute_kinit:
+    kinit_command = format("{params.kinit_path_local} -kt {params.rm_keytab} {params.rm_principal_name}")
+    Execute(kinit_command, user=params.yarn_user, logoutput=True)
+
+  try:
+
+    # Wait up to 30 mins
+    Execute('yarn app -enableFastLaunch', tries=retries, try_sleep=sleep_seconds,
+      user=params.yarn_user, logoutput=True)
+    time.sleep(afterwait_sleep)
+  except Fail:
+    Logger.error("Failed for HDFS to grant YARN FAstLaunch ACL")        
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class ApplicationTimelineServerWindows(ApplicationTimelineServer):
