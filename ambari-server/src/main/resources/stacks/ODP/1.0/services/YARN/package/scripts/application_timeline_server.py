@@ -28,6 +28,8 @@ from resource_management.libraries.functions.security_commons import build_expec
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties,\
   FILE_TYPE_XML
 from resource_management.libraries.functions.format import format
+from resource_management.core.shell import as_user
+from resource_management.core import shell
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Execute
 from resource_management.core.exceptions import Fail
@@ -66,28 +68,36 @@ class ApplicationTimelineServer(Script):
     env.set_params(params)
     yarn(name='apptimelineserver')
 
-def wait_yarn_fast_launch_acls(afterwait_sleep=0, execute_kinit=True, retries=120, sleep_seconds=10):
+def wait_yarn_fast_launch_acls(afterwait_sleep=0, execute_kinit=True, retries=60, sleep_seconds=10):
   """
-  Wait for Yarn to access right on Fast Launch directory
+  Wait for Yarn to access right on FastLaunch directory
   """
   import params
-
-  sleep_minutes = int(sleep_seconds * retries / 60)
-
-  Logger.info("Waiting up to {0} minutes to HDFS to grant access ...".format(sleep_minutes))
 
   if params.security_enabled and execute_kinit:
     kinit_command = format("{params.kinit_path_local} -kt {params.rm_keytab} {params.rm_principal_name}")
     Execute(kinit_command, user=params.yarn_user, logoutput=True)
 
-  try:
-
-    # Wait up to 30 mins
-    Execute('yarn app -enableFastLaunch', tries=retries, try_sleep=sleep_seconds,
-      user=params.yarn_user, logoutput=True)
-    time.sleep(afterwait_sleep)
-  except Fail:
-    Logger.error("Failed for HDFS to grant YARN FAstLaunch ACL")        
+  yarn_fastlaunch_is_enabled = False
+  counter = 0
+  while not yarn_fastlaunch_is_enabled:
+    try:
+      enable_cmd = as_user(format("yarn app -enableFastLaunch"), user=params.yarn_user)
+      code, output = shell.call(enable_cmd, timeout=60)
+      if code == 0:
+        Logger.info(format('Yarn FastLaunch Enabled Successfully'))
+        yarn_fastlaunch_is_enabled = True
+        return True
+      else:
+        yarn_fastlaunch_is_enabled = False
+        if counter < retries:
+          Logger.info("Waiting up to {0} seconds to HDFS to grant access ...".format(sleep_seconds))
+          time.sleep(sleep_seconds)
+        else:
+          Logger.info("Failed to Enable Yarn FastLaunch")
+    except Fail:
+      Logger.error("Failed for HDFS to grant YARN FAstLaunch ACL")                
+    counter += 1
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class ApplicationTimelineServerWindows(ApplicationTimelineServer):
