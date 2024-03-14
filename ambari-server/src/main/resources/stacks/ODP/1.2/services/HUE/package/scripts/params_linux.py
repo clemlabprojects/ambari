@@ -99,7 +99,7 @@ hue_conf_dir = '/etc/hue/conf'
 hue_pid_dir = default("/configurations/hue-env/hue_pid_dir", "/var/run/hue")
 hue_pid_file = format('{hue_pid_dir}/hue.pid')
 hue_group = default("/configurations/hue-env/hue_group", "hue")
-mode = 0644
+mode = 0o644
 
 namenode_hosts = default("/clusterHostInfo/namenode_hosts", None)
 has_namenode = bool(namenode_hosts)
