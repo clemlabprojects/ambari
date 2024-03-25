@@ -20,6 +20,7 @@ package org.apache.ambari.server.upgrade;
 import java.sql.SQLException;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.orm.DBAccessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +36,8 @@ public class UpgradeCatalog279 extends AbstractUpgradeCatalog {
 
     private static final Logger LOG = LoggerFactory.getLogger(UpgradeCatalog279.class);
 
+    private static final String REQUEST_SCHEDULE_TABLE_NAME = "requestschedule";
+    private static final String REQUEST_SCHEDULE_BATCH_TOLERATION_LIMIT_PER_BATCH_COLUMN_NAME = "batch_toleration_limit_per_batch";
     @Inject
     public UpgradeCatalog279(Injector injector) {
         super(injector);
@@ -52,7 +55,7 @@ public class UpgradeCatalog279 extends AbstractUpgradeCatalog {
 
     @Override
     protected void executeDDLUpdates() throws AmbariException, SQLException {
-        // no actions needed
+        addComulnsToRequestscheduleTable();
     }
 
     @Override
@@ -63,5 +66,10 @@ public class UpgradeCatalog279 extends AbstractUpgradeCatalog {
     protected void executeDMLUpdates() throws AmbariException, SQLException {
     }
 
+    protected void addComulnsToRequestscheduleTable() throws SQLException {
+      dbAccessor.addColumn(REQUEST_SCHEDULE_TABLE_NAME,
+          new DBAccessor.DBColumnInfo(REQUEST_SCHEDULE_BATCH_TOLERATION_LIMIT_PER_BATCH_COLUMN_NAME, Short.class, null,
+              null, true));
+    }
 
 }
