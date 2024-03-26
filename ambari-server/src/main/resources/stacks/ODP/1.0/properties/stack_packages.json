@@ -553,6 +553,30 @@
           "STANDARD": [
             "spark3-thriftserver"
           ]
+        },
+        "SPARK3_LIVY2_CLIENT": {
+          "STACK-SELECT-PACKAGE": "spark3-livy2-client",
+          "INSTALL": [
+            "spark3-livy2-client"
+          ],
+          "PATCH": [
+            "spark3-livy2-client"
+          ],
+          "STANDARD": [
+            "spark3-livy2-client"
+          ]
+        },
+        "SPARK3_LIVY2_SERVER": {
+          "STACK-SELECT-PACKAGE": "spark3-livy2-server",
+          "INSTALL": [
+            "spark3-livy2-server"
+          ],
+          "PATCH": [
+            "spark3-livy2-server"
+          ],
+          "STANDARD": [
+            "spark3-livy2-server"
+          ]
         }
       },
       "SPARK2": {
