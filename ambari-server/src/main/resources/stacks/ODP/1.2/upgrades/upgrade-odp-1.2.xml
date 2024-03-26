@@ -259,6 +259,7 @@
         <component>SPARK2_JOBHISTORYSERVER</component>
         <component>SPARK2_THRIFTSERVER</component>
         <component>SPARK2_LIVY2_SERVER</component>
+        <component>LIVY2_SERVER</component>
       </service>
     </group>
 
@@ -270,6 +271,7 @@
         <component>SPARK3_JOBHISTORYSERVER</component>
         <component>SPARK3_THRIFTSERVER</component>
         <component>SPARK3_LIVY2_SERVER</component>
+        <component>LIVY2_SERVER</component>
       </service>
     </group>
 
