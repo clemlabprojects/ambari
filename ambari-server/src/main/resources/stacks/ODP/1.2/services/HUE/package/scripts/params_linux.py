@@ -348,10 +348,10 @@ atlas_metadata_hosts = default("/clusterHostInfo/atlas_server_hosts", None)
 if atlas_metadata_hosts != None:
   atlas_tls_enabled = config['configurations']['application-properties']['atlas.enableTLS']
   if atlas_tls_enabled:
-    atlas_scheme = "http"
+    atlas_scheme = "https"
   else:
-    altas_scheme = "https"
-  atlas_ui_port = config['configurations']['application-properties'][format('atlas.server.{altas_scheme}.port')]  
+    atlas_scheme = "http"
+  atlas_ui_port = config['configurations']['application-properties'][format('atlas.server.{atlas_scheme}.port')]  
 
 
 # Hue managed properties
