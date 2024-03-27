@@ -42,15 +42,15 @@ from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import is_empty
 from resource_management.libraries.functions.setup_ranger_plugin_xml import get_audit_configs, generate_ranger_service_config
 
-def getDBEnengine(databaseType):
+def getDBEngine(databaseType):
   driverDict = {
     "MYSQL": "mysql",
     "ORACLE": "derby",
-    "POSTGRES": "postgres"
+    "POSTGRESQL": "postgres"
   }
   return driverDict.get(databaseType.upper())
 
-# def getDBEnengine(databaseType):
+# def getDBEngine(databaseType):
 #   driverDict = {
 #     "MYSQL": "mysql",
 #     "ORACLE": "derby",
@@ -466,7 +466,7 @@ if ldap_auth:
   hue_runtime_bind_password_script = format("{hue_home_dir}/bin/encrypt.sh decrypt ldap-secret-password")
 
 ## [hue-ini] - Database settings
-hue_db_engine = getDBEnengine(config['configurations']['hue-env']['hue_database'])
+hue_db_engine = getDBEngine(config['configurations']['hue-env']['hue_database'])
 if hue_db_engine != 'derby':
   hue_db_host = config['configurations']['hue-ini-conf']['hue_db_host']
   hue_db_port = config['configurations']['hue-ini-conf']['hue_db_port']
