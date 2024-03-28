@@ -40,7 +40,7 @@ try:
     service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class HueServiceAdvisor(service_advisor.ServiceAdvisor):
 
@@ -173,11 +173,6 @@ class HueRecommender(service_advisor.ServiceAdvisor):
       for key in hueDbProperties:
         putHueIniConfProperty(key, hueDbProperties.get(key))
       hue_server_hosts = [str(s) for s in hue_server_hosts]
-      print("TOTO")
-      print(hue_server_hosts[0])
-      print('hue_server_hosts')
-      print(hue_server_hosts)
-      print(format('hue_server_hosts {hue_server_hosts}'))
       putHueIniConfProperty('hue_server_hosts', hue_server_hosts[0])
 
     if 'hue-env' in services['configurations'] and ('hue_database' in services['configurations']['hue-env']['properties']) \
@@ -202,7 +197,7 @@ class HueRecommender(service_advisor.ServiceAdvisor):
       colon_count = db_host.count(':')
       DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
       if colon_count == 0:
-        if DB_TYPE_DEFAULT_PORT_MAP.has_key(db_type):
+        if db_type in DB_TYPE_DEFAULT_PORT_MAP:
           connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
         else:
           connection_string = db_host
