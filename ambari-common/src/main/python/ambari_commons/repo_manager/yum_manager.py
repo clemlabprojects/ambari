@@ -49,7 +49,7 @@ class YumManagerProperties(GenericManagerProperties):
   all_packages_cmd = [repo_manager_bin, "list", "all", "--showduplicates"]
   yum_lib_dir = "/var/lib/yum"
 
-  if OSCheck.get_os_major_version >= 8:
+  if int(OSCheck.get_os_major_version()) >= 8:
     yum_lib_dir = "/var/lib/dnf"
 
   yum_tr_prefix = "transaction-"
