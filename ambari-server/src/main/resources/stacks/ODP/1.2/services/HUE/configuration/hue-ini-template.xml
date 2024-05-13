@@ -43,7 +43,9 @@ default_hdfs_superuser={{hue_runtime_default_hdfs_superuser}}
 secret_key_script={{hue_runtime_secret_key_script}}
 http_host={{hue_runtime_http_host}}
 cluster_id={{hue_runtime_cluster_id}}
+{% if hue_load_balancer is defined %}
 hue_load_balancer={{hue_runtime_load_balancer}}
+{% endif %}
 [[metrics]]
 location={{hue_metrics_file}}
 collection_interval=30000
@@ -83,9 +85,11 @@ port=25
 user=
 password=
 tls=no
+{% if hue_generated_proxy_hosts is defined %}
 [[knox]]
 knox_principal=knox
 knox_proxyhosts={{hue_generated_proxy_hosts}}
+{% endif %}
 {% if kerberos_enabled %}
 [[kerberos]]
 ccache_path={{hue_kerberos_ccache_path}}

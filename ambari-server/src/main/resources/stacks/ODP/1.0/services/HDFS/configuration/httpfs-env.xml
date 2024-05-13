@@ -1,0 +1,117 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+
+  <!-- These configs were inherited from HDP 2.3 -->
+  <!-- hadoop-env.sh -->
+  <property>
+    <name>httpfs_http_port</name>
+    <value>14000</value>
+    <display-name>HTTPFS HTTP Port</display-name>
+    <description>The address the HTTPFS http port</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>httpfs_max_threads</name>
+    <value>1000</value>
+    <display-name>HTTPFS Maximum Threads</display-name>
+    <description>Number of maximum threads httpfs service use </description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>httpfs_max_header_size</name>
+    <display-name>HTTPFS Maximum Header Size</display-name>
+    <value>65536</value>
+    <description>Number of maximum header size for requests</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+   <name>content</name>
+   <display-name>Content</display-name>
+   <description>HTTFS Content env</description>
+   <value>
+        #
+        # Licensed under the Apache License, Version 2.0 (the "License");
+        # you may not use this file except in compliance with the License.
+        # You may obtain a copy of the License at
+        #
+        #   http://www.apache.org/licenses/LICENSE-2.0
+        #
+        #  Unless required by applicable law or agreed to in writing, software
+        #  distributed under the License is distributed on an "AS IS" BASIS,
+        #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+        #  See the License for the specific language governing permissions and
+        #  limitations under the License. See accompanying LICENSE file.
+        #
+
+        # Set httpfs specific environment variables here.
+        #
+        # hadoop-env.sh is read prior to this file.
+        #
+
+        # HTTPFS config directory
+        #
+        export HTTPFS_CONFIG=${HADOOP_CONF_DIR:-{{hadoop_home}}/conf}
+
+
+        # HTTPFS log directory
+        #
+        export HTTPFS_LOG={{hdfs_log_dir_prefix}}/$USER
+
+        # HTTPFS temporary directory
+        #
+        export HTTPFS_TEMP={{hadoop_pid_dir_prefix}}/$USER
+
+        # The HTTP port used by HTTPFS
+        #
+        export HTTPFS_HTTP_PORT={{httpfs_http_port}}
+
+        # The maximum number of HTTP handler threads
+        #
+        export HTTPFS_MAX_THREADS={{httpfs_max_threads}}
+
+        # The hostname HttpFS server runs on
+        #
+        # export HTTPFS_HTTP_HOSTNAME=$(hostname -f)
+
+        # The maximum size of HTTP header
+        #
+        export HTTPFS_MAX_HTTP_HEADER_SIZE={{httpfs_max_header_size}}
+
+        # Whether SSL is enabled
+        #
+        export HTTPFS_SSL_ENABLED={{httpfs_ssl_enabled}}
+
+        # The location of the SSL keystore if using SSL
+        #
+        export HTTPFS_SSL_KEYSTORE_FILE={{httpfs_ssl_keystore_path}}
+
+        # The password of the SSL keystore if using SSL
+        #
+        export HTTPFS_SSL_KEYSTORE_PASS={{httpfs_ssl_keystore_password}}
+        </value>
+      <value-attributes>
+      <type>content</type>
+      </value-attributes>
+      <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

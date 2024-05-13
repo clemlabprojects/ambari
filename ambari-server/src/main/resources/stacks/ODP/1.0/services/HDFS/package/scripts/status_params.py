@@ -39,6 +39,7 @@ if OSCheck.is_windows_family():
 else:
   hadoop_pid_dir_prefix = config['configurations']['hadoop-env']['hadoop_pid_dir_prefix']
   hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
+  httpfs_user = config['configurations']['hadoop-env']['httpfs_user']
   root_user = "root"
   hadoop_pid_dir = format("{hadoop_pid_dir_prefix}/{hdfs_user}")
   namenode_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-namenode.pid")
@@ -46,7 +47,9 @@ else:
   journalnode_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-journalnode.pid")
   zkfc_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-zkfc.pid")
   nfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/privileged-root-nfs3.pid")
+  httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
   unprivileged_nfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/hadoop-{hdfs_user}-root-nfs3.pid")
+  unprivileged_httpfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/hadoop-{hdfs_user}-root-httpfs.pid")
 
   # Security related/required params
   hostname = config['agentLevelParams']['hostname']
