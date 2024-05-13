@@ -169,6 +169,8 @@ if dfs_ha_enabled:
         nn_host_parts = nn_host.split(':')
         namenode_port_map[nn_host_parts[0]] = nn_host_parts[1]
 
+# cluster id
+hue_runtime_cluster_id = config['clusterLevelParams']['cluster_name']
 
 def buildUrlElement(protocol, hdfs_host, port, servicePath) :
   # openTag = "<url>"
@@ -192,6 +194,18 @@ if len(namenode_host_keys) > 0:
 elif has_namenode:
   webhdfs_service_urls = buildUrlElement(hdfs_scheme, namenode_hosts[0], namenode_http_port, "/webhdfs")
 
+webhdfs_service_urls = webhdfs_service_urls[0]  
+
+httpfs_hosts = default("/clusterHostInfo/httpfs_gateway_hosts", None)
+httpfs_port = 14000
+
+if check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks):
+  httpfs_ssl_enabled = default('/configurations/httpfs-site/httpfs.ssl.enabled', False)
+  if httpfs_hosts != None:
+    httpfs_scheme = 'https' if httpfs_ssl_enabled else 'http'
+    httpfs_url = '{0}://{1}:{2}/webhdfs/v1'.format(httpfs_scheme, httpfs_hosts[0], httpfs_port)
+    webhdfs_service_urls = httpfs_url
+
 yarn_http_policy = default('/configurations/yarn-site/yarn.http.policy', None )
 yarn_https_on = False
 yarn_scheme = 'http'
@@ -206,15 +220,15 @@ else:
   rm_host = rm_hosts
 has_rm = not rm_host == None
 
-jt_rpc_port = "8050"
 rm_port = "8080"
 rm_submit_port = "8032"
 
 if has_rm:
-  if 'yarn.resourcemanager.address' in config['configurations']['yarn-site']:
-    jt_rpc_port = get_port_from_url(config['configurations']['yarn-site']['yarn.resourcemanager.address'])
-
-  if 'yarn.resourcemanager.webapp.address' in config['configurations']['yarn-site']:
+  # Need to get Url based on scheme
+  # do not support RM on different port (no cluster should be like this ^^) 
+  if yarn_https_on:
+    rm_port = get_port_from_url(config['configurations']['yarn-site']['yarn.resourcemanager.webapp.https.address'])
+  else:
     rm_port = get_port_from_url(config['configurations']['yarn-site']['yarn.resourcemanager.webapp.address'])
 
 hive_http_port = default('/configurations/hive-site/hive.server2.thrift.http.port', "10001")

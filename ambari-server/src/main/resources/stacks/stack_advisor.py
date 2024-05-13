@@ -2690,6 +2690,21 @@ class DefaultStackAdvisor(StackAdvisor):
 
     return users
 
+  def getHTTPFSProxyUsers(self, services, hosts, configurations):
+    """
+    Gets Hadoop Proxy User recommendations based on the configuration that is provided by
+    getServiceHTTPFSProxyUsersConfigurationDict.
+
+    See getServiceHTTPFSProxyUsersConfigurationDict
+    """
+    servicesList = self.get_services_list(services)
+    users = {}
+
+    for serviceName, serviceUserComponents in self.getServiceHTTPFSProxyUsersConfigurationDict().items():
+      users.update(self._getHadoopProxyUsersForService(serviceName, serviceUserComponents, services, hosts, configurations))
+
+    return users
+
   def getServiceHadoopProxyUsersConfigurationDict(self):
     """
     Returns a map that is used by 'getHadoopProxyUsers' to determine service
@@ -2733,6 +2748,45 @@ class DefaultStackAdvisor(StackAdvisor):
       "FALCON": [("falcon-env", "falcon_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
       "SPARK":  [("livy-env", "livy_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
       "SPARK2":  [("livy2-env", "livy2_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})]
+    }
+
+  def getServiceHTTPFSProxyUsersConfigurationDict(self):
+    """
+    Returns a map that is used by 'getHadoopProxyUsers' to determine service
+    user properties and related components and get proxyuser recommendations.
+    This method can be overridden in stackadvisors for the further stacks to
+    add additional services or change the previous logic.
+
+    Example of the map format:
+    {
+      "serviceName": [
+        ("configTypeName1", "userPropertyName1", {"propertyHosts": "*", "propertyGroups": "exact string value"})
+        ("configTypeName2", "userPropertyName2", {"propertyHosts": ["COMPONENT1", "COMPONENT2", "COMPONENT3"], "propertyGroups": "*"}),
+        ("configTypeName3", "userPropertyName3", {"propertyHosts": ["COMPONENT1", "COMPONENT2", "COMPONENT3"]}, filterFunction)
+      ],
+      "serviceName2": [
+        ...
+    }
+
+    If the third element of a tuple is map that maps proxy property to it's value.
+    The key could be either 'propertyHosts' or 'propertyGroups'. (Both are optional)
+    If the map value is a string, then this string will be used for the proxyuser
+    value (e.g. 'hadoop.proxyuser.{user}.hosts' = '*').
+    Otherwise map value should be alist or a tuple with component names.
+    All hosts with the provided components will be added
+    to the property (e.g. 'hadoop.proxyuser.{user}.hosts' = 'host1,host2,host3')
+
+    The forth element of the tuple is optional and if it's provided,
+    it should be a function that takes two arguments: services and hosts.
+    If it returns False, proxyusers for the tuple will not be added.
+    """
+    ALL_WILDCARD = "*"
+    HOSTS_PROPERTY = "propertyHosts"
+    GROUPS_PROPERTY = "propertyGroups"
+
+    return {
+      "KNOX":   [("knox-env", "knox_user", {HOSTS_PROPERTY: ["KNOX_GATEWAY"], GROUPS_PROPERTY: ALL_WILDCARD})],
+      "HUE":  [("hue-env", "hue_user", {HOSTS_PROPERTY: ["HUE_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})]
     }
 
   def _getHadoopProxyUsersForService(self, serviceName, serviceUserComponents, services, hosts, configurations):
@@ -2817,6 +2871,37 @@ class DefaultStackAdvisor(StackAdvisor):
 
     self.recommendAmbariProxyUsersForHDFS(services, configurations, servicesList, putCoreSiteProperty, putCoreSitePropertyAttribute)
 
+  def recommendHTTPFSProxyUsers(self, configurations, services, hosts):
+    servicesList = self.get_services_list(services)
+
+    if 'forced-configurations' not in services:
+      services["forced-configurations"] = []
+
+    putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
+    putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "httpfs-site")
+
+    users = self.getHTTPFSProxyUsers(services, hosts, configurations)
+
+    for user_name, user_properties in users.items():
+
+      # Add properties "hadoop.proxyuser.*.hosts", "hadoop.proxyuser.*.groups" to core-site for all users
+      self.put_httpfs_proxyuser_value(user_name, user_properties["propertyHosts"], services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
+      self.logger.info("Updated httpfs.proxyuser.{0}.hosts as : {1}".format(user_name, user_properties["propertyHosts"]))
+      if "propertyGroups" in user_properties:
+        self.put_httpfs_proxyuser_value(user_name, user_properties["propertyGroups"], is_groups=True, services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
+
+      # Remove old properties if user was renamed
+      userOldValue = self.getOldValue(services, user_properties["config"], user_properties["propertyName"])
+      if userOldValue is not None and userOldValue != user_name:
+        putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.hosts".format(userOldValue), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.hosts".format(userOldValue)})
+        services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.hosts".format(user_name)})
+
+        if "propertyGroups" in user_properties:
+          putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(userOldValue), 'delete', 'true')
+          services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.groups".format(userOldValue)})
+          services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.groups".format(user_name)})
+
   def recommendAmbariProxyUsersForHDFS(self, services, configurations, servicesList, putCoreSiteProperty, putCoreSitePropertyAttribute):
     if "HDFS" in servicesList:
       ambari_user = self.getAmbariUser(services)
@@ -2898,6 +2983,20 @@ class DefaultStackAdvisor(StackAdvisor):
       property_name = "hadoop.proxyuser.{0}.groups".format(user_name)
     else:
       property_name = "hadoop.proxyuser.{0}.hosts".format(user_name)
+
+    put_function(property_name, result_value)
+
+  def put_httpfs_proxyuser_value(self, user_name, value, is_groups=False, services=None, configurations=None, put_function=None):
+    is_wildcard_value, current_value = self.get_data_for_proxyuser(user_name, services, configurations, is_groups)
+    result_value = "*"
+    result_values_set = self.merge_proxyusers_values(current_value, value)
+    if len(result_values_set) > 0:
+      result_value = ",".join(sorted([val for val in result_values_set if val]))
+
+    if is_groups:
+      property_name = "httpfs.proxyuser.{0}.groups".format(user_name)
+    else:
+      property_name = "httpfs.proxyuser.{0}.hosts".format(user_name)
 
     put_function(property_name, result_value)
 
