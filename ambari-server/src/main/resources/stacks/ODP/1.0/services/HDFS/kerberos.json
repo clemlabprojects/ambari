@@ -173,6 +173,54 @@
           ]
         },
         {
+          "name": "HTTPFS_GATEWAY",
+          "identities": [
+            {
+              "name": "httpfs_gateway",
+              "principal": {
+                "value": "httpfs/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "httpfs-site/httpfs.hadoop.authentication.kerberos.principal",
+                "local_username" : "${hadoop-env/httpfs_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/httpfs.service.keytab",
+                "owner": {
+                  "name": "${hadoop-env/hdfs_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "httpfs-site/httpfs.hadoop.authentication.kerberos.keytab"
+              }
+            },
+            {
+              "name": "httpfs_httpfs_gateway_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "httpfs-site/httpfs.authentication.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "httpfs.authentication.kerberos.keytab"
+              }
+            }
+          ],
+          "configurations" : [
+            {
+              "core-site": {
+                "hadoop.proxyuser.httpfs.groups": "*",
+                "hadoop.proxyuser.httpfs.hosts": "${clusterHostInfo/httpfs_gateway_hosts}"
+              },
+              "httpfs-site": {
+                "httpfs.authentication.type": "kerberos",
+                "httpfs.hadoop.authentication.type": "kerberos"
+              }
+            }
+          ]
+        },
+        {
           "name": "SECONDARY_NAMENODE",
           "identities": [
             {

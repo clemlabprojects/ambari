@@ -80,6 +80,7 @@ stack_supports_zk_security = check_stack_feature(StackFeature.SECURE_ZOOKEEPER, 
 
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 hdfs_user = status_params.hdfs_user
+httpfs_user = status_params.httpfs_user
 root_user = "root"
 current_user = pwd.getpwuid(os.getuid()).pw_name
 hadoop_pid_dir_prefix = status_params.hadoop_pid_dir_prefix
@@ -138,6 +139,18 @@ if secure_dn_ports_are_in_use:
   datanode_pid_file = datanode_secure_pid_file
 else:
   datanode_pid_file = datanode_unsecure_pid_file
+
+httpfs_stack_enabled = check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks)
+if httpfs_stack_enabled:
+  httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
+  httpfs_ssl_enabled = (dfs_http_policy == "HTTPS_ONLY")
+  httpfs_ssl_keystore_path = config['configurations']['ssl-server']['ssl.server.keystore.location']
+  httpfs_ssl_keystore_password = config['configurations']['ssl-server']['ssl.server.keystore.password']
+  httpfs_env_sh_template = config['configurations']['httpfs-env']['content']
+httpfs_max_threads = default("/configurations/httpfs-env/httpfs_max_threads", 1000)
+httpfs_max_header_size = default("/configurations/httpfs-env/httpfs_max_header_size", 65536)
+httpfs_http_port = default("/configurations/httpfs-env/httpfs_http_port", 14000)
+
 
 ambari_libs_dir = "/var/lib/ambari-agent/lib"
 limits_conf_dir = "/etc/security/limits.d"

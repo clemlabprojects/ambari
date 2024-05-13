@@ -271,6 +271,9 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
     # recommendations for "hadoop.proxyuser.*.hosts", "hadoop.proxyuser.*.groups" properties in core-site
     self.recommendHadoopProxyUsers(configurations, services, hosts)
 
+    # recommandations for "httpfs.proxyuser.*.hosts, "httpfs.proxyuser.*.groups" properties in httpfs-site
+    self.recommendHTTPFSProxyUsers(configurations, services, hosts)
+
   def recommendConfigurationsFromHDP22(self, configurations, clusterData, services, hosts):
     """
     Recommend configurations for this service based on HDP 2.2
