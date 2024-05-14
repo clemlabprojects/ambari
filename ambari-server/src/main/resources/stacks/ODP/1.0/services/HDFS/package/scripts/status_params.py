@@ -49,7 +49,6 @@ else:
   nfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/privileged-root-nfs3.pid")
   httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
   unprivileged_nfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/hadoop-{hdfs_user}-root-nfs3.pid")
-  unprivileged_httpfsgateway_pid_file = format("{hadoop_pid_dir_prefix}/root/hadoop-{hdfs_user}-root-httpfs.pid")
 
   # Security related/required params
   hostname = config['agentLevelParams']['hostname']
