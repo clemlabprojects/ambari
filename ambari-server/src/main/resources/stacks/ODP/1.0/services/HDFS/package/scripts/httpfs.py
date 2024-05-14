@@ -70,11 +70,7 @@ class HTTPFSGateway(Script):
     import status_params
 
     env.set_params(status_params)
-
-    try:
-      check_process_status(status_params.httpfs_pid_file)
-    except ComponentIsNotRunning:
-      check_process_status(status_params.unprivileged_httpfs_pid_file)
+    check_process_status(status_params.httpfs_pid_file)
 
   def get_log_folder(self):
     import params
@@ -86,7 +82,7 @@ class HTTPFSGateway(Script):
 
   def get_pid_files(self):
     import status_params
-    return [status_params.httpfs_pid_file, status_params.unprivileged_httpfs_pid_file]
+    return [status_params.httpfs_pid_file]
 
 if __name__ == "__main__":
   HTTPFSGateway().execute()
