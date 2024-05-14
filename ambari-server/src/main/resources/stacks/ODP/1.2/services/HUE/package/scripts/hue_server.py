@@ -42,6 +42,7 @@ from resource_management import InlineTemplate, Template
 from ambari_commons import OSConst, OSCheck
 from ambari_commons.os_family_impl import OsFamilyImpl
 
+import time
 import upgrade
 
 class HueGateway(Script):
@@ -148,7 +149,7 @@ class HueGatewayDefault(HueGateway):
       Execute((format('{params.hue_home_dir}/build/env/bin/hue'), 'migrate'))
     except:
       show_logs(params.hue_logs_dir, params.hue_user)
-
+    first_time = False
     ## Create the default admin password ## need to change password before creating user
     create_cmd = format('{params.hue_home_dir}/build/env/bin/hue createsuperuser --username {params.hue_admin_username}  --email {params.hue_admin_username}@hadoop.com --noinput')
     change_password_cmd = format('export HUE_HOME_DIR={params.hue_home_dir}; {params.hue_home_dir}/bin/changepassword.sh {params.hue_admin_username} {params.hue_admin_password!p}')
@@ -165,6 +166,9 @@ class HueGatewayDefault(HueGateway):
               user=params.hue_user,
               environment={'DJANGO_SUPERUSER_PASSWORD': params.hue_admin_password},
             )
+            first_time = True
+            # need to sleep on the first time
+            time.sleep(5)
         else:
           Logger.error(format('Failed to Change Password / Create superadmin user'))
     except:
@@ -173,11 +177,17 @@ class HueGatewayDefault(HueGateway):
     daemon_cmd = format('{params.hue_home_dir}/build/env/bin/supervisor -d -p {params.hue_pid_dir}/hue.pid')
     no_op_test = format('ls {params.hue_pid_file} >/dev/null 2>&1 && ps -p `cat {params.hue_pid_file}` >/dev/null 2>&1')
     try:
+      # need to sleep on the first time
+      if first_time:
+        time.sleep(5)
       Execute(daemon_cmd,
               user=params.hue_user,
               environment={},
               not_if=no_op_test
       )
+      # need to sleep on the first time
+      if first_time:
+        time.sleep(5)
     except:
       show_logs(params.hue_logs_dir, params.hue_user)
       raise
