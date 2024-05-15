@@ -142,8 +142,8 @@ else:
 
 httpfs_stack_enabled = check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks)
 if httpfs_stack_enabled:
+  httpfs_ssl_enabled = True if str(default('/configurations/httpfs-site/httpfs.ssl.enabled', False)).lower() == "true" else False
   httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
-  httpfs_ssl_enabled = (dfs_http_policy == "HTTPS_ONLY")
   httpfs_ssl_keystore_path = config['configurations']['ssl-server']['ssl.server.keystore.location']
   httpfs_ssl_keystore_password = config['configurations']['ssl-server']['ssl.server.keystore.password']
   httpfs_env_sh_template = config['configurations']['httpfs-env']['content']
