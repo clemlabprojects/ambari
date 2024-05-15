@@ -466,6 +466,7 @@
         <config-type>ams-ssl-client</config-type>
         <config-type>hadoop-metrics2.properties</config-type>
         <config-type>httpfs-site</config-type>
+        <config-type>httpfs-env</config-type>
       </configuration-dependencies>
       <restartRequiredAfterRackChange>true</restartRequiredAfterRackChange>
 

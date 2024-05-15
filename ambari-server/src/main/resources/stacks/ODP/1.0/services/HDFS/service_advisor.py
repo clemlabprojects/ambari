@@ -143,6 +143,7 @@ class HDFSServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendConfigurationsFromHDP22(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsFromHDP23(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsFromHDP26(configurations, clusterData, services, hosts)
+    recommender.recommendConfigurationsFromODP12(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsForSSO(configurations, clusterData, services, hosts)
 
   def getServiceConfigurationRecommendationsForSSO(self, configurations, clusterData, services, hosts):
@@ -484,6 +485,31 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
     else:
       self.logger.info("Not setting HDFS Repo user for Ranger.")
 
+  def recommendConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    """
+    Recommend configurations for this service based on ODP 1.2
+    """
+    HTTPS_ONLY = 'HTTPS_ONLY'
+    HTTP_AND_HTTPS = 'HTTP_AND_HTTPS'
+    HTTP_SSL_POLICIES = [HTTPS_ONLY, HTTP_AND_HTTPS]
+
+    dfs_http_policy = 'dfs.http.policy'
+    putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
+
+    # trying to read default value
+    try:
+      if 'hdfs-site' in services['configurations']:
+        dfs_http_policy_value = services['configurations']['hdfs-site']['properties'][dfs_http_policy]
+      else:
+        dfs_http_policy_value = HTTP_ONLY
+    except KeyError:
+      dfs_http_policy_value = HTTP_ONLY  # Default
+
+    if dfs_http_policy_value in HTTP_SSL_POLICIES:
+      putHTTPFSSiteProperty("httpfs.ssl.enabled", true)
+    else:
+      putHTTPFSSiteProperty("httpfs.ssl.enabled", false)
+
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
     ambari_sso_details = ambari_configuration.get_ambari_sso_details() if ambari_configuration else None
@@ -556,7 +582,8 @@ class HDFSValidator(service_advisor.ServiceAdvisor):
                        ("hdfs-site", self.validateHDFSConfigurationsFromHDP22),
                        ("hadoop-env", self.validateHadoopEnvConfigurationsFromHDP22),
                        ("ranger-hdfs-plugin-properties", self.validateHDFSRangerPluginConfigurationsFromHDP22),
-                       ("hdfs-site", self.validateRangerAuthorizerFromHDP23)]
+                       ("hdfs-site", self.validateRangerAuthorizerFromHDP23),
+                       ("httpfs-site", self.validateHTTPFSSiteFromODP12)]
 
     # **********************************************************
     # Example of how to add a function that validates a certain config type.
@@ -880,6 +907,49 @@ class HDFSValidator(service_advisor.ServiceAdvisor):
 
     return self.toConfigurationValidationProblems(validationItems, "hdfs-site")
 
+  def validateHTTPFSSiteFromODP12(self, properties, recommendedDefaults, configurations, services, hosts):
+    """
+    This checks that the property httpfs.ssl.enabled is defined when HTTPFS_GATEWAY is installed to keep consistency
+    """
+    self.logger.info("Class: %s, Method: %s. Checking if HTTPFS service is present and if SSL is enabled according to HDFS dfs.http.policy." %
+                (self.__class__.__name__, inspect.stack()[0][3]))
+
+
+    httpfs_site = properties
+    validationItems = []
+    HTTP_ONLY = 'HTTP_ONLY'
+    HTTPS_ONLY = 'HTTPS_ONLY'
+    HTTP_AND_HTTPS = 'HTTP_AND_HTTPS'
+    HTTP_SSL_POLICIES = [HTTPS_ONLY, HTTP_AND_HTTPS]
+    dfs_http_policy = 'dfs.http.policy'
+    dfs_http_policy_value = 'HTTP_ONLY'
+
+    if len(self.getHTTPFSNodeHosts(services, hosts)) > 0:
+      if 'httpfs.ssl.enabled' not in httpfs_site:
+          message = "httpfs.ssl.enabled needs te be defined when HTTPFS_GATEWAY service is enabled."
+          validationItems.append({"config-name": 'httpfs.ssl.enabled',
+                                "item": self.getErrorItem(message)})
+ 
+    return self.toConfigurationValidationProblems(validationItems, "httpfs-site")
+
+      # if 'hdfs-site' in services['configurations']:
+      #   dfs_http_policy_value = services['configurations']['hdfs-site']['properties'][dfs_http_policy]
+      # if dfs_http_policy_value in HTTP_SSL_POLICIES:
+      #   # it the property does not exist should define it:
+      #   else:
+      #     #
+      #     if httpfs_site['httpfs.ssl.enabled'].lower() == 'true' and dfs_http_policy_value not in HTTP_SSL_POLICIES:
+      #       message = "dfs.namenode.inode.attributes.provider.class needs to be set to 'org.apache.ranger.authorization.hadoop.RangerHdfsAuthorizer' if Ranger HDFS Plugin is enabled."
+      #       validationItems.append({"config-name": 'dfs.namenode.inode.attributes.provider.class',
+      #                               "item": self.getWarnItem(message)})
+      # else:
+      #   if 'httpfs.ssl.enabled' in httpfs_site:
+      #     if httpfs_site['httpfs.ssl.enabled'] == 'true':
+      #       message = "dfs.namenode.inode.attributes.provider.class needs to be set to 'org.apache.ranger.authorization.hadoop.RangerHdfsAuthorizer' if Ranger HDFS Plugin is enabled."
+      #       validationItems.append({"config-name": 'dfs.namenode.inode.attributes.provider.class',
+      #                               "item": self.getWarnItem(message)})
+
+
   def getDataNodeHosts(self, services, hosts):
     """
     Returns the list of Data Node hosts. If none, return an empty list.
@@ -888,4 +958,14 @@ class HDFSValidator(service_advisor.ServiceAdvisor):
       dataNodeHosts = self.getHostsWithComponent("HDFS", "DATANODE", services, hosts)
       if dataNodeHosts is not None:
         return dataNodeHosts
+    return []
+
+  def getHTTPFSNodeHosts(self, services, hosts):
+    """
+    Returns the list of HTTPFS Gateway Node hosts. If none, return an empty list.
+    """
+    if len(hosts["items"]) > 0:
+      HTTPFSNodeHosts = self.getHostsWithComponent("HDFS", "HTTPFS_GATEWAY", services, hosts)
+      if HTTPFSNodeHosts is not None:
+        return HTTPFSNodeHosts
     return []
