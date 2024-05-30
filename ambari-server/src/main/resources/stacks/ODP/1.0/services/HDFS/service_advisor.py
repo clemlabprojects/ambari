@@ -508,9 +508,12 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
       dfs_http_policy_value = HTTP_ONLY  # Default
 
     if dfs_http_policy_value in HTTP_SSL_POLICIES:
-      putHTTPFSSiteProperty("httpfs.ssl.enabled", true)
+      putHTTPFSSiteProperty("httpfs.ssl.enabled", 'true')
     else:
-      putHTTPFSSiteProperty("httpfs.ssl.enabled", false)
+      putHTTPFSSiteProperty("httpfs.ssl.enabled", 'false')
+    if(self.is_kerberos_enabled(configurations, services)):
+        putHTTPFSSiteProperty('httpfs.authentication.type', "kerberos")
+        putHTTPFSSiteProperty('httpfs.hadoop.authentication.type', "kerberos")
 
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
