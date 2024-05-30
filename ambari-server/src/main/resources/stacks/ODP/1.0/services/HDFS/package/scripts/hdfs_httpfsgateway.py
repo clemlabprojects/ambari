@@ -37,7 +37,7 @@ def httpfsgateway(action=None):
     if params.httpfs_stack_enabled:
       XmlConfig("httpfs-site.xml",
               conf_dir=params.hadoop_conf_dir,
-              configurations=params.config['configurations']['httpfs-site'],
+              configurations=params.httpfs_properties,
               configuration_attributes=params.config['configurationAttributes']['httpfs-site'],
               mode=0o644,
               owner=params.httpfs_user,
