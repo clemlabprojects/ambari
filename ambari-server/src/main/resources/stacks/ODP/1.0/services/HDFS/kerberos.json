@@ -200,10 +200,10 @@
               "name": "httpfs_httpfs_gateway_spnego",
               "reference": "/spnego",
               "principal": {
-                "configuration": "httpfs-site/httpfs.authentication.kerberos.principal"
+                "configuration": "httpfs-site/hadoop.http.authentication.kerberos.principal"
               },
               "keytab": {
-                "configuration": "httpfs.authentication.kerberos.keytab"
+                "configuration": "httpfs-site/hadoop.http.authentication.kerberos.keytab"
               }
             }
           ],

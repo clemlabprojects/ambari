@@ -108,6 +108,7 @@ hadoop_secure_dn_user = hdfs_user
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
 hadoop_conf_secure_dir = os.path.join(hadoop_conf_dir, "secure")
 hadoop_lib_home = stack_select.get_hadoop_dir("lib")
+_hostname_lowercase = config['agentLevelParams']['hostname'].lower()
 
 # hadoop parameters for stacks that support rolling_upgrade
 if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, stack_version_formatted):
@@ -140,13 +141,28 @@ if secure_dn_ports_are_in_use:
 else:
   datanode_pid_file = datanode_unsecure_pid_file
 
+
 httpfs_stack_enabled = check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks)
 if httpfs_stack_enabled:
+  httpfs_properties = dict(config['configurations']['httpfs-site'])
   httpfs_ssl_enabled = True if str(default('/configurations/httpfs-site/httpfs.ssl.enabled', False)).lower() == "true" else False
   httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
   httpfs_ssl_keystore_path = config['configurations']['ssl-server']['ssl.server.keystore.location']
   httpfs_ssl_keystore_password = config['configurations']['ssl-server']['ssl.server.keystore.password']
   httpfs_env_sh_template = config['configurations']['httpfs-env']['content']
+
+  httpfs_hadoop_auth_principal_name = default("/configurations/httpfs-site/httpfs.hadoop.authentication.kerberos.principal", None)
+  if httpfs_hadoop_auth_principal_name is not None:
+    httpfs_hadoop_auth_principal_name = httpfs_hadoop_auth_principal_name.replace('_HOST',_hostname_lowercase)
+
+  httpfs_principal_name = default("/configurations/httpfs-site/hadoop.http.authentication.kerberos.principal", None)
+  if httpfs_principal_name is not None:
+    httpfs_principal_name = httpfs_principal_name.replace('_HOST',_hostname_lowercase)
+  
+  # apply principal name
+  httpfs_properties['httpfs.hadoop.authentication.kerberos.principal'] = httpfs_hadoop_auth_principal_name
+  httpfs_properties['hadoop.http.authentication.kerberos.principal'] = httpfs_principal_name
+
 httpfs_max_threads = default("/configurations/httpfs-env/httpfs_max_threads", 1000)
 httpfs_max_header_size = default("/configurations/httpfs-env/httpfs_max_header_size", 65536)
 httpfs_http_port = default("/configurations/httpfs-env/httpfs_http_port", 14000)

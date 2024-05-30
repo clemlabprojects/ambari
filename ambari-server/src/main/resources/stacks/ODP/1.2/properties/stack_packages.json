@@ -189,6 +189,18 @@
           "STANDARD": [
             "hadoop-hdfs-zkfc"
           ]
+        },
+        "HTTPFS_GATEWAY": {
+          "STACK-SELECT-PACKAGE": "hadoop-hdfs-httpfs",
+          "INSTALL": [
+            "hadoop-hdfs-httpfs"
+          ],
+          "PATCH": [
+            "hadoop-hdfs-httpfs"
+          ],
+          "STANDARD": [
+            "hadoop-hdfs-httpfs"
+          ]
         }
       },
       "HIVE": {
