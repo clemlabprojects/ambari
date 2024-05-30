@@ -2745,14 +2745,19 @@ class DefaultStackAdvisor(StackAdvisor):
     GROUPS_PROPERTY = "propertyGroups"
 
     return {
-      "HDFS":   [("hadoop-env", "hdfs_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
+      "HDFS":   [("hadoop-env", "hdfs_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD}),
+                 ("hadoop-env", "httpfs_user", {HOSTS_PROPERTY: ["HTTPFS_GATEWAY"], GROUPS_PROPERTY: ALL_WILDCARD})],
       "OOZIE":  [("oozie-env", "oozie_user", {HOSTS_PROPERTY: ["OOZIE_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
       "HIVE":   [("hive-env", "hive_user", {HOSTS_PROPERTY: ["HIVE_SERVER", "HIVE_SERVER_INTERACTIVE"], GROUPS_PROPERTY: ALL_WILDCARD}),
                  ("hive-env", "webhcat_user", {HOSTS_PROPERTY: ["WEBHCAT_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
       "YARN":   [("yarn-env", "yarn_user", {HOSTS_PROPERTY: ["RESOURCEMANAGER"]}, lambda services, hosts: len(self.getHostsWithComponent("YARN", "RESOURCEMANAGER", services, hosts)) > 1)],
       "FALCON": [("falcon-env", "falcon_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
       "SPARK":  [("livy-env", "livy_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
-      "SPARK2":  [("livy2-env", "livy2_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})]
+      "SPARK2":  [("livy2-env", "livy2_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD}),
+                 ("spark2-livy2-env", "livy2_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
+      "SPARK3":  [("spark3-livy2-env", "livy2_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD})],
+      "HUE":      [("hue-env", "hue_user", {HOSTS_PROPERTY: ["HUE_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
+      "KNOX":     [("knox-env", "knox_user", {HOSTS_PROPERTY: ["KNOX_GATEWAY"], GROUPS_PROPERTY: ALL_WILDCARD})]
     }
 
   def getServiceHTTPFSProxyUsersConfigurationDict(self):
@@ -2889,7 +2894,7 @@ class DefaultStackAdvisor(StackAdvisor):
 
     for user_name, user_properties in users.items():
 
-      # Add properties "hadoop.proxyuser.*.hosts", "hadoop.proxyuser.*.groups" to core-site for all users
+      # Add properties "hadoop.proxyuser.*.hosts", "hadoop.proxyuser.*.groups" to httpfs-site for all users
       self.put_httpfs_proxyuser_value(user_name, user_properties["propertyHosts"], services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
       self.logger.info("Updated httpfs.proxyuser.{0}.hosts as : {1}".format(user_name, user_properties["propertyHosts"]))
       if "propertyGroups" in user_properties:
@@ -2899,13 +2904,13 @@ class DefaultStackAdvisor(StackAdvisor):
       userOldValue = self.getOldValue(services, user_properties["config"], user_properties["propertyName"])
       if userOldValue is not None and userOldValue != user_name:
         putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.hosts".format(userOldValue), 'delete', 'true')
-        services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.hosts".format(userOldValue)})
-        services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.hosts".format(user_name)})
+        services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.hosts".format(userOldValue)})
+        services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.hosts".format(user_name)})
 
         if "propertyGroups" in user_properties:
           putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(userOldValue), 'delete', 'true')
-          services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.groups".format(userOldValue)})
-          services["forced-configurations"].append({"type" : "core-site", "name" : "httpfs.proxyuser.{0}.groups".format(user_name)})
+          services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(userOldValue)})
+          services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(user_name)})
 
   def recommendAmbariProxyUsersForHDFS(self, services, configurations, servicesList, putCoreSiteProperty, putCoreSitePropertyAttribute):
     if "HDFS" in servicesList:
