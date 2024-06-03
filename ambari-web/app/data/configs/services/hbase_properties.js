@@ -120,5 +120,75 @@ module.exports = [
     "index": 1,
     "name": "ranger-hbase-plugin-enabled",
     "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 1,
+    "name": "hbase.thrift.minWorkerThreads",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 2,
+    "name": "hbase.thrift.info.port",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 3,
+    "name": "hbase.thrift.support.proxyuser",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 4,
+    "name": "hbase.thrift.info.bindAddress",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 5,
+    "name": "hbase.thrift.security.qop",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 6,
+    "name": "hbase.thrift.ssl.enabled",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 7,
+    "name": "hbase.thrift.ssl.keystore.store",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 8,
+    "name": "hbase.thrift.ssl.keystore.password",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 9,
+    "name": "hbase.thrift.ssl.keystore.keypassword",
+    "serviceName": "HBASE"
+  },
+  {
+    "category": "HBASE_THRIFTSERVER",
+    "filename": "hbase-site.xml",
+    "index": 10,
+    "name": "hbase.thrift.ssl.keystore.type",
+    "serviceName": "HBASE"
   }
 ];

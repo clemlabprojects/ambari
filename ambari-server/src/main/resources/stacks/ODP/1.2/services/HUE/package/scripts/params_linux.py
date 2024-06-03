@@ -46,7 +46,8 @@ def getDBEngine(databaseType):
   driverDict = {
     "MYSQL": "mysql",
     "ORACLE": "derby",
-    "POSTGRESQL": "postgres"
+    "POSTGRESQL": "postgres",
+    "POSTGRES": "postgres"
   }
   return driverDict.get(databaseType.upper())
 
@@ -260,11 +261,18 @@ if type(hbase_master_hosts) is list:
 else:
   hbase_master_host = hbase_master_hosts
 
+hbase_thrift_stack_enabled = check_stack_feature(StackFeature.HBASE_SUPPORTS_THRIFT, version_for_stack_feature_checks)
+if hbase_thrift_stack_enabled:
+  hbase_thrift_hosts = default("/clusterHostInfo/hbase_thriftserver_hosts", None)
+  has_hbase = len(hbase_thrift_hosts) > 0
+else:
+  has_hbase = False
+
 #
 # Oozie
 #
 oozie_https_port = None
-oozie_scheme = 'http'
+oozie_scheme = 'http' if config['configurations']['oozie-site']['oozie.base.url'].startswith('http://') else 'https'
 oozie_server_port = "11000"
 oozie_server_hosts = default("/clusterHostInfo/oozie_server_hosts", None)
 
@@ -280,7 +288,6 @@ if has_oozie:
   oozie_https_port = default("/configurations/oozie-site/oozie.https.port", None)
 
 if oozie_https_port is not None:
-  oozie_scheme = 'https'
   oozie_server_port = oozie_https_port
 
 #
@@ -552,9 +559,15 @@ if has_oozie:
   hue_oozie_url = format('{oozie_scheme}://{oozie_server_host}:{oozie_server_port}/oozie')
   hue_oozie_kerberos_enabled = security_enabled
 
-has_hbase = hbase_master_host != None
 if has_hbase:
-  hue_hbase_clusters = format("(HBase|{hbase_master_host}:{hbase_master_rs_port})")
+  hbase_thrift_port = default("/configurations/hbase-site/hbase.thrift.port", 9090)
+  if len(hbase_thrift_hosts) > 1:
+    hue_hbase_clusters = ','.join('(HBase|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
+  else:
+    hbase_thrift_host = hbase_thrift_hosts[0]
+    hue_hbase_clusters = '(HBase|' + hbase_thrift_host +':'+ str(hbase_thrift_port) + ')'
+else:
+  hue_app_blacklist += ",hbase"
 
 ## Zookeeper Settings
 zookeeper_hosts_list = config['clusterHostInfo']['zookeeper_server_hosts']

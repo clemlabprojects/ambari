@@ -701,7 +701,8 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
                        ("hbase-site", self.validateHBASEConfigurationsFromHDP22),
                        ("hbase-env", self.validateHBASEEnvConfigurationsFromHDP22),
                        ("ranger-hbase-plugin-properties", self.validateHBASERangerPluginConfigurationsFromHDP22),
-                       ("hbase-site", self.validateHBASEConfigurationsFromHDP23)]
+                       ("hbase-site", self.validateHBASEConfigurationsFromHDP23),
+                       ("hbase-site", self.validateHBASEConfigurationsFromODP12)]
 
 
   def validateHbaseEnvConfigurationsFromHDP206(self, properties, recommendedDefaults, configurations, services, hosts):
@@ -845,3 +846,28 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
 
     validationProblems = self.toConfigurationValidationProblems(validationItems, "hbase-site")
     return validationProblems
+
+  def validateHBASEConfigurationsFromODP12(self, properties, recommendedDefaults, configurations, services, hosts):
+      hbase_site = properties
+      validationItems = []
+
+      #Adding HBase Thrift Logic Here
+      ranger_plugin_properties = self.getSiteProperties(configurations, "ranger-hbase-plugin-properties")
+      ranger_plugin_enabled = ranger_plugin_properties['ranger-hbase-plugin-enabled'] if ranger_plugin_properties else 'No'
+      prop_name = 'hadoop.security.credential.provider.path'
+      if 'hbase.thrift.ssl.enabled' in hbase_site:
+        if hbase_site['hbase.thrift.ssl.enabled']:
+          if prop_name not in hbase_site:
+            validationItems.append({"config-name": prop_name,
+                                  "item": self.getErrorItem(
+                                    "If HBase Thrift TLS/SSL is enabled." \
+                                    "{0} need to be set with a value like {1}".format(prop_name,"localjceks://file//etc/hbase/conf/creds.localjceks"))})
+          else:
+            if hbase_site[prop_name].startswith('localjceks://file/'):
+              self.logger.info("{0} format is valid".format(prop_name))
+            else:
+              validationItems.append({"config-name": prop_name,
+                                    "item": self.getErrorItem("{0} need to start with {1}".format(prop_name,"localjceks://file/"))})
+
+      validationProblems = self.toConfigurationValidationProblems(validationItems, "hbase-site")
+      return validationProblems

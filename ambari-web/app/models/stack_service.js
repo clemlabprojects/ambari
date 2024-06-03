@@ -408,6 +408,7 @@ App.StackService.configCategories = function () {
       serviceConfigCategories.pushObjects([
         App.ServiceConfigCategory.create({ name: 'HBASE_MASTER', displayName: 'HBase Master', showHost: true}),
         App.ServiceConfigCategory.create({ name: 'HBASE_REGIONSERVER', displayName: 'RegionServer', showHost: true}),
+        App.ServiceConfigCategory.create({ name: 'HBASE_THRIFTSERVER', displayName: 'ThriftServer'}),
         App.ServiceConfigCategory.create({ name: 'General', displayName: 'General'})
       ]);
       break;

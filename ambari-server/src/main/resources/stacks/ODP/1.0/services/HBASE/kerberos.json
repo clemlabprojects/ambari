@@ -164,6 +164,42 @@
           ]
         },
         {
+          "name": "HBASE_THRIFTSERVER",
+          "identities": [
+            {
+              "name": "hbase_thriftserver_hbase",
+              "principal": {
+                "value": "hbase/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "hbase-site/hbase.thrift.kerberos.principal",
+                "local_username": "${hbase-env/hbase_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/hbase-thrift.service.keytab",
+                "owner": {
+                  "name": "${hbase-env/hbase_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "hbase-site/hbase.thrift.keytab.file"
+              }
+            },
+            {
+              "name": "hbase_hbase_regionserver_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "hbase-site/hbase.thrift.spnego.principal"
+              },
+              "keytab": {
+                "configuration": "hbase-site/hbase.thrift.spnego.keytab.file"
+              }
+            }
+          ]
+        },
+        {
           "name": "PHOENIX_QUERY_SERVER",
           "identities": [
             {
