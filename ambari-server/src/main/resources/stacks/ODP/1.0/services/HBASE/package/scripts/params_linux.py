@@ -65,6 +65,7 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
+hbase_thrift_stack_enabled = check_stack_feature(StackFeature.HBASE_SUPPORTS_THRIFT, version_for_stack_feature_checks)
 
 # hadoop default parameters
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin")
@@ -104,6 +105,7 @@ hbase_drain_only = default("/commandParams/mark_draining_only",False)
 hbase_included_hosts = config['commandParams']['included_hosts']
 
 hbase_user = status_params.hbase_user
+user_group = config['configurations']['cluster-env']['user_group']
 hbase_principal_name = config['configurations']['hbase-env']['hbase_principal_name']
 smokeuser = config['configurations']['cluster-env']['smokeuser']
 _authentication = config['configurations']['core-site']['hadoop.security.authentication']
@@ -216,6 +218,10 @@ if security_enabled:
   master_jaas_princ = config['configurations']['hbase-site']['hbase.master.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   master_keytab_path = config['configurations']['hbase-site']['hbase.master.keytab.file']
   regionserver_jaas_princ = config['configurations']['hbase-site']['hbase.regionserver.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  if hbase_thrift_stack_enabled:
+    thrift_keytab_path = config['configurations']['hbase-site']['hbase.thrift.keytab.file']
+    thrift_jaas_princ = config['configurations']['hbase-site']['hbase.thrift.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+
   _queryserver_jaas_princ = config['configurations']['hbase-site']['phoenix.queryserver.kerberos.principal']
   if not is_empty(_queryserver_jaas_princ):
     queryserver_jaas_princ =_queryserver_jaas_princ.replace('_HOST',_hostname_lowercase)
@@ -460,3 +466,21 @@ if 'viewfs-mount-table' in config['configurations']:
   if 'content' in mount_table and mount_table['content'].strip():
     mount_table_xml_inclusion_file_full_path = os.path.join(hbase_conf_dir, xml_inclusion_file_name)
     mount_table_content = mount_table['content']
+
+
+## AMBARI-137: add HBase thrift support for hue interface
+if hbase_thrift_stack_enabled:
+  # configure ssl keystore properties
+  thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
+  if thrift_ssl_enabled:
+    thrift_ssl_keystore_password = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.password']
+    thrift_ssl_keystore_keypassword = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.keypassword']
+    hbase_thrift_creds_file = config['configurations']['hbase-site']['hadoop.security.credential.provider.path']
+  
+  # mask ssl password properties
+  hbase_site = dict(config['configurations']['hbase-site'])
+  hbase_site['hbase.thrift.ssl.keystore.password'] = '**************'
+
+  hbase_site = dict(config['configurations']['hbase-site'])
+  hbase_site['hbase.thrift.ssl.keystore.keypassword'] = '**************'
+

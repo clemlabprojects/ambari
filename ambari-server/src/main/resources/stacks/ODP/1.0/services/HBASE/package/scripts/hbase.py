@@ -38,11 +38,20 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
 def hbase(name=None):
   import params
-  XmlConfig("hbase-site.xml",
-            conf_dir = params.hbase_conf_dir,
-            configurations = params.config['configurations']['hbase-site'],
-            configuration_attributes=params.config['configurationAttributes']['hbase-site']
-  )
+  if params.hbase_thrift_stack_enabled:
+    XmlConfig("hbase-site.xml",
+              conf_dir = params.hbase_conf_dir,
+              configurations = params.hbase_site,
+              configuration_attributes=params.config['configurationAttributes']['hbase-site']
+    )
+  else:
+    XmlConfig("hbase-site.xml",
+              conf_dir = params.hbase_conf_dir,
+              configurations = params.config['configurations']['hbase-site'],
+              configuration_attributes=params.config['configurationAttributes']['hbase-site']
+    )
+
+
 
   if params.service_map.has_key(name):
     # Manually overriding service logon user & password set by the installation package
@@ -101,13 +110,22 @@ def hbase(name=None):
     )
     Execute(("chmod", "1777", parent_dir), sudo=True)
 
-  XmlConfig( "hbase-site.xml",
+  if params.hbase_thrift_stack_enabled:
+    XmlConfig( "hbase-site.xml",
+              conf_dir = params.hbase_conf_dir,
+              configurations = params.hbase_site,
+              configuration_attributes=params.config['configurationAttributes']['hbase-site'],
+              owner = params.hbase_user,
+              group = params.user_group
+    )
+  else:
+    XmlConfig( "hbase-site.xml",
             conf_dir = params.hbase_conf_dir,
             configurations = params.config['configurations']['hbase-site'],
             configuration_attributes=params.config['configurationAttributes']['hbase-site'],
             owner = params.hbase_user,
             group = params.user_group
-  )
+    )
 
   if check_stack_feature(StackFeature.PHOENIX_CORE_HDFS_SITE_REQUIRED, params.version_for_stack_feature_checks):
     XmlConfig( "core-site.xml",

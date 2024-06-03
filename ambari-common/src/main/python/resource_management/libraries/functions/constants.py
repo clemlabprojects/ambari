@@ -78,6 +78,7 @@ class StackFeature:
   OOZIE_SETUP_SHARED_LIB = "oozie_setup_shared_lib"
   OOZIE_HOST_KERBEROS = "oozie_host_kerberos"
   HDFS_SUPPORTS_HTTPFS = "hdfs_supports_httpfs"
+  HBASE_SUPPORTS_THRIFT = "hbase_supports_thrift"
   HIVE_METASTORE_UPGRADE_SCHEMA = "hive_metastore_upgrade_schema"
   HIVE_SERVER_INTERACTIVE = "hive_server_interactive"
   HIVE_WEBHCAT_SPECIFIC_CONFIGS = "hive_webhcat_specific_configs"
