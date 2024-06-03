@@ -211,6 +211,28 @@ class OozieRecommender(service_advisor.ServiceAdvisor):
           dbConnection = self.getDBConnectionString(oozieEnvProperties['oozie_database']).format(oozieServerHost['Hosts']['host_name'], oozieSiteProperties['oozie.db.schema.name'])
           putOozieSiteProperty('oozie.service.JPAService.jdbc.url', dbConnection)
 
+  ## added in ODP 1.2.3.0
+
+    if "HUE_SERVER" in clusterData["components"]:
+      hueUser = None
+      if "hue-env" in services["configurations"] and "hue_user" in services["configurations"]["hue-env"]["properties"]:
+        hueUser = services["configurations"]["hue-env"]["properties"]["hue_user"]
+        if hueUser is not None:
+          putOozieSiteProperty("oozie.service.ProxyUserService.proxyuser.{0}.groups".format(hueUser) , "*")
+          putOozieSiteProperty("oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(hueUser) , "*")
+        hueUserOldValue = self.getOldValue(services, "hue-env", "hue_user")
+        if hueUserOldValue is not None:
+          if 'forced-configurations' not in services:
+            services["forced-configurations"] = []
+          putOozieSitePropertyAttributes("oozie.service.ProxyUserService.proxyuser.{0}.groups".format(hueUserOldValue), 'delete', 'true')
+          putOozieSitePropertyAttributes("oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(hueUserOldValue), 'delete', 'true')
+          services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(hueUserOldValue)})
+          services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.groups".format(hueUserOldValue)})
+          if hueUser is not None:
+            services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(hueUser)})
+            services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.groups".format(hueUser)})
+
+
     ## added in 2.3
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
 
