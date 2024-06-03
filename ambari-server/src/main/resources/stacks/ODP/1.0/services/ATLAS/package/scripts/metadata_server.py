@@ -87,11 +87,11 @@ class MetadataServer(Script):
         {'alias': 'truststore.password', 'value': format('{atlas_tls_ssl_truststore_password}')},
         {'alias': 'password', 'value': format('{atlas_tls_ssl_keystore_password}')}
       ]
+      separator = ('jceks://file')
       setup_credential_file(params.java64_home, None,
                         params.atlas_credential_file_path, 'atlas', params.user_group,
-                        passwords, 'atlas-server' )
+                        passwords, 'atlas-server', separator )
 
-      separator = ('jceks://file')
       file_to_chown = params.atlas_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
           Execute(('chown', format('{params.metadata_user}:{params.user_group}'), file_to_chown),

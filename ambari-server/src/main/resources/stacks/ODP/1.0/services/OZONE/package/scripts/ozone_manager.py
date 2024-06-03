@@ -73,16 +73,16 @@ class OzoneManagerDefault(OzoneManager):
         {'alias': 'ssl.server.keystore.keypassword', 'value': format('{ozone_om_tls_ssl_key_password}')},
         {'alias': 'ssl.client.truststore.password', 'value': format('{ozone_om_tls_ssl_client_truststore_password}')}
       ]
+      separator = ('jceks://file')
       if params.is_hdfs_enabled:
         setup_credential_file(params.java64_home, None,
                           params.ozone_om_credential_file_path, 'ozone', params.user_group,
-                          passwords, 'ozone-manager' )
+                          passwords, 'ozone-manager', separator )
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_om_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-manager' )
+                      passwords, 'ozone-manager', separator )
 
-      separator = ('jceks://file')
       file_to_chown = params.ozone_om_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
           Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),
