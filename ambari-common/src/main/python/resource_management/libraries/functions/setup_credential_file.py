@@ -37,7 +37,7 @@ from resource_management.libraries.functions.default import default
 
 def setup_credential_file(java_home, hadoop_bin_override,
                         credential_path, credential_owner, credential_group,
-                        passwords, component_select_name ):
+                        passwords, component_select_name, separator ):
 
   stack_root = Script.get_stack_root()
   stack_version = get_stack_version(component_select_name)
@@ -53,7 +53,6 @@ def setup_credential_file(java_home, hadoop_bin_override,
     Logger.info("skipping credential file creation")
   else:
 
-    separator = ('jceks://file')
     file_to_delete = credential_path.split(separator)[1]
     Logger.info("Deleting existing provider")
     rm_cmd = ('rm', '-f', file_to_delete)
