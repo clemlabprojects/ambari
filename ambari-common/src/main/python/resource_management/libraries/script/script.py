@@ -1001,6 +1001,10 @@ class Script(object):
       except ClientComponentHasNoStatus as e:
         pass  # expected
 
+      # adding sleep for hue to let time to start
+      if service_name in ['HUE']:
+        time.sleep(5)
+
       # To remain backward compatible with older stacks, only pass upgrade_type if available.
       # TODO, remove checking the argspec for "upgrade_type" once all of the services support that optional param.
       self.pre_start(env)
