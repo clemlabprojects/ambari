@@ -125,7 +125,7 @@ class KnoxServiceAdvisor(service_advisor.ServiceAdvisor):
 
     recommender = KnoxRecommender()
     recommender.recommendKnoxConfigurationsFromHDP22(configurations, clusterData, services, hosts)
-
+    recommender.recommendKnoxConfigurationsFromODP12(configurations, clusterData, services, hosts)
 
 
   def getServiceConfigurationsValidationItems(self, configurations, recommendedDefaults, services, hosts):
@@ -222,6 +222,30 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
             putKnoxTopologyContent('content', ET.tostring(root))
 
 
+  def recommendKnoxConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    knoxEnvProperties = self.getSiteProperties(services['configurations'], 'knox-env')
+
+    if knoxEnvProperties and self.checkSiteProperties(knoxEnvProperties, 'knox_user') and 'KERBEROS' in servicesList:
+      putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
+      putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
+      knoxUser = knoxEnvProperties['knox_user']
+      knoxUserOld = self.getOldValue(services, 'knox-env', 'knox_user')
+      self.put_proxyuser_value(knoxUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+      if knoxUserOld is not None and knoxUser != knoxUserOld:
+        putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(knoxUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(knoxUserOld)})
+        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(knoxUser)})
+
+      putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
+      putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "httpfs-site")
+      knoxUser = knoxEnvProperties['knox_user']
+      knoxUserOld = self.getOldValue(services, 'knox-env', 'knox_user')
+      self.put_proxyuser_value(knoxUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
+      if knoxUserOld is not None and knoxUser != knoxUserOld:
+        putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(knoxUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(knoxUserOld)})
+        services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(knoxUser)})
 
 
 class KnoxValidator(service_advisor.ServiceAdvisor):

@@ -2995,6 +2995,10 @@ class DefaultStackAdvisor(StackAdvisor):
       property_name = "hadoop.proxyuser.{0}.hosts".format(user_name)
 
     put_function(property_name, result_value)
+    if is_groups and user_name in ['hue','knox']:
+      put_function(property_name, '*')
+    else:
+      put_function(property_name, result_value)
 
   def put_httpfs_proxyuser_value(self, user_name, value, is_groups=False, services=None, configurations=None, put_function=None):
     is_wildcard_value, current_value = self.get_data_for_proxyuser(user_name, services, configurations, is_groups)
@@ -3008,7 +3012,10 @@ class DefaultStackAdvisor(StackAdvisor):
     else:
       property_name = "httpfs.proxyuser.{0}.hosts".format(user_name)
 
-    put_function(property_name, result_value)
+    if is_groups and user_name in ['hue','knox']:
+      put_function(property_name, '*')
+    else:
+      put_function(property_name, result_value)
 
   def get_data_for_proxyuser(self, user_name, services, configurations, groups=False):
     """

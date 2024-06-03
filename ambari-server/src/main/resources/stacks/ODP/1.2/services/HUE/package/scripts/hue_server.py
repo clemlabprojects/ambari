@@ -179,7 +179,7 @@ class HueGatewayDefault(HueGateway):
     try:
       # need to sleep on the first time
       if first_time:
-        time.sleep(5)
+        time.sleep(10)
       Execute(daemon_cmd,
               user=params.hue_user,
               environment={},
