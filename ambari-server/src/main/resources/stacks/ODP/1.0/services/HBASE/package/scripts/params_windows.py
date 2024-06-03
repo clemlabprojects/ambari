@@ -39,5 +39,6 @@ hbase_drain_only = config['commandParams']['mark_draining_only']
 
 service_map = {
   'master' : status_params.hbase_master_win_service_name,
-  'regionserver' : status_params.hbase_regionserver_win_service_name
+  'regionserver' : status_params.hbase_regionserver_win_service_name,
+  'thrift': status_params.hbase_thrift_win_service_name
 }

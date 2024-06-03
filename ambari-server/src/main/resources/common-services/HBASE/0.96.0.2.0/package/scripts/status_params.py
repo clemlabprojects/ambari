@@ -47,6 +47,7 @@ else:
   hbase_user = config['configurations']['hbase-env']['hbase_user']
 
   hbase_master_pid_file = format("{pid_dir}/hbase-{hbase_user}-master.pid")
+  hbase_thrift_pid_file = format("{pid_dir}/hbase-{hbase_user}-thrift.pid")
   regionserver_pid_file = format("{pid_dir}/hbase-{hbase_user}-regionserver.pid")
   phoenix_pid_file = format("{pid_dir}/phoenix-{hbase_user}-server.pid")
 

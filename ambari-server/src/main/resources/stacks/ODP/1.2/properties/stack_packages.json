@@ -103,6 +103,18 @@
           "STANDARD": [
             "phoenix-server"
           ]
+        },
+        "HBASE_THRIFTSERVER": {
+          "STACK-SELECT-PACKAGE": "hbase-thrift",
+          "INSTALL": [
+            "hbase-thrift"
+          ],
+          "PATCH": [
+            "hbase-thrift"
+          ],
+          "STANDARD": [
+            "hbase-thrift"
+          ]
         }
       },
       "HDFS": {

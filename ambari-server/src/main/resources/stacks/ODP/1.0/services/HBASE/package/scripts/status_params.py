@@ -41,12 +41,14 @@ config = Script.get_config()
 
 if OSCheck.is_windows_family():
   hbase_master_win_service_name = "master"
+  hbase_thrift_win_service_name = "thrift"
   hbase_regionserver_win_service_name = "regionserver"
 else:
   pid_dir = config['configurations']['hbase-env']['hbase_pid_dir']
   hbase_user = config['configurations']['hbase-env']['hbase_user']
 
   hbase_master_pid_file = format("{pid_dir}/hbase-{hbase_user}-master.pid")
+  hbase_thrift_pid_file = format("{pid_dir}/hbase-{hbase_user}-thrift.pid")
   regionserver_pid_file = format("{pid_dir}/hbase-{hbase_user}-regionserver.pid")
   phoenix_pid_file = format("{pid_dir}/phoenix-{hbase_user}-queryserver.pid")
 
