@@ -489,6 +489,7 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
     """
     Recommend configurations for this service based on ODP 1.2
     """
+    HTTP_ONLY = 'HTTP_ONLY'
     HTTPS_ONLY = 'HTTPS_ONLY'
     HTTP_AND_HTTPS = 'HTTP_AND_HTTPS'
     HTTP_SSL_POLICIES = [HTTPS_ONLY, HTTP_AND_HTTPS]
