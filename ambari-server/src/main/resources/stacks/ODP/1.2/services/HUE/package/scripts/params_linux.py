@@ -562,10 +562,10 @@ if has_oozie:
 if has_hbase:
   hbase_thrift_port = default("/configurations/hbase-site/hbase.thrift.port", 9090)
   if len(hbase_thrift_hosts) > 1:
-    hue_hbase_clusters = ','.join('(HBase|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
+    hue_hbase_clusters = ','.join('(HBase Thrift'+ str(item)+ '|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
   else:
     hbase_thrift_host = hbase_thrift_hosts[0]
-    hue_hbase_clusters = '(HBase|' + hbase_thrift_host +':'+ str(hbase_thrift_port) + ')'
+    hue_hbase_clusters = '(HBase Thrift'+ str(hbase_thrift_host)+ '|' + hbase_thrift_host +':'+ str(hbase_thrift_port) + ')'
 else:
   hue_app_blacklist += ",hbase"
 
