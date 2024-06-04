@@ -82,28 +82,6 @@
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <reassignAllowed>false</reassignAllowed>
-          <dependencies>
-            <dependency>
-              <name>OZONE/OZONE_STORAGE_CONTAINER_MANAGER</name>
-              <scope>cluster</scope>
-              <auto-deploy>
-                <enabled>false</enabled>
-              </auto-deploy>
-            </dependency>
-            <dependency>
-              <name>HDFS/NAMENODE</name>
-              <scope>cluster</scope>
-              <auto-deploy>
-                <enabled>false</enabled>
-              </auto-deploy>
-              <conditions>
-                <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
-                  <configType>ozone-env</configType>
-                  <property>run_in_hdfs</property>
-                </condition>
-              </conditions>
-            </dependency>
-          </dependencies>
           <commandScript>
             <script>scripts/ozone_manager.py</script>
             <scriptType>PYTHON</scriptType>
@@ -151,21 +129,6 @@
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <decommissionAllowed>true</decommissionAllowed>
-          <dependencies>
-            <dependency>
-                <name>HDFS/DATANODE</name>
-                <scope>host</scope>
-                <auto-deploy>
-                  <enabled>false</enabled>
-                </auto-deploy>
-                <conditions>
-                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
-                    <configType>ozone-env</configType>
-                    <property>run_in_hdfs</property>
-                  </condition>
-                </conditions>
-              </dependency>
-          </dependencies>
           <commandScript>
             <script>scripts/ozone_datanode.py</script>
             <scriptType>PYTHON</scriptType>
@@ -259,21 +222,6 @@
           <category>CLIENT</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
-          <dependencies>
-              <dependency>
-                <name>HDFS/HDFS_CLIENT</name>
-                <scope>host</scope>
-                <auto-deploy>
-                  <enabled>false</enabled>
-                </auto-deploy>
-                <conditions>
-                  <condition type="ozone-env" property="run_in_hdfs" value="false" comparison="not-equals">
-                    <configType>ozone-env</configType>
-                    <property>run_in_hdfs</property>
-                  </condition>
-                </conditions>
-              </dependency>
-          </dependencies>
           <commandScript>
             <script>scripts/ozone_client.py</script>
             <scriptType>PYTHON</scriptType>

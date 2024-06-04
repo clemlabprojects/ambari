@@ -809,25 +809,6 @@
         <property-type>KERBEROS_PRINCIPAL</property-type>
         <on-ambari-upgrade add="false"/>
     </property>
-    <property>
-        <name>run_in_hdfs</name>
-        <value>false</value>
-        <description>Run Ozone as part of HDFS</description>
-        <display-name>Run Ozone as part of HDFS</display-name>
-        <final>true</final>
-        <value-attributes>
-            <type>boolean</type>
-            <overridable>true</overridable>
-        </value-attributes>
-        <depends-on>
-            <property>
-                <type>hdfs-site</type>
-                <name>dfs.datanode.data.dir</name>
-            </property>
-        </depends-on>
-        <on-ambari-upgrade add="false"/>
-    </property>
-
     <!-- ozone-env.sh -->
     <property>
         <name>content</name>
