@@ -186,14 +186,13 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     ozoneUser = 'ozone'
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
-    run_in_hdfs = False
     # run ozone inside HDFS Datanodes is HDFS is enabled
     if 'HDFS' in servicesList:
-      run_in_hdfs = True
+      putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
     else:
       # disable hdfs related properties
       putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
-    putOzoneEnvProperty('run_in_hdfs', run_in_hdfs)
+
   
     dataDirsCount = 1
     # Use users 'hdds.datanode.dir' first
@@ -302,9 +301,7 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       putOzoneEnvProperty('ozone_scm_heapsize', max(scm_heapsize_limit, 1024))
 
     datanodeHosts = self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts)
-    if run_in_hdfs:
-      datanodeHosts = self.getHostsWithComponent("HDFS", "DATANODE", services, hosts)
-    
+
     if datanodeHosts is not None and len(datanodeHosts) > 0:
       min_datanode_ram_kb = 1073741824  # 1 TB
       for datanode in datanodeHosts:
