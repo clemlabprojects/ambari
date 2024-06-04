@@ -36,6 +36,7 @@ import os
 from resource_management.libraries.functions.setup_atlas_hook import has_atlas_in_cluster, setup_atlas_hook
 from ambari_commons.constants import SERVICE
 from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Execute
 
 
 class HbaseMaster(Script):
@@ -92,6 +93,20 @@ class HbaseMasterDefault(HbaseMaster):
       setup_atlas_hook(SERVICE.HBASE,params.hbase_atlas_hook_properties,hbase_atlas_hook_file_path,params.hbase_user,params.user_group)
     else:
       Logger.info("Hbase Atlas hook is disabled, skippking Atlas configurations.")
+    if params.hbase_thrift_stack_enabled:
+      if params.thrift_ssl_enabled:
+        Logger.info("TLS/SSL is enabled on HBase Thrift Server. Setting up keystore")
+        ## creating ssl keystore credential file if needed
+        if params.thrift_ssl_enabled is not None and params.thrift_ssl_enabled:
+          separator = ('localjceks://file')
+          file_to_chown = params.hbase_thrift_creds_file.split(separator)[1]
+          if os.path.exists(file_to_chown):
+              Execute(('chown', format('{params.hbase_user}:{params.user_group}'), file_to_chown),
+                      sudo=True
+                      )
+              Execute(('chmod', '640', file_to_chown),
+                      sudo=True
+                      )
     hbase_service('master', action = 'start')
     
   def stop(self, env, upgrade_type=None):
