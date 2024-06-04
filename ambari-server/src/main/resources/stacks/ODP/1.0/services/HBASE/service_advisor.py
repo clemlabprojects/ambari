@@ -458,8 +458,12 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
 
     # https://github.com/apache/hbase/blob/13af64dc1cbd0e90c3a98071deeb815520b624ee/hbase-common/src/main/resources/hbase-default.xml#L1389
     hbaseThriftServerHosts = self.getHostsWithComponent("HBASE", "HBASE_THRIFTSERVER", services, hosts)
+    hueServerHosts = self.getHostsWithComponent("HUE", "HUE_SERVER", services, hosts)
     if hbaseThriftServerHosts is not None and len(hbaseThriftServerHosts):
-      putHbaseSiteProperty('hbase.regionserver.thrift.framed', 'true')
+      putHbaseSiteProperty('hbase.regionserver.thrift.framed', 'false')
+      putHbaseSiteProperty('hbase.regionserver.thrift.http', 'true')
+    if hueServerHosts is not None and len(hueServerHosts) > 0 :
+      putHbaseSiteProperty('hbase.thrift.support.proxyuser', 'true')
 
   def setHandlerCounts(self, configurations, clusterData, services, hosts, cores):
     putHbaseSiteProperty = self.putProperty(configurations, "hbase-site", services)
@@ -534,16 +538,18 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
       else:
         self.logger.debug("No phoenix query server hosts to update")
 
-      hbase_thriftserver_server_hosts = self.getHBaseThriftServerHosts(services, hosts)      
-      hbaseEnvProperties = self.getSiteProperties(services['configurations'], 'hbase-env')
-      if hbaseEnvProperties and self.checkSiteProperties(hbaseEnvProperties, 'hbase_user'):
-      hbaseUser = hbaseEnvProperties['hbase_user']
-      hbaseUserOld = self.getOldValue(services, 'hbase-env', 'hbase_user')
-      self.put_proxyuser_value(hbaseUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
-      if hbaseUserOld is not None and hbaseUser != hbaseUserOld:
-        putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hbaseUserOld), 'delete', 'true')
-        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUserOld)})
-        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUser)})
+      if 'hbase.thrift.support.proxyuser' in configurations['hbase-site']['properties']:
+        if configurations['hbase-site']['properties']['hbase.thrift.support.proxyuser'].lower() == 'true':
+          hbase_thriftserver_server_hosts = self.getHBaseThriftServerHosts(services, hosts)
+          hbaseEnvProperties = self.getSiteProperties(services['configurations'], 'hbase-env')
+          if hbaseEnvProperties and self.checkSiteProperties(hbaseEnvProperties, 'hbase_user'):
+          hbaseUser = hbaseEnvProperties['hbase_user']
+          hbaseUserOld = self.getOldValue(services, 'hbase-env', 'hbase_user')
+          self.put_proxyuser_value(hbaseUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+          if hbaseUserOld is not None and hbaseUser != hbaseUserOld:
+            putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hbaseUserOld), 'delete', 'true')
+            services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUserOld)})
+            services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUser)})
 
     else:
       putHbaseSiteProperty('hbase.master.ui.readonly', 'false')
@@ -883,7 +889,9 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
   def validateHBASEConfigurationsFromODP12(self, properties, recommendedDefaults, configurations, services, hosts):
       hbase_site = properties
       validationItems = []
-
+      hbase_security_kerberos = False
+      if "hbase.security.authentication" in properties:
+        hbase_security_kerberos = properties["hbase.security.authentication"].lower() == "kerberos"
       #Adding HBase Thrift Logic Here
       ranger_plugin_properties = self.getSiteProperties(configurations, "ranger-hbase-plugin-properties")
       ranger_plugin_enabled = ranger_plugin_properties['ranger-hbase-plugin-enabled'] if ranger_plugin_properties else 'No'
@@ -909,9 +917,20 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
           validationItems.append({"config-name": framed_prop_name,
                         "item": self.getErrorItem("{0} needs to be defined when HBase Thrift Server is installed".format(framed_prop_name))})
         else:
-          if 'false' == hbase_site[framed_prop_name].lower():
+          if 'true' == hbase_site[framed_prop_name].lower() and hbase_security_kerberos :
             validationItems.append({"config-name": framed_prop_name,
-                          "item": self.getWarnItem("{0} should be set to true to improve performance and security".format(framed_prop_name))})
+                          "item": self.getWarnItem("{0} need to be set to false when kerberos is enabled".format(framed_prop_name))})
+      #https://hbase.apache.org/book.html#security.gateway.thrift
+
+      # verification of hbase proxy user when hbase thrift server is installed and proxy is enable
+        hbase_user = services['configurations']['hbase-env']['properties']['hbase_user']
+        if 'hbase.thrift.support.proxyuser' in hbase_site:
+          if hbase_site['hbase.thrift.support.proxyuser'].lower() == 'true':
+            for prop in ["hadoop.proxyuser.{0}.groups".format(hbase_user),"hadoop.proxyuser.{0}.groups".format(hbase_user)]:
+              if prop not in services['configurations']['core-site']['properties']:
+                validationItems.append({"config-name": prop_name,
+                                      "item": self.getErrorItem(
+                                        "HBase user need to be added to proxyuser when impersonation is enabled.".format(prop_name))})
 
       validationProblems = self.toConfigurationValidationProblems(validationItems, "hbase-site")
       return validationProblems
