@@ -66,10 +66,10 @@ def setup_credential_file(java_home, hadoop_bin_override,
       exists_cmd = format('{hadoop_bin} credential list -provider {credential_path}')
       code, output = shell.call(exists_cmd, timeout=5)
       if code == 0:
-        if '{password.alias}' in output:
+        if format('{password.alias}') in output:
           Logger.info("Entry \'{password.alias}\' exists in credential file \'{credential_path}\'")
           Logger.info("checking if it matches")
-          check_match_cmd = '{0} credential check -provider {1} -value {2} -provider {3}'.format(hadoop_bin, password['alias'], PasswordString(password['value']), credential_path)
+          check_match_cmd = '{0} credential check {1} -value \'{2}\' -provider {3}'.format(hadoop_bin, password['alias'], PasswordString(password['value']), credential_path)
           code, output = shell.call(check_match_cmd, timeout=5)
           if code == 0 and 'Password match success' in output:
             Logger.info("Password alias matches. Skipping...")
