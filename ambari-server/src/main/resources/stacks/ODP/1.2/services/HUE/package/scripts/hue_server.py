@@ -37,7 +37,8 @@ from resource_management.core.logger import Logger
 from resource_management.core.shell import as_user
 from resource_management.core import shell
 from resource_management import InlineTemplate, Template
-
+from resource_management.core.exceptions import Fail
+from resource_management.libraries.functions.decorator import retry
 
 from ambari_commons import OSConst, OSCheck
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -191,6 +192,11 @@ class HueGatewayDefault(HueGateway):
     except:
       show_logs(params.hue_logs_dir, params.hue_user)
       raise
+
+  @retry(times=5, sleep_time=5, err_class=Fail)
+  def post_start(self, env=None):
+    return super(HueGatewayDefault, self).post_start(env)
+
 
   def stop(self, env, upgrade_type=None):
     import params
