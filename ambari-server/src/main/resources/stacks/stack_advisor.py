@@ -2742,6 +2742,8 @@ class DefaultStackAdvisor(StackAdvisor):
     return {
       "HDFS":   [("hadoop-env", "hdfs_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD}),
                  ("hadoop-env", "httpfs_user", {HOSTS_PROPERTY: ["HTTPFS_GATEWAY"], GROUPS_PROPERTY: ALL_WILDCARD})],
+      "HBASE":   [("hbase-env", "hbase_user", {HOSTS_PROPERTY: ALL_WILDCARD, GROUPS_PROPERTY: ALL_WILDCARD}),
+                 ("hbase-env", "hbase_user", {HOSTS_PROPERTY: ["HBASE_THRIFTSERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
       "OOZIE":  [("oozie-env", "oozie_user", {HOSTS_PROPERTY: ["OOZIE_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
       "HIVE":   [("hive-env", "hive_user", {HOSTS_PROPERTY: ["HIVE_SERVER", "HIVE_SERVER_INTERACTIVE"], GROUPS_PROPERTY: ALL_WILDCARD}),
                  ("hive-env", "webhcat_user", {HOSTS_PROPERTY: ["WEBHCAT_SERVER"], GROUPS_PROPERTY: ALL_WILDCARD})],
@@ -2990,7 +2992,7 @@ class DefaultStackAdvisor(StackAdvisor):
       property_name = "hadoop.proxyuser.{0}.hosts".format(user_name)
 
     put_function(property_name, result_value)
-    if is_groups and user_name in ['hue','knox']:
+    if is_groups and user_name in ['hue','knox','HTTP','hbase']:
       put_function(property_name, '*')
     else:
       put_function(property_name, result_value)

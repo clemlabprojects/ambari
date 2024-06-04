@@ -129,6 +129,7 @@ class HBASEServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendHBASEConfigurationsFromHDP26(configurations, clusterData, services, hosts)
     recommender.recommendHBASEConfigurationsFromHDP30(configurations, clusterData, services, hosts)
     recommender.recommendHBASEConfigurationsFromHDP301(configurations, clusterData, services, hosts)
+    recommender.recommendHBASEConfigurationsFromODP12(configurations, clusterData, services, hosts)
     recommender.recommendHBASEConfigurationsForKerberos(configurations, clusterData, services, hosts)
 
   def getServiceConfigurationRecommendationsForKerberos(self, configurations, clusterData, services, hosts):
@@ -451,6 +452,15 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
     # Try to give a good guess for the number of handlers
     self.setHandlerCounts(configurations, clusterData, services, hosts, cores)
 
+  def recommendHBASEConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    # Setters
+    putHbaseSiteProperty = self.putProperty(configurations, "hbase-site", services)
+
+    # https://github.com/apache/hbase/blob/13af64dc1cbd0e90c3a98071deeb815520b624ee/hbase-common/src/main/resources/hbase-default.xml#L1389
+    hbaseThriftServerHosts = self.getHostsWithComponent("HBASE", "HBASE_THRIFTSERVER", services, hosts)
+    if hbaseThriftServerHosts is not None and len(hbaseThriftServerHosts):
+      putHbaseSiteProperty('hbase.regionserver.thrift.framed', 'true')
+
   def setHandlerCounts(self, configurations, clusterData, services, hosts, cores):
     putHbaseSiteProperty = self.putProperty(configurations, "hbase-site", services)
     # The amount of RAM that Ambari says HBase should use
@@ -505,6 +515,7 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
     putHbaseSitePropertyAttributes = self.putPropertyAttribute(configurations, "hbase-site")
 
     putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
+    putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
 
     is_kerberos_enabled = self.isHBaseKerberosEnabled(configurations, services)
 
@@ -522,6 +533,18 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
         self.put_proxyuser_value("HTTP", new_value, services=services, configurations=configurations, put_function=putCoreSiteProperty)
       else:
         self.logger.debug("No phoenix query server hosts to update")
+
+      hbase_thriftserver_server_hosts = self.getHBaseThriftServerHosts(services, hosts)      
+      hbaseEnvProperties = self.getSiteProperties(services['configurations'], 'hbase-env')
+      if hbaseEnvProperties and self.checkSiteProperties(hbaseEnvProperties, 'hbase_user'):
+      hbaseUser = hbaseEnvProperties['hbase_user']
+      hbaseUserOld = self.getOldValue(services, 'hbase-env', 'hbase_user')
+      self.put_proxyuser_value(hbaseUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+      if hbaseUserOld is not None and hbaseUser != hbaseUserOld:
+        putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hbaseUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUserOld)})
+        services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUser)})
+
     else:
       putHbaseSiteProperty('hbase.master.ui.readonly', 'false')
 
@@ -654,6 +677,16 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
 
     return hbaseCoProcessorConfigs, hbaseCoProcessorConfigAttributes
 
+
+  def getHBaseThriftServerHosts(self, services, hosts):
+    """
+    Returns the list of HBase Thrift Server host names, or None.
+    """
+    if len(hosts['items']) > 0:
+      hbase_thriftserver_hosts = self.getHostsWithComponent("HBASE", "HBASE_THRIFTSERVER", services, hosts)
+      if hbase_thriftserver_hosts is None:
+        return []
+      return [host['Hosts']['host_name'] for host in hbase_thriftserver_hosts]
 
   def getPhoenixQueryServerHosts(self, services, hosts):
     """
@@ -868,6 +901,17 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
             else:
               validationItems.append({"config-name": prop_name,
                                     "item": self.getErrorItem("{0} need to start with {1}".format(prop_name,"localjceks://file/"))})
+
+      hbaseThriftServerHosts = self.getHostsWithComponent("HBASE", "HBASE_THRIFTSERVER", services, hosts)
+      if hbaseThriftServerHosts is not None and len(hbaseThriftServerHosts):
+        framed_prop_name = 'hbase.regionserver.thrift.framed'
+        if framed_prop_name not in hbase_site:
+          validationItems.append({"config-name": framed_prop_name,
+                        "item": self.getErrorItem("{0} needs to be defined when HBase Thrift Server is installed".format(framed_prop_name))})
+        else:
+          if 'false' == hbase_site[framed_prop_name].lower():
+            validationItems.append({"config-name": framed_prop_name,
+                          "item": self.getWarnItem("{0} should be set to true to improve performance and security".format(framed_prop_name))})
 
       validationProblems = self.toConfigurationValidationProblems(validationItems, "hbase-site")
       return validationProblems
