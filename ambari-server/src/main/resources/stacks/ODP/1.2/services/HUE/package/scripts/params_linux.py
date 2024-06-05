@@ -565,10 +565,10 @@ if has_hbase:
   hbase_thrift_http_enabled = default("/configurations/hbase-site/'hbase.regionserver.thrift.http", 'false')
   hbase_thrift_port = hbase_thrift_binary_port if hbase_thrift_http_enabled.lower() == 'false' else hbase_thrift_http_port
   if len(hbase_thrift_hosts) > 1:
-    hue_hbase_clusters = ','.join('(HBase Thrift'+ str(item)+ '|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
+    hue_hbase_clusters = ','.join('(HBase|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
   else:
     hbase_thrift_host = hbase_thrift_hosts[0]
-    hue_hbase_clusters = '(HBase Thrift'+ str(hbase_thrift_host)+ '|' + hbase_thrift_host +':'+ str(hbase_thrift_port) + ')'
+    hue_hbase_clusters = '(HBase|' + hbase_thrift_host +':'+ str(hbase_thrift_port) + ')'
 else:
   hue_app_blacklist += ",hbase"
 
