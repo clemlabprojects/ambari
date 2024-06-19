@@ -23,7 +23,7 @@
       <name>SPARK3</name>
       <displayName>Spark3</displayName>
       <comment>Apache Spark 3 is a fast and general engine for large-scale data processing.</comment>
-      <version>3.4.2</version>
+      <version>3.5.1</version>
       <components>
         <component>
           <name>SPARK3_JOBHISTORYSERVER</name>
