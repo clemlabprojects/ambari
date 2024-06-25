@@ -75,7 +75,7 @@ def setup_credential_file(java_home, hadoop_bin_override,
             Logger.info("Password alias matches. Skipping...")
           else:
             Logger.info("Deleting alias before create")
-            delete_cmd = (hadoop_bin, 'credential', 'delete', password['alias'] , '-provider', credential_path)
+            delete_cmd = (hadoop_bin, 'credential', 'delete', '-f', password['alias'] , '-provider', credential_path)
             Execute(delete_cmd, environment=cmd_env, logoutput=True, sudo=True)
             Logger.info("Alias {password.alias} deleted")
             need_to_create = True
