@@ -2381,7 +2381,8 @@ class YARNValidator(service_advisor.ServiceAdvisor):
       else:
         webapp_address = services["configurations"]["yarn-site"]["properties"]["yarn.timeline-service.webapp.https.address"]
         propertyValue = "https://"+webapp_address+"/ws/v1/applicationhistory"
-        self.logger.info("validateYarnSiteConfigurations: recommended value for webservice url"+services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"])
+        if 'yarn.log.server.web-service.url' in siteProperties:
+          self.logger.info("validateYarnSiteConfigurations: recommended value for webservice url"+services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"])
       if 'yarn.log.server.web-service.url' in siteProperties:
         if services["configurations"]["yarn-site"]["properties"]["yarn.log.server.web-service.url"] != propertyValue:
           validationItems = [

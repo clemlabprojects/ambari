@@ -70,7 +70,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>almalinux8,redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>knox_${stack_version}</name>

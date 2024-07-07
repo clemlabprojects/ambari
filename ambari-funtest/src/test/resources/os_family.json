@@ -5,7 +5,9 @@
       "fedora",
       "centos",
       "oraclelinux",
-      "almalinux"
+      "almalinux",
+      "rocky",
+      "rocky linux"
     ],
     "versions": [
       5,
