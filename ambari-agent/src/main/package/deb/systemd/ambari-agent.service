@@ -6,5 +6,6 @@
   ExecStart=/etc/init.d/ambari-agent start
   ExecStop=/etc/init.d/ambari-agent stop
   LimitNOFILE=256000
+  KillMode=process
   [Install]
   WantedBy=multi-user.target
