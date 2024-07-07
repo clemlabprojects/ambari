@@ -3,7 +3,6 @@
       "redhat": {
         "distro": [
           "redhat",
-          "almalinux",
           "fedora",
           "centos",
           "oraclelinux",

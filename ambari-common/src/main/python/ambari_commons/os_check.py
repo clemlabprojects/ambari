@@ -250,6 +250,10 @@ class OSCheck:
       operatingSystem = 'sles'
     elif operatingSystem.startswith('red hat enterprise linux'):
       operatingSystem = 'redhat'
+    elif operatingSystem.startswith('rocky linux'):
+      operatingSystem = 'redhat'
+    elif operatingSystem.startswith('almalinux'):
+      operatingSystem = 'redhat'
     elif operatingSystem.startswith('darwin'):
       operatingSystem = 'mac'
 

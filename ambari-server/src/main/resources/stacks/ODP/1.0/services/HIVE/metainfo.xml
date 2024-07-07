@@ -291,7 +291,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>almalinux8,redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>hive_${stack_version}</name>
@@ -315,7 +315,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>almalinux8,redhat8,redhat9,redhat7,amazonlinux2</osFamily>
+          <osFamily>redhat8,redhat9,redhat7,amazonlinux2</osFamily>
           <packages>
             <package>
               <name>mariadb-server</name>
