@@ -363,7 +363,7 @@
 
         <!-- removing snappy for RHEL 8  -->
         <osSpecific>
-          <osFamily>redhat8,redhat9,almalinux8</osFamily>
+          <osFamily>redhat8,redhat9</osFamily>
           <packages>
             <package>
               <name>hadoop_${stack_version}</name>
