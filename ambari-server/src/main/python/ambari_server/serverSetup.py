@@ -80,7 +80,10 @@ UNTAR_JDK_ARCHIVE = "tar --no-same-owner -xvf {0}"
 JDK_PROMPT = "[{0}] {1}\n"
 JDK_VALID_CHOICES = "^[{0}{1:d}]$"
 
-JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed 's/.*version ".*\.\(.*\)\..*"/\\1/; 1q' 2>&1"""
+# implemetation for 7 or 8
+#JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed 's/.*version ".*\.\(.*\)\..*"/\\1/; 1q' 2>&1"""
+# implentation for 7,8, 11 and 17
+JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed -n 's/.*"\([^"]*\)".*/\\1/p' 2>&1"""
 
 def get_supported_jdbc_drivers():
   factory = DBMSConfigFactory()
@@ -1294,7 +1297,16 @@ def check_ambari_java_version_is_valid(java_home, java_bin, min_version, propert
       err = "Checking JDK version command returned with exit code %s" % process.returncode
       raise FatalException(process.returncode, err)
     else:
-      actual_jdk_version = int(out)
+      # the output can be 1.8.x or 17.x.x
+      if    re.match(r'^1\.8\.\d+(_\d+)?$', out):
+              actual_jdk_version = 8
+      elif  re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
+              actual_jdk_version = 11
+      elif  re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
+              actual_jdk_version = 17
+      else:
+          err = 'Error during parsing of JDK version {0}'.format(out)
+          raise FatalException(process.returncode, err)
       print('JDK version found: {0}'.format(actual_jdk_version))
       if actual_jdk_version < min_version:
         print('Minimum JDK version is {0} for Ambari. Setup JDK again only for Ambari Server.'.format(min_version))
@@ -1311,6 +1323,53 @@ def check_ambari_java_version_is_valid(java_home, java_bin, min_version, propert
     raise FatalException(1, err)
 
   return result
+
+# Return JDK Version as configured from /etc/ambari-server/conf/ambari.properties file
+def getJDKVersion(java_home, java_bin):
+  """
+  Return JDK Version from based on configured JDK_HOME.
+  """
+  java_exe_path = get_java_exe_path()
+  if java_exe_path is None:
+    err = ("No JDK found, please run the \"setup\" "
+                    "command to install a JDK automatically or install any "
+                    "JDK manually to " + configDefaults.JDK_INSTALL_DIR)
+    print_error_msg(err)
+    raise FatalException(1, err)
+  actual_jdk_version = None
+  print('Reading JDK version from Ambari Server Configuration File...')
+  try:
+    command = JDK_VERSION_CHECK_CMD.format(os.path.join(java_home, 'bin', java_bin))
+    process = subprocess.Popen(command,
+                               stdout=subprocess.PIPE,
+                               stdin=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               shell=True,
+                               universal_newlines=True
+                               )
+    (out, err) = process.communicate()
+    if process.returncode != 0:
+      err = "Could not read JDK Version %s" % process.returncode
+      raise FatalException(process.returncode, err)
+    else:
+      # the output can be 1.8.x or 17.x.x
+      if    re.match(r'^1\.8\.\d+(_\d+)?$', out):
+              actual_jdk_version = 8
+      elif  re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
+              actual_jdk_version = 11
+      elif  re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
+              actual_jdk_version = 17
+      else:
+          err = 'Error during parsing of JDK version {0}'.format(out)
+          raise FatalException(process.returncode, err)
+      print('JDK version found: {0}'.format(actual_jdk_version))
+
+  except FatalException as e:
+    err = 'Running java version check command failed: {0}. Exiting.'.format(e)
+    raise FatalException(e.code, err)
+
+  return actual_jdk_version
+
 #
 # Resets the Ambari Server.
 #

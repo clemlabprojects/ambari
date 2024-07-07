@@ -3330,7 +3330,11 @@ public class Configuration {
       return 7;
     } else if (versionStr.startsWith("1.8")) {
       return 8;
-    } else { // Some unsupported java version
+    } else if (versionStr.startsWith("11")) {
+      return 11;
+    } else if (versionStr.startsWith("17")) {
+      return 17;
+    }else { // Some unsupported java version
       return -1;
     }
   }
