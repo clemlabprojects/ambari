@@ -54,6 +54,7 @@ from ambari_commons.logging_utils import get_debug_mode, set_debug_mode_from_opt
 
 logger = logging.getLogger(__name__)
 
+JDK_VERSION = get_ambari_properties().get_property('java.home')
 # constants
 STACK_NAME_VER_SEP = "-"
 
@@ -61,14 +62,23 @@ SCHEMA_UPGRADE_HELPER_CMD = "{0} -cp {1} " + \
                             "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
                             " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
 
-SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
-                         "-server -XX:NewRatio=2 " \
-                         "-XX:+UseConcMarkSweepGC " + \
-                         " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
-                         "server=y,suspend={2} " \
-                         "-cp {1} " + \
-                         "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
-                         " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
+if JDK_VERSION == 8:
+  SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
+                          "-server -XX:NewRatio=2 " \
+                          "-XX:+UseConcMarkSweepGC " + \
+                          " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+                          "server=y,suspend={2} " \
+                          "-cp {1} " + \
+                          "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                          " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
+else:
+  SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
+                          "-server -XX:NewRatio=2 " \
+                          " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+                          "server=y,suspend={2} " \
+                          "-cp {1} " + \
+                          "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                          " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
 
 SCHEMA_UPGRADE_DEBUG = False
 

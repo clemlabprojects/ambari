@@ -191,8 +191,13 @@ export AMS_COLLECTOR_OPTS="$AMS_COLLECTOR_OPTS -Djava.security.auth.login.config
 {% endif %}
 
 # AMS Collector GC options
+{% if java_version <= 8 %}
 export AMS_COLLECTOR_GC_OPTS="-XX:+UseConcMarkSweepGC -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:{{ams_collector_log_dir}}/collector-gc.log-`date +'%Y%m%d%H%M'`"
 export AMS_COLLECTOR_OPTS="$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS"
+{% else %}
+export AMS_COLLECTOR_GC_OPTS="-verbose:gc -Xlog:gc:{{ams_collector_log_dir}}/collector-gc.log-`date +'%Y%m%d%H%M'`"
+export AMS_COLLECTOR_OPTS="$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS"
+{% endif %}
 
 # Metrics collector host will be blacklisted for specified number of seconds if metric monitor failed to connect to it.
 export AMS_FAILOVER_STRATEGY_BLACKLISTED_INTERVAL={{failover_strategy_blacklisted_interval}}

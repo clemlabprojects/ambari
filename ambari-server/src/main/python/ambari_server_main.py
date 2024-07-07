@@ -33,8 +33,10 @@ from ambari_server.dbConfiguration import ensure_dbms_is_running, ensure_jdbc_dr
 from ambari_server.serverConfiguration import configDefaults, find_jdk, get_ambari_properties, \
   get_java_exe_path, read_ambari_user, \
   get_is_active_instance, update_properties, get_ambari_server_ui_port, PID_NAME, \
-  check_database_name_property, parse_properties_file, get_missing_properties
+  check_database_name_property, parse_properties_file, get_missing_properties, \
+  get_JAVA_HOME
 
+from ambari_server.serverSetup import JDKSetup, getJDKVersion
 from ambari_server.serverConfiguration import get_web_server_startup_timeout
 from ambari_server.serverUtils import refresh_stack_hash
 from ambari_server.setupHttps import get_fqdn
@@ -42,6 +44,17 @@ from ambari_server.setupSecurity import generate_env, ensure_can_start_under_cur
 from ambari_server.utils import check_reverse_lookup, save_pid, locate_file, locate_all_file_paths, looking_for_pid, \
   save_main_pid_ex, check_exitcode, get_live_pids_count, wait_for_ui_start
 from ambari_server.serverClassPath import ServerClassPath
+
+
+from ambari_server.serverConfiguration import configDefaults, JDKRelease, get_stack_location,\
+  get_ambari_properties, get_is_secure, get_is_persisted, get_java_exe_path, get_JAVA_HOME, get_missing_properties, \
+  get_resources_location, get_value_from_properties, read_ambari_user, update_properties, validate_jdk, write_property, write_gpl_license_accepted,\
+  JAVA_HOME, JAVA_HOME_PROPERTY, JCE_NAME_PROPERTY, JDBC_RCA_URL_PROPERTY, JDBC_URL_PROPERTY, \
+  JDK_NAME_PROPERTY, JDK_RELEASES, NR_USER_PROPERTY, OS_FAMILY, OS_FAMILY_PROPERTY, OS_TYPE, OS_TYPE_PROPERTY, OS_VERSION, \
+  VIEWS_DIR_PROPERTY, JDBC_DATABASE_PROPERTY, JDK_DOWNLOAD_SUPPORTED_PROPERTY, JCE_DOWNLOAD_SUPPORTED_PROPERTY, SETUP_DONE_PROPERTIES, \
+  STACK_JAVA_HOME_PROPERTY, STACK_JDK_NAME_PROPERTY, STACK_JCE_NAME_PROPERTY, STACK_JAVA_VERSION, GPL_LICENSE_ACCEPTED_PROPERTY
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,36 +69,11 @@ if ambari_provider_module is not None:
   ambari_provider_module_option = "-Dprovider.module.class=" + \
                                   ambari_provider_module + " "
 
-jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m -XX:MaxPermSize=128m')
-
 ENV_FOREGROUND_KEY = "AMBARI_SERVER_RUN_IN_FOREGROUND"
 CHECK_DATABASE_HELPER_CMD = "{0} -cp {1} org.apache.ambari.server.checks.DatabaseConsistencyChecker"
 IS_FOREGROUND = ENV_FOREGROUND_KEY in os.environ and os.environ[ENV_FOREGROUND_KEY].lower() == "true"
 
-SERVER_START_CMD = "{0} " \
-    "-server -XX:NewRatio=3 " \
-    "-XX:+UseConcMarkSweepGC " + \
-    "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
-    "-XX:+CMSClassUnloadingEnabled " \
-    "-Dsun.zip.disableMemoryMapping=true " + \
-    "{1} {2} " \
-    "-cp {3} "\
-    "org.apache.ambari.server.controller.AmbariServer " \
-    "> {4} 2>&1 || echo $? > {5}"
-SERVER_START_CMD_DEBUG = "{0} " \
-    "-server -XX:NewRatio=2 " \
-    "-XX:+UseConcMarkSweepGC " + \
-    "{1} {2} " \
-    " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
-    "server=y,suspend={6} " \
-    "-cp {3} " + \
-    "org.apache.ambari.server.controller.AmbariServer " \
-    "> {4} 2>&1 || echo $? > {5}"
-    
-if not IS_FOREGROUND:
-  SERVER_START_CMD += " &"
-  SERVER_START_CMD_DEBUG += " &"
-
+## legacy WINDOWS options
 SERVER_START_CMD_WINDOWS = "{0} " \
     "-server -XX:NewRatio=3 " \
     "-XX:+UseConcMarkSweepGC " + \
@@ -163,7 +151,76 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
 
   properties = get_ambari_properties()
 
+  # need to parse JDK Version to support multiple runtimes
+  JDK_VERSION = getJDKVersion(get_JAVA_HOME(), JDKSetup().JAVA_BIN)
+  JDK_VERSION_NOT_SUPPORTED = "JDK VERSION {0} is not supported"
+
+  if JDK_VERSION == 8:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m -XX:MaxPermSize=128m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-XX:+UseConcMarkSweepGC " + \
+        "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
+        "-XX:+CMSClassUnloadingEnabled " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "-XX:+UseConcMarkSweepGC " + \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  elif JDK_VERSION == 11:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
+        "-XX:+CMSClassUnloadingEnabled " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  elif JDK_VERSION == 17:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  else:
+    exception = FatalException(-1, JDK_VERSION_NOT_SUPPORTED.format(JDK_VERSION))
+    raise exception
+
   command_base = SERVER_START_CMD_DEBUG if debug_start else SERVER_START_CMD
+
+  if not IS_FOREGROUND:
+    SERVER_START_CMD += " &"
+    SERVER_START_CMD_DEBUG += " &"
 
   ulimit_cmd = "%s %s" % (ULIMIT_CMD, str(get_ulimit_open_files(properties)))
   command = command_base.format(java_exe,
