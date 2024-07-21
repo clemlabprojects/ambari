@@ -22,7 +22,7 @@
 <configuration>
   <!-- Uncomment this if you would like to expose Logback JMX beans -->
   <!--jmxConfigurator /-->
-
+  <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
   <property name="zookeeper.console.threshold" value="{{zookeeper_log_level}}" />
   <!--
     console
@@ -36,7 +36,7 @@
       <level>${zookeeper.console.threshold}</level>
     </filter>
   </appender>
-  <root level="INFO">
+  <root level="{{zookeeper_log_level}}">
     <appender-ref ref="CONSOLE" />
   </root>
 </configuration>

@@ -440,6 +440,7 @@ init_metastore_schema = upgrade_direction is None
 
 #Hive log4j properties
 hive_log_level = default("/configurations/hive-env/hive.log.level", "INFO")
+hive_zookeeper_log_level = default("/configurations/hive-env/hive.zookeeper.log.level", "ERROR")
 
 # parquet-logging.properties
 parquet_logging_properties = None
@@ -840,4 +841,4 @@ if has_hive_interactive:
 # logback support for zookeeper client
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
-  zookeeper_log_level = hive_log_level
+  zookeeper_log_level = hive_zookeeper_log_level

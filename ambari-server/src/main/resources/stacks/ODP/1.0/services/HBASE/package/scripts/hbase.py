@@ -222,6 +222,13 @@ def hbase(name=None):
 
     generate_logfeeder_input_config('hbase', Template("input.config-hbase.json.j2", extra_imports=[default]))
 
+  if(params.logback_support):
+    File(os.path.join(params.hbase_conf_dir, "logback.xml"),
+      owner=params.hbase_user,
+      group=params.user_group,
+      content=Template("zookeeper-logback.xml.j2"),
+      mode=0o644
+    )
   if (params.log4j_props != None):
     File(format("{params.hbase_conf_dir}/log4j.properties"),
          mode=0o644,
