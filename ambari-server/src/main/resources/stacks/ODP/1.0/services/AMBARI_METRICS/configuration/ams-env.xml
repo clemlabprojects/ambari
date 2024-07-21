@@ -191,7 +191,7 @@ export AMS_COLLECTOR_OPTS="$AMS_COLLECTOR_OPTS -Djava.security.auth.login.config
 {% endif %}
 
 # AMS Collector GC options
-{% if java_version <= 8 %}
+{% if java_version &lt;= 8 %}
 export AMS_COLLECTOR_GC_OPTS="-XX:+UseConcMarkSweepGC -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:{{ams_collector_log_dir}}/collector-gc.log-`date +'%Y%m%d%H%M'`"
 export AMS_COLLECTOR_OPTS="$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS"
 {% else %}
