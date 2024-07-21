@@ -484,3 +484,10 @@ if hbase_thrift_stack_enabled:
   hbase_site = dict(config['configurations']['hbase-site'])
   hbase_site['hbase.thrift.ssl.keystore.keypassword'] = '**************'
 
+
+# logback support for zookeeper client
+hbase_zookeeper_log_level = default("/configurations/hbase-env/hbase.zookeeper.log.level", "ERROR")
+
+logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
+if logback_support:
+  zookeeper_log_level = hbase_zookeeper_log_level

@@ -128,11 +128,19 @@ def knox():
          content=InlineTemplate(params.gateway_log4j)
     )
 
+    if(params.knox_log4j2_support):
+      File(os.path.join(params.knox_conf_dir, "gateway-log4j2.xml"),
+        owner=params.knox_user,
+        group=params.knox_group,
+        content=InlineTemplate(params.knox_gateway_log4j2_template),
+        mode=0o644
+      )
+
     File(format("{params.knox_conf_dir}/topologies/default.xml"),
          mode=0600,
          group=params.knox_group,
          owner=params.knox_user,
-         content=InlineTemplate(params.topology_template)
+         content=InlineTemplate(params.admin_topology_template)
     )
 
     if params.admin_topology_template:

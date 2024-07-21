@@ -554,3 +554,9 @@ if 'viewfs-mount-table' in config['configurations']:
   if 'content' in mount_table and mount_table['content'].strip():
     mount_table_xml_inclusion_file_full_path = os.path.join(knox_conf_dir, xml_inclusion_file_name)
     mount_table_content = mount_table['content']
+
+
+# Knox Log4j2.xml
+knox_log4j2_support = check_stack_feature(StackFeature.KNOX_SUPPORT_LOG4J2, version_for_stack_feature_checks)
+if knox_log4j2_support:
+  knox_gateway_log4j2_template = config['configurations']['gateway-log4j2']['content']
