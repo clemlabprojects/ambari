@@ -213,34 +213,34 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUserOld)})
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
 
-def getDBConnectionHostPort(self, db_type, db_host):
-    connection_string = ""
-    if db_type is None or db_type == "":
-      return connection_string
-    else:
-      colon_count = db_host.count(':')
-      DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
-      if colon_count == 0:
-        if db_type in DB_TYPE_DEFAULT_PORT_MAP:
-          connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
-        else:
+  def getDBConnectionHostPort(self, db_type, db_host):
+      connection_string = ""
+      if db_type is None or db_type == "":
+        return connection_string
+      else:
+        colon_count = db_host.count(':')
+        DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
+        if colon_count == 0:
+          if db_type in DB_TYPE_DEFAULT_PORT_MAP:
+            connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
+          else:
+            connection_string = db_host
+        elif colon_count == 1:
           connection_string = db_host
-      elif colon_count == 1:
-        connection_string = db_host
-      elif colon_count == 2:
-        connection_string = db_host
+        elif colon_count == 2:
+          connection_string = db_host
 
-    return connection_string
+      return connection_string
 
   def getOracleDBConnectionHostPort(self, db_type, db_host, hueDbName):
-    connection_string = self.getDBConnectionHostPort(db_type, db_host)
-    colon_count = db_host.count(':')
-    if colon_count == 1 and '/' in db_host:
-      connection_string = "//" + connection_string
-    elif colon_count == 0 or colon_count == 1:
-      connection_string = "//" + connection_string + "/" + hueDbName if hueDbName else "//" + connection_string
+      connection_string = self.getDBConnectionHostPort(db_type, db_host)
+      colon_count = db_host.count(':')
+      if colon_count == 1 and '/' in db_host:
+        connection_string = "//" + connection_string
+      elif colon_count == 0 or colon_count == 1:
+        connection_string = "//" + connection_string + "/" + hueDbName if hueDbName else "//" + connection_string
 
-    return connection_string
+      return connection_string
   
 class HueValidator(service_advisor.ServiceAdvisor):
   """
