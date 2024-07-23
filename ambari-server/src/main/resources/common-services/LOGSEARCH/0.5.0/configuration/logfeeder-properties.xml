@@ -138,8 +138,22 @@
     <description>Include default Log Feeder Log Levels for Log Search. Used for bootstrapping the configuration only. (levels: FATAL,ERROR,WARN,INFO,DEBUG,TRACE)</description>
     <display-name>Log Feeder Log Levels</display-name>
     <value-attributes>
-      <editable-only-at-install>true</editable-only-at-install>
+      <editable-only-at-install>false</editable-only-at-install>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
+  <property>
+    <name>logfeeder.cloud.storage.mode</name>
+    <value>default</value>
+    <description>Log Feeder is responsible to ship logs to any data storage. In Log Search case, it is a search engine (Solr), and that can be used by Log Search server to visualize logs.
+      Although there is a way to send logs to cloud storage / HDFS as well, of course in that case Solr is not used, so you won't be able to visualize the data. Log Feeder has 3 main modes:</description>
+    <display-name>Log Feeder Storamge Mode</display-name>
+    <value-attributes>
+      <editable-only-at-install>false</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+
+  
 </configuration>
