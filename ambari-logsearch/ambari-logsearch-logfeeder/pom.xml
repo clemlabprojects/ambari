@@ -109,12 +109,6 @@
       <groupId>org.apache.solr</groupId>
       <artifactId>solr-solrj</artifactId>
       <version>${solr.version}</version>
-      <exclusions>
-        <exclusion>
-          <groupId>org.eclipse.jetty</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.codehaus.jackson</groupId>
@@ -182,7 +176,7 @@
       <version>${hadoop.version}</version>
       <exclusions>
         <exclusion>
-          <groupId>org.eclipse.jetty</groupId>
+          <groupId>com.fasterxml.jackson.core</groupId>
           <artifactId>*</artifactId>
         </exclusion>
       </exclusions>
@@ -192,10 +186,6 @@
       <artifactId>hadoop-azure-datalake</artifactId>
       <version>${hadoop.version}</version>
       <exclusions>
-        <exclusion>
-          <groupId>org.eclipse.jetty</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -251,10 +241,6 @@
         </exclusion>
         <exclusion>
           <groupId>org.eclipse.jetty</groupId>
-          <artifactId>jetty-util</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.eclipse.jetty</groupId>
           <artifactId>jetty-servlet</artifactId>
         </exclusion>
         <exclusion>
@@ -299,10 +285,6 @@
         <exclusion>
           <groupId>org.springframework.boot</groupId>
           <artifactId>spring-boot-starter-logging</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.eclipse.jetty</groupId>
-          <artifactId>*</artifactId>
         </exclusion>
       </exclusions>
     </dependency>
