@@ -199,6 +199,28 @@ atlas_kerberos_service_user = get_name_from_principal(default('configurations/ap
 logfeeder_kerberos_service_user = get_name_from_principal(default('configurations/logfeeder-env/logfeeder_kerberos_principal', 'logfeeder'))
 infra_solr_kerberos_service_user = get_name_from_principal(default('configurations/infra-solr-env/infra_solr_kerberos_principal', 'infra-solr'))
 
+# AMBARI-154 (clemlab): Change Ambari Infra Solr security.json rendering to allow multiple shard and mutliple logfeeder rangeradmin to read collections
+logsearch_logfeeder_hosts = default("/clusterHostInfo/logsearch_logfeeder_hosts", [])
+enable_logsearch_feeder_rule = False
+if security_enabled:
+  def to_ambari_infra_logfeeder_rule(host):
+    return format("{logfeeder_kerberos_service_user}/{host}")
+  if len(logsearch_logfeeder_hosts) > 0:
+    enable_logsearch_feeder_rule = True
+
+    # map each host on logfeeder principal
+    logsearch_logfeeder_service_users = map(to_ambari_infra_logfeeder_rule,logsearch_logfeeder_hosts)
+
+ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
+enable_ranger_admin_rule = False
+if security_enabled:
+  def to_ambari_infra_rangeradmin_rule(host):
+    return format("{ranger_admin_kerberos_service_user}/{host}")
+  if len(ranger_admin_hosts) > 0:
+    enable_ranger_admin_rule = True
+    ranger_admin_service_users = map(to_ambari_infra_rangeradmin_rule,ranger_admin_hosts)
+    # map each host on logfeeder principal
+
 infra_solr_role_ranger_admin = default('configurations/infra-solr-security-json/infra_solr_role_ranger_admin', 'ranger_user')
 infra_solr_role_ranger_audit = default('configurations/infra-solr-security-json/infra_solr_role_ranger_audit', 'ranger_audit_user')
 infra_solr_role_atlas = default('configurations/infra-solr-security-json/infra_solr_role_atlas', 'atlas_user')
