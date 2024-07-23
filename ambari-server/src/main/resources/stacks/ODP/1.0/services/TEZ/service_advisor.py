@@ -127,6 +127,8 @@ class TezServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendTezConfigurationsFromHDP23(configurations, clusterData, services, hosts)
     recommender.recommendTezConfigurationsFromHDP26(configurations, clusterData, services, hosts)
     recommender.recommendTezConfigurationsFromHDP30(configurations, clusterData, services, hosts)
+    recommender.recommendTezConfigurationsFromODP12(configurations, clusterData, services, hosts)
+
 
 
   def getServiceConfigurationsValidationItems(self, configurations, recommendedDefaults, services, hosts):
@@ -323,6 +325,20 @@ class TezRecommender(service_advisor.ServiceAdvisor):
       putTezProperty("tez.history.logging.proto-base-dir", "{0}/sys.db".format(hive_metastore_warehouse_external_dir))
       putTezProperty("tez.history.logging.service.class", "org.apache.tez.dag.history.logging.proto.ProtoHistoryLoggingService")
       self.logger.info("Updated 'tez-site' config 'tez.history.logging.proto-base-dir' and 'tez.history.logging.service.class'")
+
+  def recommendTezConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    putTezProperty = self.putProperty(configurations, "tez-site")
+
+    # TEZ JVM options
+    jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
+    tez_jvm_opts = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "
+    # Append 'jvmGCParams' and 'Heap Dump related option' (({{heap_dump_opts}}) Expanded while writing the
+    # configurations at start/restart time).
+    tez_jvm_updated_opts = tez_jvm_opts + jvmGCParams + "{{heap_dump_opts}}"
+    putTezProperty('tez.am.launch.cmd-opts', tez_jvm_updated_opts)
+    putTezProperty('tez.task.launch.cmd-opts', tez_jvm_updated_opts)
+    self.logger.info("Updated 'tez-site' config 'tez.task.launch.cmd-opts' and 'tez.am.launch.cmd-opts' as "
+                ": {0}".format(tez_jvm_updated_opts))
 
 
   def __getJdkMajorVersion(self, javaHome):
