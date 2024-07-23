@@ -372,9 +372,9 @@ logfeeder_properties['logfeeder.solr.core.config.name'] = 'history'
 
 # load config values
 
-logfeeder_properties = dict(logfeeder_properties.items() +\
-                       dict(config['configurations']['logsearch-common-properties']).items() +\
-                       dict(config['configurations']['logfeeder-properties']).items())
+logfeeder_properties = dict(logfeeder_properties)
+logfeeder_properties.update(config['configurations']['logsearch-common-properties'])
+logfeeder_properties.update(config['configurations']['logfeeder-properties'])
 
 # load derivated values
 
