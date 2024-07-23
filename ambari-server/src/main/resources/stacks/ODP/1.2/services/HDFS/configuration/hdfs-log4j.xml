@@ -23,7 +23,7 @@
   <property>
     <name>zookeeper_log_level</name>
     <description>Zookeeper Log level to control log4j - Options are INFO, DEBUG, WARN, ERROR</description>
-    <value>INFO</value>
+    <value>ERROR</value>
     <display-name>Zookeeper Log Level</display-name>
     <value-attributes>
       <type>value-list</type>
