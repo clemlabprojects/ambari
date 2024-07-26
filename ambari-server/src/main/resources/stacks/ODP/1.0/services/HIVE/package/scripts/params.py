@@ -440,7 +440,7 @@ init_metastore_schema = upgrade_direction is None
 
 #Hive log4j properties
 hive_log_level = default("/configurations/hive-env/hive.log.level", "INFO")
-hive_zookeeper_log_level = default("/configurations/hive-env/hive.zookeeper.log.level", "ERROR")
+hive_zookeeper_log_level = default("/configurations/hive-site/hive.zookeeper.log.level", "ERROR")
 
 # parquet-logging.properties
 parquet_logging_properties = None
