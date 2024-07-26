@@ -31,12 +31,12 @@ def main():
   (options, args) = parser.parse_args()
   timeout_seconds = 5
   try:
-    s = socket.create_connection((options.hostname, int(options.port)),timeout=timeout_seconds)
-    print("Successfully connected to %s on port %s" % (options.hostname, options.port))
+    s = socket.create_connection((options.hostname, int(options.port)), timeout=timeout_seconds)
+    print("Successfully connected to {} on port {}".format(options.hostname, options.port))
     s.close()
-  except socket.error, e:
-    print "Connection to %s on port %s failed: %s" % (options.hostname, options.port, e)
-    exit(1)
+  except socket.error as e:
+    print("Connection to {} on port {} failed: {}".format(options.hostname, options.port, e))
+    sys.exit(1)
 
 if __name__ == "__main__":
   main()
