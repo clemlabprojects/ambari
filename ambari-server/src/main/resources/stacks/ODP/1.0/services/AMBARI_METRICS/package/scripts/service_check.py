@@ -30,7 +30,7 @@ from ambari_commons.parallel_processing import PrallelProcessResult, execute_in_
 
 import http.client
 import ambari_commons.network as network
-import urllib
+import urllib.parse
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import os
 import random
@@ -102,7 +102,7 @@ class AMSServiceCheck(Script):
         "precision": "seconds",
         "grouped": "false",
       }
-      encoded_get_metrics_parameters = urllib.urlencode(get_metrics_parameters)
+      encoded_get_metrics_parameters = urllib.parse.urlencode(get_metrics_parameters)
 
       if is_spnego_enabled(params):
         method = 'GET'
@@ -115,7 +115,7 @@ class AMSServiceCheck(Script):
         Logger.info("Connecting (GET) to %s:%s%s" % (metric_collector_host,
                                                      params.metric_collector_port,
                                                      self.AMS_METRICS_GET_URL % encoded_get_metrics_parameters))
-        for i in xrange(0, self.AMS_READ_TRIES):
+        for i in range(0, self.AMS_READ_TRIES):
           conn = network.get_http_connection(
             metric_collector_host,
             int(params.metric_collector_port),
@@ -196,7 +196,7 @@ def call_curl_krb_request(tmp_dir, user_keytab, user_princ, uri, kinit_path, use
   if method == 'POST':
     Logger.info("Generated metrics for %s:\n%s" % (uri, metric_json))
 
-  for i in xrange(0, tries):
+  for i in range(0, tries):
     try:
       Logger.info("Connecting (%s) to %s" % (method, uri));
 
@@ -257,7 +257,7 @@ def call_curl_krb_request(tmp_dir, user_keytab, user_princ, uri, kinit_path, use
 
 def post_metrics_to_collector(ams_metrics_post_url, metric_collector_host, metric_collector_port, metric_collector_https_enabled,
                               metric_json, headers, ca_certs, tries = 1, connect_timeout = 10):
-  for i in xrange(0, tries):
+  for i in range(0, tries):
     try:
       Logger.info("Generated metrics for host %s :\n%s" % (metric_collector_host, metric_json))
 
