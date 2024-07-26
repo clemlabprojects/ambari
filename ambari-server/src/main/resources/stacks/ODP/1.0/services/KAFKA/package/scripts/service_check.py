@@ -35,8 +35,8 @@ class ServiceCheck(Script):
 
     kafka_config = self.read_kafka_config()
     topic = "ambari_kafka_service_check"
-    create_topic_cmd_created_output = "Created topic \"ambari_kafka_service_check\"."
-    create_topic_cmd_exists_output = "Topic \"ambari_kafka_service_check\" already exists."
+    create_topic_cmd_created_output = "Created topic ambari_kafka_service_check."
+    create_topic_cmd_exists_output = "Topic \'ambari_kafka_service_check\' already exists."
     source_cmd = format("source {conf_dir}/kafka-env.sh")
     topic_exists_cmd = format(source_cmd + " ; " + "{kafka_home}/bin/kafka-topics.sh --zookeeper {kafka_config[zookeeper.connect]} --topic {topic} --list")
     topic_exists_cmd_code, topic_exists_cmd_out = shell.call(topic_exists_cmd, logoutput=True, quiet=False, user=params.kafka_user)
@@ -67,7 +67,7 @@ class ServiceCheck(Script):
     import params
 
     kafka_config = {}
-    content = sudo.read_file(params.conf_dir + "/server.properties")
+    content = sudo.read_file(params.conf_dir + "/server.properties").decode()
     for line in content.splitlines():
       if line.startswith("#") or not line.strip():
         continue
