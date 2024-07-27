@@ -169,6 +169,8 @@ def run_schema_upgrade(args):
   environ = generate_env(args, ambari_user, current_user)
 
   (retcode, stdout, stderr) = run_os_command(command, env=environ)
+  if stdout == "" :
+    stdout = "\{\}" 
   upgrade_response = json.loads(stdout)
 
   check_gpl_license_approved(upgrade_response)
@@ -241,10 +243,11 @@ def upgrade(args):
     err = AMBARI_PROPERTIES_FILE + ' file can\'t be updated. Exiting'
     raise FatalException(retcode, err)
 
-  print_info_msg('Updating Ambari Server properties in {0} ...'.format(AMBARI_ENV_FILE), True)
+  print_info_msg('Updating Ambari Server Environment File in {0} ...'.format(AMBARI_ENV_FILE), True)
   retcode = update_ambari_env()
   if not retcode == 0:
     err = AMBARI_ENV_FILE + ' file can\'t be updated. Exiting'
+    print_error_msg(err)
     raise FatalException(retcode, err)
 
   retcode = update_krb_jaas_login_properties()
