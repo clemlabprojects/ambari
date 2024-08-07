@@ -203,6 +203,8 @@ def format_scm(force=None):
       mode = 0755,
   )
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
+  env = {'JAVA_HOME': params.java_home }
+
   if params.ozone_scm_ha_enabled:
     Logger.info(format("Ozone SCM Server HA is enabled. Running bootstrapping actions..."))
     if is_scm_server_bootstrapped():
@@ -216,6 +218,7 @@ def format_scm(force=None):
           Execute(format("ozone --config {conf_dir} scm --init"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
+            environment=env,
             logoutput=True
           )
         except Fail:
@@ -236,6 +239,7 @@ def format_scm(force=None):
           Execute(format("ozone --config {conf_dir} scm --bootstrap"),
             user = params.ozone_user,
             path = [params.hadoop_ozone_bin_dir],
+            environment=env,
             logoutput=True
           )
         except Fail:
@@ -255,6 +259,7 @@ def format_scm(force=None):
         Execute(format("ozone --config {conf_dir} scm --init"),
           user = params.ozone_user,
           path = [params.hadoop_ozone_bin_dir],
+          environment=env,
           logoutput=True
         )
       except Fail:
@@ -284,6 +289,7 @@ def wait_for_primary_node_to_started(ozone_binary, afterwait_sleep=0, execute_ki
       Execute(format("ozone --config {conf_dir} admin scm roles --scm {params.hostname}:{params.ozone_scm_ha_ratis_port}"),
         user = params.ozone_user,
         path = [params.hadoop_ozone_bin_dir],
+        environment=env,
         logoutput=True
       )
       time.sleep(afterwait_sleep)
@@ -307,6 +313,7 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
     Execute(format("ozone --config {conf_dir} admin safemode wait --timeout {timeout}"),
       user = params.ozone_user,
       path = [params.hadoop_ozone_bin_dir],
+      environment=env,
       logoutput=True
     )
     time.sleep(afterwait_sleep)
