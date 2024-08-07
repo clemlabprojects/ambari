@@ -458,6 +458,7 @@ ozone_manager_ha_dirs = config['configurations']['ozone-site']['ozone.om.ratis.s
 ozone_om_snapshot_dirs = config['configurations']['ozone-site']['ozone.om.ratis.snapshot.dir']
 ozone_recon_db_dir = config['configurations']['ozone-site']['ozone.recon.db.dir']
 
+core_site = config['configurations']['core-site']
 ozone_core_site = config['configurations']['ozone-core-site']
 #for now ozone datanode and manager use `ozone.metadata.dirs` as configuration key
 for prop in config['configurations']['ozone-site'].keys():
