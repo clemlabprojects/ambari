@@ -30,7 +30,7 @@ from resource_management.core.resources.service import Service
 def zookeeper_service(action='start', upgrade_type=None):
   import params
 
-  cmd = format("env ZOOCFGDIR={config_dir} ZOOCFG=zoo.cfg")
+  cmd = format("env ZOOCFGDIR={config_dir} ZOOCFG=zoo.cfg ")
   if params.security_enabled:
     cmd = format('{cmd} -Djava.security.auth.login.config={zk_server_jaas_file} ')
 
