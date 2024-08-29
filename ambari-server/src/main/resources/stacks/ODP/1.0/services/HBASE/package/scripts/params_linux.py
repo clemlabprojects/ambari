@@ -486,7 +486,7 @@ if hbase_thrift_stack_enabled:
 
 
 # logback support for zookeeper client
-hbase_zookeeper_log_level = default("/configurations/hbase-env/hbase.zookeeper.log.level", "ERROR")
+hbase_zookeeper_log_level = default("/configurations/hbase-env/hbase.zookeeper.log.level", "INFO")
 
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
