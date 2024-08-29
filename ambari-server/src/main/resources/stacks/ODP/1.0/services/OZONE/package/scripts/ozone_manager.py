@@ -178,12 +178,12 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
   """
   Wait for the primary om server to be up and running on its ratis port when HA is enabled)
   """
+  cmd_env = {'JAVA_HOME': params.java_home }
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   if not params.ozone_om_ha_enabled:
     Logger.info("Skipping waiting for primordial node")
     return
   else:
-    env = {'JAVA_HOME': params.java_home }
     sleep_minutes = int(sleep_seconds * retries / 60)
     if params.security_enabled and execute_kinit:
       kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
@@ -192,8 +192,8 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
       try:
         Execute(format("ozone --config {conf_dir} admin om getserviceroles -id {params.ozone_om_ha_current_cluster_nameservice} | grep {params.ozone_ha_om_active} | grep LEADER"),
           user = params.ozone_user,
-          environment=env,
-          path = [params.hadoop_ozone_bin_dir],
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
           logoutput=True
         )
         break
@@ -208,7 +208,7 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   Instead of looping on test safe mode, we use the included ozone command wait safemode using timeout parameters.
   """
   import params
-  env = {'JAVA_HOME': params.java_home }
+  cmd_env = {'JAVA_HOME': params.java_home }
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   #Logger.info("Waiting up to {0} minutes for the SCM Server to leave Safemode...".format(sleep_minutes))
   if params.security_enabled and execute_kinit:
@@ -219,8 +219,8 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   try:
     Execute(format("ozone --config {conf_dir} admin safemode wait --timeout {timeout}"),
       user = params.ozone_user,
-      environment=env,
-      path = [params.hadoop_ozone_bin_dir],
+      environment = cmd_env,
+      path = params.hadoop_ozone_bin_dir,
       logoutput=True
     )
     time.sleep(afterwait_sleep)
@@ -229,6 +229,7 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
 
 def bootstrap_server(env=None):
   import params
+  cmd_env = {'JAVA_HOME': params.java_home }
   Directory( params.ozone_manager_db_dirs,
       owner = params.ozone_user,
       create_parents = True,
@@ -261,12 +262,11 @@ def bootstrap_server(env=None):
         Logger.info("Ozone OM is the first leader. Initializing")
          # bootstrapp the primary node
         try:
-          env = {'JAVA_HOME': params.java_home }
           Logger.info(format("Bootstrapping om leader node..."))
           Execute(format("ozone --config {conf_dir} om --init"),
             user = params.ozone_user,
-            environment=env,
-            path = [params.hadoop_ozone_bin_dir],
+            environment = cmd_env,
+            path = params.hadoop_ozone_bin_dir,
             logoutput=True
           )
         except Fail:
@@ -285,8 +285,8 @@ def bootstrap_server(env=None):
           Logger.info(format("Bootstrapping om node..."))
           Execute(format("ozone --config {conf_dir} om --bootstrap"),
             user = params.ozone_user,
-            environment=env,
-            path = [params.hadoop_ozone_bin_dir],
+            environment= cmd_env ,
+            path = params.hadoop_ozone_bin_dir,
             logoutput=True
           )
         except Fail:
@@ -304,8 +304,8 @@ def bootstrap_server(env=None):
         Logger.info(format("Bootstrapping om node..."))
         Execute(format("ozone --config {conf_dir} om --init"),
           user = params.ozone_user,
-          environment=env,
-          path = [params.hadoop_ozone_bin_dir],
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
           logoutput=True
         )
       except Fail:
