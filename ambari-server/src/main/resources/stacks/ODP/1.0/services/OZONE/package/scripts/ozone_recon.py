@@ -105,7 +105,7 @@ class OzoneReconDefault(OzoneRecon):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_recon_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-recon', separator)
+                      passwords, 'ozone-recon')
 
       file_to_chown = params.ozone_recon_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):

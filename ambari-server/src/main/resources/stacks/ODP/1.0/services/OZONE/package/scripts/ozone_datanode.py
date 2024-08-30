@@ -79,8 +79,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_dn_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-datanode', separator)
-
+                      passwords, 'ozone-datanode')
       file_to_chown = params.ozone_dn_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
           Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),

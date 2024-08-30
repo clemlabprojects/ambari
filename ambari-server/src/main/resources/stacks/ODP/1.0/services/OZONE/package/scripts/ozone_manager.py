@@ -81,7 +81,7 @@ class OzoneManagerDefault(OzoneManager):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_om_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-manager', separator )
+                      passwords, 'ozone-manager' )
 
       file_to_chown = params.ozone_om_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):

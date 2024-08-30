@@ -83,7 +83,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_scm_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-storage-container-manager', separator )
+                      passwords, 'ozone-storage-container-manager' )
 
       file_to_chown = params.ozone_scm_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
