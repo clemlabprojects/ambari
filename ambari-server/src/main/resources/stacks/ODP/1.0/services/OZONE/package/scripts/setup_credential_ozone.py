@@ -61,7 +61,7 @@ def setup_credential_ozone(java_home,
       classpath_name = 'ozone-s3gateway'
     else:
       classpath_name = component_select_name
-    ozone_classpath = subprocess.check_output(['ozone', 'classpath', classpath_name])
+    ozone_classpath = subprocess.check_output(['ozone', 'classpath', classpath_name]).decode('utf-8')
     for password in passwords:
       Logger.info("Adding entry \'{password.alias}\' in credential file \'{credential_path}\'")
       cmd = ('java', '-cp', ozone_classpath, 'org.apache.hadoop.security.alias.CredentialShell', 'create', password['alias'], '-value', PasswordString(password['value']), '-provider', credential_path)
