@@ -86,10 +86,10 @@ class KerberosServiceCheck(Script):
       raise Fail(err_msg)
     else:
       # Ambari is not managing identities so if the smoke user does not exist, indicate why....
-      print "Skipping this service check since Ambari is not managing Kerberos identities and the smoke user " \
+      print("Skipping this service check since Ambari is not managing Kerberos identities and the smoke user " \
             "credentials are not available. To execute this service check, the smoke user principal name " \
             "and keytab file location must be set in the cluster_env and the smoke user's keytab file must" \
-            "exist in the configured location."
+            "exist in the configured location.")
 
 
 if __name__ == "__main__":
