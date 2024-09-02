@@ -160,7 +160,7 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
 
 class OzoneRecommender(service_advisor.ServiceAdvisor):
   """
-  Oozie Recommender suggests properties when adding the service for the first time or modifying configurations via the UI.
+  Ozone Recommender suggests properties when adding the service for the first time or modifying configurations via the UI.
   """
 
   def __init__(self, *args, **kwargs):

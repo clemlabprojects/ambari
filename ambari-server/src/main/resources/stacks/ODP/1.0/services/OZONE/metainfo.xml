@@ -173,7 +173,7 @@
 
         <component>
           <name>OZONE_RECON</name>
-          <displayName>Oozie Recon WEB console</displayName>
+          <displayName>Ozone Recon WEB console</displayName>
           <category>MASTER</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
