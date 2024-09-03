@@ -280,27 +280,44 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
   makeSortable: function (selector, isNSLayout) {
     var self = this;
     var controller = this.get('controller');
-    $('html').on('DOMNodeInserted', selector, function () {
-      $(this).sortable({
-        items: "> div",
-        cursor: "move",
-        tolerance: "pointer",
-        scroll: false,
-        update: function () {
-          var layout = isNSLayout ? controller.get('selectedNSWidgetLayout') : controller.get('activeWidgetLayout');
-          var widgets = misc.sortByOrder($(selector + " .widget").map(function () {
-            return this.id;
-          }), layout.get('widgets').toArray());
-          controller.saveWidgetLayout(widgets, layout);
-        },
-        activate: function () {
-          self.set('isMoving', true);
-        },
-        deactivate: function () {
-          self.set('isMoving', false);
+    // Create a MutationObserver instance
+    const observer = new MutationObserver((mutationsList) => {
+      mutationsList.forEach((mutation) => {
+        if (mutation.type === 'childList') {
+          // Check if nodes have been added
+          mutation.addedNodes.forEach((node) => {
+            // Check if the added node matches the selector
+            if (node.matches && node.matches(selector)) {
+              $(node).sortable({
+                items: "> div",
+                cursor: "move",
+                tolerance: "pointer",
+                scroll: false,
+                update: function update() {
+                  var layout = isNSLayout ? controller.get('selectedNSWidgetLayout') : controller.get('activeWidgetLayout');
+                  var widgets = misc.sortByOrder($(selector + " .widget").map(function () {
+                    return this.id;
+                  }), layout.get('widgets').toArray());
+                  controller.saveWidgetLayout(widgets, layout);
+                },
+                activate: function activate() {
+                  self.set('isMoving', true);
+                },
+                deactivate: function deactivate() {
+                  self.set('isMoving', false);
+                }
+              }).disableSelection();
+            }
+          });
         }
-      }).disableSelection();
-      $('html').off('DOMNodeInserted', selector);
+      });
     });
+
+    // Observe the entire document for changes in child nodes
+    observer.observe(document.documentElement, {
+      childList: true,  // Listen for additions or removals of child nodes
+      subtree: true     // Observe the entire document subtree
+    });
+
   }
 });
