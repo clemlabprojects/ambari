@@ -177,14 +177,6 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>redhat8</osFamily>
-          <packages>
-            <package>
-              <name>python3-kerberos</name>
-            </package>
-          </packages>
-        </osSpecific>
-        <osSpecific>
           <osFamily>debian7,ubuntu12,ubuntu14</osFamily>
           <packages>
             <package>
