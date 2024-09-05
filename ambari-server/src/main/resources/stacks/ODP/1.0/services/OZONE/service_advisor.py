@@ -241,8 +241,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         om_max_heapsize = min(int(managerHosts[0]["Hosts"]["total_mem"]),
                               int(managerHosts[1]["Hosts"]["total_mem"])) / 1024
         masters_at_host = max(
-          self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
-          self.getHostComponentsByCategories(managerHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts))
+            self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+            self.getHostComponentsByCategories(managerHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+            key=lambda x: len(x)
+        )
       else:
         om_max_heapsize = int(managerHosts[0]["Hosts"]["total_mem"] / 1024)  # total_mem in kb
         masters_at_host = self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"],
@@ -285,7 +287,9 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
                               int(scmHosts[1]["Hosts"]["total_mem"])) / 1024
         masters_at_host = max(
           self.getHostComponentsByCategories(scmHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
-          self.getHostComponentsByCategories(scmHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts))
+          self.getHostComponentsByCategories(scmHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+          key=lambda x: len(x)  # Replace with the actual key you want to compare
+        )
       else:
         om_max_heapsize = int(scmHosts[0]["Hosts"]["total_mem"] / 1024)  # total_mem in kb
         masters_at_host = self.getHostComponentsByCategories(scmHosts[0]["Hosts"]["host_name"], ["MASTER"],
