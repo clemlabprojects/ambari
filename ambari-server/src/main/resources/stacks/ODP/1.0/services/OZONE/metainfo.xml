@@ -34,7 +34,7 @@
           <name>OZONE_STORAGE_CONTAINER_MANAGER</name>
           <displayName>Ozone Storage Container Manager</displayName>
           <category>MASTER</category>
-          <cardinality>1</cardinality>
+          <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <reassignAllowed>false</reassignAllowed>
           <dependencies>

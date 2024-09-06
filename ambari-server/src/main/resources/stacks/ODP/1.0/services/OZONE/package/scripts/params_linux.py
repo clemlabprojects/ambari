@@ -471,6 +471,7 @@ for prop in config['configurations']['ozone-site'].keys():
 
 ozone_datanode_metadata_dir = config['configurations']['ozone-site']['ozone.metadata.dirs']
 ozone_manager_metadata_dir =  config['configurations']['ozone-site']['ozone.metadata.dirs']
+ozone_scm_metadata_dir =  config['configurations']['ozone-site']['ozone.metadata.dirs']
 ozone_recon_scm_metadata_dir =  config['configurations']['ozone-site']['ozone.recon.scm.db.dirs']
 ozone_recon_om_metadata_dir =  config['configurations']['ozone-site']['ozone.recon.om.db.dir']
 override_metadata_dir_user =  default("/configurations/ozone-env/override_metadata_dir", False)
@@ -486,7 +487,7 @@ ozone_scm_ha_current_cluster_nameservice = default('/configurations/ozone-site/o
 ozone_scm_ha_enabled = ozone_scm_ha_current_cluster_nameservice != None
 ozone_scm_ha_dirs = ''
 if ozone_scm_ha_enabled: 
-  ozone_scm_ha_dirs = config['configurations']['ozone-site']['ozone.scm.ha.ratis.storage.dir']
+  ozone_scm_ha_dirs = config['configurations']['ozone-site']['ozone.scm.ha.ratis.storage.dir'].split(',')
 ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_scm_format_disabled", False)
 ozone_scm_primordial_node_id = config['configurations']['ozone-site']['ozone.scm.primordial.node.id']
 ozone_scm_ha_ratis_port = default("/configurations/ozone-site/ozone.scm.ratis.port", 9894)
@@ -507,8 +508,9 @@ ozone_om_ha_props = [
 ]
 ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_om_format_disabled", False)
 ozone_ha_om_active = om_ha_utils.get_initial_active_om(default("/configurations/ozone-env", {}))
-if ozone_ha_om_active == '':
-  ozone_ha_om_active = config['clusterHostInfo']['ozone_manager_hosts'][0]
+ozone_om_ratis_port = default("/configurations/ozone-site/ozone.om.ratis-por", "9872")
+if not ozone_ha_om_active:
+  ozone_ha_om_active = frozenset()
 om_service_id = ''
 if ozone_om_ha_is_enabled:
   om_service_id = ozone_om_ha_current_cluster_nameservice

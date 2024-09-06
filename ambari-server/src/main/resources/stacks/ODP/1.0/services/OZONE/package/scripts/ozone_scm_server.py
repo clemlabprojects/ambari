@@ -34,6 +34,8 @@ from resource_management.libraries.functions.security_commons import build_expec
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
 import sys, os
+import pwd
+import grp
 import upgrade
 import time
 from setup_ranger_ozone import setup_ranger_ozone
@@ -124,7 +126,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
       ozone_expectations = {}
       ozone_expectations.update(ozone_site_expectations)
 
-      security_params = get_params_from_filesystem("{}/ozone.om/".format(status_params.ozone_conf_dir),
+      security_params = get_params_from_filesystem("{}/ozone.scm/".format(status_params.ozone_conf_dir),
                                                    {'ozone-site.xml': FILE_TYPE_XML})
       result_issues = validate_security_config_properties(security_params, ozone_site_expectations)
       if not result_issues:  # If all validations passed successfully
@@ -175,7 +177,8 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
 
 def is_scm_server_bootstrapped():
   import params
-  bootstrapped_path = format("{params.ozone_scm_db_dirs}/current/VERSION")
+  bootstrapped_path = format("{params.ozone_scm_db_dirs}/scm/current/VERSION")
+  Logger.info(format("Checking if SCM VERSION file exists at {bootstrapped_path}"))
   if params.ozone_scm_format_disabled:
     Logger.info("ozone_scm_format_disabled is disabled in cluster-env configuration, Skipping")
     return True
@@ -194,18 +197,30 @@ def is_scm_server_primordial_node_id():
   import params
   return params.hostname == get_primordial_node_id()
 
+def prepareOzoneLayout(dirs):
+  import params
+  # Retrieve UID and GID if user and group are provided
+  uid = pwd.getpwnam(params.ozone_user).pw_uid if isinstance(params.ozone_user, str) else params.ozone_user
+  gid = grp.getgrnam(params.user_group).gr_gid if isinstance(params.user_group, str) else params.user_group
+  if isinstance(dirs, list):
+    to_create = dirs
+  else:
+    to_create = [dirs]
+  for scm_path in to_create:
+    Logger.info(format("Creating dir {scm_path}"))
+    os.makedirs(scm_path, exist_ok=True)
+    os.chmod(scm_path, 0o754)
+    os.chown(scm_path, uid, gid)  # Change ownership
+
 def format_scm(force=None):
   import params
-  Directory( params.ozone_scm_db_dirs,
-      owner = params.ozone_user,
-      create_parents = True,
-      cd_access = "a",
-      mode = 0o755,
-  )
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   cmd_env = {'JAVA_HOME': params.java_home }
-
   if params.ozone_scm_ha_enabled:
+    # format dir ozone_scm_ha_dirs
+    prepareOzoneLayout(params.ozone_scm_ha_dirs)
+    prepareOzoneLayout(params.ozone_scm_db_dirs)
+    prepareOzoneLayout(params.ozone_scm_metadata_dir)
     Logger.info(format("Ozone SCM Server HA is enabled. Running bootstrapping actions..."))
     if is_scm_server_bootstrapped():
       Logger.info(format("Ozone SCM Server {params.hostname} is already bootstrapped. Skipping..."))
@@ -270,9 +285,9 @@ def format_scm(force=None):
           )
         raise Fail('Could not initial primary scm node')
 
-def wait_for_primary_node_to_started(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
+def wait_for_primary_node_to_started(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   """
-  Wait for the primary scm server to be up and running on its ratis port 5when HA is enabled)
+  Wait for the primary scm server to be up and running on its ratis port when HA is enabled)
   """
   import params
   cmd_env = {'JAVA_HOME': params.java_home }
@@ -297,7 +312,7 @@ def wait_for_primary_node_to_started(ozone_binary, afterwait_sleep=0, execute_ki
     except Fail:
       Logger.error("The Primordial SCM Server is still down. Waiting....")
 
-def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
+def wait_ozone_scm_safemode(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   """
   Wait for Safe Mode Off on SCM Servers
   Instead of looping on test safe mode, we use the included ozone command wait safemode using timeout parameters.
