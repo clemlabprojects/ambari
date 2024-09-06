@@ -432,6 +432,18 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       else:
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')
       
+      # Enable High Availability params
+      if len(ozone_om_hosts) > 1 :
+        self.logger.info("Enabling Ozone Manager High availability properties")
+        putOzoneSiteProperty("ozone.om.internal.service.id", defaultOMServiceName)
+        putOzoneSiteProperty("ozone.om.ratis.enable", "true")
+        # setting default Ozone Manager Active Node
+        putOzoneEnvProperty("hdds_ha_initial_om_active", managerHosts[0]["Hosts"]["host_name"])
+      if len(ozone_scm_hosts) > 1 :
+        self.logger.info("Enabling Ozone Manager High availability properties")
+        putOzoneSiteProperty("ozone.scm.default.service.id", defaultSCMServiceName)
+        putOzoneSiteProperty("ozone.scm.ratis.enable", "true")
+
   def is_kerberos_enabled(self, configurations, services):
     """
     Tests if Ozone has Kerberos enabled by first checking the recommended changes and then the
