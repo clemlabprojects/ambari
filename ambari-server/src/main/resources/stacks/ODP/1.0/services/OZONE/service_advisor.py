@@ -181,14 +181,13 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneSiteProperty = self.putProperty(configurations, "ozone-site", services)
     putOzoneSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-site")
     putOzoneRangerAuditSiteProperty = self.putProperty(configurations, "ranger-ozone-audit", services)
-
-    ## default configuration
-    ozoneUser = 'ozone'
+    putOzoneRangerPluginPropertes = self.putProperty(configurations, "ranger-ozone-plugin-properties", services)
+    
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     # run ozone inside HDFS Datanodes is HDFS is enabled
     if 'HDFS' in servicesList:
-      putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
+      putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', True)
     else:
       # disable hdfs related properties
       putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
@@ -421,6 +420,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       replicationReco = min(3, dnHosts)
       putOzoneSiteProperty("ozone.replication", replicationReco)
 
+      if 'ozone-env' in services['configurations'] and 'ozone_user' in services['configurations']['ozone-env']['properties']:
+        ozone_user = services['configurations']['ozone-env']['properties']['ozone_user']
+      else:
+        ozone_user = 'ozone'
       ## Ranger Logic
       ranger_ozone_plugin_enabled = ''
       if 'ranger-ozone-plugin-properties' in configurations and 'ranger-ozone-plugin-enabled' in configurations['ranger-ozone-plugin-properties']['properties']:
@@ -428,10 +431,17 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       elif 'ranger-ozone-plugin-properties' in services['configurations'] and 'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']:
         ranger_ozone_plugin_enabled = services['configurations']['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
       if ranger_ozone_plugin_enabled.lower() == 'Yes'.lower():
+        self.logger.info("Enabling Ozone ACL.")
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer')
+        putOzoneSiteProperty("ozone.acl.enabled", 'true')
+        self.logger.info("Setting Ozone Repo user for Ranger.")
+        putOzoneRangerPluginPropertes("REPOSITORY_CONFIG_USERNAME",ozone_user)
+        # put right ranger smoke user
+        if 'cluster-env' in configurations and 'smokeuser' in configurations['cluster-env']['properties']:
+          putOzoneRangerPluginPropertes("policy_user", services['configurations']['cluster-env']['properties']['smokeuser'])
       else:
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')
-      
+
       # Enable High Availability params
       if len(ozone_om_hosts) > 1 :
         self.logger.info("Enabling Ozone Manager High availability properties")

@@ -69,7 +69,16 @@
         set, ozone.security.http.kerberos.enabled should be set to true.
         </description>
         <final>true</final>
-        <display-name>Enable Kerberos for Ozone web consoles</display-name>
+        <display-name>Ozone Web Consoles HTTP filters</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.security.http.kerberos.enabled</name>
+        <value>false</value>
+        <description>Set this property to true to enable Kerberos authentication when accessing Ozone Web Consoles.
+            No effect when ozone.http.filter.initializers is not set to 'org.apache.hadoop.security.AuthenticationFilterInitializer'
+        </description>
+        <display-name>Enable Ozone Keberos Authentication on HTTP Web Consoles</display-name>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
@@ -150,12 +159,18 @@
     <property>
         <name>ozone.acl.enabled</name>
         <value>true</value>
-        <description>Key to enable/disable ozone acls.
+        <description>Key to enable/disable ozone acls. Must be set to true when ranger is enabled
         </description>
         <value-attributes>
             <type>boolean</type>
             <overridable>true</overridable>
         </value-attributes>
+        <depends-on>
+            <property>
+                <type>ranger-ozone-plugin-properties</type>
+                <name>ranger-ozone-plugin-enabled</name>
+            </property>
+        </depends-on>
         <on-ambari-upgrade add="false"/>
     </property>
 <!--    Ozone Manager related properties -->

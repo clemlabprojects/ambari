@@ -213,6 +213,15 @@ if scm_ssl_enabled:
     else:
       Logger.debug("Skipping property {prop} when computing scm_ssl_client")
 
+
+## Ozone SCM HA dirs
+# path looks like #/var/lib/hadoop-ozone/hdds-metadata/scm/ca/certs/certificate.crt
+ozone_scm_hdds_metadata_dir = default("/configurations/ozone-site/hdds.metadata.dir", "/var/lib/hadoop-ozone/hdds-metadata")
+ozone_scm_hdds_x509_dir = default("/configurations/ozone-site/hdds.x509.dir.name", "certs")
+ozone_scm_hdds_x509_filename = default("/configurations/ozone-site/hdds.x509.file.name", "certificate.crt")
+ozone_security_enabled = security_enabled and config['configurations']['ozone-site']['ozone.security.enabled']
+ozone_scm_ha_tls_enabled = config['configurations']['ozone-site']['hdds.grpc.tls.enabled']
+
 # Ozone Datanode TLS related params #
 ozone_dn_credential_file_path = config['configurations']['ssl-server-datanode']['hadoop.security.credential.provider.path']
 ozone_dn_tls_ssl_keystore_password = config['configurations']['ssl-server-datanode']['ssl.server.keystore.password']
@@ -539,7 +548,6 @@ if has_ranger_admin:
   # ranger ozone plugin enabled property
   enable_ranger_ozone = default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")
   enable_ranger_ozone = True if enable_ranger_ozone.lower() == 'yes' else False
-  ranger_policy_config = {}
   # ranger ozone properties
   if enable_ranger_ozone:
     # get ranger policy url
@@ -579,6 +587,10 @@ if has_ranger_admin:
       ranger_env['admin_password'] = external_admin_password
       ranger_env['ranger_admin_username'] = external_ranger_admin_username
       ranger_env['ranger_admin_password'] = external_ranger_admin_password
+
+    if has_ranger_admin:
+      ranger_admin_username = config['configurations']['ranger-env']['admin_username']
+      ranger_admin_password = config['configurations']['ranger-env']['admin_password']
 
     xa_audit_db_password = ''
     if not is_empty(config['configurations']['admin-properties']['audit_db_password']) and stack_supports_ranger_audit_db and has_ranger_admin:
@@ -659,6 +671,83 @@ else:
 # need this to capture cluster name from where ranger hbase plugin is enabled
 cluster_name = config['clusterName']
 
+  # smoke user ozone ranger policy
+ranger_policy_config = {
+    "isEnabled": "true",
+    "policyType": 0,
+    "policyPriority": 0,
+    "service": cluster_name + "_ozone",
+    "name": "[AMBARI] - Ozone Smoke User Check",
+    "resources": {
+      "volume": {
+        "values": [
+          "ambarismokevolume"
+        ],
+        "isExcludes": "false",
+        "isRecursive": "false"
+      },
+      "bucket": {
+        "values": [
+          "ambarismokebucket"
+        ],
+        "isExcludes": "false",
+        "isRecursive": "false"
+      },
+      "key": {
+        "values": [
+          "*"
+        ],
+        "isExcludes": "false",
+        "isRecursive": "true"
+      }
+    },
+    "policyItems": [
+          {
+            "accesses": [
+              {
+                "type": "all",
+                "isAllowed": "true"
+              },
+              {
+                "type": "read",
+                "isAllowed": "true"
+              },
+              {
+                "type": "write",
+                "isAllowed": "true"
+              },
+              {
+                "type": "create",
+                "isAllowed": "true"
+              },
+              {
+                "type": "list",
+                "isAllowed": "true"
+              },
+              {
+                "type": "delete",
+                "isAllowed": "true"
+              },
+              {
+                "type": "read_acl",
+                "isAllowed": "true"
+              },
+              {
+                "type": "write_acl",
+                "isAllowed": "true"
+              }
+            ],
+            "users": [
+              format("{smoke_test_user}")
+            ],
+            "groups": [],
+            "roles": [],
+            "conditions": [],
+            "delegateAdmin": "true"
+          }
+        ],
+  }
+
 # ranger ozone plugin section end
 role_scm = ROLE_NAME_MAP_DAEMON['ozone-scm']
 role_om = ROLE_NAME_MAP_DAEMON['ozone-manager']
@@ -670,5 +759,3 @@ ozone_datanode_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_datanode}.p
 ozone_manager_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_om}.pid")
 ozone_recon_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_recon}.pid")
 ozone_s3g_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_s3g}.pid")
-
-
