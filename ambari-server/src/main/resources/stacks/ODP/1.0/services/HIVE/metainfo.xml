@@ -22,7 +22,7 @@
       <name>HIVE</name>
       <displayName>Hive</displayName>
       <comment>Data warehouse system for ad-hoc queries &amp; analysis of large datasets and table &amp; storage management service</comment>
-      <version>3.1.2</version>
+      <version>3.1.3</version>
       <credential-store>
         <supported>true</supported>
         <enabled>true</enabled>
@@ -393,6 +393,7 @@
       </requiredServices>
 
       <configuration-dependencies>
+        <config-type>ozone-core-site</config-type>
         <config-type>core-site</config-type>
         <config-type>viewfs-mount-table</config-type>
         <config-type>hive-log4j</config-type>
