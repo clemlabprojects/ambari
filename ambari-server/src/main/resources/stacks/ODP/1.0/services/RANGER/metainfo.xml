@@ -194,7 +194,9 @@
           <default>true</default>
         </quickLinksConfiguration>
       </quickLinksConfigurations>
-
+      <configuration-dependencies>
+        <config-type>ozone-core-site</config-type>
+      </configuration-dependencies>
     </service>
   </services>
 </metainfo>

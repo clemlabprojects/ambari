@@ -270,7 +270,9 @@ tagsync_log4j = config['configurations']['tagsync-log4j']['content']
 # ranger kerberos
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
+ozone_manager_hosts = default("/clusterHostInfo/ozone_manager_hosts", [])
 has_namenode = len(namenode_hosts) > 0
+has_ozone = len(ozone_manager_hosts) > 0
 
 ugsync_policymgr_alias = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.policymgr.alias"]
 ugsync_policymgr_keystore = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.policymgr.keystore"]
@@ -345,41 +347,49 @@ if security_enabled:
         solr_kerberos_keytab = ranger_admin_keytab
 
 # logic to create core-site.xml if hdfs not installed
+# will check also ig ozone is not installed
+# TODO: create a common service for ozone and hdfs
+
 if stack_supports_ranger_kerberos and not has_namenode:
   core_site_property = {
     'hadoop.security.authentication': 'kerberos' if security_enabled else 'simple'
   }
 
-  if security_enabled:
-    realm = 'EXAMPLE.COM'
-    ranger_admin_bare_principal = 'rangeradmin'
-    ranger_usersync_bare_principal = 'rangerusersync'
-    ranger_tagsync_bare_principal = 'rangertagsync'
-
-    ranger_usersync_principal = config['configurations']['ranger-ugsync-site']['ranger.usersync.kerberos.principal']
-    if not is_empty(ranger_admin_principal) and ranger_admin_principal != '':
-      ranger_admin_bare_principal = get_bare_principal(ranger_admin_principal)
-    if not is_empty(ranger_usersync_principal) and ranger_usersync_principal != '':
-      ranger_usersync_bare_principal = get_bare_principal(ranger_usersync_principal)
-    realm = config['configurations']['kerberos-env']['realm']
-
-    rule_dict = [
-      {'principal': ranger_admin_bare_principal, 'user': unix_user},
-      {'principal': ranger_usersync_bare_principal, 'user': 'rangerusersync'},
-    ]
-
-    if has_ranger_tagsync:
-      if not is_empty(ranger_tagsync_principal) and ranger_tagsync_principal != '':
-        ranger_tagsync_bare_principal = get_bare_principal(ranger_tagsync_principal)
-      rule_dict.append({'principal': ranger_tagsync_bare_principal, 'user': 'rangertagsync'})
-
-    core_site_auth_to_local_property = ''
-    for item in range(len(rule_dict)):
-      rule_line = 'RULE:[2:$1@$0]({0}@{1})s/.*/{2}/\n'.format(rule_dict[item]['principal'], realm, rule_dict[item]['user'])
-      core_site_auth_to_local_property = rule_line + core_site_auth_to_local_property
-
-    core_site_auth_to_local_property = core_site_auth_to_local_property + 'DEFAULT'
+  if has_ozone:
+    # read auth to local rules from ozone-core-site
+    core_site_auth_to_local_property = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
     core_site_property['hadoop.security.auth_to_local'] = core_site_auth_to_local_property
+  else:
+    if security_enabled:
+      realm = 'EXAMPLE.COM'
+      ranger_admin_bare_principal = 'rangeradmin'
+      ranger_usersync_bare_principal = 'rangerusersync'
+      ranger_tagsync_bare_principal = 'rangertagsync'
+
+      ranger_usersync_principal = config['configurations']['ranger-ugsync-site']['ranger.usersync.kerberos.principal']
+      if not is_empty(ranger_admin_principal) and ranger_admin_principal != '':
+        ranger_admin_bare_principal = get_bare_principal(ranger_admin_principal)
+      if not is_empty(ranger_usersync_principal) and ranger_usersync_principal != '':
+        ranger_usersync_bare_principal = get_bare_principal(ranger_usersync_principal)
+      realm = config['configurations']['kerberos-env']['realm']
+
+      rule_dict = [
+        {'principal': ranger_admin_bare_principal, 'user': unix_user},
+        {'principal': ranger_usersync_bare_principal, 'user': 'rangerusersync'},
+      ]
+
+      if has_ranger_tagsync:
+        if not is_empty(ranger_tagsync_principal) and ranger_tagsync_principal != '':
+          ranger_tagsync_bare_principal = get_bare_principal(ranger_tagsync_principal)
+        rule_dict.append({'principal': ranger_tagsync_bare_principal, 'user': 'rangertagsync'})
+
+      core_site_auth_to_local_property = ''
+      for item in range(len(rule_dict)):
+        rule_line = 'RULE:[2:$1@$0]({0}@{1})s/.*/{2}/\n'.format(rule_dict[item]['principal'], realm, rule_dict[item]['user'])
+        core_site_auth_to_local_property = rule_line + core_site_auth_to_local_property
+
+      core_site_auth_to_local_property = core_site_auth_to_local_property + 'DEFAULT'
+      core_site_property['hadoop.security.auth_to_local'] = core_site_auth_to_local_property
 
 upgrade_type = Script.get_upgrade_type(default("/commandParams/upgrade_type", ""))
 
