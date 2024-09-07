@@ -34,7 +34,8 @@
         }
       ],
       "auth_to_local_properties" : [
-        "ozone-core-site/hadoop.security.auth_to_local"
+        "ozone-core-site/hadoop.security.auth_to_local",
+        "core-site/hadoop.security.auth_to_local"
       ],
       "configurations": [
         {
@@ -47,7 +48,8 @@
           "ozone-site": {
             "ozone.security.enabled": "true",
             "ozone.acl.enabled": "true",
-            "ozone.http.filter.initializers": "org.apache.hadoop.security.AuthenticationFilterInitializer"
+            "ozone.http.filter.initializers": "org.apache.hadoop.security.AuthenticationFilterInitializer",
+            "ozone.security.http.kerberos.enabled": "true"
           }
         },
         {

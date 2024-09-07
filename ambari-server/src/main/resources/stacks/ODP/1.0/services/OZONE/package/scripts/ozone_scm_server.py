@@ -185,6 +185,19 @@ def is_scm_server_bootstrapped():
   else:
     return os.path.exists(bootstrapped_path)
 
+def is_scm_ha_autoca_bootstrapped():
+  import params
+  exists = False
+  certpaths = []
+
+  for certpath in [
+    format("{params.ozone_scm_hdds_metadata_dir}/scm/sub-ca/{params.ozone_scm_hdds_x509_dir}"),
+    format("{params.ozone_scm_hdds_metadata_dir}/scm/ca/{params.ozone_scm_hdds_x509_dir}")]:
+    bootstrapped_path = certpath
+    Logger.info(format("Checking if SCM HA CA cert dir exists at {bootstrapped_path}"))
+    exists = (exists and os.path.exists(bootstrapped_path))
+  return exists
+
 def is_scm_ha_enabled():
   import params
   return params.ozone_scm_ha_enabled
@@ -221,9 +234,32 @@ def format_scm(force=None):
     prepareOzoneLayout(params.ozone_scm_ha_dirs)
     prepareOzoneLayout(params.ozone_scm_db_dirs)
     prepareOzoneLayout(params.ozone_scm_metadata_dir)
+    prepareOzoneLayout(params.ozone_scm_hdds_metadata_dir)
     Logger.info(format("Ozone SCM Server HA is enabled. Running bootstrapping actions..."))
     if is_scm_server_bootstrapped():
-      Logger.info(format("Ozone SCM Server {params.hostname} is already bootstrapped. Skipping..."))
+      Logger.info(format("Ozone SCM Server {params.hostname} is already bootstrapped."))
+      ## when Ozone SCM Server is bootstrapped and Kerberos + TLS is enabled we need to init/bootstrap again according to
+      # hadoop-hdds/framework/src/main/java/org/apache/hadoop/hdds/security/x509/certificate/authority/DefaultCAServer.java#456
+      # if security enabled and mTLS is enabled (internal encryption)
+      if False:
+      # if params.ozone_security_enabled and params.ozone_scm_ha_tls_enabled:
+        Logger.info(format("Ozone SCM HA is enabled checking if certs need to be generated"))
+        initcmd = format("ozone --config {conf_dir} ") + "scm {arg}".format(arg="--init" if is_scm_server_primordial_node_id() else "--bootstrap --force")
+        if is_scm_ha_autoca_bootstrapped:
+          if not is_scm_server_primordial_node_id:
+            wait_for_primary_node_to_started()
+          else:
+            try:
+              Execute(initcmd,
+                user = params.ozone_user,
+                path = [params.hadoop_ozone_bin_dir],
+                environment = cmd_env,
+                logoutput=True
+              )
+            except Fail:
+              raise Fail('Could Not Initialize SCM HA SSL/TLS Primordial Node')
+      else:
+        Logger.info(format("Ozone SCM HA is disabled. Skipping"))
     else:
       Logger.info(format("Ozone SCM Server {params.hostname} is not bootstrapped. Running bootstrap procedure"))
       Logger.info(format("Checking if current Ozone SCM Server is primordial node"))

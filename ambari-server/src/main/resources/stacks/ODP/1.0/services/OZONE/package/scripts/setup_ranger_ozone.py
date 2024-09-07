@@ -19,6 +19,7 @@ limitations under the License.
 """
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.setup_ranger_plugin_xml import setup_ranger_plugin
+from resource_management.libraries.functions import ranger_functions_v2
 
 def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
   import params
@@ -35,29 +36,34 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
     else:
       Logger.info("Ozone: Setup ranger: command retry not enabled thus skipping if ranger admin is down !")
 
-    if params.xa_audit_hdfs_is_enabled and service_name == 'ozone-manager':
-      try:
-        params.HdfsResource("/ranger/audit",
-                           type="directory",
-                           action="create_on_execute",
-                           owner=params.ozone_user,
-                           group=params.ozone_user,
-                           mode=0755,
-                           recursive_chmod=True
-        )
-        params.HdfsResource("/ranger/audit/ozoneManager",
-                           type="directory",
-                           action="create_on_execute",
-                           owner=params.ozone_user,
-                           group=params.ozone_user,
-                           mode=0700,
-                           recursive_chmod=True
-        )
-        params.HdfsResource(None, action="execute")
-      except Exception, err:
-        Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
+    if params.is_hdfs_enabled:
+      if params.xa_audit_hdfs_is_enabled and service_name == 'ozone-manager':
+        try:
+          params.HdfsResource("/ranger/audit",
+                            type="directory",
+                            action="create_on_execute",
+                            owner=params.ozone_user,
+                            group=params.ozone_user,
+                            mode=0o755,
+                            recursive_chmod=True
+          )
+          params.HdfsResource("/ranger/audit/ozoneManager",
+                            type="directory",
+                            action="create_on_execute",
+                            owner=params.ozone_user,
+                            group=params.ozone_user,
+                            mode=0o700,
+                            recursive_chmod=True
+          )
+          params.HdfsResource(None, action="execute")
+        except Exception as err:
+          Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
 
     api_version = 'v2'
+    Logger.info("Creating Ranger Ozone Repository User: " + params.repo_config_username)
+    ranger_admin_v2_obj = ranger_functions_v2.RangeradminV2(url = params.policymgr_mgr_url, skip_if_rangeradmin_down = False)
+    ranger_admin_v2_obj.create_policy_user(params.ranger_admin_username, params.ranger_admin_password, params.repo_config_username)
+
     setup_ranger_plugin('ozone-client', 'ozone', params.previous_jdbc_jar, params.downloaded_custom_connector,
                         params.driver_curl_source, params.driver_curl_target, params.java64_home,
                         params.repo_name, params.ozone_ranger_plugin_repo,
