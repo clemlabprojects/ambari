@@ -95,7 +95,7 @@
     </property>
     <property>
         <name>ozone.administrators</name>
-        <value>ozone,hdfs</value>
+        <value>ozone,hdfs,knox</value>
         <display-name>Ozone Administrators</display-name>
         <description>Ozone administrator users delimited by the comma.
             If not set, only the user who launches an ozone service will be the admin

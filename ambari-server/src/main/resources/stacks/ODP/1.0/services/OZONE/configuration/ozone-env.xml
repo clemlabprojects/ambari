@@ -1016,12 +1016,23 @@
             export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
 
             {% if security_enabled %}
+            {% if role == 'ozone-manager' %}
             export OZONE_OM_OPTS="$OZONE_OM_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_om_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-scm' %}
             export OZONE_SMC_OPTS="$OZONE_SMC_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_scm_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-datanode' %}
             export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_datanode_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-recon' %}
             export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-s3g' %}
             export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             {% endif %}
+            {% endif %}
+
         </value>
         <value-attributes>
             <type>content</type>
