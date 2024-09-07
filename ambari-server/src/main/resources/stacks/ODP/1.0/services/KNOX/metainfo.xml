@@ -22,7 +22,7 @@
       <name>KNOX</name>
       <displayName>Knox</displayName>
       <comment>Provides a single point of authentication and access for Apache Hadoop services in a cluster</comment>
-      <version>1.4.0</version>
+      <version>2.0.0</version>
       <components>
         <component>
           <name>KNOX_GATEWAY</name>
@@ -96,6 +96,7 @@
       <configuration-dependencies>
         <config-type>gateway-site</config-type>
         <config-type>gateway-log4j</config-type>
+        <config-type>gateway-log4j2</config-type>
         <config-type>topology</config-type>
         <config-type>admin-topology</config-type>
         <config-type>knoxsso-topology</config-type>
