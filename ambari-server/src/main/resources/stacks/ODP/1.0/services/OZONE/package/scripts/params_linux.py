@@ -330,6 +330,7 @@ dashed_version = stack_version_unformatted.replace('.', '-')
 ozone_om_jaas_config_file = "ozone_om_jaas.conf"
 ozone_scm_jaas_config_file = "ozone_scm_jaas.conf"
 ozone_dn_jaas_config_file = "ozone_datanode_jaas.conf"
+ozone_recon_jaas_config_file = "ozone_recon_jaas.conf"
 ozone_s3g_jaas_config_file = "ozone_gateway_jaas.conf"
 
 set_instanceId = "false"
@@ -391,6 +392,9 @@ if security_enabled:
   ## ozone s3g
   s3g_jaas_princ = config['configurations']['ozone-site']['ozone.s3g.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   s3g_keytab_path = config['configurations']['ozone-site']['ozone.s3g.kerberos.keytab.file']
+  ## ozone recon
+  recon_jaas_princ = config['configurations']['ozone-site']['ozone.recon.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  recon_keytab_path = config['configurations']['ozone-site']['ozone.recon.kerberos.keytab.file']
 
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 ozone_user_keytab = config['configurations']['ozone-env']['ozone_user_keytab']

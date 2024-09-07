@@ -291,7 +291,8 @@ def ozone(name=None):
     ozone_pid_dir_prefix = ozone_env_dict['ozone_pid_dir_prefix'],
     ozone_log_number_of_backup_files = ozone_env_dict['ozone_log_number_of_backup_files'],
     ozone_secure_dn_user = ozone_env_dict['ozone_secure_dn_user'],
-    java_home = ozone_env_dict['java_home']  
+    java_home = ozone_env_dict['java_home'],
+    role = name
   )
 
   File(format("{conf_dir}/ozone-env.sh"),
@@ -347,12 +348,15 @@ def ozone_TemplateConfig(name, params=None, conf_dir=None):
   elif name == 'ozone-datanode':
     jaas_name = params.ozone_dn_jaas_config_file
     renderJaas(jaas_name, conf_dir)
+  elif name == 'ozone-recon':
+    jaas_name = params.ozone_recon_jaas_config_file
+    renderJaas(jaas_name, conf_dir)
   elif name == 'ozone-s3g':
     jaas_name = params.ozone_s3g_jaas_config_file
     renderJaas(jaas_name, conf_dir)
   else:
     pass
-  
+
 def getDictObjectForComponent(name=None, params=None, type="env"):
   if type == "env":
     conf_dir = params.ozone_base_conf_dir
