@@ -120,14 +120,11 @@ smokeuser = config['configurations']['cluster-env']['smokeuser']
 _authentication = 'simple'
 hadoop_security_authorization = ''
 hadoop_security_auth_to_local = 'DEFAULT'
-if 'core-site' in config['configurations']:
-  _authentication = config['configurations']['core-site']['hadoop.security.authentication']
-  hadoop_security_authorization = config['configurations']['core-site']['hadoop.security.authorization']
-  hadoop_security_auth_to_local = config['configurations']['core-site']['hadoop.security.auth_to_local']
-else:
-  config['configurations']['ozone-core-site']['hadoop.security.authentication']
-  hadoop_security_authorization = config['configurations']['ozone-core-site']['hadoop.security.authorization']
-  hadoop_security_auth_to_local = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
+for k, v in config['configurations']['ozone-core-site'].items():
+  if k is 'hadoop.security.authentication':
+    _authentication = v
+hadoop_security_authorization = config['configurations']['ozone-core-site']['hadoop.security.authorization']
+hadoop_security_auth_to_local = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
 hadoop_security_authentication = _authentication
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
