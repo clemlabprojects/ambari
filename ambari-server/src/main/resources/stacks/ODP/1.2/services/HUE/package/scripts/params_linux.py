@@ -195,7 +195,6 @@ if len(namenode_host_keys) > 0:
 elif has_namenode:
   webhdfs_service_urls = buildUrlElement(hdfs_scheme, namenode_hosts[0], namenode_http_port, "/webhdfs")
 
-webhdfs_service_urls = webhdfs_service_urls[0]  
 
 httpfs_hosts = default("/clusterHostInfo/httpfs_gateway_hosts", None)
 httpfs_port = 14000
@@ -262,33 +261,33 @@ else:
   hbase_master_host = hbase_master_hosts
 
 hbase_thrift_stack_enabled = check_stack_feature(StackFeature.HBASE_SUPPORTS_THRIFT, version_for_stack_feature_checks)
+has_hbase = False
 if hbase_thrift_stack_enabled:
   hbase_thrift_hosts = default("/clusterHostInfo/hbase_thriftserver_hosts", None)
-  has_hbase = len(hbase_thrift_hosts) > 0
-else:
-  has_hbase = False
+  if hbase_thrift_hosts != None:
+    has_hbase = True
 
 #
 # Oozie
 #
-oozie_https_port = None
-oozie_scheme = 'http' if config['configurations']['oozie-site']['oozie.base.url'].startswith('http://') else 'https'
-oozie_server_port = "11000"
 oozie_server_hosts = default("/clusterHostInfo/oozie_server_hosts", None)
-
-if type(oozie_server_hosts) is list:
-  oozie_server_host = oozie_server_hosts[0]
-else:
-  oozie_server_host = oozie_server_hosts
-
-has_oozie = not oozie_server_host == None
+oozie_server_port = "11000"
+has_oozie = False
+if oozie_server_hosts != None:
+  has_oozie = True
+  oozie_https_port = None
+  oozie_scheme = 'http' if config['configurations']['oozie-site']['oozie.base.url'].startswith('http://') else 'https'
+  if type(oozie_server_hosts) is list:
+    oozie_server_host = oozie_server_hosts[0]
+  else:
+    oozie_server_host = oozie_server_hosts
 
 if has_oozie:
   oozie_server_port = get_port_from_url(config['configurations']['oozie-site']['oozie.base.url'])
   oozie_https_port = default("/configurations/oozie-site/oozie.https.port", None)
 
-if oozie_https_port is not None:
-  oozie_server_port = oozie_https_port
+  if oozie_https_port is not None:
+    oozie_server_port = oozie_https_port
 
 #
 # Falcon
