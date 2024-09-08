@@ -410,6 +410,18 @@
             "ozone-recon"
           ]
         },
+        "OZONE_HTTPFS_GATEWAY": {
+          "STACK-SELECT-PACKAGE": "ozone-httpfs",
+          "INSTALL": [
+            "ozone-httpfs"
+          ],
+          "PATCH": [
+            "ozone-httpfs"
+          ],
+          "STANDARD": [
+            "ozone-httpfs"
+          ]
+        },
         "OZONE_STORAGE_CONTAINER_MANAGER": {
           "STACK-SELECT-PACKAGE": "ozone-storage-container-manager",
           "INSTALL": [
