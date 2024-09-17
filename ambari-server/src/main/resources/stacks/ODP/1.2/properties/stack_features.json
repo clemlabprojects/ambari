@@ -38,6 +38,11 @@
         "min_version": "1.2.2.0"
       },
       {
+        "name": "knox_support_log4j2",
+        "description": "Knox Support Log4j2",
+        "min_version": "1.2.4.0"
+      },
+      {
         "name": "config_versioning",
         "description": "Configurable versions support",
         "min_version": "1.0.0.0"

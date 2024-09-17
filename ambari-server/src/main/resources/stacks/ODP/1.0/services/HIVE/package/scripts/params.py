@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -20,7 +20,7 @@ limitations under the License.
 
 # Python Imports
 import os
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 # Local Imports
 import status_params
@@ -197,7 +197,7 @@ sqoop_tar_source = "{0}/{1}/sqoop/sqoop.tar.gz".format(STACK_ROOT_PATTERN, STACK
 hadoop_streaming_tar_dest_dir = "/{0}/apps/{1}/mapreduce/".format(STACK_NAME_PATTERN,STACK_VERSION_PATTERN)
 sqoop_tar_dest_dir = "/{0}/apps/{1}/sqoop/".format(STACK_NAME_PATTERN, STACK_VERSION_PATTERN)
 
-tarballs_mode = 0444
+tarballs_mode = 0o444
 
 purge_tables = "false"
 # Starting from stack version for feature hive_purge_table drop should be executed with purge
@@ -225,7 +225,7 @@ if credential_store_enabled:
     raise Exception("hadoop.security.credential.provider.path property should be set")
 else:
   hive_metastore_user_passwd = config['configurations']['hive-site']['javax.jdo.option.ConnectionPassword']
-hive_metastore_user_passwd = unicode(hive_metastore_user_passwd) if not is_empty(hive_metastore_user_passwd) else hive_metastore_user_passwd
+hive_metastore_user_passwd = str(hive_metastore_user_passwd) if not is_empty(hive_metastore_user_passwd) else hive_metastore_user_passwd
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
 hive_db_schma_name = config['configurations']['hive-site']['ambari.hive.db.schema.name']
 
@@ -440,6 +440,7 @@ init_metastore_schema = upgrade_direction is None
 
 #Hive log4j properties
 hive_log_level = default("/configurations/hive-env/hive.log.level", "INFO")
+hive_zookeeper_log_level = default("/configurations/hive-site/hive.zookeeper.log.level", "ERROR")
 
 # parquet-logging.properties
 parquet_logging_properties = None
@@ -450,7 +451,7 @@ process_name = status_params.process_name
 hive_env_sh_template = config['configurations']['hive-env']['content']
 
 hive_hdfs_user_dir = format("/user/{hive_user}")
-hive_hdfs_user_mode = 0755
+hive_hdfs_user_mode = 0o755
 hive_metastore_warehouse_dir = config['configurations']['hive-site']["hive.metastore.warehouse.dir"]
 hive_metastore_warehouse_external_dir = config['configurations']['hive-site']["hive.metastore.warehouse.external.dir"]
 whs_dir_protocol = urlparse(hive_metastore_warehouse_dir).scheme
@@ -840,4 +841,4 @@ if has_hive_interactive:
 # logback support for zookeeper client
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
-  zookeeper_log_level = hive_log_level
+  zookeeper_log_level = hive_zookeeper_log_level

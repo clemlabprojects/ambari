@@ -87,17 +87,17 @@ class HistoryServerDefault(HistoryServer):
 
     if params.stack_version_formatted_major and check_stack_feature(StackFeature.COPY_TARBALL_TO_HDFS, params.stack_version_formatted_major):
       # MC Hammer said, "Can't touch this"
-      resource_created = copy_to_hdfs(
+      resource_created_mr = copy_to_hdfs(
         "mapreduce",
         params.user_group,
         params.hdfs_user,
         skip=params.sysprep_skip_copy_tarballs_hdfs)
-      resource_created = copy_to_hdfs(
+      resource_created_tez = copy_to_hdfs(
         "tez",
         params.user_group,
         params.hdfs_user,
-        skip=params.sysprep_skip_copy_tarballs_hdfs) or resource_created
-      if resource_created:
+        skip=params.sysprep_skip_copy_tarballs_hdfs)
+      if resource_created_mr or resource_created_tez:
         params.HdfsResource(None, action="execute")
     else:
       # In stack versions before copy_tarball_to_hdfs support tez.tar.gz was copied to a different folder in HDFS.

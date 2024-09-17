@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -123,7 +123,7 @@ class TestHawqStandby(HawqBaseTestCase):
         configuration_attributes = self.getConfig()['configurationAttributes']['hawq-site'],
         group = self.GPADMIN,
         owner = self.GPADMIN,
-        mode = 0644
+        mode = 0o644
         )
 
     self.assertResourceCalled('Execute', self.SOURCE_HAWQ_SCRIPT + 'export PGHOST=\"c6402.ambari.apache.org\" && hawq activate standby -a -M fast -v --ignore-bad-hosts',

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -22,6 +22,7 @@ import re
 import os
 import sys
 import platform
+import distro
 
 def _get_windows_version():
   """
@@ -164,9 +165,7 @@ class OS_CONST_TYPE(type):
     raise Exception("Unknown class property '%s'" % name)
 
 
-class OSConst:
-  __metaclass__ = OS_CONST_TYPE
-
+class OSConst(metaclass=OS_CONST_TYPE):
   systemd_redhat_os_major_versions = ["7"]
 
 
@@ -195,14 +194,7 @@ class OSCheck:
         distribution = ("", "","")
     else:
       # linux distribution
-      PYTHON_VER = sys.version_info[0] * 10 + sys.version_info[1]
-
-      if PYTHON_VER < 26:
-        distribution = platform.dist()
-      elif _is_redhat_linux():
-        distribution = platform.dist()
-      else:
-        distribution = platform.linux_distribution()
+      distribution = distro.linux_distribution()
         
     
 
@@ -257,6 +249,10 @@ class OSCheck:
     elif operatingSystem.startswith('suse linux enterprise server'):
       operatingSystem = 'sles'
     elif operatingSystem.startswith('red hat enterprise linux'):
+      operatingSystem = 'redhat'
+    elif operatingSystem.startswith('rocky linux'):
+      operatingSystem = 'redhat'
+    elif operatingSystem.startswith('almalinux'):
       operatingSystem = 'redhat'
     elif operatingSystem.startswith('darwin'):
       operatingSystem = 'mac'

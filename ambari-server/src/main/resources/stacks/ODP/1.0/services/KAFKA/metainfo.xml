@@ -22,7 +22,7 @@
             <name>KAFKA</name>
             <displayName>Kafka</displayName>
             <comment>A high-throughput distributed messaging system</comment>
-            <version>3.1.0</version>
+            <version>3.6.2</version>
             <components>
                 <component>
                     <name>KAFKA_BROKER</name>
@@ -88,7 +88,7 @@
             </configuration-dependencies>
             <osSpecifics>
                 <osSpecific>
-                    <osFamily>almalinux8,redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+                    <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
                     <packages>
                         <package>
                             <name>kafka_${stack_version}</name>

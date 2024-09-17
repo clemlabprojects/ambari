@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,7 @@ import shutil
 import os
 import socket
 
-from urlparse import urlparse
+from urllib.parse import urlparse
 from resource_management.core.exceptions import ComponentIsNotRunning
 from resource_management.core.logger import Logger
 from resource_management.core import shell
@@ -46,7 +46,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
   Directory([params.flink_pid_dir, params.flink_log_dir],
             owner=params.flink_user,
             group=params.user_group,
-            mode=0775,
+            mode=0o775,
             create_parents = True
   )
   if action == 'config':
@@ -56,7 +56,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
       Directory([params.flink_restserver_conf],
               owner=params.flink_user,
               group=params.user_group,
-              mode=0750,
+              mode=0o750,
               create_parents = True
       )
       props = params.flink_rest_server_properties
@@ -71,9 +71,9 @@ def flink_setup(env, type, upgrade_type = None, action = None):
         key_value_delimiter = ": ",
         owner=params.flink_user,
         group=params.flink_group,
-        mode=0644
+        mode=0o644
       )
-      File(format("{params.flink_restserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0400)
+      File(format("{params.flink_restserver_conf}/logback.xml"), content=logback_content, owner=params.flink_user, group=params.flink_group, mode=0o400)
 
     # Configuring HistoryServer
     elif type == 'historyserver':
@@ -88,7 +88,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
       Directory(params.flink_historyserver_conf,
               owner=params.flink_user,
               group=params.user_group,
-              mode=0750,
+              mode=0o750,
               create_parents = True
       )
       PropertiesFile(format("{params.flink_historyserver_conf}/flink-conf.yaml"),
@@ -96,19 +96,19 @@ def flink_setup(env, type, upgrade_type = None, action = None):
         key_value_delimiter = ": ",
         owner=params.flink_user,
         group=params.flink_group,
-        mode=0644
+        mode=0o644
       )
       File(os.path.join(params.flink_historyserver_conf, 'log4j-console.properties'),
         owner=params.flink_user,
         group=params.flink_group,
         content=InlineTemplate(params.flink_log4j_console_content_properties),
-        mode=0644
+        mode=0o644
       )
       File(os.path.join(params.flink_historyserver_conf, 'log4j.properties'),
         owner=params.flink_user,
         group=params.flink_group,
         content=InlineTemplate(params.flink_log4j_historyserver_content_properties),
-        mode=0644
+        mode=0o644
       )
       XmlConfig("core-site.xml",
                 conf_dir=params.flink_historyserver_conf,
@@ -116,7 +116,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
                 configuration_attributes=params.config['configurationAttributes']['core-site'],
                 owner=params.flink_user,
                 group=params.flink_group,
-                mode=0644
+                mode=0o644
       )
       XmlConfig("hdfs-site.xml",
                 conf_dir=params.flink_historyserver_conf,
@@ -124,7 +124,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
                 configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
                 owner=params.flink_user,
                 group=params.flink_group,
-                mode=0644
+                mode=0o644
       )
 
       generate_logfeeder_input_config('flink', Template("input.config-flink.json.j2", extra_imports=[default]))
@@ -135,7 +135,7 @@ def flink_setup(env, type, upgrade_type = None, action = None):
           key_value_delimiter = ": ",
           owner=params.flink_user,
           group=params.flink_group,
-          mode=0644
+          mode=0o644
       )
 
   effective_version = params.version if upgrade_type is not None else params.stack_version_formatted

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -38,7 +38,7 @@ from ambari_commons.logging_utils import get_debug_mode, print_info_msg, print_w
   set_debug_mode
 from ambari_server.properties import Properties
 from ambari_server.userInput import get_validated_string_input
-from ambari_server.utils import compare_versions, locate_file, on_powerpc
+from ambari_server.utils import locate_file
 from ambari_server.ambariPath import AmbariPath
 from ambari_server.userInput import get_YN_input
 
@@ -178,9 +178,6 @@ CHECK_AMBARI_KRB_JAAS_CONFIGURATION_PROPERTY = "kerberos.check.jaas.configuratio
 # JDK
 JDK_RELEASES="java.releases"
 
-if on_powerpc():
-  JDK_RELEASES += ".ppc64le"
-
 VIEWS_DIR_PROPERTY = "views.dir"
 
 ACTIVE_INSTANCE_PROPERTY = "active.instance"
@@ -258,7 +255,7 @@ def get_ambari_properties():
     properties = Properties()
     with open(conf_file) as hfR:
       properties.load(hfR)
-  except (Exception), e:
+  except (Exception) as e:
     print_error_msg ('Could not read "%s": %s' % (conf_file, str(e)))
     return -1
 
@@ -272,11 +269,11 @@ def get_ambari_properties():
     else:
       root = ''
 
-    for k,v in properties.iteritems():
+    for k,v in properties.items():
       properties.__dict__[k] = v.replace("$ROOT", root)
       properties._props[k] = v.replace("$ROOT", root)
-  except (Exception), e:
-    print_error_msg ('Could not replace %s in "%s": %s' %(conf_file, root_env, str(e)))
+  except (Exception) as e:
+    print_error_msg('Could not replace %s in "%s": %s' %(conf_file, root_env, str(e)))
   return properties
 
 class ServerDatabaseType(object):
@@ -439,7 +436,7 @@ class ServerConfigDefaults(object):
     for directory in directories:
       if not os.path.isdir(directory):
         try:
-          os.makedirs(directory, 0755)
+          os.makedirs(directory, 0o755)
         except Exception as ex:
           # permission denied here is expected when ambari runs as non-root
           print_error_msg("Could not create {0}. Reason: {1}".format(directory, str(ex)))
@@ -738,7 +735,7 @@ def backup_file_in_temp(filePath):
     try:
       shutil.copyfile(filePath, tmpDir + os.sep +
                       AMBARI_PROPERTIES_FILE + "." + str(back_up_file_count + 1))
-    except (Exception), e:
+    except (Exception) as e:
       print_error_msg('Could not backup file in temp "%s": %s' % (
         back_up_file_count, str(e)))
   return 0
@@ -802,7 +799,7 @@ def check_database_name_property(upgrade=False):
 
   version = get_ambari_version(properties)
   if upgrade and (properties[JDBC_DATABASE_PROPERTY] not in ServerDatabases.databases()
-                    or properties.has_key(JDBC_RCA_SCHEMA_PROPERTY)):
+                    or JDBC_RCA_SCHEMA_PROPERTY in properties.items()):
     # This code exists for historic reasons in which property names changed from Ambari 1.6.1 to 1.7.0
     persistence_type = properties[PERSISTENCE_TYPE_PROPERTY]
     if persistence_type == "remote":
@@ -846,7 +843,7 @@ def update_database_name_property(upgrade=False):
     try:
       with open(conf_file, "w") as hfW:
         properties.store(hfW)
-    except Exception, e:
+    except Exception as e:
       err = 'Could not write ambari config file "%s": %s' % (conf_file, e)
       raise FatalException(-1, err)
 
@@ -988,7 +985,7 @@ def remove_password_file(filename):
   if os.path.exists(passFilePath):
     try:
       os.remove(passFilePath)
-    except Exception, e:
+    except Exception as e:
       print_warning_msg('Unable to remove password file: {0}'.format(str(e)))
       return 1
   pass
@@ -1037,7 +1034,7 @@ def get_original_master_key(properties, options = None):
 
     # Decrypt alias with master to validate it, if no master return
     password = None
-    if alias and env_master_key and env_master_key is not "" and env_master_key != "None":
+    if alias and env_master_key and env_master_key not in ("","None"):
       password = read_passwd_for_alias(alias, env_master_key, options)
     if not password:
       try:
@@ -1138,15 +1135,15 @@ def update_ambari_env():
 
   # Previous env file does not exist
   if (not prev_env_file) or (prev_env_file is None):
-    print ("INFO: Can not find %s file from previous version, skipping restore of environment settings. "
-           "%s may not include any user customization.") % (configDefaults.AMBARI_ENV_BACKUP_FILE, AMBARI_ENV_FILE)
+    print(("INFO: Can not find %s file from previous version, skipping restore of environment settings. "
+           "%s may not include any user customization.") % (configDefaults.AMBARI_ENV_BACKUP_FILE, AMBARI_ENV_FILE))
     return 0
 
   try:
     if env_file is not None:
       os.remove(env_file)
       os.rename(prev_env_file, env_file)
-      print ("INFO: Original file %s kept") % (AMBARI_ENV_FILE)
+      print(("INFO: Original file %s kept") % (AMBARI_ENV_FILE))
   except OSError as e:
     print_error_msg ( "Couldn't move %s file: %s" % (prev_env_file, str(e)))
     return -1
@@ -1200,7 +1197,7 @@ def update_ambari_properties():
     try:
       old_properties = Properties()
       old_properties.load(hfOld)
-    except Exception, e:
+    except Exception as e:
       print_error_msg ('Could not read "%s": %s' % (prev_conf_file, str(e)))
       return -1
 
@@ -1234,7 +1231,7 @@ def update_ambari_properties():
     with open(conf_file, 'w') as hfW:
       new_properties.store(hfW)
 
-  except Exception, e:
+  except Exception as e:
     print_error_msg ('Could not write "%s": %s' % (conf_file, str(e)))
     return -1
 
@@ -1243,7 +1240,7 @@ def update_ambari_properties():
   new_conf_file = prev_conf_file + '.' + timestamp.strftime(fmt)
   try:
     os.rename(prev_conf_file, new_conf_file)
-  except Exception, e:
+  except Exception as e:
     print_error_msg ('Could not rename "%s" to "%s": %s' % (prev_conf_file, new_conf_file, str(e)))
     #Not critical, move on
 
@@ -1259,7 +1256,7 @@ def update_properties(propertyMap):
     try:
       with open(conf_file, 'r') as file:
         properties.load(file)
-    except (Exception), e:
+    except (Exception) as e:
       print_error_msg('Could not read "%s": %s' % (conf_file, e))
       return -1
 
@@ -1268,7 +1265,7 @@ def update_properties(propertyMap):
       properties.process_pair(key, str(propertyMap[key]))
 
     for key in properties.keys():
-      if not propertyMap.has_key(key):
+      if not propertyMap.__contains__(key):
         properties.removeOldProp(key)
 
     with open(conf_file, 'w') as file:
@@ -1297,14 +1294,14 @@ def write_property(key, value):
   try:
     with open(conf_file, "r") as hfR:
       properties.load(hfR)
-  except Exception, e:
+  except Exception as e:
     print_error_msg('Could not read ambari config file "%s": %s' % (conf_file, e))
     return -1
   properties.process_pair(key, value)
   try:
     with open(conf_file, 'w') as hfW:
       properties.store(hfW)
-  except Exception, e:
+  except Exception as e:
     print_error_msg('Could not write ambari config file "%s": %s' % (conf_file, e))
     return -1
   return 0
@@ -1352,32 +1349,39 @@ class JDKRelease:
   inst_dir = ""
 
   def __init__(self, i_name, i_desc, i_url, i_dest_file, i_jcpol_url, i_dest_jcpol_file, i_inst_dir, i_reg_exp):
-    if i_name is None or i_name is "":
-      raise FatalException(-1, "Invalid JDK name: " + (i_desc or ""))
+    if i_name is None or i_name == "":
+        raise FatalException(-1, "Invalid JDK name: " + (i_desc or ""))
     self.name = i_name
-    if i_desc is None or i_desc is "":
-      self.desc = self.name
+
+    if i_desc is None or i_desc == "":
+        self.desc = self.name
     else:
-      self.desc = i_desc
-    if i_url is None or i_url is "":
-      raise FatalException(-1, "Invalid URL for JDK " + i_name)
+        self.desc = i_desc
+
+    if i_url is None or i_url == "":
+        raise FatalException(-1, "Invalid URL for JDK " + i_name)
     self.url = i_url
-    if i_dest_file is None or i_dest_file is "":
-      self.dest_file = i_name + ".exe"
+
+    if i_dest_file is None or i_dest_file == "":
+        self.dest_file = i_name + ".exe"
     else:
-      self.dest_file = i_dest_file
-    if not (i_jcpol_url is None or i_jcpol_url is ""):
-      self.jcpol_url = i_jcpol_url
-    if i_dest_jcpol_file is None or i_dest_jcpol_file is "":
-      self.dest_jcpol_file = "jcpol-" + i_name + ".zip"
+        self.dest_file = i_dest_file
+
+    if not (i_jcpol_url is None or i_jcpol_url == ""):
+        self.jcpol_url = i_jcpol_url
+
+    if i_dest_jcpol_file is None or i_dest_jcpol_file == "":
+        self.dest_jcpol_file = "jcpol-" + i_name + ".zip"
     else:
-      self.dest_jcpol_file = i_dest_jcpol_file
-    if i_inst_dir is None or i_inst_dir is "":
-      self.inst_dir = os.path.join(configDefaults.JDK_INSTALL_DIR, i_desc)
+        self.dest_jcpol_file = i_dest_jcpol_file
+
+    if i_inst_dir is None or i_inst_dir == "":
+        self.inst_dir = os.path.join(configDefaults.JDK_INSTALL_DIR, i_desc)
     else:
-      self.inst_dir = i_inst_dir
-    if i_reg_exp is None or i_reg_exp is "":
-      raise FatalException(-1, "Invalid output parsing regular expression for JDK " + i_name)
+        self.inst_dir = i_inst_dir
+
+    if i_reg_exp is None or i_reg_exp == "":
+        raise FatalException(-1, "Invalid output parsing regular expression for JDK " + i_name)
     self.reg_exp = i_reg_exp
 
   @classmethod
@@ -1388,31 +1392,31 @@ class JDKRelease:
 
   @staticmethod
   def __load_properties(properties, section_name):
-    if section_name is None or section_name is "":
+    if section_name is None or section_name == "":
       raise FatalException(-1, "Invalid properties section: " + ("(empty)" if section_name is None else ""))
-    if(properties.has_key(section_name + ".desc")):   #Not critical
+    if(properties.__contains__(section_name + ".desc")):   #Not critical
       desc = properties[section_name + ".desc"]
     else:
       desc = section_name
-    if not properties.has_key(section_name + ".url"):
+    if not properties.__contains__(section_name + ".url"):
       raise FatalException(-1, "Invalid JDK URL in the properties section: " + section_name)
     url = properties[section_name + ".url"]      #Required
-    if not properties.has_key(section_name + ".re"):
+    if not properties.__contains__(section_name + ".re"):
       raise FatalException(-1, "Invalid JDK output parsing regular expression in the properties section: " + section_name)
     reg_exp = properties[section_name + ".re"]      #Required
-    if(properties.has_key(section_name + ".dest-file")):   #Not critical
+    if(properties.__contains__(section_name + ".dest-file")):   #Not critical
       dest_file = properties[section_name + ".dest-file"]
     else:
       dest_file = section_name + ".exe"
-    if(properties.has_key(section_name + ".jcpol-url")):   #Not critical
+    if(properties.__contains__(section_name + ".jcpol-url")):   #Not critical
       jcpol_url = properties[section_name + ".jcpol-url"]
     else:
       jcpol_url = None
-    if(properties.has_key(section_name + ".jcpol-file")):   #Not critical
+    if(properties.__contains__(section_name + ".jcpol-file")):   #Not critical
       jcpol_file = properties[section_name + ".jcpol-file"]
     else:
       jcpol_file = None
-    if(properties.has_key(section_name + ".home")):   #Not critical
+    if(properties.__contains__(section_name + ".home")):   #Not critical
       inst_dir = properties[section_name + ".home"]
     else:
       inst_dir = "C:\\" + section_name
@@ -1454,14 +1458,14 @@ def find_jdk():
   print("INFO: Looking for available JDKs at {0}".format(configDefaults.JDK_INSTALL_DIR))
   jdks = glob.glob(os.path.join(configDefaults.JDK_INSTALL_DIR, configDefaults.JDK_SEARCH_PATTERN))
   #[fbarca] Use the newest JDK
-  jdks.sort(None, None, True)
+  jdks.sort(reverse=True)
   print_info_msg("Found: {0}".format(str(jdks)))
   if len(jdks) == 0:
     return
   for jdkPath in jdks:
-    print "INFO: Trying to use JDK {0}".format(jdkPath)
+    print("INFO: Trying to use JDK {0}".format(jdkPath))
     if validate_jdk(jdkPath):
-      print "INFO: Selected JDK {0}".format(jdkPath)
+      print("INFO: Selected JDK {0}".format(jdkPath))
       return jdkPath
     else:
       print_error_msg ("JDK {0} is invalid".format(jdkPath))
@@ -1484,11 +1488,11 @@ def get_resources_location(properties):
     resources_dir = properties[RESOURCES_DIR_PROPERTY]
     if not resources_dir:
       resources_dir = configDefaults.SERVER_RESOURCES_DIR
-  except (KeyError), e:
+  except (KeyError) as e:
     err = 'Property ' + str(e) + ' is not defined at ' + properties.fileName
     resources_dir = configDefaults.SERVER_RESOURCES_DIR
 
-  if not os.path.exists(os.path.abspath(resources_dir)):
+  if not os.path.exists(os.path.abspath(str(resources_dir))):
     msg = 'Resources dir ' + resources_dir + ' is incorrectly configured: ' + err
     raise FatalException(1, msg)
 
@@ -1536,7 +1540,7 @@ def get_mpacks_staging_location(properties):
 #
 def get_dashboard_location(properties):
   resources_dir = get_resources_location(properties)
-  dashboard_location = os.path.join(resources_dir, configDefaults.DASHBOARD_DIRNAME)
+  dashboard_location = os.path.join(str(resources_dir), configDefaults.DASHBOARD_DIRNAME)
   return dashboard_location
 
 #

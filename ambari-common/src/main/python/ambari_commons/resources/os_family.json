@@ -3,7 +3,6 @@
       "redhat": {
         "distro": [
           "redhat",
-          "almalinux",
           "fedora",
           "centos",
           "oraclelinux",
@@ -15,12 +14,13 @@
           "slc",
           "scientific",
           "psbm",
-          "centos linux",
+          "centos linux"
         ],
         "versions": [
           6,
           7,
-          8
+          8,
+          9
         ]
       },
       "redhat-ppc": {

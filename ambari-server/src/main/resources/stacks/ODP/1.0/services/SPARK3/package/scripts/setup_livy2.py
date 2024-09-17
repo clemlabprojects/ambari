@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -30,7 +30,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
   Directory([params.livy2_pid_dir, params.livy2_log_dir],
             owner=params.livy2_user,
             group=params.user_group,
-            mode=0775,
+            mode=0o775,
             cd_access='a',
             create_parents=True
   )
@@ -39,7 +39,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
                         type="directory",
                         action="create_on_execute",
                         owner=params.livy2_user,
-                        mode=0775
+                        mode=0o775
     )
     params.HdfsResource(None, action="execute")
 
@@ -48,7 +48,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
                           type="directory",
                           action="create_on_execute",
                           owner=params.livy2_user,
-                          mode=0700
+                          mode=0o700
          )
       params.HdfsResource(None, action="execute")
 
@@ -59,7 +59,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
        owner=params.livy2_user,
        group=params.livy2_group,
        content=InlineTemplate(params.livy2_env_sh),
-       mode=0644,
+       mode=0o644,
   )
 
   # create livy-client.conf in etc/conf dir
@@ -83,7 +83,7 @@ def setup_livy(env, type, upgrade_type = None, action = None):
        owner=params.livy2_user,
        group=params.livy2_group,
        content=params.livy2_log4j_properties,
-       mode=0644,
+       mode=0o644,
   )
 
   # create spark-blacklist.properties in etc/conf dir
@@ -91,12 +91,12 @@ def setup_livy(env, type, upgrade_type = None, action = None):
        owner=params.livy2_user,
        group=params.livy2_group,
        content=params.livy2_spark_blacklist_properties,
-       mode=0644,
+       mode=0o644,
   )
 
   Directory(params.livy2_logs_dir,
             owner=params.livy2_user,
             group=params.livy2_group,
-            mode=0755,
+            mode=0o755,
   )
 

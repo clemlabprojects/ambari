@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -77,7 +77,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -118,7 +118,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -136,7 +136,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -196,7 +196,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -237,7 +237,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -255,7 +255,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -328,7 +328,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -369,7 +369,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name='hdfs', default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0777,
+        mode = 0o777,
         nameservices = None
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -384,7 +384,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name='hdfs', default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0770,
+        mode = 0o770,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -438,7 +438,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -479,7 +479,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = ['ns1'],
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -497,7 +497,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = ['ns1'],
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -540,7 +540,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -581,7 +581,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = ['ns1'],
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -599,7 +599,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = ['ns1'],
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -644,7 +644,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -688,7 +688,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -706,7 +706,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -763,7 +763,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -804,7 +804,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', '/user/ambari-qa',
@@ -822,7 +822,7 @@ class TestNamenode(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
         nameservices = None,
     )
     self.assertResourceCalled('HdfsResource', None,
@@ -875,7 +875,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
     )
 
     # TODO: Using shell.call() to bootstrap standby which is patched to return status code '5' (i.e. already bootstrapped)
@@ -941,7 +941,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
     )
 
     # TODO: Using shell.call() to bootstrap standby which is patched to return status code '5' (i.e. already bootstrapped)
@@ -1006,7 +1006,7 @@ class TestNamenode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
     )
 
     # TODO: Using shell.call() to bootstrap standby which is patched to return status code '5' (i.e. already bootstrapped)
@@ -1144,7 +1144,7 @@ class TestNamenode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                               owner = 'hdfs',
@@ -1159,7 +1159,7 @@ class TestNamenode(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),
@@ -1170,7 +1170,7 @@ class TestNamenode(RMFTestCase):
                               owner = 'hdfs',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access='a'
                               )
 
@@ -1196,7 +1196,7 @@ class TestNamenode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/hdfs_dn_jaas.conf',
                               content = Template('hdfs_dn_jaas.conf.j2'),
@@ -1227,7 +1227,7 @@ class TestNamenode(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),
@@ -1238,7 +1238,7 @@ class TestNamenode(RMFTestCase):
                               owner = 'hdfs',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access='a'
                               )
 
@@ -1346,8 +1346,8 @@ class TestNamenode(RMFTestCase):
       pass
 
     self.assertFalse(0 == len(Script.structuredOut))
-    self.assertTrue(Script.structuredOut.has_key("upgrade_type"))
-    self.assertTrue(Script.structuredOut.has_key("direction"))
+    self.assertTrue("upgrade_type" in Script.structuredOut)
+    self.assertTrue("direction" in Script.structuredOut)
     self.assertEquals("rolling_upgrade", Script.structuredOut["upgrade_type"])
     self.assertEquals("UPGRADE", Script.structuredOut["direction"])
 

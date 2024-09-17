@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+import importlib.util
 import math
 import os
 import traceback
@@ -32,10 +32,12 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class HBASEServiceAdvisor(service_advisor.ServiceAdvisor):
 
@@ -514,6 +516,27 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
       self.logger.info("Setting Phoenix index handlers to %d" % (index_handlers))
       putHbaseSiteProperty('phoenix.rpc.index.handler.count', index_handlers)
 
+    # recommand HBase Thrift Configuration For Hue
+    HueHosts = self.getHostsWithComponent("HUE", "HUE_SERVER", services, hosts)
+    HBaseMasterHosts = self.getHostsWithComponent("HBASE", "HBASE_MASTER", services, hosts)
+    if len(HueHosts) > 0 :
+      if 'hbase.thrift.minWorkerThreads' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.minWorkerThreads', '200')
+      if 'hbase.thrift.info.port' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.info.port', '9095')
+      if 'hbase.thrift.support.proxyuser' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.support.proxyuser', 'true')
+      if 'hbase.thrift.info.bindAddress' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.info.bindAddress', '0.0.0.0')
+      if 'hbase.thrift.security.qop' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.security.qop', 'auth-conf')
+      if 'hbase.thrift.ssl.enabled' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.ssl.enabled', 'false')
+      if 'hbase.thrift.ssl.enabled' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hbase.thrift.ssl.enabled', 'false')
+      if 'hadoop.security.credential.provider.path' in configurations['hbase-site']['properties']:
+        putHbaseSiteProperty('hadoop.security.credential.provider.path', 'localjceks://file//etc/hbase/conf/creds.localjceks')
+
   def recommendHBASEConfigurationsForKerberos(self, configurations, clusterData, services, hosts):
     putHbaseSiteProperty = self.putProperty(configurations, "hbase-site", services)
     putHbaseSitePropertyAttributes = self.putPropertyAttribute(configurations, "hbase-site")
@@ -543,9 +566,9 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
           hbase_thriftserver_server_hosts = self.getHBaseThriftServerHosts(services, hosts)
           hbaseEnvProperties = self.getSiteProperties(services['configurations'], 'hbase-env')
           if hbaseEnvProperties and self.checkSiteProperties(hbaseEnvProperties, 'hbase_user'):
-          hbaseUser = hbaseEnvProperties['hbase_user']
-          hbaseUserOld = self.getOldValue(services, 'hbase-env', 'hbase_user')
-          self.put_proxyuser_value(hbaseUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+            hbaseUser = hbaseEnvProperties['hbase_user']
+            hbaseUserOld = self.getOldValue(services, 'hbase-env', 'hbase_user')
+            self.put_proxyuser_value(hbaseUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
           if hbaseUserOld is not None and hbaseUser != hbaseUserOld:
             putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hbaseUserOld), 'delete', 'true')
             services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hbaseUserOld)})
@@ -602,7 +625,7 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
 
       if hbase_coprocessor_classes:
         # Split string into an array with non-empty elements
-        hbaseCoProcessorConfigs[key] = filter(None, hbase_coprocessor_classes.split(','))
+        hbaseCoProcessorConfigs[key] = list(filter(None, hbase_coprocessor_classes.split(',')))
 
     # Authorization
     # If configurations has it - it has priority as it is calculated.

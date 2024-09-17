@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -54,7 +54,7 @@ class TestJournalnode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -114,7 +114,7 @@ class TestJournalnode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -179,7 +179,7 @@ class TestJournalnode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                               owner = 'hdfs',
@@ -194,7 +194,7 @@ class TestJournalnode(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),
@@ -230,7 +230,7 @@ class TestJournalnode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/hdfs_dn_jaas.conf',
                               content = Template('hdfs_dn_jaas.conf.j2'),
@@ -255,7 +255,7 @@ class TestJournalnode(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),
@@ -265,7 +265,7 @@ class TestJournalnode(RMFTestCase):
 
   @patch('time.sleep')
   def test_post_upgrade_restart(self, time_mock):
-    # load the NN and JN JMX files so that the urllib2.urlopen mock has data
+    # load the NN and JN JMX files so that the urllib.request.urlopen mock has data
     # to return
     num_journalnodes = 3
     journalnode_jmx_file = os.path.join(RMFTestCase._getStackTestsFolder(),
@@ -286,7 +286,7 @@ class TestJournalnode(RMFTestCase):
     namenode_status_standby = open(namenode_status_standby_file, 'r').read()
 
     import utils
-    import urllib2
+    import urllib.request
     from namenode_ha_state import NamenodeHAState
 
     url_stream_mock = MagicMock()
@@ -296,7 +296,7 @@ class TestJournalnode(RMFTestCase):
     curl_krb_request_mock = MagicMock(side_effect=(num_journalnodes * [(namenode_jmx, "", 1), (journalnode_jmx, "", 1)]))
     get_address_mock = MagicMock(return_value="c6406.ambari.apache.org")
     with patch.object(utils, "curl_krb_request", curl_krb_request_mock):
-      with patch.object(urllib2, "urlopen", urlopen_mock):
+      with patch.object(urllib.request, "urlopen", urlopen_mock):
        with patch.object(NamenodeHAState, "get_address", get_address_mock):
          self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/journalnode.py",
            classname = "JournalNode", command = "post_upgrade_restart",
@@ -325,7 +325,7 @@ class TestJournalnode(RMFTestCase):
       'c6407.ambari.apache.org', 'c6408.ambari.apache.org', 'c6409.ambari.apache.org' ]
 
     with patch.object(utils, "curl_krb_request", curl_krb_request_mock):
-      with patch.object(urllib2, "urlopen", urlopen_mock):
+      with patch.object(urllib.request, "urlopen", urlopen_mock):
        with patch.object(NamenodeHAState, "get_address", get_address_mock):
          self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/journalnode.py",
            classname = "JournalNode", command = "post_upgrade_restart",
@@ -345,7 +345,7 @@ class TestJournalnode(RMFTestCase):
 
     # now try with HDFS on SSL
     with patch.object(utils, "curl_krb_request", curl_krb_request_mock):
-      with patch.object(urllib2, "urlopen", urlopen_mock):
+      with patch.object(urllib.request, "urlopen", urlopen_mock):
         with patch.object(NamenodeHAState, "get_address", get_address_mock):
          self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/journalnode.py",
            classname = "JournalNode", command = "post_upgrade_restart",
@@ -361,7 +361,7 @@ class TestJournalnode(RMFTestCase):
                                              "jn_upgrade", "/usr/bin/kinit", False, None, "ambari-qa")
 
   @patch('time.sleep')
-  @patch("urllib2.urlopen")
+  @patch("urllib.request.urlopen")
   def test_post_upgrade_restart_bad_jmx(self, urlopen_mock, time_mock):
     urlopen_mock_response = '{ "bad_data" : "gonna_mess_you_up" }'
 

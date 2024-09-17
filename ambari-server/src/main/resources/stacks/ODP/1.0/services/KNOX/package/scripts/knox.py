@@ -65,7 +65,7 @@ def knox():
       )
 
   File(os.path.join(params.knox_conf_dir, "topologies", "default.xml"),
-       mode=0600,
+       mode=0o600,
        group=params.knox_group,
        owner=params.knox_user,
        content=InlineTemplate(params.topology_template)
@@ -73,7 +73,7 @@ def knox():
 
   if params.admin_topology_template:
     File(os.path.join(params.knox_conf_dir, "topologies", "admin.xml"),
-       mode=0600,
+       mode=0o600,
        group=params.knox_group,
        owner=params.knox_user,
        content=InlineTemplate(params.admin_topology_template)
@@ -83,7 +83,7 @@ def knox():
     knoxsso_topology_template_content = get_config("knoxsso-topology")
     if knoxsso_topology_template_content:
       File(os.path.join(params.knox_conf_dir, "topologies", "knoxsso.xml"),
-        mode=0600,
+        mode=0o600,
         group=params.knox_group,
         owner=params.knox_user,
         content=InlineTemplate(params.knoxsso_topology_template)
@@ -109,7 +109,7 @@ def knox():
               group = params.knox_group,
               create_parents = True,
               cd_access = "a",
-              mode = 0755,
+              mode = 0o755,
               recursive_ownership = True,
     )
 
@@ -122,22 +122,30 @@ def knox():
     )
 
     File(format("{params.knox_conf_dir}/gateway-log4j.properties"),
-         mode=0644,
+         mode=0o644,
          group=params.knox_group,
          owner=params.knox_user,
          content=InlineTemplate(params.gateway_log4j)
     )
 
+    if(params.knox_log4j2_support):
+      File(os.path.join(params.knox_conf_dir, "gateway-log4j2.xml"),
+        owner=params.knox_user,
+        group=params.knox_group,
+        content=InlineTemplate(params.knox_gateway_log4j2_template),
+        mode=0o644
+      )
+
     File(format("{params.knox_conf_dir}/topologies/default.xml"),
-         mode=0600,
+         mode=0o600,
          group=params.knox_group,
          owner=params.knox_user,
-         content=InlineTemplate(params.topology_template)
+         content=InlineTemplate(params.admin_topology_template)
     )
 
     if params.admin_topology_template:
       File(format("{params.knox_conf_dir}/topologies/admin.xml"),
-           mode=0600,
+           mode=0o600,
            group=params.knox_group,
            owner=params.knox_user,
            content=InlineTemplate(params.admin_topology_template)
@@ -146,7 +154,7 @@ def knox():
     knoxsso_topology_template_content = get_config("knoxsso-topology")
     if knoxsso_topology_template_content:
       File(os.path.join(params.knox_conf_dir, "topologies", "knoxsso.xml"),
-          mode=0600,
+          mode=0o600,
           group=params.knox_group,
           owner=params.knox_user,
           content=InlineTemplate(params.knoxsso_topology_template)
@@ -202,6 +210,6 @@ def update_knox_logfolder_permissions():
             group = params.knox_group,
             create_parents = True,
             cd_access = "a",
-            mode=0700,
+            mode=0o700,
             recursive_ownership = True,
   )

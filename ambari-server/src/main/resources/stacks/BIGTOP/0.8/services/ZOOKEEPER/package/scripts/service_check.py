@@ -27,7 +27,7 @@ class ZookeeperServiceCheck(Script):
     env.set_params(params)
 
     File(format("{tmp_dir}/zkSmoke.sh"),
-         mode=0755,
+         mode=0o755,
          content=StaticFile('zkSmoke.sh')
     )
 

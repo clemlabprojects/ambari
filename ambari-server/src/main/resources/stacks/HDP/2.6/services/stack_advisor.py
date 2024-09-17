@@ -362,7 +362,7 @@ class HDP26StackAdvisor(HDP25StackAdvisor):
     if host_mem < 4096:
       ats_heapsize = 1024
     else:
-      ats_heapsize = long(min(math.floor(host_mem/2), long(yarn_timeline_app_cache_size) * 500 + 3072))
+      ats_heapsize = int(min(math.floor(host_mem/2), int(yarn_timeline_app_cache_size) * 500 + 3072))
     return ats_heapsize
 
   """
@@ -792,7 +792,7 @@ class HDP26StackAdvisor(HDP25StackAdvisor):
             if superusers:
               _superusers = superusers.split(',')
               _superusers = [x.strip() for x in _superusers]
-              _superusers = filter(None, _superusers)  # Removes empty string elements from array
+              _superusers = list(filter(None, _superusers))  # Removes empty string elements from array
             else:
               _superusers = []
 

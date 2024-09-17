@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -18,16 +18,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import optparse
-import httplib
+import argparse
+import http.client
 
 #
 # Main.
 #
 def main():
-  parser = optparse.OptionParser(usage="usage: %prog [options] component ")
-  parser.add_option("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
-  parser.add_option("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
+  parser = argparse.ArgumentParser(usage="usage: %prog [options] component ")
+  parser.add_argument("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
+  parser.add_argument("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
 
   (options, args) = parser.parse_args()
   
@@ -36,7 +36,7 @@ def main():
 
   for host in hosts:
     try:
-      conn = httplib.HTTPConnection(host, port)
+      conn = http.client.HTTPConnection(host, port)
       # This can be modified to get a partial url part to be sent with request
       conn.request("GET", "/")
       httpCode = conn.getresponse().status

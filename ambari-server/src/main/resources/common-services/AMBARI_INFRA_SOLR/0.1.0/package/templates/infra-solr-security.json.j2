@@ -24,8 +24,13 @@
     "user-role": {
       "{{infra_solr_kerberos_service_user}}@{{kerberos_realm}}": "admin",
 {% if infra_solr_logsearch_service_users %}
-{%   for logsearch_kerberos_service_user in infra_solr_logsearch_service_users %}
-      "{{logsearch_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logsearch}}", "{{infra_solr_role_ranger_admin}}", "{{infra_solr_role_dev}}"],
+{%   for _logsearch_kerberos_service_user in infra_solr_logsearch_service_users %}
+      "{{_logsearch_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logsearch}}", "{{infra_solr_role_ranger_admin}}", "{{infra_solr_role_dev}}"],
+{%   endfor %}
+{% endif %}
+{% if enable_logsearch_feeder_rule %}
+{%   for logsearch_logfeeder_service_user in logsearch_logfeeder_service_users %}
+      "{{logsearch_logfeeder_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logfeeder}}", "{{infra_solr_role_dev}}"],
 {%   endfor %}
 {% endif %}
       "{{logfeeder_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logfeeder}}", "{{infra_solr_role_dev}}"],
@@ -34,6 +39,11 @@
 {%   for ranger_audit_service_user in infra_solr_ranger_audit_service_users %}
       "{{ranger_audit_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_ranger_audit}}", "{{infra_solr_role_dev}}"],
 {%   endfor %}
+{% endif %}
+{% if enable_ranger_admin_rule %}
+{%   for ranger_admin_service_user in ranger_admin_service_users %}
+      "{{ranger_admin_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_ranger_admin}}", "{{infra_solr_role_ranger_audit}}", "{{infra_solr_role_dev}}"],
+{%  endfor %}
 {% endif %}
       "{{ranger_admin_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_ranger_admin}}", "{{infra_solr_role_ranger_audit}}", "{{infra_solr_role_dev}}"]
     },

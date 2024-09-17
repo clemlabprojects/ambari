@@ -73,7 +73,7 @@ class ZookeeperClientLinux(ZookeeperClient):
 class ZookeeperClientWindows(ZookeeperClient):
   def install(self, env):
     # client checks env var to determine if it is installed
-    if not os.environ.has_key("ZOOKEEPER_HOME"):
+    if not "ZOOKEEPER_HOME" in os.environ:
       self.install_packages(env)
     self.configure(env)
 

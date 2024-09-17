@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -22,7 +22,7 @@ limitations under the License.
 import os
 import glob
 import traceback
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 # Ambari Commons & Resource Management Imports
 from ambari_commons.constants import SERVICE
@@ -74,7 +74,7 @@ def hive(name=None):
             configuration_attributes = params.config['configurationAttributes']['hive-site'],
             owner = params.hive_user,
             group = params.user_group,
-            mode = 0644)
+            mode = 0o644)
 
   # Generate atlas-application.properties.xml file
   if params.enable_atlas_hook:
@@ -85,7 +85,7 @@ def hive(name=None):
        owner=params.hive_user,
        group=params.user_group,
        content=InlineTemplate(params.hive_env_sh_template),
-       mode=0755
+       mode=0o755
   )
 
   # On some OS this folder could be not exists, so we will create it before pushing there files
@@ -98,7 +98,7 @@ def hive(name=None):
   File(os.path.join(params.limits_conf_dir, 'hive.conf'),
        owner='root',
        group='root',
-       mode=0644,
+       mode=0o644,
        content=Template("hive.conf.j2")
        )
   if params.security_enabled:
@@ -110,7 +110,7 @@ def hive(name=None):
 
   File(format("/usr/lib/ambari-agent/{check_db_connection_jar_name}"),
        content = DownloadSource(format("{jdk_location}/{check_db_connection_jar_name}")),
-       mode = 0644,
+       mode = 0o644,
   )
 
   if params.hive_jdbc_target is not None and not os.path.exists(params.hive_jdbc_target):
@@ -127,7 +127,7 @@ def setup_hiveserver2():
   import params
 
   File(params.start_hiveserver2_path,
-       mode=0755,
+       mode=0o755,
        content=Template(format('{start_hiveserver2_script}'))
   )
 
@@ -135,7 +135,7 @@ def setup_hiveserver2():
        owner=params.hive_user,
        group=params.user_group,
        content=Template("hadoop-metrics2-hiveserver2.properties.j2"),
-       mode=0600
+       mode=0o600
   )
   XmlConfig("hiveserver2-site.xml",
             conf_dir=params.hive_server_conf_dir,
@@ -143,7 +143,7 @@ def setup_hiveserver2():
             configuration_attributes=params.config['configurationAttributes']['hiveserver2-site'],
             owner=params.hive_user,
             group=params.user_group,
-            mode=0600)
+            mode=0o600)
 
   # ****** Begin Copy Tarballs ******
   # *********************************
@@ -192,7 +192,7 @@ def setup_hiveserver2():
                           type = "directory",
                           action = "create_on_execute",
                           owner = params.hive_user,
-                          mode = 01755
+                          mode = 0o1755
                           )
 
     if not is_empty(params.hive_hook_proto_base_directory):
@@ -200,7 +200,7 @@ def setup_hiveserver2():
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         dag_meta = params.tez_hook_proto_base_directory + "dag_meta"
@@ -208,7 +208,7 @@ def setup_hiveserver2():
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         dag_data = params.tez_hook_proto_base_directory + "dag_data"
@@ -216,7 +216,7 @@ def setup_hiveserver2():
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         app_data = params.tez_hook_proto_base_directory + "app_data"
@@ -224,7 +224,7 @@ def setup_hiveserver2():
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
   if not is_empty(params.hive_exec_scratchdir) and not urlparse(params.hive_exec_scratchdir).path.startswith("/tmp"):
@@ -233,7 +233,7 @@ def setup_hiveserver2():
                          action="create_on_execute",
                          owner=params.hive_user,
                          group=params.hdfs_user,
-                         mode=0777) # Hive expects this dir to be writeable by everyone as it is used as a temp dir
+                         mode=0o777) # Hive expects this dir to be writeable by everyone as it is used as a temp dir
 
   if params.hive_repl_cmrootdir is not None and params.hive_repl_cmrootdir.strip() != "":
     params.HdfsResource(params.hive_repl_cmrootdir,
@@ -241,14 +241,14 @@ def setup_hiveserver2():
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group=params.user_group,
-                        mode = 01777)
+                        mode = 0o1777)
   if params.hive_repl_rootdir is not None and params.hive_repl_rootdir.strip() != "":
     params.HdfsResource(params.hive_repl_rootdir,
                         type = "directory",
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group=params.user_group,
-                        mode = 0700)
+                        mode = 0o700)
 
   params.HdfsResource(None, action="execute")
 
@@ -275,14 +275,14 @@ def create_hive_hdfs_dirs():
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group = params.user_group,
-                        mode = 01777
+                        mode = 0o1777
     )
     params.HdfsResource(managed_dir,
                         type = "directory",
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group = params.user_group,
-                        mode = 0700
+                        mode = 0o700
     )
 
     if __is_hdfs_acls_enabled():
@@ -323,19 +323,19 @@ def setup_non_client():
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
   Directory(params.hive_log_dir,
             create_parents = True,
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
   Directory(params.hive_var_lib,
             create_parents = True,
             cd_access='a',
             owner=params.hive_user,
             group=params.user_group,
-            mode=0755)
+            mode=0o755)
 
 
 def setup_metastore():
@@ -350,17 +350,17 @@ def setup_metastore():
                 configuration_attributes=params.config['configurationAttributes']['hivemetastore-site'],
                 owner=params.hive_user,
                 group=params.user_group,
-                mode=0600)
+                mode=0o600)
 
   File(os.path.join(params.hive_server_conf_dir, "hadoop-metrics2-hivemetastore.properties"),
        owner=params.hive_user,
        group=params.user_group,
        content=Template("hadoop-metrics2-hivemetastore.properties.j2"),
-       mode=0600
+       mode=0o600
   )
 
   File(params.start_metastore_path,
-       mode=0755,
+       mode=0o755,
        content=StaticFile('startMetastore.sh')
   )
 
@@ -370,14 +370,14 @@ def setup_metastore():
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group=params.user_group,
-                        mode = 01777)
+                        mode = 0o1777)
   if params.hive_repl_rootdir is not None and params.hive_repl_rootdir.strip() != "":
     params.HdfsResource(params.hive_repl_rootdir,
                         type = "directory",
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group=params.user_group,
-                        mode = 0700)
+                        mode = 0o700)
   params.HdfsResource(None, action="execute")
 
   generate_logfeeder_input_config('hive', Template("input.config-hive.json.j2", extra_imports=[default]))
@@ -486,8 +486,8 @@ def fill_conf_dir(component_conf_dir):
   import params
   hive_client_conf_path = os.path.realpath(format("{stack_root}/current/{component_directory}/conf"))
   component_conf_dir = os.path.realpath(component_conf_dir)
-  mode_identified_for_file = 0644 if component_conf_dir == hive_client_conf_path else 0600
-  mode_identified_for_dir = 0755 if component_conf_dir == hive_client_conf_path else 0700
+  mode_identified_for_file = 0o644 if component_conf_dir == hive_client_conf_path else 0o600
+  mode_identified_for_dir = 0o755 if component_conf_dir == hive_client_conf_path else 0o700
   Directory(component_conf_dir,
             owner=params.hive_user,
             group=params.user_group,
@@ -513,7 +513,7 @@ def fill_conf_dir(component_conf_dir):
   File(format("{component_conf_dir}/hive-env.sh.template"),
        owner=params.hive_user,
        group=params.user_group,
-       mode=0755
+       mode=0o755
   )
 
   # Create properties files under conf dir
@@ -578,7 +578,7 @@ def fill_conf_dir(component_conf_dir):
       owner=params.hive_user,
       group=params.user_group,
       content=Template("zookeeper-logback.xml.j2"),
-      mode=0644
+      mode=0o644
     )
 
 def jdbc_connector(target, hive_previous_jdbc_jar):
@@ -640,7 +640,7 @@ def jdbc_connector(target, hive_previous_jdbc_jar):
   pass
 
   File(target,
-       mode = 0644,
+       mode = 0o644,
   )
 
 ## added for ambari 2.7.8.0
@@ -654,7 +654,7 @@ def create_core_site_xml(conf_dir):
               configuration_attributes=params.config['configurationAttributes']['core-site'],
               owner=params.hive_user,
               group=params.user_group,
-              mode=0644
+              mode=0o644
     )
   elif params.has_ozone_manager:
     XmlConfig("core-site.xml",
@@ -663,6 +663,6 @@ def create_core_site_xml(conf_dir):
       configuration_attributes=params.config['configurationAttributes']['core-site'],
       owner=params.hive_user,
       group=params.user_group,
-      mode=0644
+      mode=0o644
     )
     

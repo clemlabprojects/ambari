@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -36,7 +36,7 @@ def calc_xmn_from_xms(heapsize_str, xmn_percent, xmn_max):
   xmn_val = int(math.floor(heapsize*xmn_percent))
   xmn_val -= xmn_val % 8
   
-  result_xmn_val = xmn_max if xmn_val > xmn_max else xmn_val
+  result_xmn_val = xmn_max if xmn_val > int(xmn_max) else xmn_val
   return str(result_xmn_val) + heapsize_unit
 
 def ensure_unit_for_memory(memory_size):

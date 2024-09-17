@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -94,7 +94,7 @@ class TestMetricsGrafana(RMFTestCase):
       self.assertResourceCalled('Directory', ams_grafana_directory,
                               owner = 'ams',
                               group = 'hadoop',
-                              mode=0755,
+                              mode=0o755,
                               create_parents = True,
                               recursive_ownership = True
                               )
@@ -109,5 +109,5 @@ class TestMetricsGrafana(RMFTestCase):
                               owner = 'ams',
                               group = 'hadoop',
                               content = InlineTemplate(self.getConfig()['configurations']['ams-env']['content']),
-                              mode = 0600
+                              mode = 0o600
                               )

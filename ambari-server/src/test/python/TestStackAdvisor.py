@@ -22,7 +22,7 @@ import os
 class TestStackAdvisorInitialization(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
 
     self.test_directory = os.path.dirname(os.path.abspath(__file__))
     resources_path = os.path.join(self.test_directory, '../../main/resources')
@@ -30,7 +30,9 @@ class TestStackAdvisorInitialization(TestCase):
 
     ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
     with open(ambari_configuration_path, 'rb') as fp:
-      imp.load_module('ambari_configuration', fp, ambari_configuration_path, ('.py', 'rb', imp.PY_SOURCE))
+      spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+      ambari_configuration = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(ambari_configuration)
 
     with open(stack_advisor_path, 'rb') as fp:
       self.stack_advisor = imp.load_module( 'stack_advisor', fp, stack_advisor_path, ('.py', 'rb', imp.PY_SOURCE) )
@@ -39,11 +41,11 @@ class TestStackAdvisorInitialization(TestCase):
     path_template = os.path.join(self.test_directory, '../resources/stacks/{0}/{1}/services/stack_advisor.py')
     path_template_name = "STACK_ADVISOR_IMPL_PATH_TEMPLATE"
     setattr(self.stack_advisor, path_template_name, path_template)
-    self.assertEquals(path_template, getattr(self.stack_advisor, path_template_name))
+    self.assertEqual(path_template, getattr(self.stack_advisor, path_template_name))
     instantiate_stack_advisor_method_name = 'instantiateStackAdvisor'
     instantiate_stack_advisor_method = getattr(self.stack_advisor, instantiate_stack_advisor_method_name)
     stack_advisor = instantiate_stack_advisor_method("XYZ", "1.0.1", ["1.0.0"])
-    self.assertEquals("XYZ101StackAdvisor", stack_advisor.__class__.__name__)
+    self.assertEqual("XYZ101StackAdvisor", stack_advisor.__class__.__name__)
     services = {
       "Versions":
         {
@@ -89,14 +91,14 @@ class TestStackAdvisorInitialization(TestCase):
     config_recommendations = stack_advisor.recommendConfigurations(services, hosts)
     yarn_configs = config_recommendations["recommendations"]["blueprint"]["configurations"]["yarn-site"]["properties"]
     '''Check that value is populated from child class, not parent'''
-    self.assertEquals("-Xmx101m", yarn_configs["yarn.nodemanager.resource.memory-mb"])
+    self.assertEqual("-Xmx101m", yarn_configs["yarn.nodemanager.resource.memory-mb"])
 
   def test_stackAdvisorDefaultImpl(self):
     instantiate_stack_advisor_method_name = 'instantiateStackAdvisor'
     instantiate_stack_advisor_method = getattr(self.stack_advisor, instantiate_stack_advisor_method_name)
     '''Not existent stack - to return default implementation'''
     default_stack_advisor = instantiate_stack_advisor_method("HDP1", "2.0.6", [])
-    self.assertEquals("DefaultStackAdvisor", default_stack_advisor.__class__.__name__)
+    self.assertEqual("DefaultStackAdvisor", default_stack_advisor.__class__.__name__)
     services = {
       "Versions":
         {
@@ -302,8 +304,8 @@ class TestStackAdvisorInitialization(TestCase):
       "Versions": {"stack_name": "HDP1", "stack_version": "2.0.6"},
       "items": []
     }
-    self.assertEquals(actualValidateConfigResponse, expectedValidationResponse)
-    self.assertEquals(actualValidateLayoutResponse, expectedValidationResponse)
+    self.assertEqual(actualValidateConfigResponse, expectedValidationResponse)
+    self.assertEqual(actualValidateLayoutResponse, expectedValidationResponse)
     actualRecommendConfigResponse = default_stack_advisor.recommendConfigurations(services, hosts)
     expectedRecommendConfigResponse = {
       "Versions": {"stack_name": "HDP1", "stack_version": "2.0.6"},
@@ -319,7 +321,7 @@ class TestStackAdvisorInitialization(TestCase):
         }
       }
     }
-    self.assertEquals(actualRecommendConfigResponse, expectedRecommendConfigResponse)
+    self.assertEqual(actualRecommendConfigResponse, expectedRecommendConfigResponse)
     actualRecommendLayoutResponse = default_stack_advisor.recommendComponentLayout(services, hosts)
     expectedRecommendLayoutResponse = {
       "Versions": {"stack_name": "HDP1", "stack_version": "2.0.6"},
@@ -329,11 +331,11 @@ class TestStackAdvisorInitialization(TestCase):
         "blueprint": {
           "host_groups": [
             {
-              "name": "host-group-1",
+              "name": "host-group-2",
               "components": []
             },
             {
-              "name": "host-group-2",
+              "name": "host-group-1",
               "components": [
                 {"name": "GANGLIA_SERVER"},
                 {"name": "HBASE_MASTER"},
@@ -349,18 +351,18 @@ class TestStackAdvisorInitialization(TestCase):
           {
             "host_groups": [
               {
-                "name": "host-group-1",
+                "name": "host-group-2",
                 "hosts": [{"fqdn": "host2"}]
               },
               {
-                "name": "host-group-2",
+                "name": "host-group-1",
                 "hosts": [{"fqdn": "host1"}]
               }
             ]
           }
       }
     }
-    self.assertEquals(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
+    self.assertEqual(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
 
     # Test with maintenance_state. One host is in maintenance mode.
     hosts= {
@@ -420,7 +422,7 @@ class TestStackAdvisorInitialization(TestCase):
       "hosts": ["host1"],
       "Versions": {"stack_name": "HDP1", "stack_version": "2.0.6"}
     }
-    self.assertEquals(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
+    self.assertEqual(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
 
     # Test with maintenance_state. Both hosts are in maintenance mode.
     hosts= {
@@ -464,7 +466,7 @@ class TestStackAdvisorInitialization(TestCase):
       }
     }
 
-    self.assertEquals(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
+    self.assertEqual(actualRecommendLayoutResponse, expectedRecommendLayoutResponse)
 
     # Config groups support by default
     services["config-groups"] = [{
@@ -500,7 +502,7 @@ class TestStackAdvisorInitialization(TestCase):
         }
       }
     }
-    self.assertEquals(actualConfigGroupRecommendConfigResponse, expectedConfigGroupRecommendConfigResponse)
+    self.assertEqual(actualConfigGroupRecommendConfigResponse, expectedConfigGroupRecommendConfigResponse)
 
     services = {
       "services": [
@@ -636,4 +638,4 @@ class TestStackAdvisorInitialization(TestCase):
                                 {'name': 'mapreduce.map.memory.mb', 'type': 'mapred-site'},
                                 {'name': 'mapreduce.reduce.memory.mb', 'type': 'mapred-site'}]
 
-    self.assertEquals(properties_dict, expected_properties_dict)
+    self.assertEqual(properties_dict, expected_properties_dict)

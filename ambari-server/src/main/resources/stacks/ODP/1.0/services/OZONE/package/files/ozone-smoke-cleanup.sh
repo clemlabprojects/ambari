@@ -18,6 +18,7 @@
 #
 om_service_id=$1
 ozone sh key delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt
+ozone fs -rm -R -skipTrash "o3fs://ambarismokebucket.ambarismokevolume.${om_service_id}/.Trash"
 ozone sh bucket delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket
 ozone sh volume delete o3://${om_service_id}/ambarismokevolume
 exit

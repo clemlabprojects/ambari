@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -89,8 +89,8 @@ db_flavor = (config['configurations']['kms-properties']['DB_FLAVOR']).lower()
 db_host = config['configurations']['kms-properties']['db_host']
 db_name = config['configurations']['kms-properties']['db_name']
 db_user = config['configurations']['kms-properties']['db_user']
-db_password = unicode(config['configurations']['kms-properties']['db_password'])
-kms_master_key_password = unicode(config['configurations']['kms-properties']['KMS_MASTER_KEY_PASSWD'])
+db_password = config['configurations']['kms-properties']['db_password']
+kms_master_key_password = config['configurations']['kms-properties']['KMS_MASTER_KEY_PASSWD']
 credential_provider_path = config['configurations']['dbks-site']['ranger.ks.jpa.jdbc.credential.provider.path']
 jdbc_alias = config['configurations']['dbks-site']['ranger.ks.jpa.jdbc.credential.alias']
 masterkey_alias = config['configurations']['dbks-site']['ranger.ks.masterkey.credential.alias']

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -32,8 +32,6 @@ from setup_ranger_nifi_registry import setup_ranger_nifi_registry
 
 import config_utils
 
-reload(sys)
-sys.setdefaultencoding('utf8')
 
 class Master(Script):
     def get_component_name(self):
@@ -117,7 +115,7 @@ class Master(Script):
                   )
 
         env_content=InlineTemplate(params.nifi_registry_env_content)
-        File(format("{params.bin_dir}/nifi-registry-env.sh"), content=env_content, owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0755)
+        File(format("{params.bin_dir}/nifi-registry-env.sh"), content=env_content, owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o755)
 
         Execute ('export JAVA_HOME='+params.jdk64_home+';'+params.bin_dir+'/nifi-registry.sh stop >> ' + params.nifi_registry_log_file, user=params.nifi_registry_user)
         if os.path.isfile(status_params.nifi_registry_pid_file):
@@ -235,7 +233,7 @@ class Master(Script):
         #write out nifi-registry.properties
         PropertiesFile(params.nifi_registry_config_dir + '/nifi-registry.properties',
                        properties = params.nifi_registry_properties,
-                       mode = 0600,
+                       mode = 0o600,
                        owner = params.nifi_registry_user,
                        group = params.nifi_registry_group)
 
@@ -246,7 +244,7 @@ class Master(Script):
              content=bootstrap_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0600)
+             mode=0o600)
 
         #write out logback.xml
         logback_content=InlineTemplate(params.nifi_registry_logback_content)
@@ -255,7 +253,7 @@ class Master(Script):
              content=logback_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0400)
+             mode=0o400)
 
         #write out authorizers file
 
@@ -265,7 +263,7 @@ class Master(Script):
              content=authorizers_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0600)
+             mode=0o600)
 
         #write out identity-providers.xml
         identity_providers_content=config_utils.append_xml_content(params.nifi_registry_identity_providers_content, params.nifi_registry_identity_providers_dict)
@@ -274,7 +272,7 @@ class Master(Script):
              content=identity_providers_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0600)
+             mode=0o600)
 
         #write out providers file
         providers_content=config_utils.append_xml_content(params.nifi_registry_providers_content, params.nifi_registry_providers_dict)
@@ -283,7 +281,7 @@ class Master(Script):
              content=providers_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0400)
+             mode=0o400)
 
         #write out nifi-env in bin as 0755 (see BUG-61769)
         env_content=InlineTemplate(params.nifi_registry_env_content)
@@ -292,7 +290,7 @@ class Master(Script):
              content=env_content,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0755)
+             mode=0o755)
 
 
 if __name__ == "__main__":

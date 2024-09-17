@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -81,7 +81,7 @@ class OzoneManagerDefault(OzoneManager):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_om_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-manager', separator )
+                      passwords, 'ozone-manager' )
 
       file_to_chown = params.ozone_om_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
@@ -167,19 +167,37 @@ class OzoneManagerDefault(OzoneManager):
     import params
     return [params.ozone_manager_pid_file]
 
+def prepareOzoneLayout(dirs):
+  import params
+  # Retrieve UID and GID if user and group are provided
+  uid = pwd.getpwnam(params.ozone_user).pw_uid if isinstance(params.ozone_user, str) else params.ozone_user
+  gid = grp.getgrnam(params.user_group).gr_gid if isinstance(params.user_group, str) else params.user_group
+  if isinstance(dirs, list):
+    to_create = dirs
+  else:
+    to_create = [dirs]
+  for scm_path in to_create:
+    Logger.info(format("Creating dir {scm_path}"))
+    os.makedirs(scm_path, exist_ok=True)
+    os.chmod(scm_path, 0o754)
+    os.chown(scm_path, uid, gid)  # Change ownership
+
+
 ## formatting Ozone Manager server directories
 def om_server_is_bootstrapped():
   import params
-  bootstrapped_path = format("{params.ozone_manager_db_dirs}/current/VERSION")
+  bootstrapped_path = format("{params.ozone_manager_db_dirs}/om/current/VERSION")
+  Logger.info(format("Checking if OM VERSION file exists at {bootstrapped_path}"))
   return os.path.exists(bootstrapped_path)
 
-def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
+def wait_for_om_leader_to_be_active(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   import params
   """
   Wait for the primary om server to be up and running on its ratis port when HA is enabled)
   """
+  cmd_env = {'JAVA_HOME': params.java_home }
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
-  if not params.ozone_om_ha_enabled:
+  if not params.ozone_om_ha_is_enabled:
     Logger.info("Skipping waiting for primordial node")
     return
   else:
@@ -188,10 +206,12 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
       kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
       Execute(kinit_command, user=params.ozone_user, logoutput=True)
     while True:
+      active_om = next(iter(params.ozone_ha_om_active))
       try:
-        Execute(format("ozone --config {conf_dir} admin om getserviceroles -id {params.ozone_om_ha_current_cluster_nameservice} | grep {params.ozone_ha_om_active} | grep LEADER"),
+        Execute(format("ozone --config {conf_dir} admin om getserviceroles -id {params.ozone_om_ha_current_cluster_nameservice} | grep '{active_om}' | grep LEADER"),
           user = params.ozone_user,
-          path = [params.hadoop_ozone_bin_dir],
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
           logoutput=True
         )
         break
@@ -200,12 +220,44 @@ def wait_for_om_leader_to_be_active(ozone_binary, afterwait_sleep=0, execute_kin
         time.sleep(afterwait_sleep)
   return
 
+def wait_for_om_leader_to_be_started(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
+  import params
+  """
+  Wait for the primary om server to be up and running on its ratis port when HA is enabled)
+  """
+  cmd_env = {'JAVA_HOME': params.java_home }
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
+  if not params.ozone_om_ha_is_enabled:
+    Logger.info("Skipping waiting for primordial node")
+    return
+  else:
+    sleep_minutes = int(sleep_seconds * retries / 60)
+    if params.security_enabled and execute_kinit:
+      kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
+      Execute(kinit_command, user=params.ozone_user, logoutput=True)
+    while True:
+      active_om = next(iter(params.ozone_ha_om_active))
+      try:
+        Execute(format("echo > /dev/tcp/{active_om}/{ozone_om_ratis_port}"),
+          user = params.ozone_user,
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
+          logoutput=True
+        )
+        time.sleep(afterwait_sleep)
+        break
+      except Fail:
+        Logger.error("The Primordial Ozone Manager is still down. Waiting....")
+        
+  return
+
 def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   """
   Wait for Safe Mode Off on SCM Servers
   Instead of looping on test safe mode, we use the included ozone command wait safemode using timeout parameters.
   """
   import params
+  cmd_env = {'JAVA_HOME': params.java_home }
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   #Logger.info("Waiting up to {0} minutes for the SCM Server to leave Safemode...".format(sleep_minutes))
   if params.security_enabled and execute_kinit:
@@ -216,7 +268,8 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   try:
     Execute(format("ozone --config {conf_dir} admin safemode wait --timeout {timeout}"),
       user = params.ozone_user,
-      path = [params.hadoop_ozone_bin_dir],
+      environment = cmd_env,
+      path = params.hadoop_ozone_bin_dir,
       logoutput=True
     )
     time.sleep(afterwait_sleep)
@@ -225,23 +278,24 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
 
 def bootstrap_server(env=None):
   import params
+  cmd_env = {'JAVA_HOME': params.java_home }
   Directory( params.ozone_manager_db_dirs,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   Directory( params.ozone_manager_ha_dirs,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   Directory( params.ozone_om_snapshot_dirs,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
   )
   
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
@@ -250,7 +304,7 @@ def bootstrap_server(env=None):
     return None
   else:
     if params.ozone_om_ha_is_enabled:
-      if params.hostname.lowercase() == params.ozone_ha_om_active:
+      if params.hostname.lower() in params.ozone_ha_om_active:
         Logger.info("Ozone Manager HA is enabled")
         Logger.info("Waiting for Ozone SCM primordial node before initializing om. Waiting...")
         wait_ozone_scm_safemode(params.ozone_cmd)
@@ -260,7 +314,8 @@ def bootstrap_server(env=None):
           Logger.info(format("Bootstrapping om leader node..."))
           Execute(format("ozone --config {conf_dir} om --init"),
             user = params.ozone_user,
-            path = [params.hadoop_ozone_bin_dir],
+            environment = cmd_env,
+            path = params.hadoop_ozone_bin_dir,
             logoutput=True
           )
         except Fail:
@@ -273,13 +328,15 @@ def bootstrap_server(env=None):
           raise Fail('Could not bootstrap om node')
       else:
         Logger.info("Ozone OM is not the first leader. Waiting for leader to be active")
-        wait_for_om_leader_to_be_active(env)
+        wait_for_om_leader_to_be_started(env)
         # bootstrapp not primary node
         try:
           Logger.info(format("Bootstrapping om node..."))
-          Execute(format("ozone --config {conf_dir} om --bootstrap"),
+          # In Ozone 1.4.0 no need to bootstrap the high available Ozone Manager
+          Execute(format("ozone --config {conf_dir} om --init"),
             user = params.ozone_user,
-            path = [params.hadoop_ozone_bin_dir],
+            environment= cmd_env ,
+            path = params.hadoop_ozone_bin_dir,
             logoutput=True
           )
         except Fail:
@@ -297,7 +354,8 @@ def bootstrap_server(env=None):
         Logger.info(format("Bootstrapping om node..."))
         Execute(format("ozone --config {conf_dir} om --init"),
           user = params.ozone_user,
-          path = [params.hadoop_ozone_bin_dir],
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
           logoutput=True
         )
       except Fail:

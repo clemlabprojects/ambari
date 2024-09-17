@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -48,7 +48,7 @@ class HueServiceCheckDefault(HueServiceCheck):
     else:
       smoke_cmd = validateStatusCmd
 
-    print "Test connectivity to Hue server"
+    print("Test connectivity to Hue server")
 
     File(validateHueFilePath,
          content=StaticFile(validateHueFileName),

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -17,13 +17,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import httplib
+import http.client
 import locale
 import json
 import logging
 import urllib
 import time
-import urllib2
+import urllib.request, urllib.error
 import os
 import ambari_commons.network as network
 
@@ -332,7 +332,7 @@ def execute(configurations={}, parameters={}, host_name=None):
     response = conn.getresponse()
     data = response.read()
     conn.close()
-  except Exception, e:
+  except Exception as e:
     logger.info(str(e))
     return (RESULT_STATE_UNKNOWN, ["Unable to retrieve metrics from the Ambari Metrics service."])
 
@@ -442,7 +442,7 @@ def get_jmx(query, connection_timeout):
   response = None
 
   try:
-    response = urllib2.urlopen(query, timeout=connection_timeout)
+    response = urllib.request.urlopen(query, timeout=connection_timeout)
     json_data = response.read()
     return json_data
   except Exception:

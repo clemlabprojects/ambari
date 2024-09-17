@@ -20,17 +20,21 @@
     <property>
         <name>xasecure.audit.is.enabled</name>
         <value>true</value>
+        <on-ambari-upgrade add="true"/>
+
     </property>
 
     <!-- Log4j audit provider configuration -->
     <property>
         <name>xasecure.audit.destination.log4j</name>
         <value>false</value>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
         <name>xasecure.audit.destination.log4j.logger</name>
         <value>ranger_audit_logger</value>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <!-- Solr audit provider configuration -->
@@ -48,12 +52,14 @@
                 <name>xasecure.audit.destination.solr</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
         <name>xasecure.audit.destination.solr.batch.filespool.dir</name>
         <value>/var/log/nifi-registry/audit/solr/spool</value>
         <description>/var/log/nifi-registry/audit/solr/spool</description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -69,6 +75,7 @@
                 <name>ranger.audit.solr.urls</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -81,6 +88,7 @@
                 <name>ranger.audit.solr.zookeepers</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -97,6 +105,7 @@
                 <name>xasecure.audit.destination.hdfs</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -109,12 +118,14 @@
                 <name>xasecure.audit.destination.hdfs.dir</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
         <name>xasecure.audit.destination.hdfs.batch.filespool.dir</name>
         <value>/var/log/nifi-registry/audit/hdfs/spool</value>
         <description>/var/log/nifi-registry/audit/hdfs/spool</description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
 </configuration>

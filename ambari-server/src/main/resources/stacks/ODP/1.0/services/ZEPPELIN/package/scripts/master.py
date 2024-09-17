@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -94,7 +94,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
               )
 
   def create_zeppelin_hdfs_conf_dir(self, env):
@@ -105,7 +105,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
               )
 
   def chown_zeppelin_pid_dir(self, env):
@@ -127,7 +127,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
     )
     self.chown_zeppelin_pid_dir(env)
 
@@ -163,7 +163,7 @@ class Master(Script):
               configuration_attributes=params.config['configurationAttributes']['hbase-site'],
               owner=params.zeppelin_user,
               group=params.zeppelin_group,
-              mode=0644)
+              mode=0o644)
 
       XmlConfig("hdfs-site.xml",
                 conf_dir=params.external_dependency_conf,
@@ -171,7 +171,7 @@ class Master(Script):
                 configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
                 owner=params.zeppelin_user,
                 group=params.zeppelin_group,
-                mode=0644)
+                mode=0o644)
 
       XmlConfig("core-site.xml",
                 conf_dir=params.external_dependency_conf,
@@ -179,7 +179,7 @@ class Master(Script):
                 configuration_attributes=params.config['configurationAttributes']['core-site'],
                 owner=params.zeppelin_user,
                 group=params.zeppelin_group,
-                mode=0644,
+                mode=0o644,
                 xml_include_file=params.mount_table_xml_inclusion_file_full_path)
 
       if params.mount_table_content:
@@ -187,7 +187,7 @@ class Master(Script):
              owner=params.zeppelin_user,
              group=params.zeppelin_group,
              content=params.mount_table_content,
-             mode=0644
+             mode=0o644
         )
 
   def check_and_copy_notebook_in_hdfs(self, params):
@@ -294,13 +294,13 @@ class Master(Script):
     interpreter_settings = config_data['interpreterSettings']
 
     if upgrade_type is not None:
-      current_interpreters_keys = interpreter_settings.keys()
+      current_interpreters_keys = list(interpreter_settings.keys())
       for key in current_interpreters_keys:
         interpreter_data = interpreter_settings[key]
         if interpreter_data["name"] == "sh" and interpreter_data["group"] == "sh":
           del interpreter_settings[key]
 
-    for setting_key in interpreter_json_template.keys():
+    for setting_key in list(interpreter_json_template.keys()):
       if setting_key not in interpreter_settings:
         interpreter_settings[setting_key] = interpreter_json_template[
           setting_key]
@@ -446,7 +446,7 @@ class Master(Script):
     File(interpreter_config,
          group=params.zeppelin_group,
          owner=params.zeppelin_user,
-         mode=0644,
+         mode=0o644,
          content=json.dumps(config_data, indent=2))
 
     if params.conf_stored_in_hdfs:
@@ -538,7 +538,7 @@ class Master(Script):
         del interpreter_settings[key]
 
     hive_interactive_properties_key = 'hive_interactive'
-    for setting_key in interpreter_settings.keys():
+    for setting_key in list(interpreter_settings.keys()):
       interpreter = interpreter_settings[setting_key]
       if interpreter['group'] == 'jdbc' and interpreter['name'] == 'jdbc' and ('jdbc' not in exclude_interpreter_autoconfig_list
                                                                or 'jdbc' in exclude_interpreter_property_groups_map.keys()):
@@ -669,7 +669,7 @@ class Master(Script):
            content=interpreter_json,
            owner=params.zeppelin_user,
            group=params.zeppelin_group,
-           mode=0664)
+           mode=0o664)
 
       if params.conf_stored_in_hdfs:
         params.HdfsResource(self.get_zeppelin_conf_FS(params),

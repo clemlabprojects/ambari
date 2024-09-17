@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -21,14 +21,14 @@ limitations under the License.
 import re
 import time
 import sys
-import urllib2
+import urllib.request, urllib.error, urllib.parse
 import base64
-import httplib
+import http.client
 
 # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import ambari_simplejson as json
 
-from StringIO import StringIO as BytesIO
+from io import StringIO as BytesIO
 from resource_management.core.logger import Logger
 from ambari_commons.inet_utils import openurl
 from ambari_commons.exceptions import TimeoutError
@@ -68,14 +68,14 @@ class Rangeradmin:
     """
     try:
       searchRepoURL = self.urlReposPub + "?name=" + name + "&type=" + component + "&status=" + status
-      request = urllib2.Request(searchRepoURL)
-      base64string = base64.encodestring(usernamepassword).replace('\n', '')
+      request = urllib.request.Request(searchRepoURL)
+      base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base64string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(result.read().decode())
       if response_code == 200 and len(response['vXRepositories']) > 0:
         for repo in response['vXRepositories']:
           repoDump = json.loads(json.JSONEncoder().encode(repo))
@@ -84,12 +84,12 @@ class Rangeradmin:
         return None
       else:
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error getting {0} repository for component {1}. Http status code - {2}. \n {3}".format(name, component, e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Error getting {0} repository for component {1}. Http status code - {2}. \n {3}".format(name, component, e.code, e.read().decode()))
       else:
         raise Fail("Error getting {0} repository for component {1}. Reason - {2}.".format(name, component, e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
@@ -110,9 +110,9 @@ class Rangeradmin:
     :param policy_user: use this policy user for policies that will be used during repository creation
     """
     response_code = self.check_ranger_login_urllib2(self.baseUrl)
-    repo_data = json.dumps(repo_properties)
-    ambari_ranger_password = unicode(ambari_ranger_password)
-    admin_password = unicode(admin_password)
+    repo_data = json.dumps(repo_properties).encode('utf-8')
+    ambari_ranger_password = str(ambari_ranger_password)
+    admin_password = str(admin_password)
     ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
 
     if response_code is not None and response_code == 200:
@@ -152,12 +152,12 @@ class Rangeradmin:
     """
     try:
       searchRepoURL = self.urlReposPub
-      base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+      base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       headers = {
         'Accept': 'application/json',
         "Content-Type": "application/json"
       }
-      request = urllib2.Request(searchRepoURL, data, headers)
+      request = urllib.request.Request(searchRepoURL, data, headers)
       request.add_header("Authorization", "Basic {0}".format(base64string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
@@ -175,7 +175,7 @@ class Rangeradmin:
           policiesUpdateCount = 0
           for policy in policyList:
             updatedPolicyObj = self.get_policy_params(typeOfPolicy, policy, policy_user)
-            policyResCode = self.update_ranger_policy(updatedPolicyObj['id'], json.dumps(updatedPolicyObj), usernamepassword)
+            policyResCode = self.update_ranger_policy(updatedPolicyObj['id'], json.dumps(updatedPolicyObj).encode('utf-8'), usernamepassword)
             if policyResCode == 200:
               policiesUpdateCount = policiesUpdateCount + 1
             else:
@@ -193,12 +193,12 @@ class Rangeradmin:
       else:
         Logger.info('Repository creation failed')
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error creating repository. Http status code - {0}. \n {1}".format(e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Error creating repository. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating repository. Reason - {0}.".format(e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
@@ -213,12 +213,12 @@ class Rangeradmin:
       response = openurl(url, timeout=20)
       response_code = response.getcode()
       return response_code
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Connection to Ranger Admin failed. Http status code - {0}. \n {1}".format(e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Connection to Ranger Admin failed. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Connection to Ranger Admin failed. Reason - {0}.".format(e.reason))
-    except httplib.BadStatusLine, e:
+    except http.client.BadStatusLine as e:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
@@ -234,24 +234,24 @@ class Rangeradmin:
     """
     try:
       searchPolicyURL = self.urlPolicies + "?repositoryName=" + name + "&repositoryType=" + component + "&isEnabled=" + status
-      request = urllib2.Request(searchPolicyURL)
-      base64string = base64.encodestring(usernamepassword).replace('\n', '')
+      request = urllib.request.Request(searchPolicyURL)
+      base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base64string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(result.read().decode())
       if response_code == 200 and len(response['vXPolicies']) > 0:
         return response['vXPolicies']
       else:
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error getting policy from repository {0} for component {1}. Http status code - {2}. \n {3}".format(name, component, e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Error getting policy from repository {0} for component {1}. Http status code - {2}. \n {3}".format(name, component, e.code, e.read().decode()))
       else:
         raise Fail("Error getting policy from repository {0} for component {1}. Reason - {2}.".format(name, component, e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
@@ -266,12 +266,12 @@ class Rangeradmin:
     """
     try:
       searchRepoURL = self.urlPolicies + "/" + str(policyId)
-      base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+      base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       headers = {
         'Accept': 'application/json',
         "Content-Type": "application/json"
       }
-      request = urllib2.Request(searchRepoURL, data, headers)
+      request = urllib.request.Request(searchRepoURL, data, headers)
       request.add_header("Authorization", "Basic {0}".format(base64string))
       request.get_method = lambda: 'PUT'
       result = openurl(request, timeout=20)
@@ -283,12 +283,12 @@ class Rangeradmin:
       else:
         Logger.error('Update Policy failed')
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error updating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Error updating policy. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error updating policy. Reason - {0}.".format(e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")
@@ -301,16 +301,16 @@ class Rangeradmin:
     :password: ambari_ranger_password ranger admin password
     :return: Returns created Ranger reposipolicytory object
     """
-    policy_data = json.dumps(data)
+    policy_data = json.dumps(data).encode('utf-8')
     ambari_username_password_for_ranger = format('{ambari_ranger_admin}:{ambari_ranger_password}')
     try:
       search_policy_url = self.url_policies
-      base_64_string = base64.encodestring('{0}'.format(ambari_username_password_for_ranger)).replace('\n', '')
+      base_64_string = base64.b64encode(ambari_username_password_for_ranger.encode()).decode().replace('\n', '')
       headers = {
         'Accept': 'application/json',
         "Content-Type": "application/json"
       }
-      request = urllib2.Request(search_policy_url, policy_data, headers)
+      request = urllib.request.Request(search_policy_url, policy_data, headers)
       request.add_header("Authorization", "Basic {0}".format(base_64_string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
@@ -321,13 +321,13 @@ class Rangeradmin:
         return response
       else:
         raise Fail('Policy creation failed')
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        return_message = e.read()
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        return_message = e.read().decode()
         if "Another policy already exists for this name" in return_message:
           Logger.info('Policy already exists')
         else:
-          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read()))
+          raise Fail("Error creating policy. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating policy. Reason - {0}.".format(e.reason))
     except httplib.BadStatusLine:
@@ -374,14 +374,14 @@ class Rangeradmin:
       raise Fail('Invalid password given for Ranger Admin user for Ambari')
     try:
       url =  self.urlUsers + '?name=' + str(ambari_admin_username)
-      request = urllib2.Request(url)
-      base64string = base64.encodestring(usernamepassword).replace('\n', '')
+      request = urllib.request.Request(url)
+      base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
       request.add_header("Content-Type", "application/json")
       request.add_header("Accept", "application/json")
       request.add_header("Authorization", "Basic {0}".format(base64string))
       result = openurl(request, timeout=20)
       response_code = result.getcode()
-      response = json.loads(result.read())
+      response = json.loads(result.read().decode())
       if response_code == 200 and len(response['vXUsers']) >= 0:
         for vxuser in response['vXUsers']:
           if vxuser['name'] == ambari_admin_username:
@@ -403,13 +403,13 @@ class Rangeradmin:
           admin_user['password'] = ambari_admin_password
           admin_user['description'] = ambari_admin_username
           admin_user['firstName'] = ambari_admin_username
-          data = json.dumps(admin_user)
-          base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+          data = json.dumps(admin_user).encode('utf-8')
+          base64string = base64.b64encode(usernamepassword.encode()).decode().replace('\n', '')
           headers = {
             'Accept': 'application/json',
             "Content-Type": "application/json"
           }
-          request = urllib2.Request(url, data, headers)
+          request = urllib.request.Request(url, data, headers)
           request.add_header("Authorization", "Basic {0}".format(base64string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
@@ -422,12 +422,12 @@ class Rangeradmin:
             return None
       else:
         return None
-    except urllib2.URLError, e:
-      if isinstance(e, urllib2.HTTPError):
-        raise Fail("Error creating ambari admin user. Http status code - {0}. \n {1}".format(e.code, e.read()))
+    except urllib.error.URLError as e:
+      if isinstance(e, urllib.error.HTTPError):
+        raise Fail("Error creating ambari admin user. Http status code - {0}. \n {1}".format(e.code, e.read().decode()))
       else:
         raise Fail("Error creating ambari admin user. Reason - {0}.".format(e.reason))
-    except httplib.BadStatusLine:
+    except http.client.BadStatusLine:
       raise Fail("Ranger Admin service is not reachable, please restart the service and then try again")
     except TimeoutError:
       raise Fail("Connection to Ranger Admin failed. Reason - timeout")

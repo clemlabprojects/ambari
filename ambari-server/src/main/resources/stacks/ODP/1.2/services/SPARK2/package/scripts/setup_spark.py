@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,7 @@ import shutil
 import os
 import socket
 
-from urlparse import urlparse
+from urllib.parse import urlparse
 from resource_management.core.exceptions import ComponentIsNotRunning
 from resource_management.core.logger import Logger
 from resource_management.core import shell
@@ -49,7 +49,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
   Directory([params.spark_pid_dir, params.spark_log_dir],
             owner=params.spark_user,
             group=params.user_group,
-            mode=0775,
+            mode=0o775,
             create_parents = True
   )
   if type == 'server' and action == 'config':
@@ -57,7 +57,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
                        type="directory",
                        action="create_on_execute",
                        owner=params.spark_user,
-                       mode=0775
+                       mode=0o775
     )
 
     if not params.whs_dir_protocol or params.whs_dir_protocol == urlparse(params.default_fs).scheme:
@@ -66,7 +66,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
                           type="directory",
                           action="create_on_execute",
                           owner=params.spark_user,
-                          mode=0777
+                          mode=0o777
       )
 
     params.HdfsResource(None, action="execute")
@@ -102,7 +102,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
     key_value_delimiter = " ",
     owner=params.spark_user,
     group=params.spark_group,
-    mode=0644
+    mode=0o644
   )
 
   # create spark-env.sh in etc/conf dir
@@ -110,7 +110,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
        owner=params.spark_user,
        group=params.spark_group,
        content=InlineTemplate(params.spark_env_sh),
-       mode=0644,
+       mode=0o644,
   )
 
   #create log4j.properties in etc/conf dir
@@ -118,7 +118,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
        owner=params.spark_user,
        group=params.spark_group,
        content=params.spark_log4j_properties,
-       mode=0644,
+       mode=0o644,
   )
 
   #create metrics.properties in etc/conf dir
@@ -126,7 +126,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
        owner=params.spark_user,
        group=params.spark_group,
        content=InlineTemplate(params.spark_metrics_properties),
-       mode=0644
+       mode=0o644
   )
 
   if params.is_hive_installed:
@@ -135,7 +135,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
           configurations=params.spark_hive_properties,
           owner=params.spark_user,
           group=params.spark_group,
-          mode=0644)
+          mode=0o644)
 
   if params.has_spark_thriftserver:
     spark2_thrift_sparkconf = dict(params.config['configurations']['spark2-thrift-sparkconf'])
@@ -148,7 +148,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
       owner = params.hive_user,
       group = params.user_group,
       key_value_delimiter = " ",
-      mode=0644
+      mode=0o644
     )
 
   effective_version = params.version if upgrade_type is not None else params.stack_version_formatted
@@ -160,6 +160,6 @@ def setup_spark(env, type, upgrade_type = None, action = None):
     File(os.path.join(params.spark_conf,"spark-thrift-fairscheduler.xml"),
       owner=params.spark_user,
       group=params.spark_group,
-      mode=0755,
+      mode=0o755,
       content=InlineTemplate(params.spark_thrift_fairscheduler_content)
     )

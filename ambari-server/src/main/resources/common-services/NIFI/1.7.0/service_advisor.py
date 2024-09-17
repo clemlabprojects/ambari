@@ -29,7 +29,7 @@ try:
         service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
 except Exception as e:
     traceback.print_exc()
-    print "Failed to load parent"
+    print("Failed to load parent")
 
 class NIFI170ServiceAdvisor(service_advisor.NIFI110ServiceAdvisor):
 

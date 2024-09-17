@@ -118,7 +118,7 @@ class Master(Script):
       if params.metrics_collector_host and params.nifi_ambari_reporting_enabled and not sudo.path_isfile(params.nifi_flow_config_dir+'/flow.xml.gz'):
         Execute('echo "First time setup so generating flow.xml.gz" >> ' + params.nifi_node_log_file, user=params.nifi_user)
         flow_content=InlineTemplate(params.nifi_flow_content)
-        File(format("{params.nifi_flow_config_dir}/flow.xml"), content=flow_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
+        File(format("{params.nifi_flow_config_dir}/flow.xml"), content=flow_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
         Execute(format("cd {params.nifi_flow_config_dir}; gzip flow.xml;"), user=params.nifi_user)
 
 
@@ -129,7 +129,7 @@ class Master(Script):
     env.set_params(status_params)
 
     env_content=InlineTemplate(params.nifi_env_content)
-    File(format("{params.bin_dir}/nifi-env.sh"), content=env_content, owner=params.nifi_user, group=params.nifi_group, mode=0755)
+    File(format("{params.bin_dir}/nifi-env.sh"), content=env_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
 
     Execute ('export JAVA_HOME='+params.jdk64_home+';'+params.bin_dir+'/nifi.sh stop >> ' + params.nifi_node_log_file, user=params.nifi_user)
     if os.path.isfile(status_params.nifi_node_pid_file):
@@ -269,35 +269,35 @@ class Master(Script):
 
     #write out boostrap.conf
     bootstrap_content=InlineTemplate(params.nifi_boostrap_content)
-    File(format("{params.nifi_bootstrap_file}"), content=bootstrap_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
+    File(format("{params.nifi_bootstrap_file}"), content=bootstrap_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
 
     #write out logback.xml
     logback_content=InlineTemplate(params.nifi_node_logback_content)
-    File(format("{params.nifi_config_dir}/logback.xml"), content=logback_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/logback.xml"), content=logback_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #write out state-management.xml
     statemgmt_content=InlineTemplate(params.nifi_state_management_content)
-    File(format("{params.nifi_config_dir}/state-management.xml"), content=statemgmt_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/state-management.xml"), content=statemgmt_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #write out authorizers file
     authorizers_content=config_utils.append_xml_content(params.nifi_authorizers_content, params.nifi_authorizers_dict)
-    File(format("{params.nifi_config_dir}/authorizers.xml"), content=authorizers_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
+    File(format("{params.nifi_config_dir}/authorizers.xml"), content=authorizers_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
 
     #write out login-identity-providers.xml
     login_identity_providers_content=config_utils.append_xml_content(params.nifi_login_identity_providers_content, params.nifi_login_identity_providers_dict)
-    File(format("{params.nifi_config_dir}/login-identity-providers.xml"), content=login_identity_providers_content, owner=params.nifi_user, group=params.nifi_group, mode=0600)
+    File(format("{params.nifi_config_dir}/login-identity-providers.xml"), content=login_identity_providers_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
 
     #write out nifi-env in bin as 0755 (see BUG-61769)
     env_content=InlineTemplate(params.nifi_env_content)
-    File(format("{params.bin_dir}/nifi-env.sh"), content=env_content, owner=params.nifi_user, group=params.nifi_group, mode=0755)
+    File(format("{params.bin_dir}/nifi-env.sh"), content=env_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
 
     #write out bootstrap-notification-services.xml
     boostrap_notification_content=config_utils.append_xml_content(params.nifi_boostrap_notification_content, params.nifi_boostrap_notification_dict)
-    File(format("{params.nifi_config_dir}/bootstrap-notification-services.xml"), content=boostrap_notification_content, owner=params.nifi_user, group=params.nifi_group, mode=0400)
+    File(format("{params.nifi_config_dir}/bootstrap-notification-services.xml"), content=boostrap_notification_content, owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
     #if security is enabled for kerberos create the nifi_jaas.conf file
     if params.security_enabled and params.stack_support_nifi_jaas:
-      File(params.nifi_jaas_conf, content=InlineTemplate(params.nifi_jaas_conf_template), owner=params.nifi_user, group=params.nifi_group, mode=0400)
+      File(params.nifi_jaas_conf, content=InlineTemplate(params.nifi_jaas_conf_template), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
 
 
 if __name__ == "__main__":

@@ -390,6 +390,92 @@
           ]
         }
       },
+      "OZONE": {
+        "OZONE_CLIENT": {
+          "STACK-SELECT-PACKAGE": "ozone-client",
+          "INSTALL": [
+            "ozone-client"
+          ],
+          "PATCH": [
+            "ozone-client"
+          ],
+          "STANDARD": [
+            "ozone-client"
+          ]
+        },
+        "OZONE_MANAGER": {
+          "STACK-SELECT-PACKAGE": "ozone-manager",
+          "INSTALL": [
+            "ozone-manager"
+          ],
+          "PATCH": [
+            "ozone-manager"
+          ],
+          "STANDARD": [
+            "ozone-manager"
+          ]
+        },
+        "OZONE_DATANODE": {
+          "STACK-SELECT-PACKAGE": "ozone-datanode",
+          "INSTALL": [
+            "ozone-datanode"
+          ],
+          "PATCH": [
+            "ozone-datanode"
+          ],
+          "STANDARD": [
+            "ozone-datanode"
+          ]
+        },
+        "OZONE_RECON": {
+          "STACK-SELECT-PACKAGE": "ozone-recon",
+          "INSTALL": [
+            "ozone-recon"
+          ],
+          "PATCH": [
+            "ozone-recon"
+          ],
+          "STANDARD": [
+            "ozone-recon"
+          ]
+        },
+        "OZONE_HTTPFS_GATEWAY": {
+          "STACK-SELECT-PACKAGE": "ozone-httpfs",
+          "INSTALL": [
+            "ozone-httpfs"
+          ],
+          "PATCH": [
+            "ozone-httpfs"
+          ],
+          "STANDARD": [
+            "ozone-httpfs"
+          ]
+        },
+        "OZONE_STORAGE_CONTAINER_MANAGER": {
+          "STACK-SELECT-PACKAGE": "ozone-storage-container-manager",
+          "INSTALL": [
+            "ozone-storage-container-manager"
+          ],
+          "PATCH": [
+            "ozone-storage-container-manager"
+          ],
+          "STANDARD": [
+            "ozone-storage-container-manager"
+          ]
+        },
+        "OZONE_S3_GATEWAY": {
+          "STACK-SELECT-PACKAGE": "ozone-s3-gateway",
+          "INSTALL": [
+            "ozone-s3-gateway"
+          ],
+          "PATCH": [
+            "ozone-s3-gateway"
+          ],
+          "STANDARD": [
+            "ozone-s3-gateway"
+          ]
+        }
+      },
       "RANGER": {
         "RANGER_ADMIN": {
           "STACK-SELECT-PACKAGE": "ranger-admin",

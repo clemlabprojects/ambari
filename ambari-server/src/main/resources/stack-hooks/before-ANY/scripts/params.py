@@ -184,6 +184,7 @@ oozie_servers = default("/clusterHostInfo/oozie_server", [])
 falcon_server_hosts = default("/clusterHostInfo/falcon_server_hosts", [])
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 zeppelin_master_hosts = default("/clusterHostInfo/zeppelin_master_hosts", [])
+hue_server_hosts  = default("/clusterHostInfo/hue_server_hosts", [])
 
 # get the correct version to use for checking stack features
 version_for_stack_feature_checks = get_stack_feature_version(config)
@@ -192,6 +193,7 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 has_namenode = len(namenode_hosts) > 0
 has_hdfs_clients = len(hdfs_client_hosts) > 0
 has_hdfs = has_hdfs_clients or has_namenode
+has_hue = not len(hue_server_hosts) == 0
 has_ganglia_server = not len(ganglia_server_hosts) == 0
 has_tez = 'tez-site' in config['configurations']
 has_hbase_masters = not len(hbase_master_hosts) == 0
@@ -221,7 +223,7 @@ namenode_rpc = None
 dfs_ha_namemodes_ids_list = []
 other_namenode_id = None
 
-for ns, dfs_ha_namenode_ids in dfs_ha_namenode_ids_all_ns.iteritems():
+for ns, dfs_ha_namenode_ids in dfs_ha_namenode_ids_all_ns.items():
   found = False
   if not is_empty(dfs_ha_namenode_ids):
     dfs_ha_namemodes_ids_list = dfs_ha_namenode_ids.split(",")
@@ -271,7 +273,7 @@ user_to_groups_dict = {}
 #Append new user-group mapping to the dict
 try:
   user_group_map = ast.literal_eval(config['clusterLevelParams']['user_groups'])
-  for key in user_group_map.iterkeys():
+  for key in user_group_map.keys():
     user_to_groups_dict[key] = user_group_map[key]
 except ValueError:
   print('User Group mapping (user_group) is missing in the hostLevelParams')
@@ -288,3 +290,6 @@ override_uid = str(default("/configurations/cluster-env/override_uid", "true")).
 # if NN HA on secure clutser, access Zookeper securely
 if stack_supports_zk_security and dfs_ha_enabled and security_enabled:
     hadoop_zkfc_opts=format("-Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=zookeeper -Djava.security.auth.login.config={hadoop_conf_secure_dir}/hdfs_jaas.conf -Dzookeeper.sasl.clientconfig=Client")
+
+if has_hue:
+  hue_user = default("/configurations/hue-env/hue_user", "hue")

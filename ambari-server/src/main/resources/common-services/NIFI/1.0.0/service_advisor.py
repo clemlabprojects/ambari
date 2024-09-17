@@ -17,7 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import os
-import imp
+from importlib.machinery import SourceFileLoader
 import traceback
 from os.path import dirname
 from ambari_server.serverConfiguration import get_ambari_properties, get_ambari_version
@@ -28,10 +28,10 @@ PARENT_FILE = os.path.join(STACKS_DIR, 'service_advisor.py')
 
 try:
     with open(PARENT_FILE, 'rb') as fp:
-        service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+        service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
 except Exception as e:
     traceback.print_exc()
-    print "Failed to load parent"
+    print("Failed to load parent")
 
 class NIFI100ServiceAdvisor(service_advisor.ServiceAdvisor):
 

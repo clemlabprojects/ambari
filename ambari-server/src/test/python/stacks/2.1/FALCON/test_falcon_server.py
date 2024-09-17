@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -54,7 +54,7 @@ class TestFalconServer(RMFTestCase):
 
     self.assertResourceCalled('File', '/usr/hdp/current/falcon-server/server/webapp/falcon/WEB-INF/lib/je-5.0.73.jar',
       content=DownloadSource('http://c6401.ambari.apache.org:8080/resources/je-5.0.73.jar'),
-      mode=0755
+      mode=0o755
     )
 
     self.assertResourceCalled('Execute', '/usr/hdp/current/falcon-server/bin/falcon-start -port 15000',
@@ -100,13 +100,13 @@ class TestFalconServer(RMFTestCase):
                               owner = 'falcon',
                               create_parents = True,
                               cd_access = "a",
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/var/log/falcon',
                               owner = 'falcon',
                               create_parents = True,
                               cd_access = "a",
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('Directory', '/usr/hdp/current/falcon-server/webapp',
                               owner = 'falcon',
@@ -117,7 +117,7 @@ class TestFalconServer(RMFTestCase):
                               create_parents = True
                               )
     self.assertResourceCalled('Directory', '/etc/falcon',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True
     )
 
@@ -132,17 +132,17 @@ class TestFalconServer(RMFTestCase):
                               )
 
     self.assertResourceCalled('PropertiesFile', '/etc/falcon/conf/client.properties',
-                              mode = 0644,
+                              mode = 0o644,
                               owner = 'falcon',
                               properties = {u'falcon.url': u'http://{{falcon_host}}:{{falcon_port}}'}
                               )
     self.assertResourceCalled('PropertiesFile', '/etc/falcon/conf/runtime.properties',
-                              mode = 0644,
+                              mode = 0o644,
                               properties = self.getConfig()['configurations']['falcon-runtime.properties'],
                               owner = 'falcon'
                               )
     self.assertResourceCalled('PropertiesFile', '/etc/falcon/conf/startup.properties',
-                              mode = 0644,
+                              mode = 0o644,
                               properties = self.getConfig()['configurations']['falcon-startup.properties'],
                               owner = 'falcon'
                               )
@@ -151,7 +151,7 @@ class TestFalconServer(RMFTestCase):
                           content=InlineTemplate(self.getConfig()['configurations']['falcon-log4j']['content']),
                           owner='falcon',
                           group='hadoop',
-                          mode= 0644
+                          mode= 0o644
                           )
 
     self.assertResourceCalled('Directory', '/hadoop/falcon/store',
@@ -170,7 +170,7 @@ class TestFalconServer(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name=UnknownConfigurationMock(), default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0777,
+        mode = 0o777,
     )
     self.assertResourceCalled('HdfsResource', '/apps/data-mirroring',
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -187,7 +187,7 @@ class TestFalconServer(RMFTestCase):
         recursive_chown = True,
         recursive_chmod = True,
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name=UnknownConfigurationMock(), default_fs='hdfs://c6401.ambari.apache.org:8020',
-        mode = 0770,
+        mode = 0o770,
         source='/usr/hdp/current/falcon-server/data-mirroring'
     )
 
@@ -263,13 +263,13 @@ class TestFalconServer(RMFTestCase):
         owner = 'falcon',
         create_parents = True,
         cd_access = "a",
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/log/falcon',
         owner = 'falcon',
         create_parents = True,
         cd_access = "a",
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/usr/hdp/current/falcon-server/webapp',
         owner = 'falcon',
@@ -281,7 +281,7 @@ class TestFalconServer(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/etc/falcon',
         create_parents = True,
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/usr/hdp/current/falcon-server/conf',
         owner = 'falcon',
@@ -295,11 +295,11 @@ class TestFalconServer(RMFTestCase):
     self.assertResourceCalled('PropertiesFile', '/usr/hdp/current/falcon-server/conf/client.properties',
         owner = u'falcon',
         properties = {u'falcon.url': u'http://{{falcon_host}}:{{falcon_port}}'},
-        mode = 0644,
+        mode = 0o644,
     )
     self.assertResourceCalled('PropertiesFile', '/usr/hdp/current/falcon-server/conf/runtime.properties',
         owner = 'falcon',
-        mode = 0644,
+        mode = 0o644,
         properties = {u'*.domain': u'${falcon.app.type}',
            u'*.log.cleanup.frequency.days.retention': u'days(7)',
            u'*.log.cleanup.frequency.hours.retention': u'minutes(1)',
@@ -308,7 +308,7 @@ class TestFalconServer(RMFTestCase):
     )
     self.assertResourceCalled('PropertiesFile', '/usr/hdp/current/falcon-server/conf/startup.properties',
         owner = 'falcon',
-        mode = 0644,
+        mode = 0o644,
         properties = self.getConfig()['configurations']['falcon-startup.properties'],
     )
 
@@ -316,21 +316,21 @@ class TestFalconServer(RMFTestCase):
                           content=InlineTemplate(self.getConfig()['configurations']['falcon-log4j']['content']),
                           owner='falcon',
                           group='hadoop',
-                          mode= 0644
+                          mode= 0o644
                           )
 
     self.assertResourceCalled('Directory', '/hadoop/falcon/data/lineage/graphdb',
         owner = 'falcon',
         create_parents = True,
         group = 'hadoop',
-        mode = 0775,
+        mode = 0o775,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/hadoop/falcon/data/lineage',
         owner = 'falcon',
         create_parents = True,
         group = 'hadoop',
-        mode = 0775,
+        mode = 0o775,
         cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/hadoop/falcon/store',
@@ -352,7 +352,7 @@ class TestFalconServer(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0777,
+        mode = 0o777,
     )
     self.assertResourceCalled('HdfsResource', '/apps/data-mirroring',
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,
@@ -373,7 +373,7 @@ class TestFalconServer(RMFTestCase):
         hadoop_conf_dir = '/etc/hadoop/conf',
         type = 'directory',
         action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
-        mode = 0770,
+        mode = 0o770,
     )
     self.assertResourceCalled('HdfsResource', None,
         immutable_paths = self.DEFAULT_IMMUTABLE_PATHS,

@@ -290,7 +290,7 @@ namenode_dirs_created_stub_dir = hdfs_log_dir
 namenode_dirs_stub_filename = "namenode_dirs_created"
 
 smoke_hdfs_user_dir = format("/user/{smoke_user}")
-smoke_hdfs_user_mode = 0770
+smoke_hdfs_user_mode = 0o770
 
 hdfs_service_check_test_file = format('{tmp_dir}/hdfs-service-check')
 
@@ -371,7 +371,7 @@ namenode_rpc = None
 dfs_ha_namemodes_ids_list = []
 other_namenode_id = None
 
-for ns, dfs_ha_namenode_ids in dfs_ha_namenode_ids_all_ns.iteritems():
+for ns, dfs_ha_namenode_ids in dfs_ha_namenode_ids_all_ns.items():
   found = False
   if not is_empty(dfs_ha_namenode_ids):
     dfs_ha_namemodes_ids_list = dfs_ha_namenode_ids.split(",")

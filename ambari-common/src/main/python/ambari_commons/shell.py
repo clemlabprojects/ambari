@@ -1,4 +1,4 @@
-# !/usr/bin/python2
+# !/usr/bin/env python3
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -22,7 +22,7 @@ import logging
 import os
 import string
 import signal
-from ambari_commons import subprocess32 as subprocess
+import subprocess as subprocess
 import threading
 from contextlib import contextmanager
 import copy
@@ -104,10 +104,11 @@ class RepoCallContext(object):
   use_repos = None
   skip_repos = None
   is_upgrade = False
+  action_force = False  # currently only for install action
 
   def __init__(self, ignore_errors=True, retry_count=2, retry_sleep=30, retry_on_repo_unavailability=False,
                retry_on_locked=True, log_output=True, use_repos=None, skip_repos=None,
-               is_upgrade=False):
+               is_upgrade=False, action_force=False):
     """
     :type ignore_errors bool
     :type retry_count int
@@ -128,6 +129,7 @@ class RepoCallContext(object):
     self.use_repos = use_repos
     self.skip_repos = skip_repos
     self.is_upgrade = is_upgrade
+    self.action_force = action_force
 
   @property
   def retry_count(self):
@@ -180,7 +182,7 @@ class PopenEx(subprocess.Popen):
   Same nice Popen with stdout handles hack to allow pty instead of pipe. This will allow to control terminal geometry
   to eliminate some applications bugs with output formatting according to terminal width.
 
-  TODO: move the code directly to subprocess32.py
+  TODO: move the code directly to subprocess.py
   """
 
   def _get_handles(self, stdin, stdout, stderr):
@@ -227,7 +229,7 @@ def quote_bash_args(command):
   if not command:
     return "''"
 
-  if not isinstance(command, basestring):
+  if not isinstance(command, str):
     raise ValueError("Command should be a list of strings, found '{0}' in command list elements".format(str(command)))
 
   valid = set(string.ascii_letters + string.digits + '@%_-+=:,./')
@@ -271,8 +273,6 @@ def launch_subprocess(command, term_geometry=(42, 255), env=None):
     """
     Setting proper terminal geometry
     """
-    if term_geometry:
-      __set_winsize(sys.stdout.fileno(), *term_geometry)
     # check term geometry
     # print "terminal_width: ", __terminal_width()
 
@@ -281,15 +281,13 @@ def launch_subprocess(command, term_geometry=(42, 255), env=None):
     command = "{0} -H -E {1}".format(AMBARI_SUDO_BINARY, string_cmd_from_args_list(command))  # core.shell.as_sudo
   elif not is_under_root() and isinstance(command, str):
     _logger.debug("Warning, command  \"{0}\" doesn't support sudo appending".format(command))
-
   is_shell = not isinstance(command, (list, tuple))
   environ = copy.deepcopy(os.environ)
-
   if env:
     environ.update(env)
 
-  return PopenEx(command, stdout=PIPE_PTY, stderr=subprocess.PIPE,
-                 shell=is_shell, preexec_fn=_geometry_helper, close_fds=True, env=environ)
+  return PopenEx(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                 shell=is_shell, preexec_fn=_geometry_helper, close_fds=True, env=environ, universal_newlines=True)
 
 
 def chunks_reader(cmd, kill_timer):
@@ -438,19 +436,21 @@ def subprocess_executor(command, timeout=__TIMEOUT_SECONDS, strategy=ReaderStrat
   """
   r = SubprocessCallResult()
 
+
   def _error_handler(_command, _error_log, _exit_code):
-    r.error = os.linesep.join(_error_log)
+    r.error = os.linesep.join([errlog for errlog in _error_log])
     r.code = _exit_code
 
   with process_executor(command, timeout, _error_handler, strategy, env=env) as output:
-    lines = [line for line in output]
+    lines = [line.decode() if isinstance(line, bytes) else line for line in output]
 
   r.out = os.linesep.join(lines)
   return r
 
 
 @contextmanager
-def process_executor(command, timeout=__TIMEOUT_SECONDS, error_callback=None, strategy=ReaderStrategy.BufferedQueue, env=None):
+def process_executor(command, timeout=__TIMEOUT_SECONDS, error_callback=None, strategy=ReaderStrategy.BufferedQueue,
+                     env=None, silent=False):
   """
   Context manager for command execution
 
@@ -458,12 +458,14 @@ def process_executor(command, timeout=__TIMEOUT_SECONDS, error_callback=None, st
   :param timeout execution time limit in seconds. If None will default to TIMEOUT_SECONDS, -1 disable feature
   :param strategy the way how to process output. Available methods listed in ReaderStrategy
   :param env Environment variable for new spawned process
+  :param silent no error logging if command execution failed, do not affect `error_callback` param
 
   :type command list|str
   :type timeout None|int
   :type error_callback func
   :type strategy int
   :type env dict
+  :type silent bool
 
   :rtype stdout collections.Iterable
 
@@ -515,7 +517,8 @@ def process_executor(command, timeout=__TIMEOUT_SECONDS, error_callback=None, st
     if error_callback and cmd.returncode and cmd.returncode > 0:
       error_callback(command, cmd.stderr.readlines(), cmd.returncode)
   except Exception as e:
-    _logger.error("Exception during command '{0}' execution: {1}".format(command, str(e)))
+    if not silent:
+      _logger.error("Exception during command '{0}' execution: {1}".format(command, str(e)))
     if error_callback:
       error_callback(command, [str(e)], -1)
 
@@ -642,8 +645,8 @@ def kill_process_with_children(base_pid):
 
   exception_list = ["apt-get", "apt", "yum", "zypper", "zypp"]
   signals_to_post = {
-    "SIGTERM": signal.SIGTERM,
-    "SIGKILL": signal.SIGKILL
+    "SIGTERM": signal.SIGTERM.value,
+    "SIGKILL": signal.SIGKILL.value
   }
   full_child_pids = get_all_children(base_pid)
   all_child_pids = [item[0] for item in full_child_pids if item[1].lower() not in exception_list and item[0] != os.getpid()]
@@ -778,7 +781,7 @@ class shellRunnerWindows(shellRunner):
       cmd = " ".join(script)
     else:
       cmd = script
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, universal_newlines=True)
     out, err = p.communicate()
     code = p.wait()
     _logger.debug("Exitcode for %s is %d" % (cmd, code))
@@ -794,7 +797,7 @@ class shellRunnerWindows(shellRunner):
     elif script_block:
       cmd = ['powershell', '-WindowStyle', 'Hidden', '-Command', script_block] + list(args)
 
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, universal_newlines=True)
     out, err = p.communicate()
     code = p.wait()
     _logger.debug("Exitcode for %s is %d" % (cmd, code))
@@ -832,7 +835,7 @@ class shellRunnerLinux(shellRunner):
 
     cmd_list = ["/bin/bash", "--login", "--noprofile", "-c", cmd]
     p = subprocess.Popen(cmd_list, preexec_fn=self._change_uid, stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, shell=False, close_fds=True)
+                           stderr=subprocess.PIPE, shell=False, close_fds=True, universal_newlines=True)
     out, err = p.communicate()
     code = p.wait()
     _logger.debug("Exitcode for %s is %d" % (cmd, code))

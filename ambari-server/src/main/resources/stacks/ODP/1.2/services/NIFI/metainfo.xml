@@ -109,7 +109,7 @@
 
             <osSpecifics>
 	          <osSpecific>
-                 <osFamily>almalinux8,redhat8,redhat7,amazon2015,suse11,suse12,amazonlinux2</osFamily>
+                 <osFamily>redhat8,redhat9,redhat7,amazon2015,suse11,suse12,amazonlinux2</osFamily>
                  <packages>
                    <package>
                      <name>nifi_${stack_version}</name>

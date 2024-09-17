@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 import os
-from ambari_commons import subprocess32
+import subprocess
 import sys
 import logging
 import time
@@ -33,8 +33,10 @@ from ambari_server.dbConfiguration import ensure_dbms_is_running, ensure_jdbc_dr
 from ambari_server.serverConfiguration import configDefaults, find_jdk, get_ambari_properties, \
   get_java_exe_path, read_ambari_user, \
   get_is_active_instance, update_properties, get_ambari_server_ui_port, PID_NAME, \
-  check_database_name_property, parse_properties_file, get_missing_properties
+  check_database_name_property, parse_properties_file, get_missing_properties, \
+  get_JAVA_HOME
 
+from ambari_server.serverSetup import JDKSetup, getJDKVersion
 from ambari_server.serverConfiguration import get_web_server_startup_timeout
 from ambari_server.serverUtils import refresh_stack_hash
 from ambari_server.setupHttps import get_fqdn
@@ -42,6 +44,17 @@ from ambari_server.setupSecurity import generate_env, ensure_can_start_under_cur
 from ambari_server.utils import check_reverse_lookup, save_pid, locate_file, locate_all_file_paths, looking_for_pid, \
   save_main_pid_ex, check_exitcode, get_live_pids_count, wait_for_ui_start
 from ambari_server.serverClassPath import ServerClassPath
+
+
+from ambari_server.serverConfiguration import configDefaults, JDKRelease, get_stack_location,\
+  get_ambari_properties, get_is_secure, get_is_persisted, get_java_exe_path, get_JAVA_HOME, get_missing_properties, \
+  get_resources_location, get_value_from_properties, read_ambari_user, update_properties, validate_jdk, write_property, write_gpl_license_accepted,\
+  JAVA_HOME, JAVA_HOME_PROPERTY, JCE_NAME_PROPERTY, JDBC_RCA_URL_PROPERTY, JDBC_URL_PROPERTY, \
+  JDK_NAME_PROPERTY, JDK_RELEASES, NR_USER_PROPERTY, OS_FAMILY, OS_FAMILY_PROPERTY, OS_TYPE, OS_TYPE_PROPERTY, OS_VERSION, \
+  VIEWS_DIR_PROPERTY, JDBC_DATABASE_PROPERTY, JDK_DOWNLOAD_SUPPORTED_PROPERTY, JCE_DOWNLOAD_SUPPORTED_PROPERTY, SETUP_DONE_PROPERTIES, \
+  STACK_JAVA_HOME_PROPERTY, STACK_JDK_NAME_PROPERTY, STACK_JCE_NAME_PROPERTY, STACK_JAVA_VERSION, GPL_LICENSE_ACCEPTED_PROPERTY
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,36 +69,11 @@ if ambari_provider_module is not None:
   ambari_provider_module_option = "-Dprovider.module.class=" + \
                                   ambari_provider_module + " "
 
-jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m -XX:MaxPermSize=128m')
-
 ENV_FOREGROUND_KEY = "AMBARI_SERVER_RUN_IN_FOREGROUND"
 CHECK_DATABASE_HELPER_CMD = "{0} -cp {1} org.apache.ambari.server.checks.DatabaseConsistencyChecker"
 IS_FOREGROUND = ENV_FOREGROUND_KEY in os.environ and os.environ[ENV_FOREGROUND_KEY].lower() == "true"
 
-SERVER_START_CMD = "{0} " \
-    "-server -XX:NewRatio=3 " \
-    "-XX:+UseConcMarkSweepGC " + \
-    "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
-    "-XX:+CMSClassUnloadingEnabled " \
-    "-Dsun.zip.disableMemoryMapping=true " + \
-    "{1} {2} " \
-    "-cp {3} "\
-    "org.apache.ambari.server.controller.AmbariServer " \
-    "> {4} 2>&1 || echo $? > {5}"
-SERVER_START_CMD_DEBUG = "{0} " \
-    "-server -XX:NewRatio=2 " \
-    "-XX:+UseConcMarkSweepGC " + \
-    "{1} {2} " \
-    " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
-    "server=y,suspend={6} " \
-    "-cp {3} " + \
-    "org.apache.ambari.server.controller.AmbariServer " \
-    "> {4} 2>&1 || echo $? > {5}"
-    
-if not IS_FOREGROUND:
-  SERVER_START_CMD += " &"
-  SERVER_START_CMD_DEBUG += " &"
-
+## legacy WINDOWS options
 SERVER_START_CMD_WINDOWS = "{0} " \
     "-server -XX:NewRatio=3 " \
     "-XX:+UseConcMarkSweepGC " + \
@@ -133,8 +121,8 @@ def ensure_server_security_is_configured():
 @OsFamilyFuncImpl(OsFamilyImpl.DEFAULT)
 def ensure_server_security_is_configured():
   if not is_root():
-    print "Unable to check firewall status when starting without root privileges."
-    print "Please do not forget to disable or adjust firewall if needed"
+    print("Unable to check firewall status when starting without root privileges.")
+    print("Please do not forget to disable or adjust firewall if needed")
 
 
 def get_ulimit_open_files(properties):
@@ -163,7 +151,76 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
 
   properties = get_ambari_properties()
 
+  # need to parse JDK Version to support multiple runtimes
+  JDK_VERSION = getJDKVersion(get_JAVA_HOME(), JDKSetup().JAVA_BIN)
+  JDK_VERSION_NOT_SUPPORTED = "JDK VERSION {0} is not supported"
+
+  if JDK_VERSION == 8:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m -XX:MaxPermSize=128m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-XX:+UseConcMarkSweepGC " + \
+        "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
+        "-XX:+CMSClassUnloadingEnabled " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "-XX:+UseConcMarkSweepGC " + \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  elif JDK_VERSION == 11:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-XX:-UseGCOverheadLimit -XX:CMSInitiatingOccupancyFraction=60 " \
+        "-XX:+CMSClassUnloadingEnabled " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  elif JDK_VERSION == 17:
+    jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
+    SERVER_START_CMD = "{0} " \
+        "-server -XX:NewRatio=3 " \
+        "-Dsun.zip.disableMemoryMapping=true " + \
+        "{1} {2} " \
+        "-cp {3} "\
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+    SERVER_START_CMD_DEBUG = "{0} " \
+        "-server -XX:NewRatio=2 " \
+        "{1} {2} " \
+        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+        "server=y,suspend={6} " \
+        "-cp {3} " + \
+        "org.apache.ambari.server.controller.AmbariServer " \
+        "> {4} 2>&1 || echo $? > {5}"
+  else:
+    exception = FatalException(-1, JDK_VERSION_NOT_SUPPORTED.format(JDK_VERSION))
+    raise exception
+
   command_base = SERVER_START_CMD_DEBUG if debug_start else SERVER_START_CMD
+
+  if not IS_FOREGROUND:
+    SERVER_START_CMD += " &"
+    SERVER_START_CMD_DEBUG += " &"
 
   ulimit_cmd = "%s %s" % (ULIMIT_CMD, str(get_ulimit_open_files(properties)))
   command = command_base.format(java_exe,
@@ -181,8 +238,8 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
   param_list = [locate_file('sh', '/bin'), "-c"]
   if is_root() and ambari_user != "root":
     # To inherit exported environment variables (especially AMBARI_PASSPHRASE),
-    # from subprocess32, we have to skip --login option of su command. That's why
-    # we change dir to / (otherwise subprocess32 can face with 'permission denied'
+    # from subprocess, we have to skip --login option of su command. That's why
+    # we change dir to / (otherwise subprocess can face with 'permission denied'
     # errors while trying to list current directory
     cmd = "{ulimit_cmd} ; {su} {ambari_user} -s {sh_shell} -c '. {ambari_env_file} && {command}'".format(ulimit_cmd=ulimit_cmd,
                                                                                 su=locate_file('su', '/bin'), ambari_user=ambari_user,
@@ -248,18 +305,18 @@ def wait_for_server_start(pidFile, scmStatus):
 
   if os.path.isfile(configDefaults.SERVER_OUT_FILE):
     if 'DB_CHECK_ERROR' in open(configDefaults.SERVER_OUT_FILE).read():
-      print "\nDB configs consistency check failed. Run \"ambari-server start --skip-database-check\" to skip. " \
+      print("\nDB configs consistency check failed. Run \"ambari-server start --skip-database-check\" to skip. " \
         "You may try --auto-fix-database flag to attempt to fix issues automatically. " \
         "If you use this \"--skip-database-check\" option, do not make any changes to your cluster topology " \
         "or perform a cluster upgrade until you correct the database consistency issues. See " + \
-        configDefaults.DB_CHECK_LOG + " for more details on the consistency issues."
+        configDefaults.DB_CHECK_LOG + " for more details on the consistency issues.")
     elif 'DB_CHECK_WARNING' in open(configDefaults.SERVER_OUT_FILE).read():
-      print "\nDB configs consistency check found warnings. See " + configDefaults.DB_CHECK_LOG + " for more details."
+      print("\nDB configs consistency check found warnings. See " + configDefaults.DB_CHECK_LOG + " for more details.")
     # Only presume that DB check was successful if it explicitly appears in the log. An unexpected error may prevent
     # the consistency check from running at all, so missing error/warning message in the log cannot imply the check was
     # successful
     elif 'DB_CHECK_SUCCESS' in open(configDefaults.SERVER_OUT_FILE).read():
-      print "\nDB configs consistency check: no errors and warnings were found."
+      print("\nDB configs consistency check: no errors and warnings were found.")
   else:
     sys.stdout.write(configDefaults.SERVER_OUT_FILE + " does not exist")
 
@@ -322,7 +379,7 @@ def server_process_main(options, scmStatus=None):
 
   # Preparations
   if is_root():
-    print configDefaults.MESSAGE_SERVER_RUNNING_AS_ROOT
+    print(configDefaults.MESSAGE_SERVER_RUNNING_AS_ROOT)
 
   ensure_jdbc_driver_is_installed(options, properties)
 
@@ -356,12 +413,12 @@ def server_process_main(options, scmStatus=None):
   if options.skip_database_check:
     global jvm_args
     jvm_args += " -DskipDatabaseConsistencyCheck"
-    print "Ambari Server is starting with the database consistency check skipped. Do not make any changes to your cluster " \
+    print("Ambari Server is starting with the database consistency check skipped. Do not make any changes to your cluster " \
           "topology or perform a cluster upgrade until you correct the database consistency issues. See \"" \
-          + configDefaults.DB_CHECK_LOG + "\" for more details on the consistency issues."
+          + configDefaults.DB_CHECK_LOG + "\" for more details on the consistency issues.")
     properties.process_pair(CHECK_DATABASE_SKIPPED_PROPERTY, "true")
   else:
-    print "Ambari database consistency check started..."
+    print("Ambari database consistency check started...")
     if options.fix_database_consistency:
       jvm_args += " -DfixDatabaseConsistency"
     properties.process_pair(CHECK_DATABASE_SKIPPED_PROPERTY, "false")
@@ -379,12 +436,12 @@ def server_process_main(options, scmStatus=None):
     if processId > 0:
       try:
         os.setpgid(processId, processId)
-      except OSError, e:
+      except OSError as e:
         print_warning_msg('setpgid({0}, {0}) failed - {1}'.format(pidJava, str(e)))
         pass
 
   print_info_msg("Running server: " + str(param_list))
-  procJava = subprocess32.Popen(param_list, env=environ, preexec_fn=make_process_independent)
+  procJava = subprocess.Popen(param_list, env=environ, preexec_fn=make_process_independent)
 
   pidJava = procJava.pid
   if pidJava <= 0:
@@ -400,9 +457,9 @@ def server_process_main(options, scmStatus=None):
   else:
     pidfile = os.path.join(configDefaults.PID_DIR, PID_NAME)
 
-    print "Server PID at: "+pidfile
-    print "Server out at: "+configDefaults.SERVER_OUT_FILE
-    print "Server log at: "+configDefaults.SERVER_LOG_FILE
+    print("Server PID at: "+pidfile)
+    print("Server out at: "+configDefaults.SERVER_OUT_FILE)
+    print("Server log at: "+configDefaults.SERVER_LOG_FILE)
 
     wait_for_server_start(pidfile, scmStatus)
 

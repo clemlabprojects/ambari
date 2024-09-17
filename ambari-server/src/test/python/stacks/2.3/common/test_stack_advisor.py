@@ -26,7 +26,7 @@ import unittest
 class TestHDP23StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.maxDiff = None
     if 'util' in dir(unittest): unittest.util._MAX_LENGTH=2000
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +73,7 @@ class TestHDP23StackAdvisor(TestCase):
       hosts["items"].append(nextHost)
     return hosts
 
-  @patch('__builtin__.open')
+  @patch('builtins.open')
   @patch('os.path.exists')
   def get_system_min_uid_magic(self, exists_mock, open_mock):
     class MagicFile(object):

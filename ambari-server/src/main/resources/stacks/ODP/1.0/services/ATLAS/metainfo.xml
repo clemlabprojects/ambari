@@ -22,7 +22,7 @@
       <name>ATLAS</name>
       <displayName>Atlas</displayName>
       <comment>Atlas Metadata and Governance platform</comment>
-      <version>1.0</version>
+      <version>2.3.0</version>
 
       <components>
         <component>
@@ -148,7 +148,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>almalinux8,redhat8,redhat7</osFamily>
+          <osFamily>redhat8,redhat9,redhat7</osFamily>
           <packages>
             <package>
               <name>atlas_${stack_version}-metadata</name>

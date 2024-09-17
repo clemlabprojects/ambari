@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -29,7 +29,7 @@ def setup_ranger_nifi(upgrade_type=None):
         File(format('{stack_root}/{stack_version}/{service_name}/ext/ranger/scripts/ranger_credential_helper.py'),
              owner=params.nifi_user,
              group=params.nifi_group,
-             mode=0750
+             mode=0o750
              )
 
         cred_lib_prefix_path = format('{stack_root}/{stack_version}/{service_name}/ext/ranger/install/lib/*')
@@ -47,7 +47,7 @@ def setup_ranger_nifi(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.hdfs_user,
                                 group=params.hdfs_user,
-                                mode=0755,
+                                mode=0o755,
                                 recursive_chmod=True
                                 )
             params.HdfsResource("/ranger/audit/nifi",
@@ -55,7 +55,7 @@ def setup_ranger_nifi(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.nifi_user,
                                 group=params.nifi_group,
-                                mode=0750,
+                                mode=0o750,
                                 recursive_chmod=True
                                 )
             params.HdfsResource(None, action="execute")
@@ -85,9 +85,9 @@ def setup_ranger_nifi(upgrade_type=None):
                             component_user_keytab=params.ranger_nifi_keytab if params.security_enabled else None, cred_lib_path_override = cred_lib_prefix_path, cred_setup_prefix_override = cred_setup_prefix_path)
                             
         #change permissions of ranger xml that were written to 0400
-        File(os.path.join(params.nifi_config_dir, 'ranger-nifi-audit.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0400)
-        File(os.path.join(params.nifi_config_dir, 'ranger-nifi-security.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0400)
-        File(os.path.join(params.nifi_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0400)        
+        File(os.path.join(params.nifi_config_dir, 'ranger-nifi-audit.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
+        File(os.path.join(params.nifi_config_dir, 'ranger-nifi-security.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
+        File(os.path.join(params.nifi_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)        
 
     else:
         Logger.info('Ranger admin not installed')

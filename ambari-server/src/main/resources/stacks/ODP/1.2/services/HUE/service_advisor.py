@@ -193,6 +193,7 @@ class HueRecommender(service_advisor.ServiceAdvisor):
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     if hueEnvProperties and self.checkSiteProperties(hueEnvProperties, 'hue_user') and 'KERBEROS' in servicesList:
+      # HDFS core-site
       putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
       putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
       hueUser = hueEnvProperties['hue_user']
@@ -203,6 +204,18 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUserOld)})
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUser)})
 
+      # OZONE core-site
+      putCoreSiteProperty = self.putProperty(configurations, "ozone-core-site", services)
+      putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-core-site")
+      hueUser = hueEnvProperties['hue_user']
+      hueUserOld = self.getOldValue(services, 'hue-env', 'hue_user')
+      self.put_proxyuser_value(hueUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+      if hueUserOld is not None and hueUser != hueUserOld:
+        putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hueUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "ozone-core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUserOld)})
+        services["forced-configurations"].append({"type" : "ozone-core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUser)})
+
+      # HDFS 
       putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
       putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "httpfs-site")
       hueUser = hueEnvProperties['hue_user']
@@ -213,34 +226,46 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUserOld)})
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
 
-def getDBConnectionHostPort(self, db_type, db_host):
-    connection_string = ""
-    if db_type is None or db_type == "":
-      return connection_string
-    else:
-      colon_count = db_host.count(':')
-      DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
-      if colon_count == 0:
-        if db_type in DB_TYPE_DEFAULT_PORT_MAP:
-          connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
-        else:
-          connection_string = db_host
-      elif colon_count == 1:
-        connection_string = db_host
-      elif colon_count == 2:
-        connection_string = db_host
+      # Ozone 
+      putHTTPFSSiteProperty = self.putProperty(configurations, "ozone-httpfs-site", services)
+      putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-httpfs-site")
+      hueUser = hueEnvProperties['hue_user']
+      hueUserOld = self.getOldValue(services, 'hue-env', 'hue_user')
+      self.put_proxyuser_value(hueUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
+      if hueUserOld is not None and hueUser != hueUserOld:
+        putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(hueUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "ozone-httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUserOld)})
+        services["forced-configurations"].append({"type" : "ozone-httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
 
-    return connection_string
+
+  def getDBConnectionHostPort(self, db_type, db_host):
+      connection_string = ""
+      if db_type is None or db_type == "":
+        return connection_string
+      else:
+        colon_count = db_host.count(':')
+        DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
+        if colon_count == 0:
+          if db_type in DB_TYPE_DEFAULT_PORT_MAP:
+            connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
+          else:
+            connection_string = db_host
+        elif colon_count == 1:
+          connection_string = db_host
+        elif colon_count == 2:
+          connection_string = db_host
+
+      return connection_string
 
   def getOracleDBConnectionHostPort(self, db_type, db_host, hueDbName):
-    connection_string = self.getDBConnectionHostPort(db_type, db_host)
-    colon_count = db_host.count(':')
-    if colon_count == 1 and '/' in db_host:
-      connection_string = "//" + connection_string
-    elif colon_count == 0 or colon_count == 1:
-      connection_string = "//" + connection_string + "/" + hueDbName if hueDbName else "//" + connection_string
+      connection_string = self.getDBConnectionHostPort(db_type, db_host)
+      colon_count = db_host.count(':')
+      if colon_count == 1 and '/' in db_host:
+        connection_string = "//" + connection_string
+      elif colon_count == 0 or colon_count == 1:
+        connection_string = "//" + connection_string + "/" + hueDbName if hueDbName else "//" + connection_string
 
-    return connection_string
+      return connection_string
   
 class HueValidator(service_advisor.ServiceAdvisor):
   """

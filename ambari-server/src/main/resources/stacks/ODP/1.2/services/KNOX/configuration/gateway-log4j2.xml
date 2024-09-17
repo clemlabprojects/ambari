@@ -1,0 +1,103 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_final="false" supports_adding_forbidden="false">
+  <property>
+    <name>content</name>
+    <display-name>gateway-log4j2 template</display-name>
+    <value>
+&lt;Configuration&gt;
+    &lt;Properties&gt;
+        &lt;Property name="app.log.dir"&gt;${sys:launcher.dir}/../logs&lt;/Property&gt;
+        &lt;Property name="app.log.file"&gt;${sys:launcher.name}.log&lt;/Property&gt;
+        &lt;Property name="app.audit.file"&gt;${sys:launcher.name}-audit.log&lt;/Property&gt;
+    &lt;/Properties&gt;
+
+    &lt;Appenders&gt;
+        &lt;RollingFile name="auditfile" fileName="${app.log.dir}/${app.audit.file}" filePattern="${app.log.dir}/${app.audit.file}.%d{yyyy-MM-dd}"&gt;
+            &lt;AuditLayout /&gt;
+            &lt;TimeBasedTriggeringPolicy /&gt;
+        &lt;/RollingFile&gt;
+        &lt;Console name="stdout" target="SYSTEM_OUT"&gt;
+            &lt;PatternLayout pattern="%d{yy/MM/dd HH:mm:ss} %p %c{2}: %m%n" /&gt;
+        &lt;/Console&gt;
+        &lt;RollingFile name="drfa" fileName="${app.log.dir}/${app.log.file}" filePattern="${app.log.dir}/${app.log.file}.%d{yyyy-MM-dd}"&gt;
+            &lt;!-- Same as ISO8601 format but without the 'T' (log4j1 compatible) --&gt;
+            &lt;PatternLayout pattern="%d{yyyy-MM-dd' 'HH:mm:ss,SSS} %X{trace_id} %-5p %c{2} (%F:%M(%L)) - %m%n" /&gt;
+            &lt;TimeBasedTriggeringPolicy /&gt;
+        &lt;/RollingFile&gt;
+&lt;!--        &lt;RollingFile name="httpclient" fileName="${app.log.dir}/${launcher.name}-http-client.log" filePattern="${app.log.dir}/${launcher.name}-http-client.log.%d{yyyy-MM-dd}"&gt;--&gt;
+&lt;!--            &lt;PatternLayout pattern="%d{ISO8601}|%t|%m%n" /&gt;--&gt;
+&lt;!--            &lt;TimeBasedTriggeringPolicy /&gt;--&gt;
+&lt;!--        &lt;/RollingFile&gt;--&gt;
+&lt;!--        &lt;RollingFile name="httpaccess" fileName="${app.log.dir}/${launcher.name}-http-access.log" filePattern="${app.log.dir}/${launcher.name}-http-access.log.%d{yyyy-MM-dd}"&gt;--&gt;
+&lt;!--            &lt;PatternLayout pattern="%d{ISO8601}|%t|%m%n" /&gt;--&gt;
+&lt;!--            &lt;TimeBasedTriggeringPolicy /&gt;--&gt;
+&lt;!--        &lt;/RollingFile&gt;--&gt;
+&lt;!--        &lt;RollingFile name="httpserver" fileName="${app.log.dir}/${launcher.name}-http-server.log" filePattern="${app.log.dir}/${launcher.name}-http-server.log.%d{yyyy-MM-dd}"&gt;--&gt;
+&lt;!--            &lt;PatternLayout pattern="%d{ISO8601}|%t|%m%n" /&gt;--&gt;
+&lt;!--            &lt;TimeBasedTriggeringPolicy /&gt;--&gt;
+&lt;!--        &lt;/RollingFile&gt;--&gt;
+    &lt;/Appenders&gt;
+    &lt;Loggers&gt;
+        &lt;Logger name="audit" level="INFO"&gt;
+            &lt;AppenderRef ref="auditfile" /&gt;
+        &lt;/Logger&gt;
+        &lt;Logger name="org.apache.knox.gateway" level="INFO" /&gt;
+        &lt;Root level="ERROR"&gt;
+            &lt;AppenderRef ref="drfa" /&gt;
+        &lt;/Root&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.websockets" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.springframework" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.http.request.body" level="OFF" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.http" level="TRACE"&gt;--&gt;
+&lt;!--            &lt;AppenderRef ref="httpserver" /&gt;--&gt;
+&lt;!--        &lt;/Logger&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.shiro" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.http.response.body" level="OFF" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.http.client" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.http.request.headers" level="OFF" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.http.wire" level="DEBUG"&gt;--&gt;
+&lt;!--            &lt;AppenderRef ref="httpclient" /&gt;--&gt;
+&lt;!--        &lt;/Logger&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.http.response.headers" level="OFF" /&gt;--&gt;
+&lt;!--        &lt;Logger name="net.sf.ehcache" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.http" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.http.headers" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.shiro.util.ThreadContext" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.eclipse.jetty" level="DEBUG" /&gt;--&gt;
+&lt;!--        &lt;Logger name="org.apache.knox.gateway.access" level="TRACE"&gt;--&gt;
+&lt;!--            &lt;AppenderRef ref="httpaccess" /&gt;--&gt;
+&lt;!--        &lt;/Logger&gt;--&gt;
+    &lt;/Loggers&gt;
+&lt;/Configuration&gt;
+    </value>
+    <description>
+      content for gateway-log4j2.xml file for Knox.
+    </description>
+    <value-attributes>
+      <type>content</type>
+      <show-property-name>false</show-property-name>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+</configuration>

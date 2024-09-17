@@ -24,7 +24,7 @@ import socket
 class TestHDP22StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.maxDiff = None
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,7 +54,7 @@ class TestHDP22StackAdvisor(TestCase):
     self.get_system_min_uid_real = self.stackAdvisor.get_system_min_uid
     self.stackAdvisor.get_system_min_uid = self.get_system_min_uid_magic
 
-  @patch('__builtin__.open')
+  @patch('builtins.open')
   @patch('os.path.exists')
   def get_system_min_uid_magic(self, exists_mock, open_mock):
     class MagicFile(object):

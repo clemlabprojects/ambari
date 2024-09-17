@@ -23,7 +23,7 @@ from unittest import TestCase
 class TestAmbariConfiguration(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.test_directory = os.path.dirname(os.path.abspath(__file__))
 
     relative_path = '../../../main/resources/stacks/ambari_configuration.py'

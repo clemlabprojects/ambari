@@ -128,7 +128,7 @@ def set_uid(user, user_dirs):
 
   File(format("{tmp_dir}/changeUid.sh"),
        content=StaticFile("changeToSecureUid.sh"),
-       mode=0555)
+       mode=0o555)
   ignore_groupsusers_create_str = str(params.ignore_groupsusers_create).lower()
   Execute(format("{tmp_dir}/changeUid.sh {user} {user_dirs}"),
           not_if = format("(test $(id -u {user}) -gt 1000) || ({ignore_groupsusers_create_str})"))

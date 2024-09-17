@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -31,7 +31,7 @@ def setup_ranger_nifi_registry(upgrade_type=None):
         File(ranger_cred_file,
              owner=params.nifi_registry_user,
              group=params.nifi_registry_group,
-             mode=0750
+             mode=0o750
              )
 
         cred_lib_prefix_path = format('{stack_root}/{stack_version}/{service_name}/ext/ranger/lib/*:{stack_root}/{stack_version}/{service_name}/lib/slf4j-api-1.7.12.jar')
@@ -49,7 +49,7 @@ def setup_ranger_nifi_registry(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.hdfs_user,
                                 group=params.hdfs_user,
-                                mode=0755,
+                                mode=0o755,
                                 recursive_chmod=True
                                 )
             params.HdfsResource("/ranger/audit/nifi-registry",
@@ -57,7 +57,7 @@ def setup_ranger_nifi_registry(upgrade_type=None):
                                 action="create_on_execute",
                                 owner=params.nifi_registry_user,
                                 group=params.nifi_registry_group,
-                                mode=0750,
+                                mode=0o750,
                                 recursive_chmod=True
                                 )
             params.HdfsResource(None, action="execute")
@@ -94,9 +94,9 @@ def setup_ranger_nifi_registry(upgrade_type=None):
                             cred_lib_path_override=cred_lib_prefix_path,
                             cred_setup_prefix_override=cred_setup_prefix_path)
                             
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-audit.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-security.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
-        File(os.path.join(params.nifi_registry_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-audit.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-security.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
+        File(os.path.join(params.nifi_registry_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
 
     else:
         Logger.info('Skipping Ranger integration for NiFi Registry setup.')

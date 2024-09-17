@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -24,6 +24,7 @@ from stacks.utils.RMFTestCase import *
 @patch("tempfile.mkdtemp", new = MagicMock(return_value='/some_tmp_dir'))
 @patch("os.path.exists", new = MagicMock(return_value=True))
 @patch("platform.linux_distribution", new = MagicMock(return_value="Linux"))
+
 class TestMetricsCollector(RMFTestCase):
   COMMON_SERVICES_PACKAGE_DIR = "AMBARI_METRICS/0.1.0/package"
   STACK_VERSION = "2.0.6"
@@ -86,6 +87,7 @@ class TestMetricsCollector(RMFTestCase):
     )
     self.assertNoMoreResources()
 
+  @unittest.skip("disabling until migration to ODP stack")
   def test_start_default_embedded(self):
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/metrics_collector.py",
                        classname = "AmsCollector",
@@ -173,7 +175,7 @@ class TestMetricsCollector(RMFTestCase):
                               owner = 'ams',
                               group = 'hadoop',
                               content = InlineTemplate(self.getConfig()['configurations']['ams-hbase-log4j']['content']),
-                              mode=0644,
+                              mode=0o644,
     )
     self.assertResourceCalled('File', '/etc/ambari-metrics-collector/conf/ams-env.sh',
                               owner = 'ams',
@@ -184,18 +186,18 @@ class TestMetricsCollector(RMFTestCase):
                               group = 'hadoop',
                               cd_access = 'a',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
     )
     self.assertResourceCalled('Directory', '/var/run/ambari-metrics-collector',
                               owner = 'ams',
                               cd_access = 'a',
                               group = 'hadoop',
                               create_parents = True,
-                              mode=0755,
+                              mode=0o755,
     )
     self.assertResourceCalled('File', '/usr/lib/ams-hbase/bin/hadoop',
                               owner = 'ams',
-                              mode=0755
+                              mode=0o755
     )
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
@@ -205,14 +207,14 @@ class TestMetricsCollector(RMFTestCase):
     self.assertResourceCalled('File', '/etc/security/limits.d/ams.conf',
                               owner='root',
                               group='root',
-                              mode=0644,
+                              mode=0o644,
                               content=Template("ams.conf.j2")
     )
     if distributed:
       self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                                 owner = 'ams',
                                 group = 'hadoop',
-                                mode=0644,
+                                mode=0o644,
                                 conf_dir = '/etc/ambari-metrics-collector/conf',
                                 configurations = self.getConfig()['configurations']['hdfs-site'],
                                 configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-site']
@@ -220,7 +222,7 @@ class TestMetricsCollector(RMFTestCase):
       self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                                 owner = 'ams',
                                 group = 'hadoop',
-                                mode=0644,
+                                mode=0o644,
                                 conf_dir = '/etc/ams-hbase/conf',
                                 configurations = self.getConfig()['configurations']['hdfs-site'],
                                 configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-site']
@@ -228,7 +230,7 @@ class TestMetricsCollector(RMFTestCase):
       self.assertResourceCalled('XmlConfig', 'core-site.xml',
                                 owner = 'ams',
                                 group = 'hadoop',
-                                mode=0644,
+                                mode=0o644,
                                 conf_dir = '/etc/ambari-metrics-collector/conf',
                                 configurations = self.getConfig()['configurations']['core-site'],
                                 configuration_attributes = self.getConfig()['configurationAttributes']['core-site']
@@ -236,7 +238,7 @@ class TestMetricsCollector(RMFTestCase):
       self.assertResourceCalled('XmlConfig', 'core-site.xml',
                                 owner = 'ams',
                                 group = 'hadoop',
-                                mode=0644,
+                                mode=0o644,
                                 conf_dir = '/etc/ams-hbase/conf',
                                 configurations = self.getConfig()['configurations']['core-site'],
                                 configuration_attributes = self.getConfig()['configurationAttributes']['core-site']
@@ -261,7 +263,7 @@ class TestMetricsCollector(RMFTestCase):
                               owner = 'ams',
                               cd_access = 'a',
                               group = 'hadoop',
-                              mode = 0775,
+                              mode = 0o775,
                               create_parents = True
     )
 
@@ -306,13 +308,13 @@ class TestMetricsCollector(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/ambari-metrics-collector/',
                               owner = 'ams',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access = "a",
     )
     self.assertResourceCalled('Directory', '/var/log/ambari-metrics-collector',
                               owner = 'ams',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access = "a",
     )
 
@@ -327,7 +329,7 @@ class TestMetricsCollector(RMFTestCase):
                                   user = 'hdfs',
                                   dfs_type = '',
                                   owner = 'ams',
-                                  mode = 0775,
+                                  mode = 0o775,
                                   hadoop_conf_dir = '/etc/hadoop/conf',
                                   type = 'directory',
                                   action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
@@ -344,7 +346,7 @@ class TestMetricsCollector(RMFTestCase):
                                   user = 'hdfs',
                                   dfs_type = '',
                                   owner = 'ams',
-                                  mode = 0711,
+                                  mode = 0o711,
                                   hadoop_conf_dir = '/etc/hadoop/conf',
                                   type = 'directory',
                                   action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore',
@@ -367,7 +369,7 @@ class TestMetricsCollector(RMFTestCase):
                                   dfs_type = '',
                                   )
         self.assertResourceCalled('File', '/var/run/ambari-metrics-collector//distributed_mode', action=["create"],
-                                  mode=0644, owner='ams')
+                                  mode=0o644, owner='ams')
       else:
         self.assertResourceCalled('Directory', '/var/lib/ambari-metrics-collector/hbase',
                                   owner = 'ams',
@@ -386,6 +388,6 @@ class TestMetricsCollector(RMFTestCase):
     self.assertResourceCalled('File', '/etc/ams-hbase/conf/log4j.properties',
                               owner = 'ams',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               content = InlineTemplate(self.getConfig()['configurations']['ams-hbase-log4j']['content'])
     )

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -22,8 +22,7 @@ import sys
 import fileinput
 import os
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
-import urllib2, base64, httplib
-from StringIO import StringIO as BytesIO
+import urllib.request , urllib.error, base64
 from datetime import datetime
 from resource_management.core.resources.system import File, Directory, Execute
 from resource_management.libraries.resources.xml_config import XmlConfig
@@ -127,7 +126,7 @@ def do_keystore_setup(cred_provider_path, credential_alias, credential_password)
       owner = params.kms_user,
       group = params.kms_group,
       only_if = format("test -e {cred_provider_path}"),
-      mode = 0640
+      mode = 0o640
     )
 
     dot_jceks_crc_file_path = os.path.join(os.path.dirname(cred_provider_path), "." + os.path.basename(cred_provider_path) + ".crc")
@@ -136,7 +135,7 @@ def do_keystore_setup(cred_provider_path, credential_alias, credential_password)
       owner = params.kms_user,
       group = params.kms_group,
       only_if = format("test -e {dot_jceks_crc_file_path}"),
-      mode = 0640
+      mode = 0o640
     )
 
 def kms(upgrade_type=None):
@@ -164,7 +163,7 @@ def kms(upgrade_type=None):
 
     File(format("/usr/lib/ambari-agent/{check_db_connection_jar_name}"),
       content = DownloadSource(format("{jdk_location}/{check_db_connection_jar_name}")),
-      mode = 0644,
+      mode = 0o644,
     )
 
     cp = format("{check_db_connection_jar}")
@@ -198,17 +197,17 @@ def kms(upgrade_type=None):
 
       File(params.downloaded_connector_path,
         content = DownloadSource(params.driver_source),
-        mode = 0644
+        mode = 0o644
       )
 
       Execute(('cp', '--remove-destination', params.downloaded_connector_path, params.driver_target),
           path=["/bin", "/usr/bin/"],
           sudo=True)
 
-      File(params.driver_target, mode=0644)
+      File(params.driver_target, mode=0o644)
 
     Directory(os.path.join(params.kms_home, 'ews', 'webapp', 'WEB-INF', 'classes', 'lib'),
-        mode=0755,
+        mode=0o755,
         owner=params.kms_user,
         group=params.kms_group
       )
@@ -219,7 +218,7 @@ def kms(upgrade_type=None):
     sudo=True)
 
     File('/etc/init.d/ranger-kms',
-      mode = 0755
+      mode = 0o755
     )
 
     Directory(format('{kms_home}/'),
@@ -229,7 +228,7 @@ def kms(upgrade_type=None):
     )
 
     Directory(params.ranger_kms_pid_dir,
-      mode = 0755,
+      mode = 0o755,
       owner = params.kms_user,
       group = params.user_group,
       cd_access = "a",
@@ -241,7 +240,7 @@ def kms(upgrade_type=None):
       group = params.kms_group,
       cd_access = 'a',
       create_parents = True,
-      mode = 0755
+      mode = 0o755
     )
 
     generate_logfeeder_input_config('ranger-kms', Template("input.config-ranger-kms.json.j2", extra_imports=[default]))
@@ -250,7 +249,7 @@ def kms(upgrade_type=None):
       content = InlineTemplate(params.kms_env_content),
       owner = params.kms_user,
       group = params.kms_group,
-      mode = 0755
+      mode = 0o755
     )
 
     Execute(('ln','-sf', format('{kms_home}/ranger-kms'),'/usr/bin/ranger-kms'),
@@ -258,26 +257,26 @@ def kms(upgrade_type=None):
       only_if=format('ls {kms_home}/ranger-kms'),
       sudo=True)
 
-    File('/usr/bin/ranger-kms', mode = 0755)
+    File('/usr/bin/ranger-kms', mode = 0o755)
 
     Execute(('ln','-sf', format('{kms_home}/ranger-kms'),'/usr/bin/ranger-kms-services.sh'),
       not_if=format('ls /usr/bin/ranger-kms-services.sh'),
       only_if=format('ls {kms_home}/ranger-kms'),
       sudo=True)
 
-    File('/usr/bin/ranger-kms-services.sh', mode = 0755)
+    File('/usr/bin/ranger-kms-services.sh', mode = 0o755)
 
     Execute(('ln','-sf', format('{kms_home}/ranger-kms-initd'),format('{kms_home}/ranger-kms-services.sh')),
       not_if=format('ls {kms_home}/ranger-kms-services.sh'),
       only_if=format('ls {kms_home}/ranger-kms-initd'),
       sudo=True)
 
-    File(format('{kms_home}/ranger-kms-services.sh'), mode = 0755)
+    File(format('{kms_home}/ranger-kms-services.sh'), mode = 0o755)
 
     do_keystore_setup(params.credential_provider_path, params.jdbc_alias, params.db_password)
     do_keystore_setup(params.credential_provider_path, params.masterkey_alias, params.kms_master_key_password)
     if params.stack_support_kms_hsm and params.enable_kms_hsm:
-      do_keystore_setup(params.credential_provider_path, params.hms_partition_alias, unicode(params.hms_partition_passwd))
+      do_keystore_setup(params.credential_provider_path, params.hms_partition_alias, params.hms_partition_passwd)
     if params.stack_supports_ranger_kms_ssl and params.ranger_kms_ssl_enabled:
       do_keystore_setup(params.ranger_kms_cred_ssl_path, params.ranger_kms_ssl_keystore_alias, params.ranger_kms_ssl_passwd)
 
@@ -295,7 +294,7 @@ def kms(upgrade_type=None):
       configuration_attributes=params.config['configurationAttributes']['dbks-site'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0644
+      mode=0o644
     )
 
     ranger_kms_site_copy = {}
@@ -312,7 +311,7 @@ def kms(upgrade_type=None):
       configuration_attributes=params.config['configurationAttributes']['ranger-kms-site'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0644
+      mode=0o644
     )
 
     XmlConfig("kms-site.xml",
@@ -321,14 +320,14 @@ def kms(upgrade_type=None):
       configuration_attributes=params.config['configurationAttributes']['kms-site'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0644
+      mode=0o644
     )
 
     File(os.path.join(params.kms_conf_dir, "kms-log4j.properties"),
       owner=params.kms_user,
       group=params.kms_group,
       content=InlineTemplate(params.kms_log4j),
-      mode=0644
+      mode=0o644
     )
 
     # core-site.xml linking required by setup for HDFS encryption
@@ -338,7 +337,7 @@ def kms(upgrade_type=None):
       configuration_attributes=params.config['configurationAttributes']['core-site'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0644,
+      mode=0o644,
       xml_include_file=params.mount_table_xml_inclusion_file_full_path
     )
 
@@ -347,7 +346,7 @@ def kms(upgrade_type=None):
         owner=params.kms_user,
         group=params.kms_group,
         content=params.mount_table_content,
-        mode=0644
+        mode=0o644
       )
 
 def copy_jdbc_connector(kms_home):
@@ -366,11 +365,11 @@ def copy_jdbc_connector(kms_home):
 
   File(params.downloaded_custom_connector,
     content = DownloadSource(params.driver_curl_source),
-    mode = 0644
+    mode = 0o644
   )
 
   Directory(os.path.join(kms_home, 'ews', 'lib'),
-    mode=0755
+    mode=0o755
   )
 
   if params.db_flavor.lower() == 'sqla':
@@ -387,14 +386,14 @@ def copy_jdbc_connector(kms_home):
     Execute(as_sudo(['yes', '|', 'cp', params.libs_path_in_archive, params.jdbc_libs_dir], auto_escape=False),
       path=["/bin", "/usr/bin/"])
 
-    File(os.path.join(kms_home, 'ews', 'webapp', 'WEB-INF', 'lib', 'sajdbc4.jar'), mode=0644)
+    File(os.path.join(kms_home, 'ews', 'webapp', 'WEB-INF', 'lib', 'sajdbc4.jar'), mode=0o644)
   else:
     Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(kms_home, 'ews', 'lib')),
       path=["/bin", "/usr/bin/"],
       sudo=True)
 
-    File(os.path.join(kms_home, 'ews', 'lib', params.jdbc_jar_name), mode=0644)
-
+    File(os.path.join(kms_home, 'ews', 'lib', params.jdbc_jar_name), mode=0o644)
+    
   ModifyPropertiesFile(format("{kms_home}/install.properties"),
     properties = params.config['configurations']['kms-properties'],
     owner = params.kms_user
@@ -435,21 +434,21 @@ def enable_kms_plugin():
     File(format('{kms_conf_dir}/ranger-security.xml'),
       owner = params.kms_user,
       group = params.kms_group,
-      mode = 0644,
+      mode = 0o644,
       content = format('<ranger>\n<enabled>{current_datetime}</enabled>\n</ranger>')
     )
 
     Directory([os.path.join('/etc', 'ranger', params.repo_name), os.path.join('/etc', 'ranger', params.repo_name, 'policycache')],
       owner = params.kms_user,
       group = params.kms_group,
-      mode=0775,
+      mode=0o775,
       create_parents = True
     )
 
     File(os.path.join('/etc', 'ranger', params.repo_name, 'policycache',format('kms_{repo_name}.json')),
       owner = params.kms_user,
       group = params.kms_group,
-      mode = 0644
+      mode = 0o644
     )
 
     # remove plain-text password from xml configs
@@ -465,7 +464,7 @@ def enable_kms_plugin():
       configuration_attributes=params.config['configurationAttributes']['ranger-kms-audit'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0744)
+      mode=0o744)
 
     XmlConfig("ranger-kms-security.xml",
       conf_dir=params.kms_conf_dir,
@@ -473,7 +472,7 @@ def enable_kms_plugin():
       configuration_attributes=params.config['configurationAttributes']['ranger-kms-security'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0744)
+      mode=0o744)
 
     # remove plain-text password from xml configs
     ranger_kms_policymgr_ssl_copy = {}
@@ -489,7 +488,7 @@ def enable_kms_plugin():
       configuration_attributes=params.config['configurationAttributes']['ranger-kms-policymgr-ssl'],
       owner=params.kms_user,
       group=params.kms_group,
-      mode=0744)
+      mode=0o744)
 
     if params.xa_audit_db_is_enabled:
       cred_setup = params.cred_setup_prefix + ('-f', params.credential_file, '-k', 'auditDBCred', '-v', PasswordString(params.xa_audit_db_password), '-c', '1')
@@ -505,7 +504,7 @@ def enable_kms_plugin():
       owner = params.kms_user,
       group = params.kms_group,
       only_if = format("test -e {credential_file}"),
-      mode = 0640
+      mode = 0o640
     )
 
     dot_jceks_crc_file_path = os.path.join(os.path.dirname(params.credential_file), "." + os.path.basename(params.credential_file) + ".crc")
@@ -514,7 +513,7 @@ def enable_kms_plugin():
       owner = params.kms_user,
       group = params.kms_group,
       only_if = format("test -e {dot_jceks_crc_file_path}"),
-      mode = 0640
+      mode = 0o640
     )
 
     # create ranger kms audit directory
@@ -525,7 +524,7 @@ def enable_kms_plugin():
                           action="create_on_execute",
                           owner=params.hdfs_user,
                           group=params.hdfs_user,
-                          mode=0755,
+                          mode=0o755,
                           recursive_chmod=True
         )
         params.HdfsResource("/ranger/audit/kms",
@@ -533,11 +532,11 @@ def enable_kms_plugin():
                           action="create_on_execute",
                           owner=params.kms_user,
                           group=params.kms_group,
-                          mode=0750,
+                          mode=0o750,
                           recursive_chmod=True
         )
         params.HdfsResource(None, action="execute")
-      except Exception, err:
+      except Exception as err:
         Logger.exception("Audit directory creation in HDFS for RANGER KMS Ranger plugin failed with error:\n{0}".format(err))
 
     if params.xa_audit_hdfs_is_enabled and len(params.namenode_host) > 1:
@@ -548,7 +547,7 @@ def enable_kms_plugin():
         configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
         owner=params.kms_user,
         group=params.kms_group,
-        mode=0644
+        mode=0o644
       )
     else:
       File(format('{kms_conf_dir}/hdfs-site.xml'), action="delete")
@@ -565,7 +564,7 @@ def setup_kms_jce():
 
     File(jce_target,
       content = DownloadSource(format('{jdk_location}/{jce_name}')),
-      mode = 0644,
+      mode = 0o644,
     )
 
     File([format("{java_home}/jre/lib/security/local_policy.jar"), format("{java_home}/jre/lib/security/US_export_policy.jar")],
@@ -610,14 +609,14 @@ def check_ranger_service():
 def create_repo(url, data, usernamepassword):
   try:
     base_url = url + '/service/public/v2/api/service'
-    base64string = base64.encodestring('{0}'.format(usernamepassword)).replace('\n', '')
+    base64string = base64.encodebytes(usernamepassword.encode()).decode().replace('\n', '')
     headers = {
       'Accept': 'application/json',
       "Content-Type": "application/json"
     }
-    request = urllib2.Request(base_url, data, headers)
+    request = urllib.request.Request(base_url, data, headers)
     request.add_header("Authorization", "Basic {0}".format(base64string))
-    result = urllib2.urlopen(request, timeout=20)
+    result = urllib.request.urlopen(request, timeout=20)
     response_code = result.getcode()
     response = json.loads(json.JSONEncoder().encode(result.read()))
     if response_code == 200:
@@ -626,8 +625,8 @@ def create_repo(url, data, usernamepassword):
     else:
       Logger.info('Repository not created')
       return False
-  except urllib2.URLError, e:
-    if isinstance(e, urllib2.HTTPError):
+  except urllib.error.URLError as e:
+    if isinstance(e, urllib.error.HTTPError):
       raise Fail("Error creating service. Http status code - {0}. \n {1}".format(e.code, e.read()))
     else:
       raise Fail("Error creating service. Reason - {0}.".format(e.reason))
@@ -638,17 +637,17 @@ def create_repo(url, data, usernamepassword):
 def get_repo(url, name, usernamepassword):
   try:
     base_url = url + '/service/public/v2/api/service?serviceName=' + name + '&serviceType=kms&isEnabled=true'
-    request = urllib2.Request(base_url)
-    base64string = base64.encodestring(usernamepassword).replace('\n', '')
+    request = urllib.request.Request(base_url)
+    base64string = base64.encodebytes(usernamepassword.encode()).decode().replace('\n', '')
     request.add_header("Content-Type", "application/json")
     request.add_header("Accept", "application/json")
     request.add_header("Authorization", "Basic {0}".format(base64string))
-    result = urllib2.urlopen(request, timeout=20)
+    result = urllib.request.urlopen(request, timeout=20)
     response_code = result.getcode()
     response = json.loads(result.read())
     if response_code == 200 and len(response) > 0:
       for repo in response:
-        if repo.get('name').lower() == name.lower() and repo.has_key('name'):
+        if repo.get('name').lower() == name.lower() and 'name' in repo:
           Logger.info('KMS repository exist')
           return True
         else:
@@ -657,8 +656,8 @@ def get_repo(url, name, usernamepassword):
     else:
       Logger.info('KMS repository doesnot exist')
       return False
-  except urllib2.URLError, e:
-    if isinstance(e, urllib2.HTTPError):
+  except urllib.error.URLError as e:
+    if isinstance(e, urllib.error.HTTPError):
       raise Fail("Error getting {0} service. Http status code - {1}. \n {2}".format(name, e.code, e.read()))
     else:
       raise Fail("Error getting {0} service. Reason - {1}.".format(name, e.reason))

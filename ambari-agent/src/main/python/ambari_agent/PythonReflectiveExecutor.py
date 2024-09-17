@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -21,7 +21,7 @@ limitations under the License.
 from PythonExecutor import PythonExecutor
 from resource_management.core.exceptions import ClientComponentHasNoStatus, ComponentIsNotRunning
 
-import imp
+import importlib.util
 import sys
 import os
 import pprint
@@ -57,7 +57,9 @@ class PythonReflectiveExecutor(PythonExecutor):
       current_context = PythonContext(script_dir, pythonCommand)
       PythonReflectiveExecutor.last_context = current_context
       with current_context:
-        imp.load_source('__main__', script)
+        spec = importlib.util.spec_from_file_location('__main__', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
     except SystemExit as e:
       returncode = e.code
       if returncode:

@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+from importlib.machinery import SourceFileLoader
 import os
 import traceback
 import re
@@ -34,7 +34,7 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, "rb") as fp:
-    service_advisor = imp.load_module("service_advisor", fp, PARENT_FILE, (".py", "rb", imp.PY_SOURCE))
+    service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
 except Exception as e:
   traceback.print_exc()
 
@@ -160,7 +160,7 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
 
 class OzoneRecommender(service_advisor.ServiceAdvisor):
   """
-  Oozie Recommender suggests properties when adding the service for the first time or modifying configurations via the UI.
+  Ozone Recommender suggests properties when adding the service for the first time or modifying configurations via the UI.
   """
 
   def __init__(self, *args, **kwargs):
@@ -181,14 +181,13 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneSiteProperty = self.putProperty(configurations, "ozone-site", services)
     putOzoneSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-site")
     putOzoneRangerAuditSiteProperty = self.putProperty(configurations, "ranger-ozone-audit", services)
-
-    ## default configuration
-    ozoneUser = 'ozone'
+    putOzoneRangerPluginPropertes = self.putProperty(configurations, "ranger-ozone-plugin-properties", services)
+    
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     # run ozone inside HDFS Datanodes is HDFS is enabled
     if 'HDFS' in servicesList:
-      putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
+      putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', True)
     else:
       # disable hdfs related properties
       putOzoneRangerAuditSiteProperty('xasecure.audit.destination.hdfs', False)
@@ -241,8 +240,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         om_max_heapsize = min(int(managerHosts[0]["Hosts"]["total_mem"]),
                               int(managerHosts[1]["Hosts"]["total_mem"])) / 1024
         masters_at_host = max(
-          self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
-          self.getHostComponentsByCategories(managerHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts))
+            self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+            self.getHostComponentsByCategories(managerHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+            key=lambda x: len(x)
+        )
       else:
         om_max_heapsize = int(managerHosts[0]["Hosts"]["total_mem"] / 1024)  # total_mem in kb
         masters_at_host = self.getHostComponentsByCategories(managerHosts[0]["Hosts"]["host_name"], ["MASTER"],
@@ -285,7 +286,9 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
                               int(scmHosts[1]["Hosts"]["total_mem"])) / 1024
         masters_at_host = max(
           self.getHostComponentsByCategories(scmHosts[0]["Hosts"]["host_name"], ["MASTER"], services, hosts),
-          self.getHostComponentsByCategories(scmHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts))
+          self.getHostComponentsByCategories(scmHosts[1]["Hosts"]["host_name"], ["MASTER"], services, hosts),
+          key=lambda x: len(x)  # Replace with the actual key you want to compare
+        )
       else:
         om_max_heapsize = int(scmHosts[0]["Hosts"]["total_mem"] / 1024)  # total_mem in kb
         masters_at_host = self.getHostComponentsByCategories(scmHosts[0]["Hosts"]["host_name"], ["MASTER"],
@@ -417,6 +420,10 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       replicationReco = min(3, dnHosts)
       putOzoneSiteProperty("ozone.replication", replicationReco)
 
+      if 'ozone-env' in services['configurations'] and 'ozone_user' in services['configurations']['ozone-env']['properties']:
+        ozone_user = services['configurations']['ozone-env']['properties']['ozone_user']
+      else:
+        ozone_user = 'ozone'
       ## Ranger Logic
       ranger_ozone_plugin_enabled = ''
       if 'ranger-ozone-plugin-properties' in configurations and 'ranger-ozone-plugin-enabled' in configurations['ranger-ozone-plugin-properties']['properties']:
@@ -424,10 +431,29 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       elif 'ranger-ozone-plugin-properties' in services['configurations'] and 'ranger-ozone-plugin-enabled' in services['configurations']['ranger-ozone-plugin-properties']['properties']:
         ranger_ozone_plugin_enabled = services['configurations']['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
       if ranger_ozone_plugin_enabled.lower() == 'Yes'.lower():
+        self.logger.info("Enabling Ozone ACL.")
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer')
+        putOzoneSiteProperty("ozone.acl.enabled", 'true')
+        self.logger.info("Setting Ozone Repo user for Ranger.")
+        putOzoneRangerPluginPropertes("REPOSITORY_CONFIG_USERNAME",ozone_user)
+        # put right ranger smoke user
+        if 'cluster-env' in configurations and 'smokeuser' in configurations['cluster-env']['properties']:
+          putOzoneRangerPluginPropertes("policy_user", services['configurations']['cluster-env']['properties']['smokeuser'])
       else:
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')
-      
+
+      # Enable High Availability params
+      if len(ozone_om_hosts) > 1 :
+        self.logger.info("Enabling Ozone Manager High availability properties")
+        putOzoneSiteProperty("ozone.om.internal.service.id", defaultOMServiceName)
+        putOzoneSiteProperty("ozone.om.ratis.enable", "true")
+        # setting default Ozone Manager Active Node
+        putOzoneEnvProperty("hdds_ha_initial_om_active", managerHosts[0]["Hosts"]["host_name"])
+      if len(ozone_scm_hosts) > 1 :
+        self.logger.info("Enabling Ozone Manager High availability properties")
+        putOzoneSiteProperty("ozone.scm.default.service.id", defaultSCMServiceName)
+        putOzoneSiteProperty("ozone.scm.ratis.enable", "true")
+
   def is_kerberos_enabled(self, configurations, services):
     """
     Tests if Ozone has Kerberos enabled by first checking the recommended changes and then the
@@ -503,7 +529,7 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
     validationItems = []
     defaultReplication = services["configurations"]["ozone-site"]["properties"]["ozone.replication"]
     dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
-    if defaultReplication < 2 :
+    if int(defaultReplication) < 2 :
       validationItems.extend([{"config-name": "ozone.replication", "item": self.getWarnItem("Value is less than the default recommended value of 3 ")}])
     if int(dnHosts) < int(defaultReplication):
       validationItems.extend([{"config-name": "ozone.replication", "item": self.getErrorItem("Value is higher "+str(defaultReplication)+" than the number of Ozone Datanode Hosts " + str(dnHosts) )}])
@@ -539,7 +565,7 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
       try:
         if ozone_site['ozone.acl.authorizer.class'].lower() != 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer'.lower():
           raise ValueError()
-      except (KeyError, ValueError), e:
+      except (KeyError, ValueError) as e:
         message = "ozone.acl.authorizer.class needs to be set to 'org.apache.ranger.authorization.ozone.authorizer.RangerOzoneAuthorizer' if Ranger Ozone Plugin is enabled."
         validationItems.append({"config-name": 'ozone.acl.authorizer.class',
                                 "item": self.getWarnItem(message)})

@@ -23,7 +23,7 @@
       <name>SPARK3</name>
       <displayName>Spark3</displayName>
       <comment>Apache Spark 3 is a fast and general engine for large-scale data processing.</comment>
-      <version>3.4.2</version>
+      <version>3.5.1</version>
       <components>
         <component>
           <name>SPARK3_JOBHISTORYSERVER</name>
@@ -202,7 +202,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>almalinux8,redhat8,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>spark3_${stack_version}</name>

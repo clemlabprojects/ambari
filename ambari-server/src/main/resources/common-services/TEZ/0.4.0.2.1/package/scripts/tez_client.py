@@ -19,7 +19,7 @@ Ambari Agent
 
 """
 import os
-import urlparse
+from urllib.parse import urlparse
 
 from ambari_commons import OSConst
 from ambari_commons.inet_utils import download_file

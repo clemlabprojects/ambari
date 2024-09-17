@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -145,7 +145,7 @@ class DBMSConfig(object):
     return result
 
   def setup_database(self):
-    print 'Configuring {0} database...'.format(self.db_title)
+    print('Configuring {0} database...'.format(self.db_title))
 
     #DB setup should be done last after doing any setup.
     if self._is_local_database():
@@ -194,12 +194,12 @@ class DBMSConfig(object):
             if replace_jdbc_in_share_dir:
               try:
                 os.remove(os.path.join(configDefaults.JAVA_SHARE_PATH, custom_jdbc_name))
-              except Exception, ee:
+              except Exception as ee:
                 err = 'ERROR: Could not remove jdbc file. %s' % os.path.join(configDefaults.JAVA_SHARE_PATH, custom_jdbc_name)
                 raise FatalException(1, err)
           shutil.copy(path_to_custom_jdbc_driver, configDefaults.JAVA_SHARE_PATH)
-          print "Copying {0} to {1}".format(path_to_custom_jdbc_driver, configDefaults.JAVA_SHARE_PATH)
-      except Exception, e:
+          print("Copying {0} to {1}".format(path_to_custom_jdbc_driver, configDefaults.JAVA_SHARE_PATH))
+      except Exception as e:
         err = "Can not copy file {0} to {1} due to: {2} . Please check file " \
           "permissions and free disk space.".format(path_to_custom_jdbc_driver, configDefaults.JAVA_SHARE_PATH, str(e))
         raise FatalException(1, err)
@@ -239,20 +239,20 @@ class DBMSConfig(object):
   @staticmethod
   def _init_member_with_default(options, attr_name, default_val):
     options_val = getattr(options, attr_name, None)
-    val = options_val if options_val is not None and options_val is not "" else default_val
+    val = options_val if options_val is not None and options_val != "" else default_val
     return val
 
   @staticmethod
   def _init_member_with_properties(options, attr_name, properties, property_key):
     options_val = getattr(options, attr_name, None)
-    if options_val is None or options_val is "":
+    if options_val is None or options_val == "":
       options_val = get_value_from_properties(properties, property_key, None)
     return options_val
 
   @staticmethod
   def _init_member_with_prop_default(options, attr_name, properties, property_key, default_val):
     val = DBMSConfig._init_member_with_properties(options, attr_name, properties, property_key)
-    if val is None or val is "":
+    if val is None or val == "":
       val = default_val
     return val
 
@@ -298,7 +298,7 @@ class DBMSConfig(object):
         print_error_msg(self.JDBC_DRIVER_INSTALL_MSG)
       else:
         print_warning_msg(self.JDBC_DRIVER_INSTALL_MSG)
-        raw_input(PRESS_ENTER_MSG)
+        input(PRESS_ENTER_MSG)
         result = self._is_jdbc_driver_installed(properties)
     return (result, self.JDBC_DRIVER_INSTALL_MSG)
 

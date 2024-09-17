@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -144,11 +144,11 @@ ranger_auditdb_name = default('/configurations/admin-properties/audit_db_name', 
 
 sql_command_invoker = config['configurations']['admin-properties']['SQL_COMMAND_INVOKER']
 db_root_user = config['configurations']['admin-properties']['db_root_user']
-db_root_password = unicode(config['configurations']['admin-properties']['db_root_password'])
+db_root_password = config['configurations']['admin-properties']['db_root_password']
 db_host =  config['configurations']['admin-properties']['db_host']
 ranger_db_user = config['configurations']['admin-properties']['db_user']
 ranger_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
-ranger_db_password = unicode(config['configurations']['admin-properties']['db_password'])
+ranger_db_password = config['configurations']['admin-properties']['db_password']
 
 #ranger-env properties
 oracle_home = default("/configurations/ranger-env/oracle_home", "-")
@@ -213,12 +213,12 @@ ranger_jdbc_driver = config["configurations"]["ranger-admin-site"]["ranger.jpa.j
 
 ranger_credential_provider_path = config["configurations"]["ranger-admin-site"]["ranger.credential.provider.path"]
 ranger_jpa_jdbc_credential_alias = config["configurations"]["ranger-admin-site"]["ranger.jpa.jdbc.credential.alias"]
-ranger_ambari_db_password = unicode(config["configurations"]["admin-properties"]["db_password"])
+ranger_ambari_db_password = config["configurations"]["admin-properties"]["db_password"]
 
 ranger_jpa_audit_jdbc_credential_alias = default('/configurations/ranger-admin-site/ranger.jpa.audit.jdbc.credential.alias', 'rangeraudit')
 ranger_ambari_audit_db_password = ''
 if not is_empty(config["configurations"]["admin-properties"]["audit_db_password"]) and stack_supports_ranger_audit_db:
-  ranger_ambari_audit_db_password = unicode(config["configurations"]["admin-properties"]["audit_db_password"])
+  ranger_ambari_audit_db_password = config["configurations"]["admin-properties"]["audit_db_password"]
 
 ugsync_jceks_path = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.credstore.filename"]
 ugsync_cred_lib = os.path.join(usersync_home,"lib","*")
@@ -226,9 +226,9 @@ cred_lib_path = os.path.join(ranger_home,"cred","lib","*")
 cred_setup_prefix = (format('{ranger_home}/ranger_credential_helper.py'), '-l', cred_lib_path)
 ranger_audit_source_type = config["configurations"]["ranger-admin-site"]["ranger.audit.source.type"]
 
-ranger_usersync_keystore_password = unicode(config["configurations"]["ranger-ugsync-site"]["ranger.usersync.keystore.password"])
-ranger_usersync_ldap_ldapbindpassword = unicode(config["configurations"]["ranger-ugsync-site"]["ranger.usersync.ldap.ldapbindpassword"])
-ranger_usersync_truststore_password = unicode(config["configurations"]["ranger-ugsync-site"]["ranger.usersync.truststore.password"])
+ranger_usersync_keystore_password = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.keystore.password"]
+ranger_usersync_ldap_ldapbindpassword = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.ldap.ldapbindpassword"]
+ranger_usersync_truststore_password = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.truststore.password"]
 ranger_usersync_keystore_file = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.keystore.file"]
 default_dn_name = 'cn=unixauthservice,ou=authenticator,o=mycompany,c=US'
 
@@ -249,8 +249,8 @@ ranger_tagsync_hosts = default("/clusterHostInfo/ranger_tagsync_hosts", [])
 has_ranger_tagsync = len(ranger_tagsync_hosts) > 0
 
 tagsync_log_dir = default("/configurations/ranger-tagsync-site/ranger.tagsync.logdir", "/var/log/ranger/tagsync")
-tagsync_jceks_path = config["configurations"]["ranger-tagsync-site"]["ranger.tagsync.keystore.filename"]
-atlas_tagsync_jceks_path = config["configurations"]["ranger-tagsync-site"]["ranger.tagsync.source.atlasrest.keystore.filename"]
+tagsync_jceks_path = default("/configurations/ranger-tagsync-site/ranger.tagsync.keystore.filename", "/usr/odp/current/ranger-tagsync/conf/rangertagsync.jceks")
+atlas_tagsync_jceks_path = default("/configurations/ranger-tagsync-site/ranger.tagsync.source.atlasrest.keystore.filename", "/usr/odp/current/ranger-tagsync/conf/atlasuser.jceks")
 tagsync_application_properties = dict(config["configurations"]["tagsync-application-properties"]) if has_ranger_tagsync else None
 tagsync_pid_file = format('{ranger_pid_dir}/tagsync.pid')
 tagsync_cred_lib = os.path.join(ranger_tagsync_home, "lib", "*")
@@ -270,7 +270,9 @@ tagsync_log4j = config['configurations']['tagsync-log4j']['content']
 # ranger kerberos
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
+ozone_manager_hosts = default("/clusterHostInfo/ozone_manager_hosts", [])
 has_namenode = len(namenode_hosts) > 0
+has_ozone = len(ozone_manager_hosts) > 0
 
 ugsync_policymgr_alias = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.policymgr.alias"]
 ugsync_policymgr_keystore = config["configurations"]["ranger-ugsync-site"]["ranger.usersync.policymgr.keystore"]
@@ -345,41 +347,49 @@ if security_enabled:
         solr_kerberos_keytab = ranger_admin_keytab
 
 # logic to create core-site.xml if hdfs not installed
+# will check also ig ozone is not installed
+# TODO: create a common service for ozone and hdfs
+
 if stack_supports_ranger_kerberos and not has_namenode:
   core_site_property = {
     'hadoop.security.authentication': 'kerberos' if security_enabled else 'simple'
   }
 
-  if security_enabled:
-    realm = 'EXAMPLE.COM'
-    ranger_admin_bare_principal = 'rangeradmin'
-    ranger_usersync_bare_principal = 'rangerusersync'
-    ranger_tagsync_bare_principal = 'rangertagsync'
-
-    ranger_usersync_principal = config['configurations']['ranger-ugsync-site']['ranger.usersync.kerberos.principal']
-    if not is_empty(ranger_admin_principal) and ranger_admin_principal != '':
-      ranger_admin_bare_principal = get_bare_principal(ranger_admin_principal)
-    if not is_empty(ranger_usersync_principal) and ranger_usersync_principal != '':
-      ranger_usersync_bare_principal = get_bare_principal(ranger_usersync_principal)
-    realm = config['configurations']['kerberos-env']['realm']
-
-    rule_dict = [
-      {'principal': ranger_admin_bare_principal, 'user': unix_user},
-      {'principal': ranger_usersync_bare_principal, 'user': 'rangerusersync'},
-    ]
-
-    if has_ranger_tagsync:
-      if not is_empty(ranger_tagsync_principal) and ranger_tagsync_principal != '':
-        ranger_tagsync_bare_principal = get_bare_principal(ranger_tagsync_principal)
-      rule_dict.append({'principal': ranger_tagsync_bare_principal, 'user': 'rangertagsync'})
-
-    core_site_auth_to_local_property = ''
-    for item in range(len(rule_dict)):
-      rule_line = 'RULE:[2:$1@$0]({0}@{1})s/.*/{2}/\n'.format(rule_dict[item]['principal'], realm, rule_dict[item]['user'])
-      core_site_auth_to_local_property = rule_line + core_site_auth_to_local_property
-
-    core_site_auth_to_local_property = core_site_auth_to_local_property + 'DEFAULT'
+  if has_ozone:
+    # read auth to local rules from ozone-core-site
+    core_site_auth_to_local_property = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
     core_site_property['hadoop.security.auth_to_local'] = core_site_auth_to_local_property
+  else:
+    if security_enabled:
+      realm = 'EXAMPLE.COM'
+      ranger_admin_bare_principal = 'rangeradmin'
+      ranger_usersync_bare_principal = 'rangerusersync'
+      ranger_tagsync_bare_principal = 'rangertagsync'
+
+      ranger_usersync_principal = config['configurations']['ranger-ugsync-site']['ranger.usersync.kerberos.principal']
+      if not is_empty(ranger_admin_principal) and ranger_admin_principal != '':
+        ranger_admin_bare_principal = get_bare_principal(ranger_admin_principal)
+      if not is_empty(ranger_usersync_principal) and ranger_usersync_principal != '':
+        ranger_usersync_bare_principal = get_bare_principal(ranger_usersync_principal)
+      realm = config['configurations']['kerberos-env']['realm']
+
+      rule_dict = [
+        {'principal': ranger_admin_bare_principal, 'user': unix_user},
+        {'principal': ranger_usersync_bare_principal, 'user': 'rangerusersync'},
+      ]
+
+      if has_ranger_tagsync:
+        if not is_empty(ranger_tagsync_principal) and ranger_tagsync_principal != '':
+          ranger_tagsync_bare_principal = get_bare_principal(ranger_tagsync_principal)
+        rule_dict.append({'principal': ranger_tagsync_bare_principal, 'user': 'rangertagsync'})
+
+      core_site_auth_to_local_property = ''
+      for item in range(len(rule_dict)):
+        rule_line = 'RULE:[2:$1@$0]({0}@{1})s/.*/{2}/\n'.format(rule_dict[item]['principal'], realm, rule_dict[item]['user'])
+        core_site_auth_to_local_property = rule_line + core_site_auth_to_local_property
+
+      core_site_auth_to_local_property = core_site_auth_to_local_property + 'DEFAULT'
+      core_site_property['hadoop.security.auth_to_local'] = core_site_auth_to_local_property
 
 upgrade_type = Script.get_upgrade_type(default("/commandParams/upgrade_type", ""))
 

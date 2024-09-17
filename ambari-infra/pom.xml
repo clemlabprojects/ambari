@@ -20,7 +20,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.apache.ambari</groupId>
   <artifactId>ambari-infra</artifactId>
-  <version>2.7.9.0.0</version>
+  <version>2.7.11.0.0</version>
   <packaging>pom</packaging>
 
   <properties>
@@ -35,7 +35,8 @@
     <odp.release.number>134</odp.release.number>
     <hadoop.version>3.3.4.1.2.1.0-${odp.release.number}</hadoop.version>
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
-    <zookeeper.version>3.5.6.${odp.release.stack}-${odp.release.number}</zookeeper.version>
+    <!-- <zookeeper.version>3.8.4.${odp.release.stack}-${odp.release.number}</zookeeper.version> -->
+    <zookeeper.version>3.8.4.1.2.2.0-135</zookeeper.version>
     <skipSurefireTests>false</skipSurefireTests>
     <log4j2.version>2.16.0</log4j2.version>
   </properties>

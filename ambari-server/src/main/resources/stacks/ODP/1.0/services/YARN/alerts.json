@@ -188,7 +188,7 @@
         "enabled": true,
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/YARN/package/alerts/alert_nodemanager_health.py",
+          "path": "ODP/1.0/services/YARN/package/alerts/alert_nodemanager_health.py",
           "parameters": [
             {
               "name": "connection.timeout",
@@ -341,7 +341,7 @@
         "enabled": true,
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/YARN/package/alerts/alert_nodemanagers_summary.py",
+          "path": "ODP/1.0/services/YARN/package/alerts/alert_nodemanagers_summary.py",
           "parameters": [
             {
               "name": "connection.timeout",
@@ -455,7 +455,7 @@
         "enabled": true,
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/YARN/package/alerts/alert_ats_hbase.py",
+          "path": "ODP/1.0/services/YARN/package/alerts/alert_ats_hbase.py",
           "parameters": [
             {
               "name": "check.command.timeout",

@@ -26,7 +26,7 @@ class TestVersion(TestCase):
   of both Ambari (which use 3 digits separated by dots) and stacks (which use 4 digits separated by dots).
   """
   def setUp(self):
-    import imp
+    import importlib.util
 
     self.test_directory = os.path.dirname(os.path.abspath(__file__))
     test_file_path = os.path.join(self.test_directory, '../../../../ambari-common/src/main/python/resource_management/libraries/functions/version.py')
@@ -61,6 +61,9 @@ class TestVersion(TestCase):
     # All versions to compare, from 1.0.0.0 to 3.0.0.0, and only include elements that are a multiple of 7.
     versions = range(1000, 3000, 7)
     versions = [".".join(list(str(elem))) for elem in versions]
+
+    def cmp(a, b):
+      return (a > b) - (a < b)
 
     for idx, x in enumerate(versions):
       for idy, y in enumerate(versions):

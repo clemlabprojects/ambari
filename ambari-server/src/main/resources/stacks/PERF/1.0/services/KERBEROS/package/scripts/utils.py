@@ -59,7 +59,7 @@ def get_property_value(dictionary, property_name, default_value=None, trim_strin
 def get_unstructured_data(dictionary, property_name):
   prefix = property_name + '/'
   prefix_len = len(prefix)
-  return dict((k[prefix_len:], v) for k, v in dictionary.iteritems() if k.startswith(prefix))
+  return dict((k[prefix_len:], v) for k, v in dictionary.items() if k.startswith(prefix))
 
 def split_host_and_port(host):
   """

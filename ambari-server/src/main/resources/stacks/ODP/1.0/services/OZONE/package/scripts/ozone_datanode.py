@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -63,7 +63,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
     if params.dn_ssl_enabled:
       passwords =  [
@@ -79,8 +79,7 @@ class OzoneDatanodeDefault(OzoneDatanode):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_dn_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-datanode', separator)
-
+                      passwords, 'ozone-datanode')
       file_to_chown = params.ozone_dn_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):
           Execute(('chown', format('{params.ozone_user}:{params.user_group}'), file_to_chown),

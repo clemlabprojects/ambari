@@ -95,7 +95,7 @@ def update_config_permissions(names):
 
 def jdbc_connector():
   import params
-  from urllib2 import HTTPError
+  import urllib.request, urllib.error, urllib.parse
   from resource_management import Fail
   for jar_name in params.sqoop_jdbc_drivers_dict:
     if not jar_name or 'mysql' in jar_name:
@@ -113,9 +113,9 @@ def jdbc_connector():
 
       File(downloaded_custom_connector,
            content = DownloadSource(driver_curl_source),
-           mode = 0644,
+           mode = 0o644,
       )
-    except HTTPError:
+    except urllib.error.HTTPError:
       error_string = format("Could not download {driver_curl_source}\n\
                  Please upload jdbc driver to server by run command:\n\
                  ambari-server setup --jdbc-db={jdbc_driver_label} --jdbc-driver=<PATH TO DRIVER>\n\

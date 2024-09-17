@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -58,12 +58,12 @@ class TestOozieServiceCheck(RMFTestCase):
     self.assertResourceCalled('File',
       "/tmp/oozieSmoke2.sh",
       content = StaticFile("oozieSmoke2.sh"),
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('File',
       "/tmp/prepareOozieHdfsDirectories.sh",
       content = StaticFile("prepareOozieHdfsDirectories.sh"),
-      mode = 0755)
+      mode = 0o755)
 
     self.assertResourceCalled('Execute',
       ('/tmp/prepareOozieHdfsDirectories.sh', '/usr/hdp/current/oozie-client/conf', 'examples-dir', '/usr/hdp/2.3.0.0-1234/hadoop/conf', 'c6402.ambari.apache.org:8050', 'hdfs://c6401.ambari.apache.org:8020', 'default', 'map-reduce'),

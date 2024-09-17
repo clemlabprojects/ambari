@@ -16,7 +16,7 @@
    limitations under the License.
 -->
 <reposinfo>
-  <latest>http://repo.clemlab.com/ODP/odp_urlinfo.json</latest>
+  <latest>https://archive.clemlab.com/ODP/odp_urlinfo.json</latest>
   <os family="redhat7">
     <repo>
       <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.1.6.0-17/rpms/</baseurl>
@@ -26,14 +26,6 @@
     </repo>
   </os>
   <os family="redhat8">
-    <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.1.6.0-17/rpms/</baseurl>
-      <repoid>ODP-1.1.6.0-17</repoid>
-      <reponame>ODP</reponame>
-      <unique>true</unique>
-    </repo>
-  </os>
-  <os family="almalinux8">
     <repo>
       <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.1.6.0-17/rpms/</baseurl>
       <repoid>ODP-1.1.6.0-17</repoid>

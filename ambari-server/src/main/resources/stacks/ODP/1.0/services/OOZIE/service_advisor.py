@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+from importlib.machinery import SourceFileLoader
 import os
 import traceback
 import re
@@ -33,10 +33,10 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, "rb") as fp:
-    service_advisor = imp.load_module("service_advisor", fp, PARENT_FILE, (".py", "rb", imp.PY_SOURCE))
+    service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class OozieServiceAdvisor(service_advisor.ServiceAdvisor):
 

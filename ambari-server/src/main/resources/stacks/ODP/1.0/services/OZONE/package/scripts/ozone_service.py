@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -33,7 +33,7 @@ def ozone_service(
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
     )
     conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF[name])
     role = params.ROLE_NAME_MAP_DAEMON[name]

@@ -23,7 +23,7 @@ from mock.mock import patch, MagicMock
 class TestHDP206StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     import os
 
     testDirectory = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +48,7 @@ class TestHDP206StackAdvisor(TestCase):
     self.get_system_min_uid_real = self.stackAdvisor.get_system_min_uid
     self.stackAdvisor.get_system_min_uid = self.get_system_min_uid_magic
 
-  @patch('__builtin__.open')
+  @patch('builtins.open')
   @patch('os.path.exists')
   def get_system_min_uid_magic(self, exists_mock, open_mock):
     class MagicFile(object):
@@ -3170,7 +3170,7 @@ class TestHDP206StackAdvisor(TestCase):
     self.assertEquals(self.stackAdvisor.validatorEqualsToRecommendedItem(properties, recommendedDefaults, "property1"), expected)
 
   def test_getServicesSiteProperties(self):
-    import imp, os
+    import importlib.util, os
     testDirectory = os.path.dirname(os.path.abspath(__file__))
     hdp206StackAdvisorPath = os.path.join(testDirectory, '../../../../../main/resources/stacks/HDP/2.0.6/services/stack_advisor.py')
     stack_advisor = imp.load_source('stack_advisor', hdp206StackAdvisorPath)

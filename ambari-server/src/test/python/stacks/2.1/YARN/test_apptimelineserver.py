@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -166,7 +166,7 @@ class TestAppTimelineServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'core-site.xml',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site']
@@ -174,7 +174,7 @@ class TestAppTimelineServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['hdfs-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['hdfs-site']
@@ -182,7 +182,7 @@ class TestAppTimelineServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
                               owner = 'yarn',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['mapred-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['mapred-site']
@@ -190,7 +190,7 @@ class TestAppTimelineServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'yarn-site.xml',
                               owner = 'yarn',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['yarn-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['yarn-site']
@@ -198,43 +198,43 @@ class TestAppTimelineServer(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'capacity-scheduler.xml',
                               owner = 'yarn',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['capacity-scheduler'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['capacity-scheduler']
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
                               content = Template('yarn.conf.j2'),
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/mapreduce.conf',
                               content = Template('mapreduce.conf.j2'),
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/yarn-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['yarn-env']['content']),
                               owner = 'yarn',
                               group = 'hadoop',
-                              mode = 0755,
+                              mode = 0o755,
                               )
     self.assertResourceCalled('File', '/usr/lib/hadoop-yarn/bin/container-executor',
                               group = 'hadoop',
-                              mode = 02050,
+                              mode = 0o2050,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/container-executor.cfg',
                               content = InlineTemplate(self.getConfig()['configurations']['container-executor']['content']),
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
                               create_parents = True,
-                              mode = 0755,
+                              mode = 0o755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
-                              mode = 0755,
+                              mode = 0o755,
                               owner = 'hdfs',
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/taskcontroller.cfg',

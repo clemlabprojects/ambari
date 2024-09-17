@@ -21,7 +21,7 @@
   <artifactId>ambari</artifactId>
   <packaging>pom</packaging>
   <name>Ambari Main</name>
-  <version>2.7.9.0.0</version>
+  <version>2.7.11.0.0</version>
   <description>Ambari</description>
   <url>https://ambari.apache.org/</url>
   <scm>
@@ -61,7 +61,7 @@
     <distMgmtStagingName>Apache Release Distribution Repository</distMgmtStagingName>
     <distMgmtStagingUrl>https://repository.apache.org/service/local/staging/deploy/maven2</distMgmtStagingUrl>
     <assemblyPhase>package</assemblyPhase> <!-- use -DassemblyPhase=none to skip building tarball, useful when you want purely compile jar -->
-    <eclipselink.version>2.6.2</eclipselink.version>
+    <eclipselink.version>2.7.14</eclipselink.version>
   </properties>
   <pluginRepositories>
     <pluginRepository>

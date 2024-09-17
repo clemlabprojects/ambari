@@ -29,6 +29,7 @@
                 <name>policymgr_external_url</name>
             </property>
         </depends-on>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -37,6 +38,7 @@
         <description>
             Name of the Ranger service containing policies for this nifi instance
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -45,6 +47,7 @@
         <description>
             Class to retrieve policies from the source
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -53,6 +56,7 @@
         <description>
             Path to the file containing SSL details to contact Ranger Admin
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -61,6 +65,7 @@
         <description>
             How often to poll for changes in policies?
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -69,6 +74,7 @@
         <description>
             Directory where Ranger policies are cached after successful retrieval from the source
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -77,6 +83,7 @@
         <description>
             RangerRestClient Connection Timeout in Milli Seconds
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
     <property>
@@ -85,5 +92,6 @@
         <description>
             RangerRestClient read Timeout in Milli Seconds
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
 </configuration>

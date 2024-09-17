@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -40,7 +40,7 @@ def hbase(name=None # 'master' or 'regionserver' or 'client'
   Directory (os.path.join(params.local_dir, "jars"),
              owner = params.hbase_user,
              group = params.user_group,
-             mode=0775,
+             mode=0o775,
              create_parents = True
   )
 
@@ -110,14 +110,14 @@ def hbase(name=None # 'master' or 'regionserver' or 'client'
 
   if (params.log4j_props != None):
     File(format("{params.hbase_conf_dir}/log4j.properties"),
-         mode=0644,
+         mode=0o644,
          group=params.user_group,
          owner=params.hbase_user,
          content=params.log4j_props
     )
   elif (os.path.exists(format("{params.hbase_conf_dir}/log4j.properties"))):
     File(format("{params.hbase_conf_dir}/log4j.properties"),
-      mode=0644,
+      mode=0o644,
       group=params.user_group,
       owner=params.hbase_user
     )
@@ -129,7 +129,7 @@ def hbase(name=None # 'master' or 'regionserver' or 'client'
     params.HdfsDirectory(params.hbase_staging_dir,
                          action="create_delayed",
                          owner=params.hbase_user,
-                         mode=0711
+                         mode=0o711
     )
     params.HdfsDirectory(None, action="create")
 

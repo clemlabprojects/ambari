@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -117,7 +117,7 @@ def validateAbilityResponse(component, response):
   try:
     if component == RESOURCEMANAGER:
       nodes = []
-      if response.has_key('nodes') and not response['nodes'] == None and response['nodes'].has_key('node'):
+      if 'nodes' in response and not response['nodes'] == None and 'node' in response['nodes']:
         nodes = response['nodes']['node']
       connected_nodes_count = len(nodes)
       if connected_nodes_count == 0:

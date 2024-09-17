@@ -19,8 +19,8 @@ limitations under the License.
 import os
 import logging
 
-from models.commands import AgentCommand
-from models.hooks import HookPrefix
+from ambari_agent.models.commands import AgentCommand
+from ambari_agent.models.hooks import HookPrefix
 
 __all__ = ["ResolvedHooks", "HooksOrchestrator"]
 
@@ -102,7 +102,7 @@ class HookSequenceBuilder(object):
       if "service" in hook_definition and service is None:
         continue
 
-      if "role" is hook_definition and role is None:
+      if "role" == hook_definition and role is None:
         continue
 
       yield hook_definition.format(prefix=prefix, command=command, service=service, role=role)

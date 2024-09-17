@@ -25,6 +25,7 @@
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>xasecure.policymgr.clientssl.keystore.password</name>
@@ -35,6 +36,7 @@
             <type>password</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>xasecure.policymgr.clientssl.truststore</name>
@@ -43,6 +45,7 @@
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>xasecure.policymgr.clientssl.truststore.password</name>
@@ -53,6 +56,7 @@
             <type>password</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>owner.for.certificate</name>
@@ -61,16 +65,19 @@
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>xasecure.policymgr.clientssl.keystore.credential.file</name>
         <value>jceks://file{{credential_file}}</value>
         <description>java keystore credential file</description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>xasecure.policymgr.clientssl.truststore.credential.file</name>
         <value>jceks://file{{credential_file}}</value>
         <description>java truststore credential file</description>
+        <on-ambari-upgrade add="true"/>
     </property>
 
 </configuration>

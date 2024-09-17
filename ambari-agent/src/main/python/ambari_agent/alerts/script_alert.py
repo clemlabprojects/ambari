@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import imp
+import importlib.util
 import logging
 import os
 import re
@@ -54,7 +54,7 @@ class ScriptAlert(BaseAlert):
     self.parameters = {}
 
     # will force a kinit even if klist says there are valid tickets (4 hour default)
-    self.kinit_timeout = long(config.get('agent', 'alert_kinit_timeout', BaseAlert._DEFAULT_KINIT_TIMEOUT))
+    self.kinit_timeout = int(config.get('agent', 'alert_kinit_timeout', BaseAlert._DEFAULT_KINIT_TIMEOUT))
 
     if 'path' in alert_source_meta:
       self.path = alert_source_meta['path']
@@ -173,7 +173,10 @@ class ScriptAlert(BaseAlert):
 
       return None
 
-    return imp.load_source(self._get_alert_meta_value_safely('name'), self.path_to_script)
+    spec = importlib.util.spec_from_file_location(self._get_alert_meta_value_safely('name'), self.path_to_script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
   def _get_reporting_text(self, state):

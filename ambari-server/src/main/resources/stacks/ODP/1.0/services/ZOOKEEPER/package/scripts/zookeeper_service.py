@@ -30,8 +30,11 @@ from resource_management.core.resources.service import Service
 def zookeeper_service(action='start', upgrade_type=None):
   import params
 
-  cmd = format("env ZOOCFGDIR={config_dir} ZOOCFG=zoo.cfg {zk_bin}/zkServer.sh")
+  cmd = format("env ZOOCFGDIR={config_dir} ZOOCFG=zoo.cfg ")
+  if params.security_enabled:
+    cmd = format('{cmd} -Djava.security.auth.login.config={zk_server_jaas_file} ')
 
+  cmd = cmd + format('{zk_bin}/zkServer.sh')
   if action == 'start':
     daemon_cmd = format("source {config_dir}/zookeeper-env.sh ; {cmd} start")
     no_op_test = format("ls {zk_pid_file} >/dev/null 2>&1 && ps -p `cat {zk_pid_file}` >/dev/null 2>&1")

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -85,7 +85,7 @@ class Master(Script):
                         source=spark_deps_full_path,
                         group=params.zeppelin_group,
                         owner=params.zeppelin_user,
-                        mode=0444,
+                        mode=0o444,
                         replace_existing_files=True,
                         )
 
@@ -99,7 +99,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
               )
 
   def create_zeppelin_hdfs_conf_dir(self, env):
@@ -110,7 +110,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
               )
 
   def chown_zeppelin_pid_dir(self, env):
@@ -132,7 +132,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
-              mode=0755
+              mode=0o755
     )
     self.chown_zeppelin_pid_dir(env)
 
@@ -167,7 +167,7 @@ class Master(Script):
               configuration_attributes=params.config['configurationAttributes']['hbase-site'],
               owner=params.zeppelin_user,
               group=params.zeppelin_group,
-              mode=0644)
+              mode=0o644)
 
       XmlConfig("hdfs-site.xml",
                 conf_dir=params.external_dependency_conf,
@@ -175,7 +175,7 @@ class Master(Script):
                 configuration_attributes=params.config['configurationAttributes']['hdfs-site'],
                 owner=params.zeppelin_user,
                 group=params.zeppelin_group,
-                mode=0644)
+                mode=0o644)
 
       XmlConfig("core-site.xml",
                 conf_dir=params.external_dependency_conf,
@@ -183,7 +183,7 @@ class Master(Script):
                 configuration_attributes=params.config['configurationAttributes']['core-site'],
                 owner=params.zeppelin_user,
                 group=params.zeppelin_group,
-                mode=0644)
+                mode=0o644)
 
   def check_and_copy_notebook_in_hdfs(self, params):
     if params.config['configurations']['zeppelin-config']['zeppelin.notebook.dir'].startswith("/"):

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -38,7 +38,7 @@ class BlacklistedSet(set):
 
   def __iter__(self):
     for item in set.__iter__(self):
-      if time.time() > self.__dict.get(item):
+      if time.time() > self.__dict.get(item, 0):
         yield item
 
   def get_actual_size(self):
@@ -62,12 +62,12 @@ if __name__ == "__main__":
   hosts = [1, 2, 3, 4]
   bs = BlacklistedSet(hosts)
   bs.blacklist(4)
-  print bs
+  print(bs)
   for a in bs:
-    print a
+    print(a)
   time.sleep(2)
 
   bs.blacklist(1)
   bs.blacklist(5)
   for a in bs:
-    print a
+    print(a)

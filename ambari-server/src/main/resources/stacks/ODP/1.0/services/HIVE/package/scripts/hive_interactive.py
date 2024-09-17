@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -20,7 +20,7 @@ limitations under the License.
 
 # Python Imports
 import os
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 # Local Imports
 from hive import fill_conf_dir, jdbc_connector
@@ -54,7 +54,7 @@ def hive_interactive(name = None):
   Directory(params.tez_interactive_conf_dir,
         create_parents = True,
         cd_access="a",
-        mode=0775,
+        mode=0o775,
         owner=params.tez_user,
         group=params.user_group,
         ignore_failures=True,
@@ -68,7 +68,7 @@ def hive_interactive(name = None):
                         action = "create_on_execute",
                         owner = params.hive_user,
                         group = params.user_group,
-                        mode = 0700
+                        mode = 0o700
     )
     # create directories for llap package
     pkg_dir = '/user/' + params.hive_user + '/.yarn'
@@ -79,7 +79,7 @@ def hive_interactive(name = None):
                           action = "create_on_execute",
                           owner = params.hive_user,
                           group = params.user_group,
-                          mode = 0755
+                          mode = 0o755
       )
 
     if not is_empty(params.tez_hook_proto_base_directory):
@@ -87,7 +87,7 @@ def hive_interactive(name = None):
                           type = "directory",
                           action = "create_on_execute",
                           owner = params.hive_user,
-                          mode = 01755
+                          mode = 0o1755
                           )
 
     if not is_empty(params.hive_hook_proto_base_directory):
@@ -95,7 +95,7 @@ def hive_interactive(name = None):
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         dag_meta = params.tez_hook_proto_base_directory + "dag_meta"
@@ -103,7 +103,7 @@ def hive_interactive(name = None):
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         dag_data = params.tez_hook_proto_base_directory + "dag_data"
@@ -111,7 +111,7 @@ def hive_interactive(name = None):
                             type = "directory",
                             action = "create_on_execute",
                             owner = params.hive_user,
-                            mode = 01777
+                            mode = 0o1777
                             )
 
         app_data = params.tez_hook_proto_base_directory + "app_data"
@@ -119,7 +119,7 @@ def hive_interactive(name = None):
                             type="directory",
                             action="create_on_execute",
                             owner=params.hive_user,
-                            mode=01777
+                            mode=0o1777
                             )
 
   else:
@@ -168,7 +168,7 @@ def hive_interactive(name = None):
   '''
   if 'hive.llap.io.memory.size' in merged_hive_interactive_site.keys():
     hive_llap_io_mem_size_in_mb = merged_hive_interactive_site.get("hive.llap.io.memory.size")
-    hive_llap_io_mem_size_in_bytes = long(hive_llap_io_mem_size_in_mb) * MB_TO_BYTES
+    hive_llap_io_mem_size_in_bytes = int(hive_llap_io_mem_size_in_mb) * MB_TO_BYTES
     merged_hive_interactive_site['hive.llap.io.memory.size'] = hive_llap_io_mem_size_in_bytes
     Logger.info("Converted 'hive.llap.io.memory.size' value from '{0} MB' to '{1} Bytes' before writing "
                 "it to config file.".format(hive_llap_io_mem_size_in_mb, hive_llap_io_mem_size_in_bytes))
@@ -209,7 +209,7 @@ def hive_interactive(name = None):
             configuration_attributes=params.config['configurationAttributes']['tez-interactive-site'],
             owner = params.tez_interactive_user,
             group = params.user_group,
-            mode = 0664)
+            mode = 0o664)
 
   '''
   Merge properties from hiveserver2-interactive-site into hiveserver2-site
@@ -234,7 +234,7 @@ def hive_interactive(name = None):
 
   hive_server_interactive_conf_dir = params.hive_server_interactive_conf_dir
 
-  mode_identified = 0600
+  mode_identified = 0o600
   merged_hive_interactive_site = update_credential_provider_path(merged_hive_interactive_site,
                                                                  'hive-site',
                                                                  os.path.join(conf_dir, 'hive-site.jceks'),
@@ -247,7 +247,7 @@ def hive_interactive(name = None):
             configuration_attributes = params.config['configurationAttributes']['hive-interactive-site'],
             owner = params.hive_user,
             group = params.user_group,
-            mode = 0644
+            mode = 0o644
   )
   XmlConfig("hiveserver2-site.xml",
             conf_dir = hive_server_interactive_conf_dir,
@@ -261,7 +261,7 @@ def hive_interactive(name = None):
   File(format("{hive_server_interactive_conf_dir}/hive-env.sh"),
        owner = params.hive_user,
        group = params.user_group,
-       mode = 0755,
+       mode = 0o755,
        content = InlineTemplate(params.hive_interactive_env_sh_template)
   )
 
@@ -343,7 +343,7 @@ def hive_interactive(name = None):
   File(os.path.join(params.limits_conf_dir, 'hive.conf'),
        owner = 'root',
        group = 'root',
-       mode = 0644,
+       mode = 0o644,
        content=Template("hive.conf.j2")
   )
 
@@ -352,10 +352,10 @@ def hive_interactive(name = None):
 
   File(format("/usr/lib/ambari-agent/{check_db_connection_jar_name}"),
        content = DownloadSource(format("{jdk_location}/{check_db_connection_jar_name}")),
-       mode = 0644
+       mode = 0o644
   )
   File(params.start_hiveserver2_interactive_path,
-       mode = 0755,
+       mode = 0o755,
        content = Template(format('{start_hiveserver2_interactive_script}'))
   )
 
@@ -364,21 +364,21 @@ def hive_interactive(name = None):
             cd_access = 'a',
             owner = params.hive_user,
             group = params.user_group,
-            mode = 0755
+            mode = 0o755
   )
   Directory(params.hive_log_dir,
             create_parents = True,
             cd_access = 'a',
             owner = params.hive_user,
             group = params.user_group,
-            mode = 0755
+            mode = 0o755
   )
   Directory(params.hive_interactive_var_lib,
             create_parents = True,
             cd_access = 'a',
             owner = params.hive_user,
             group = params.user_group,
-            mode = 0755
+            mode = 0o755
   )
   generate_logfeeder_input_config('hive', Template("input.config-hive.json.j2", extra_imports=[default]))
 

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -59,7 +59,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -129,7 +129,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -169,7 +169,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -212,7 +212,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
@@ -343,7 +343,7 @@ class TestDatanode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                               owner = 'hdfs',
@@ -358,7 +358,7 @@ class TestDatanode(RMFTestCase):
                               conf_dir = '/usr/hdp/current/hadoop-client/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
                               )
     self.assertResourceCalled('File', '/usr/hdp/current/hadoop-client/conf/slaves',
                               content = Template('slaves.j2'),
@@ -372,7 +372,7 @@ class TestDatanode(RMFTestCase):
                               create_parents = True,
                               )
     self.assertResourceCalled('Directory', '/var/lib/ambari-agent/data/datanode',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True
     )
     self.assertResourceCalled('Directory', '/hadoop/hdfs/data',
@@ -387,7 +387,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('File', '/var/lib/ambari-agent/data/datanode/dfs_data_dir_mount.hist',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               content = content
                               )
 
@@ -418,7 +418,7 @@ class TestDatanode(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', conf_dir + '/hdfs_dn_jaas.conf',
                               content = Template('hdfs_dn_jaas.conf.j2'),
@@ -444,7 +444,7 @@ class TestDatanode(RMFTestCase):
                               conf_dir = conf_dir,
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
     )
     self.assertResourceCalled('File', conf_dir + '/slaves',
                               content = Template('slaves.j2'),
@@ -458,7 +458,7 @@ class TestDatanode(RMFTestCase):
                               create_parents = True,
                               )
     self.assertResourceCalled('Directory', '/var/lib/ambari-agent/data/datanode',
-                              mode = 0755,
+                              mode = 0o755,
                               create_parents = True
     )
     self.assertResourceCalled('Directory', '/hadoop/hdfs/data',
@@ -473,7 +473,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('File', '/var/lib/ambari-agent/data/datanode/dfs_data_dir_mount.hist',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0644,
+                              mode = 0o644,
                               content = content
                               )
 
@@ -624,7 +624,7 @@ class TestDatanode(RMFTestCase):
         command_args=["rolling"])
 
       raise Fail("Expected a fail since datanode didn't report a shutdown")
-    except Exception, err:
+    except Exception as err:
       expected_message = "DataNode has not yet deregistered from the NameNode..."
       if str(err.message) != expected_message:
         self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err.message))
@@ -658,7 +658,7 @@ class TestDatanode(RMFTestCase):
                          command_args=["rolling"])
 
       raise Fail("Expected a fail since datanode didn't report a shutdown")
-    except Exception, err:
+    except Exception as err:
       expected_message = "DataNode has not yet deregistered from the NameNode..."
       if str(err.message) != expected_message:
         self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err.message))

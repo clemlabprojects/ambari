@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 """
 Licensed to the Apache Software Foundation (ASF) under one
@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import urllib2
+import urllib.request
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import logging
 import traceback
@@ -191,7 +191,7 @@ def get_value_from_jmx(query, jmx_property, connection_timeout):
   try:
     # use a customer header process that will look for the non-standard
     # "Refresh" header and attempt to follow the redirect
-    url_opener = urllib2.build_opener(RefreshHeaderProcessor())
+    url_opener = urllib.request.build_opener(RefreshHeaderProcessor())
     response = url_opener.open(query, timeout=connection_timeout)
 
     data = response.read()

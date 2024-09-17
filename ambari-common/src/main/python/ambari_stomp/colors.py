@@ -1,7 +1,7 @@
 """Color 'constants' used by the command line client.
 """
 
-import platform
+import platform as platform
 
 
 if platform.system().lower() != 'windows':

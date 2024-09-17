@@ -99,9 +99,6 @@
     <property>
         <name>nifi.registry.security.keystorePasswd</name>
         <value></value>
-        <value-attributes>
-          <empty-value-valid>true</empty-value-valid>
-        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The keystore password. It is blank by default.</description>
         <value-attributes>
@@ -113,9 +110,6 @@
     <property>
         <name>nifi.registry.security.keyPasswd</name>
         <value></value>
-        <value-attributes>
-          <empty-value-valid>true</empty-value-valid>
-        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The key password. It is blank by default.</description>
         <value-attributes>
@@ -147,9 +141,6 @@
     <property>
         <name>nifi.registry.security.truststorePasswd</name>
         <value></value>
-        <value-attributes>
-          <empty-value-valid>true</empty-value-valid>
-        </value-attributes>
         <on-ambari-upgrade add="true"/>
         <description>The truststore password. It is blank by default.</description>
         <value-attributes>
@@ -161,9 +152,6 @@
     <property>
         <name>nifi.registry.security.needClientAuth</name>
         <value></value>
-        <value-attributes>
-          <empty-value-valid>true</empty-value-valid>
-        </value-attributes>
         <value-attributes>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>

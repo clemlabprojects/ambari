@@ -33,11 +33,6 @@
         "min_version": "1.0.0.0"
       },
       {
-        "name": "zookeeper_support_logback",
-        "description": "Support Logback ",
-        "min_version": "1.2.2.0"
-      },
-      {
         "name": "config_versioning",
         "description": "Configurable versions support",
         "min_version": "1.0.0.0"

@@ -25,7 +25,7 @@ from mock.mock import patch, MagicMock
 class TestHDP25StackAdvisor(TestCase):
 
   def setUp(self):
-    import imp
+    import importlib.util
     self.maxDiff = None
     self.testDirectory = os.path.dirname(os.path.abspath(__file__))
 
@@ -763,7 +763,7 @@ class TestHDP25StackAdvisor(TestCase):
       hosts["items"].append(nextHost)
     return hosts
 
-  @patch('__builtin__.open')
+  @patch('builtins.open')
   @patch('os.path.exists')
   def get_system_min_uid_magic(self, exists_mock, open_mock):
     class MagicFile(object):

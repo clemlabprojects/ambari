@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+import importlib.util
 import os
 import traceback
 import re
@@ -36,10 +36,12 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
 
@@ -312,7 +314,7 @@ class RangerKMSRecommender(service_advisor.ServiceAdvisor):
     else:
       colon_count = db_host.count(':')
       if colon_count == 0:
-        if DB_TYPE_DEFAULT_PORT_MAP.has_key(db_type):
+        if db_type in DB_TYPE_DEFAULT_PORT_MAP:
           connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
         else:
           connection_string = db_host

@@ -80,19 +80,19 @@ class HueGatewayDefault(HueGateway):
               group = params.hue_group,
               create_parents = True,
               cd_access = "a",
-              mode = 0755,
+              mode = 0o755,
               recursive_ownership = True,
     )
 
     ## Render Hue ini configuration
     File(format("{params.hue_conf_dir}/hue.ini"),
-         mode=0644,
+         mode=0o644,
          group=params.hue_group,
          owner=params.hue_user,
          content=InlineTemplate(params.hue_ini_content)
     )
     File(format("{params.hue_log_redaction_file}"),
-      mode=0644,
+      mode=0o644,
       group=params.hue_group,
       owner=params.hue_user,
       content=Template("redaction-rules.json")

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -73,11 +73,14 @@ def setup_credential_file(java_home, hadoop_bin_override,
           code, output = shell.call(check_match_cmd, timeout=5)
           if code == 0 and 'Password match success' in output:
             Logger.info("Password alias matches. Skipping...")
-          else:
+          elif code == 0 and 'Password match failed' in output:
+            Logger.info("Password alias does not match deleting and creating. Skipping...")
             Logger.info("Deleting alias before create")
-            delete_cmd = (hadoop_bin, 'credential', 'delete', password['alias'] , '-provider', credential_path)
+            delete_cmd = (hadoop_bin, 'credential', 'delete', password['alias'] , '-f', '-provider', credential_path)
             Execute(delete_cmd, environment=cmd_env, logoutput=True, sudo=True)
             Logger.info("Alias {password.alias} deleted")
+            need_to_create = True
+          else:
             need_to_create = True
         else:
           need_to_create = True

@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import ConfigParser
+import configparser
 import glob
 
 from .generic_manager import GenericManagerProperties, GenericManager
@@ -27,7 +27,7 @@ from resource_management.core.logger import Logger
 from resource_management.core.utils import suppress_stdout
 from resource_management.core import sudo
 
-from StringIO import StringIO
+from io import StringIO
 
 import re
 import os
@@ -51,7 +51,6 @@ class YumManagerProperties(GenericManagerProperties):
 
   if int(OSCheck.get_os_major_version()) >= 8:
     yum_lib_dir = "/var/lib/dnf"
-
   yum_tr_prefix = "transaction-"
 
   repo_definition_location = "/etc/yum.repos.d"
@@ -209,12 +208,14 @@ class YumManager(GenericManager):
 
     :raise ValueError if name is empty
     """
+
     if (context.is_upgrade) and (name == "odp-select"):
       Logger.info("Skipping upgrade of {0}".format(name))
       return True
+
     if not name:
       raise ValueError("Installation command was executed with no package name")
-    elif context.is_upgrade or context.use_repos or not self._check_existence(name):
+    elif not self._check_existence(name) or context.action_force:
       cmd = self.properties.install_cmd[context.log_output]
       if context.use_repos:
         enable_repo_option = '--enablerepo=' + ",".join(sorted(context.use_repos.keys()))
@@ -279,26 +280,10 @@ class YumManager(GenericManager):
     yum in inconsistant state (locked, used, having invalid repo). Once packages are installed
     we should not rely on that.
     """
+    if not name:
+      raise ValueError("Package name can't be empty")
+
     return self.rpm_check_package_available(name)
-
-  def yum_check_package_available(self, name):
-    """
-    Does the same as rpm_check_package_avaiable, but faster.
-    However need root permissions.
-    """
-    import yum  # Python Yum API is much faster then other check methods. (even then "import rpm")
-    yb = yum.YumBase()
-    name_regex = re.escape(name).replace("\\?", ".").replace("\\*", ".*") + '$'
-    regex = re.compile(name_regex)
-
-    with suppress_stdout():
-      package_list = yb.rpmdb.simplePkgList()
-
-    for package in package_list:
-      if regex.match(package[0]):
-        return True
-
-    return False
 
   @staticmethod
   def _build_repos_ids(repos):
@@ -327,7 +312,7 @@ class YumManager(GenericManager):
     # if there are any matches, it means the repo already exists and we should use it to search
     # for packages to install
     for repo_file in glob.glob(os.path.join(YumManagerProperties.repo_definition_location, "*.repo")):
-      config_parser = ConfigParser.ConfigParser()
+      config_parser = configparser.ConfigParser()
       config_parser.read(repo_file)
       sections = config_parser.sections()
       for section in sections:
@@ -344,13 +329,18 @@ class YumManager(GenericManager):
     return set(repo_ids)
 
   def rpm_check_package_available(self, name):
-    import os
-    packages = os.popen("rpm -qa --queryformat '%{name} '").read().split()
+    import rpm # this is faster then calling 'rpm'-binary externally.
+    ts = rpm.TransactionSet()
+    packages = ts.dbMatch()
 
     name_regex = re.escape(name).replace("\\?", ".").replace("\\*", ".*") + '$'
     regex = re.compile(name_regex)
-    
-    return any(regex.match(package) for package in packages)
+
+    for package in packages:
+      pkg_name = package['name'].decode() if isinstance(package['name'], bytes) else package['name']
+      if regex.match(pkg_name):
+        return True
+    return False
 
   def get_installed_package_version(self, package_name):
     version = None
@@ -446,6 +436,9 @@ Ambari has detected that there are incomplete Yum transactions on this host. Thi
 - Identify the pending transactions with the command 'yum history list <packages failed>'
 - Revert each pending transaction with the command 'yum history undo'
 - Flush the transaction log with 'yum-complete-transaction --cleanup-only'
+
+If the issue persists, old transaction files may be the cause.
+Please delete them from /var/lib/yum/transaction*
 """
 
     for line in help_msg.split("\n"):

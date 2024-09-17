@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -87,7 +87,7 @@ class Properties(object):
         first, last = m.span()
         sepidx = last - 1
       while line[-1] == '\\':
-        nextline = i.next()
+        nextline = next(i)
         nextline = nextline.strip()
         lineno += 1
         line = line[:-1] + nextline
@@ -117,7 +117,7 @@ class Properties(object):
     oldvalue = self.unescape(oldvalue)
     value = self.unescape(value)
     self._props[key] = None if value is None else value.strip()
-    if self._keymap.has_key(key):
+    if key in self._keymap:
       oldkey = self._keymap.get(key)
       self._origprops[oldkey] = None if oldvalue is None else oldvalue.strip()
     else:
@@ -132,20 +132,18 @@ class Properties(object):
     return newvalue
 
   def removeOldProp(self, key):
-    if self._origprops.has_key(key):
+    if key in self._origprops:
       del self._origprops[key]
     pass
 
   def removeProp(self, key):
-    if self._props.has_key(key):
+    if key in self._props:
       del self._props[key]
     pass
 
   def load(self, stream):
-    if type(stream) is not file:
-      raise TypeError, 'Argument should be a file object!'
     if stream.mode != 'r':
-      raise ValueError, 'Stream should be opened in read-only mode!'
+      raise ValueError('Stream should be opened in read-only mode!')
     try:
       self.fileName = os.path.abspath(stream.name)
       lines = stream.readlines()
@@ -182,7 +180,7 @@ class Properties(object):
   def sort_origprops(self):
     tmp_props = self._origprops.copy()
     self._origprops.clear()
-    for key in sorted(tmp_props.iterkeys()):
+    for key in sorted(tmp_props.keys()):
       self._origprops[key] = tmp_props[key]
     pass
 
@@ -192,7 +190,7 @@ class Properties(object):
     This function will attempt to close the file handler once it's done.
     """
     if out.mode[0] != 'w':
-      raise ValueError, 'Steam should be opened in write mode!'
+      raise ValueError('Steam should be opened in write mode!')
     try:
       out.write(''.join(('#', ASF_LICENSE_HEADER, '\n')))
       out.write(''.join(('#', header, '\n')))
@@ -213,7 +211,7 @@ class Properties(object):
     """ Write the properties list to the stream 'out' along
     with the optional 'header' """
     if out.mode[0] != 'w':
-      raise ValueError, 'Steam should be opened in write mode!'
+      raise ValueError('Steam should be opened in write mode!')
     try:
       out.write(''.join(('#', ASF_LICENSE_HEADER, '\n')))
       out.write(''.join(('#', header, '\n')))
@@ -221,7 +219,7 @@ class Properties(object):
       tstamp = time.strftime('%a %b %d %H:%M:%S %Z %Y', time.localtime())
       out.write(''.join(('#', tstamp, '\n')))
       # Write properties from the pristine dictionary
-      for key in sorted(self._origprops.iterkeys()):
+      for key in sorted(self._origprops.keys()):
         val = self._origprops[key]
         if val is not None:
           out.write(''.join((key, '=', val, '\n')))

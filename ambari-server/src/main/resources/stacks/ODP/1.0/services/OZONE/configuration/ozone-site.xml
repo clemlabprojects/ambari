@@ -69,7 +69,16 @@
         set, ozone.security.http.kerberos.enabled should be set to true.
         </description>
         <final>true</final>
-        <display-name>Enable Kerberos for Ozone web consoles</display-name>
+        <display-name>Ozone Web Consoles HTTP filters</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone.security.http.kerberos.enabled</name>
+        <value>false</value>
+        <description>Set this property to true to enable Kerberos authentication when accessing Ozone Web Consoles.
+            No effect when ozone.http.filter.initializers is not set to 'org.apache.hadoop.security.AuthenticationFilterInitializer'
+        </description>
+        <display-name>Enable Ozone Keberos Authentication on HTTP Web Consoles</display-name>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
@@ -86,7 +95,7 @@
     </property>
     <property>
         <name>ozone.administrators</name>
-        <value>ozone,hdfs</value>
+        <value>ozone,hdfs,knox</value>
         <display-name>Ozone Administrators</display-name>
         <description>Ozone administrator users delimited by the comma.
             If not set, only the user who launches an ozone service will be the admin
@@ -150,12 +159,18 @@
     <property>
         <name>ozone.acl.enabled</name>
         <value>true</value>
-        <description>Key to enable/disable ozone acls.
+        <description>Key to enable/disable ozone acls. Must be set to true when ranger is enabled
         </description>
         <value-attributes>
             <type>boolean</type>
             <overridable>true</overridable>
         </value-attributes>
+        <depends-on>
+            <property>
+                <type>ranger-ozone-plugin-properties</type>
+                <name>ranger-ozone-plugin-enabled</name>
+            </property>
+        </depends-on>
         <on-ambari-upgrade add="false"/>
     </property>
 <!--    Ozone Manager related properties -->
@@ -166,18 +181,19 @@
         <description>Comma-separated list of SCM service Ids. This property allows the client
             to figure out quorum of OzoneManager address.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.om.ratis.snapshot.dir</name>
         <value>/var/lib/hadoop-ozone/om-snapshots</value>
-        <tag>OZONE, OM, STORAGE, MANAGEMENT, RATIS</tag>
         <description>This directory is used for storing OM's snapshot
         related files like the ratisSnapshotIndex and DB checkpoint from leader
         OM.
         If undefined, OM snapshot dir will fallback to ozone.metadata.dirs.
         This fallback approach is not recommended for production environments.
         </description>
-  </property>
+        <on-ambari-upgrade add="true"/>
+    </property>
     <property>
         <name>ozone.om.http-address</name>
         <value>0.0.0.0:9874</value>
@@ -223,12 +239,15 @@
     </property>
     <property>
         <name>ozone.om.ratis.enable</name>
-        <value>0.0.0.0</value>
+        <value>false</value>
         <display-name>Ozone Manager Ratis (HA) enabled</display-name>
         <description>Property to enable or disable Ratis server on OM.
         Please note - this is a temporary property to disable OM Ratis server.
         </description>
-        <on-ambari-upgrade add="false"/>
+        <value-attributes>
+            <overridable>false</overridable>
+            <type>boolean</type>
+        </value-attributes>
     </property>
     <!-- <property>
         <name>ozone.om.internal.service.id</name>
@@ -526,15 +545,15 @@
         <name>ozone.scm.datanode.port</name>
         <value>9861</value>
         <display-name>Ozone SCM service Datanode port</display-name>
-        <description>The port number of the Ozone SCM service.
-        </description>
+        <description>The port number of the Ozone SCM service.</description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.scm.ratis.port</name>
         <value>9894</value>
         <display-name>Ozone SCM Ratis Server port</display-name>
-        <description>The port number of the SCM's Ratis server.
-        </description>
+        <description>The port number of the SCM's Ratis server.</description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.scm.security.service.port</name>
@@ -542,6 +561,7 @@
         <display-name>Ozone SCM Security server port</display-name>
         <description>SCM security server port.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.scm.service.ids</name>
@@ -550,6 +570,7 @@
         <description>Comma-separated list of SCM service Ids. This property allows the client
             to figure out quorum of OzoneManager address.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.scm.names</name>
@@ -564,6 +585,7 @@
         <value-attributes>
             <overridable>false</overridable>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.scm.ratis.enable</name>
@@ -571,10 +593,11 @@
         <display-name>Enable Ozone SCM HA</display-name>
         <description>HA mode of Storage Container Manager can be enabled with the following settings in
         </description>
-        <value-attributes>
+        <!-- <value-attributes>
             <overridable>false</overridable>
             <type>boolean</type>
-        </value-attributes>
+        </value-attributes> -->
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>hdds.scm.http.auth.type</name>
@@ -586,9 +609,10 @@
         <value-attributes>
             <overridable>false</overridable>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
-        <name>zone.scm.skip.bootstrap.validation</name>
+        <name>ozone.scm.skip.bootstrap.validation</name>
         <value/>
         <display-name>Skip Ozone Boostrap Validation</display-name>
         <description>optional config, the config when set to true skips the clusterId
@@ -598,6 +622,7 @@
             <type>boolean</type>
             <overridable>false</overridable>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <!--    Ozone Recon UI related properties-->
     <property>
@@ -606,6 +631,7 @@
         <display-name>Ozone RECON UI RPC address</display-name>
         <description>The RECON UI RPC listening port for DataNode heartbeats and registration.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.db.dir</name>
@@ -619,6 +645,7 @@
             ozone.metadata.dirs. This fallback approach is not recommended for
             production environments.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.http-bind-host</name>
@@ -628,6 +655,7 @@
             the address is set, it overrides only the hostname portion of
             ozone.recon.http-address (TLS disabled).
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.https-bind-host</name>
@@ -637,6 +665,7 @@
             the address is set, it overrides only the hostname portion of
             ozone.recon.http-address (TLS enable).
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.http-port</name>
@@ -644,6 +673,7 @@
         <display-name>Ozone RECON UI HTTP unsecure port</display-name>
         <description>The network port used by Ozone RECON when TLS is not enabled.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.https-port</name>
@@ -651,6 +681,7 @@
         <display-name>Ozone RECON UI TLS port</display-name>
         <description>The HTTP port used by Ozone RECON when TLS is enabled.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.om.db.dir</name>
@@ -667,6 +698,7 @@
         <value-attributes>
             <type>directories</type>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.scm.db.dirs</name>
@@ -683,6 +715,7 @@
         <value-attributes>
             <type>directories</type>
         </value-attributes>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.recon.rpc-port</name>
@@ -690,6 +723,7 @@
         <display-name>Ozone RECON UI TLS port</display-name>
         <description>Port used by Datanodes to communicate with Recon Server (reporting).
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <!--    Ozone S3 Gateway related properties-->
     <property>
@@ -701,6 +735,7 @@
             This is useful for making the Ozone S3Gateway HTTP server listen on all
             interfaces by setting it to 0.0.0.0 (TLS not enabled).
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.https-bind-host</name>
@@ -711,6 +746,7 @@
             This is useful for making the Ozone S3Gateway HTTP server listen on all
             interfaces by setting it to 0.0.0.0 (TLS enabled).
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.http-port</name>
@@ -718,6 +754,7 @@
         <display-name>Ozone S3 Gateway unsecure port</display-name>
         <description>The network port used by Ozone S3 Gateway Container when TLS is not enabled.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.https-port</name>
@@ -725,6 +762,7 @@
         <display-name>Ozone S3 Gateway TLS port</display-name>
         <description>The HTTP port used by Ozone S3 Gateway when TLS is enabled.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.http.auth.type</name>
@@ -733,6 +771,7 @@
         <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
             will be used for http authentication.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.http-address</name>
@@ -740,6 +779,7 @@
         <display-name>Ozone S3 Gateway unsecure HTTP address</display-name>
         <description>The address and the base port where the Ozone S3Gateway
             Server will listen on , when TLS/SSL is not enabled.</description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>ozone.s3g.https-address</name>
@@ -747,6 +787,7 @@
         <display-name>Ozone S3 Gateway TLS/SSL HTTP address</display-name>
         <description>The address and the base port where the Ozone S3Gateway
             Server will listen on, when TLS/SSL is enabled</description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <!--    Ozone Balancer SCM related properties-->
     <property>
@@ -890,6 +931,7 @@
         <display-name>Ozone Datanode IPC port</display-name>
         <description>The ipc port number of container for admin requests.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>dfs.container.ratis.datanode.storage.dir</name>
@@ -899,6 +941,7 @@
             this is not set then default metadata dirs is used. A warning will be logged if
             this not set. Ideally, this should be mapped to a fast disk like an SSD.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>dfs.container.ratis.server.port</name>
@@ -906,6 +949,7 @@
         <display-name>Ozone Datanode Intra-node IPC port</display-name>
         <description>The ipc port number of container for server-server communication.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>hdds.datanode.dir</name>
@@ -918,6 +962,7 @@
             storage type will be DISK if the directory does not have a storage type
             tagged explicitly.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>hdds.datanode.http-address</name>
@@ -955,6 +1000,7 @@
         <description> simple or kerberos. If kerberos is set, Kerberos SPNEOGO
             will be used for http authentication.
         </description>
+        <on-ambari-upgrade add="true"/>
     </property>
     <property>
         <name>hdds.datanode.https-address</name>

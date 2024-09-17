@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -61,7 +61,7 @@ class TestNFSGateway(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'root',
                               group = 'root',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/root',
                               owner = 'root',
@@ -71,7 +71,7 @@ class TestNFSGateway(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/log/hadoop/root',
                               owner = 'root',
                               group = 'hadoop',
-                              mode = 0775
+                              mode = 0o775
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/root/hadoop_privileged_nfs3.pid',
         action = ['delete'],
@@ -129,7 +129,7 @@ class TestNFSGateway(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/hadoop',
                               owner = 'root',
                               group = 'root',
-                              mode = 0755
+                              mode = 0o755
                               )
     self.assertResourceCalled('Directory', '/var/run/hadoop/root',
                               owner = 'root',
@@ -139,7 +139,7 @@ class TestNFSGateway(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/log/hadoop/root',
                               owner = 'root',
                               group = 'hadoop',
-                              mode = 0775
+                              mode = 0o775
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/root/hadoop_privileged_nfs3.pid',
         action = ['delete'],
@@ -194,7 +194,7 @@ class TestNFSGateway(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('XmlConfig', 'hdfs-site.xml',
                               owner = 'hdfs',
@@ -209,7 +209,7 @@ class TestNFSGateway(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),
@@ -243,7 +243,7 @@ class TestNFSGateway(RMFTestCase):
                               content = Template('hdfs.conf.j2'),
                               owner = 'root',
                               group = 'root',
-                              mode = 0644,
+                              mode = 0o644,
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/hdfs_dn_jaas.conf',
                               content = Template('hdfs_dn_jaas.conf.j2'),
@@ -268,7 +268,7 @@ class TestNFSGateway(RMFTestCase):
                               conf_dir = '/etc/hadoop/conf',
                               configurations = self.getConfig()['configurations']['core-site'],
                               configuration_attributes = self.getConfig()['configurationAttributes']['core-site'],
-                              mode = 0644
+                              mode = 0o644
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/slaves',
                               content = Template('slaves.j2'),

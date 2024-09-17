@@ -55,7 +55,7 @@ def nifi_cli(command=None, subcommand=None, errors_retries=12, retries_pause=10,
   else:
     command_args["baseUrl"] = client_opts["baseUrl"]
 
-  for arg_name, arg_value in command_args.iteritems():
+  for arg_name, arg_value in command_args.items():
     cmd.append("--" + arg_name)
     cmd.append(arg_value)
 

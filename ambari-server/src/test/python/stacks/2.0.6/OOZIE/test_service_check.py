@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -56,11 +56,11 @@ class TestServiceCheck(RMFTestCase):
   def assert_service_check(self):
     self.assertResourceCalled('File', '/tmp/oozieSmoke2.sh',
         content = StaticFile('oozieSmoke2.sh'),
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('File', '/tmp/prepareOozieHdfsDirectories.sh',
         content = StaticFile('prepareOozieHdfsDirectories.sh'),
-        mode = 0755,
+        mode = 0o755,
     )
     self.assertResourceCalled('Execute', ('/tmp/prepareOozieHdfsDirectories.sh', '/etc/oozie/conf', '/', '/etc/hadoop/conf', 'c6402.ambari.apache.org:8050', 'hdfs://c6401.ambari.apache.org:8020', 'default', 'no-op'),
         logoutput = True,
@@ -75,7 +75,7 @@ class TestServiceCheck(RMFTestCase):
                               kinit_path_local = '/usr/bin/kinit',
                               user = 'hdfs',
                               dfs_type = '',
-                              mode = 0770,
+                              mode = 0o770,
                               owner = 'ambari-qa',
                               action = ['create_on_execute'], hdfs_resource_ignore_file='/var/lib/ambari-agent/data/.hdfs_resource_ignore', hdfs_site=self.getConfig()['configurations']['hdfs-site'], principal_name=UnknownConfigurationMock(), default_fs='hdfs://c6401.ambari.apache.org:8020',
                               hadoop_conf_dir = '/etc/hadoop/conf',

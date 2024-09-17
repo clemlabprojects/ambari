@@ -18,12 +18,13 @@ limitations under the License.
 """
 
 # Python imports
-import imp
+import importlib.util
 import os
 import traceback
 import re
 import socket
 import fnmatch
+from lxml import etree
 import xml.etree.ElementTree as ET
 
 
@@ -37,10 +38,12 @@ try:
   if "BASE_SERVICE_ADVISOR" in os.environ:
     PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class KnoxServiceAdvisor(service_advisor.ServiceAdvisor):
 
@@ -169,9 +172,10 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
 
       # check if authorization provider already added
       topologyContent = services["configurations"]["topology"]["properties"]["content"]
+      parser = etree.XMLParser(recover=True)
+      root = etree.fromstring(topologyContent, parser=parser)
       authorizationProviderExists = False
       authNameChanged = False
-      root = ET.fromstring(topologyContent)
       if root is not None:
         gateway = root.find("gateway")
         if gateway is not None:
@@ -192,6 +196,7 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
 
             if authNameChanged:
               name.text = newAuthName
+              import xml.etree.ElementTree as ET
               putKnoxTopologyContent('content', ET.tostring(root))
 
             if authorizationProviderExists:

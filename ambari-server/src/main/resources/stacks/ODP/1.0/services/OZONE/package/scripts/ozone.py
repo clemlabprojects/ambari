@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -48,7 +48,7 @@ def create_dirs(data_dir):
   Directory(data_dir,
             create_parents = True,
             cd_access="a",
-            mode=0755,
+            mode=0o755,
             owner=params.ozone_user,
             group=params.user_group,
             ignore_failures=True
@@ -65,7 +65,7 @@ def ozone(name=None):
   conf_dir = ozone_env_dict['ozone_conf_dir']
 
   Directory( params.etc_prefix_dir,
-      mode=0755
+      mode=0o755
   )
   Directory(ozone_env_dict['ozone_conf_dir'],
       group = params.user_group,
@@ -74,7 +74,7 @@ def ozone(name=None):
    
   Directory(params.java_io_tmpdir,
       create_parents = True,
-      mode=0777
+      mode=0o777
   )
   
   if name == "ozone-manager":
@@ -96,8 +96,22 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
+
+  if name == "ozone-httpfs":
+    XmlConfig("httpfs-site.xml",
+      conf_dir = ozone_env_dict['ozone_conf_dir'],
+      configurations = params.ozone_httpfs_properties,
+      owner = params.ozone_user,
+      group = params.user_group
+    )
+
+    File(os.path.join(ozone_env_dict['ozone_conf_dir'], 'httpfs-env.sh'),
+        owner=params.ozone_user,  group=params.user_group,
+        content=InlineTemplate(params.ozone_httpfs_env_sh_template)
+    )
+    generate_logfeeder_input_config('ozone', Template("input.config-ozone.json.j2", extra_imports=[default]))
 
   ## Servers side tasks
   if name != "ozone-client":
@@ -105,19 +119,19 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
     )
     Directory (params.log_dir,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0755,
+      mode = 0o755,
     )
     Directory (params.ozone_http_dir,
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0754,
+      mode = 0o754,
     )
     # On some OS this folder could be not exists, so we will create it before pushing there files
     Directory(params.limits_conf_dir,
@@ -130,12 +144,12 @@ def ozone(name=None):
       owner = params.ozone_user,
       create_parents = True,
       cd_access = "a",
-      mode = 0750,
+      mode = 0o750,
     )
     File(os.path.join(params.limits_conf_dir, 'ozone.conf'),
         owner='root',
         group='root',
-        mode=0644,
+        mode=0o644,
         content=Template("ozone.conf.j2")
         )
     ## ssl properties
@@ -153,7 +167,7 @@ def ozone(name=None):
         group = params.user_group
       )
     ## ssl properties
-    if params.dn_ssl_enabled:
+    if params.dn_ssl_enabled and name == "ozone-datanode":
       XmlConfig("ssl-server.xml",
         conf_dir = ozone_env_dict['ozone_conf_dir'],
         configurations = params.dn_ssl_server_dict,
@@ -167,7 +181,7 @@ def ozone(name=None):
         group = params.user_group
       )
     ## ssl properties
-    if params.scm_ssl_enabled:
+    if params.scm_ssl_enabled and name == "ozone-scm":
       XmlConfig("ssl-server.xml",
         conf_dir = ozone_env_dict['ozone_conf_dir'],
         configurations = params.scm_ssl_server_dict,
@@ -181,7 +195,7 @@ def ozone(name=None):
         group = params.user_group
       )
     ## ssl properties
-    if params.recon_ssl_enabled:
+    if params.recon_ssl_enabled and name == "ozone-recon":
       XmlConfig("ssl-server.xml",
         conf_dir = ozone_env_dict['ozone_conf_dir'],
         configurations = params.recon_ssl_server_dict,
@@ -195,7 +209,7 @@ def ozone(name=None):
         group = params.user_group
       )
     ## ssl properties
-    if params.s3g_ssl_enabled:
+    if params.s3g_ssl_enabled and name == "ozone-s3g":
       XmlConfig("ssl-server.xml",
         conf_dir = ozone_env_dict['ozone_conf_dir'],
         configurations = params.s3g_ssl_server_dict,
@@ -205,6 +219,21 @@ def ozone(name=None):
       XmlConfig("ssl-client.xml",
         conf_dir = ozone_env_dict['ozone_conf_dir'],
         configurations = params.s3g_ssl_client_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+
+    ## ssl properties
+    if params.httpfs_ssl_enabled and name == "ozone-httpfs":
+      XmlConfig("ssl-server.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.httpfs_ssl_server_dict,
+        owner = params.ozone_user,
+        group = params.user_group
+      )
+      XmlConfig("ssl-client.xml",
+        conf_dir = ozone_env_dict['ozone_conf_dir'],
+        configurations = params.httpfs_ssl_client_dict,
         owner = params.ozone_user,
         group = params.user_group
       )
@@ -254,7 +283,7 @@ def ozone(name=None):
       File(params.data_dir_mount_file,
           owner=params.ozone_user,
           group=params.user_group,
-          mode=0644,
+          mode=0o644,
           content=data_dir_to_mount_file_content
       )
       generate_logfeeder_input_config('ozone', Template("input.config-ozone.json.j2", extra_imports=[default]))
@@ -291,7 +320,8 @@ def ozone(name=None):
     ozone_pid_dir_prefix = ozone_env_dict['ozone_pid_dir_prefix'],
     ozone_log_number_of_backup_files = ozone_env_dict['ozone_log_number_of_backup_files'],
     ozone_secure_dn_user = ozone_env_dict['ozone_secure_dn_user'],
-    java_home = ozone_env_dict['java_home']  
+    java_home = ozone_env_dict['java_home'],
+    role = name
   )
 
   File(format("{conf_dir}/ozone-env.sh"),
@@ -322,11 +352,39 @@ def ozone(name=None):
   )
   # render specific configuration files
   File(format("{conf_dir}/log4j.properties"),
-        mode=0644,
+        mode=0o644,
         group=params.user_group,
         owner=params.ozone_user,
         content=content_log4j_env
   )
+  if name == 'ozone-httpfs':
+    content_httpfs_log4j_env = InlineTemplate(ozone_env_dict['httpfs_log4j_content'],
+      ozone_conf_dir = ozone_env_dict['ozone_conf_dir'],
+      ozone_log_level = ozone_env_dict['ozone_log_level'],
+      jsvc_path = ozone_env_dict['jsvc_path'],
+      log4j_content = ozone_env_dict['log4j_content'],
+      ozone_security_log_max_backup_size = ozone_env_dict['ozone_security_log_max_backup_size'],
+      ozone_new_generation_size = ozone_env_dict['ozone_new_generation_size'],
+      ozone_log_max_backup_size = ozone_env_dict['ozone_log_max_backup_size'],
+      ozone_max_new_generation_size = ozone_env_dict['ozone_max_new_generation_size'],
+      ozone_java_opts = ozone_env_dict['ozone_java_opts'],
+      ozone_security_log_number_of_backup_files = ozone_env_dict['ozone_security_log_number_of_backup_files'],
+      ozone_log_dir_prefix = ozone_env_dict['ozone_log_dir_prefix'],
+      ozone_heapsize = ozone_env_dict['ozone_heapsize'],
+      ozone_max_perm_size = ozone_env_dict['ozone_max_perm_size'],
+      ozone_home = ozone_env_dict['ozone_home'],
+      ozone_perm_size = ozone_env_dict['ozone_perm_size'],
+      ozone_pid_dir_prefix = ozone_env_dict['ozone_pid_dir_prefix'],
+      ozone_log_number_of_backup_files = ozone_env_dict['ozone_log_number_of_backup_files'],
+      ozone_secure_dn_user = ozone_env_dict['ozone_secure_dn_user'],
+      java_home = ozone_env_dict['java_home']  
+    )
+    File(format("{conf_dir}/httpfs-log4j.properties"),
+          mode=0o644,
+          group=params.user_group,
+          owner=params.ozone_user,
+          content=content_httpfs_log4j_env
+    )
 
   if params.security_enabled:
     ozone_TemplateConfig(name, params, conf_dir)
@@ -347,12 +405,15 @@ def ozone_TemplateConfig(name, params=None, conf_dir=None):
   elif name == 'ozone-datanode':
     jaas_name = params.ozone_dn_jaas_config_file
     renderJaas(jaas_name, conf_dir)
+  elif name == 'ozone-recon':
+    jaas_name = params.ozone_recon_jaas_config_file
+    renderJaas(jaas_name, conf_dir)
   elif name == 'ozone-s3g':
     jaas_name = params.ozone_s3g_jaas_config_file
     renderJaas(jaas_name, conf_dir)
   else:
     pass
-  
+
 def getDictObjectForComponent(name=None, params=None, type="env"):
   if type == "env":
     conf_dir = params.ozone_base_conf_dir
@@ -413,8 +474,22 @@ def getDictObjectForComponent(name=None, params=None, type="env"):
       ozone_perm_size = params.ozone_recon_opt_permsize
       ozone_max_perm_size = params.ozone_recon_opt_maxpermsize
       ozone_log4j_content = params.ozone_recon_log4j_content
+    elif name == 'ozone-httpfs':
+      ozone_home =  format('{params.stack_root}/current/ozone-httpfs')
+      ozone_heapsize = params.ozone_httpfs_heapsize
+      ozone_log_level = params.ozone_httpfs_log_level
+      ozone_security_log_max_backup_size = params.ozone_httpfs_security_log_max_backup_size
+      ozone_security_log_number_of_backup_files = params.ozone_httpfs_security_log_number_of_backup_files
+      ozone_log_max_backup_size = params.ozone_httpfs_ozone_log_max_backup_size
+      ozone_log_number_of_backup_files = params.ozone_httpfs_ozone_log_number_of_backup_files
+      ozone_java_opts = params.ozone_httpfs_java_opts
+      ozone_new_generation_size = params.ozone_httpfs_opt_newsize
+      ozone_max_new_generation_size = params.ozone_httpfs_opt_maxnewsize
+      ozone_perm_size = params.ozone_httpfs_opt_permsize
+      ozone_max_perm_size = params.ozone_httpfs_opt_maxpermsize
+      ozone_httpfs_log4j_content = params.ozone_httpfs_log4j_content
+      ozone_log4j_content = params.ozone_log4j_content
     elif name == 'ozone-datanode':
-
       ozone_home =  format('{params.stack_root}/current/ozone-datanode')
       ozone_heapsize = params.ozone_datanode_heapsize
       ozone_log_level = params.ozone_manager_log_level
@@ -464,6 +539,8 @@ def getDictObjectForComponent(name=None, params=None, type="env"):
     ozone_env_dict['ozone_perm_size'] = ozone_perm_size
     ozone_env_dict['ozone_max_perm_size'] = ozone_max_perm_size
     ozone_env_dict['log4j_content'] = ozone_log4j_content
+    if name == 'ozone-httpfs':
+      ozone_env_dict['httpfs_log4j_content'] = ozone_httpfs_log4j_content
     return ozone_env_dict
   else:
     Logger.info(format("{name} component is not supported"))

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -170,12 +170,12 @@ class MSSQLConfig(DBMSConfig):
     pass
 
   def _setup_remote_database(self):
-    print 'Populating the {0} database structure...'.format(self.db_title)
+    print('Populating the {0} database structure...'.format(self.db_title))
 
     self._populate_database_structure()
 
   def _reset_remote_database(self):
-    print 'Resetting the {0} database structure...'.format(self.db_title)
+    print('Resetting the {0} database structure...'.format(self.db_title))
 
     self._populate_database_structure()
 
@@ -198,7 +198,7 @@ class MSSQLConfig(DBMSConfig):
 
     try:
       driver_path = properties[JDBC_DRIVER_PATH_PROPERTY]
-      if driver_path is None or driver_path is "":
+      if driver_path is None or driver_path == "":
         return 0
     except Exception:
       # No such attribute set
@@ -324,7 +324,7 @@ class MSSQLAmbariDBConfig(MSSQLConfig):
 
     super(MSSQLAmbariDBConfig, self).__init__(options, properties, storage_type)
 
-    if self.database_name is None or self.database_name is "":
+    if self.database_name is None or self.database_name == "":
       self.database_name = AMBARI_DATABASE_NAME
 
     self.persistence_property = PERSISTENCE_TYPE_PROPERTY

@@ -18,7 +18,7 @@ limitations under the License.
 """
 import os
 import fnmatch
-import imp
+import importlib.util
 import socket
 import sys
 import traceback
@@ -31,10 +31,12 @@ if "BASE_SERVICE_ADVISOR" in os.environ:
 
 try:
   with open(PARENT_FILE, 'rb') as fp:
-    service_advisor = imp.load_module('service_advisor', fp, PARENT_FILE, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
+    service_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(service_advisor)
 except Exception as e:
   traceback.print_exc()
-  print "Failed to load parent"
+  print("Failed to load parent")
 
 class MICROSOFT_R_SERVER805ServiceAdvisor(service_advisor.ServiceAdvisor):
 

@@ -538,12 +538,6 @@
         <increment-step>256</increment-step>
         <overridable>false</overridable>
     </value-attributes>
-    <depends-on>
-        <property>
-            <type>hdfs-site</type>
-            <name>dfs.datanode.data.dir</name>
-        </property>
-    </depends-on>
     <on-ambari-upgrade add="false"/>
 </property>
     <property>
@@ -674,12 +668,6 @@
             <increment-step>256</increment-step>
             <overridable>false</overridable>
         </value-attributes>
-        <depends-on>
-            <property>
-                <type>hdfs-site</type>
-                <name>dfs.datanode.data.dir</name>
-            </property>
-        </depends-on>
         <on-ambari-upgrade add="false"/>
     </property>
     <property>
@@ -768,10 +756,133 @@
         <display-name>Enable SSL</display-name>
         <on-ambari-upgrade add="false"/>
     </property>
+    <!--  Ozone HTTPFS Gateway related properties  -->
+    <property>
+        <name>ozone_httpfs_log_level</name>
+        <value>INFO</value>
+        <display-name>Ozone HTTPFS Gateway Log Level</display-name>
+        <value-attributes>
+            <type>value-list</type>
+            <entries>
+                <entry>
+                    <value>INFO</value>
+                    <label>INFO (Recommended)</label>
+                </entry>
+                <entry>
+                    <value>DEBUG</value>
+                    <label>DEBUG (Most Verbose)</label>
+                </entry>
+                <entry>
+                    <value>WARN</value>
+                    <label>WARN</label>
+                </entry>
+                <entry>
+                    <value>ERROR</value>
+                    <label>ERROR (Least Verbose)</label>
+                </entry>
+            </entries>
+            <selection-cardinality>1</selection-cardinality>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_heapsize</name>
+        <value>1024</value>
+        <description>Ozone HTTPFS Gateway Java heap size</description>
+        <display-name>Ozone HTTPFS Gateway Java heap size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>268435456</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_opt_newsize</name>
+        <value>200</value>
+        <description>Default size of Java new generation for Ozone HTTPFS Gateway (Java option -XX:NewSize) Note: The value of Ozone HTTPFS Gateway new generation size (default size of Java new generation for Ozone HTTPFS Gateway (Java option -XX:NewSize)) should be 1/8 of maximum heap size (-Xmx). Ensure that the value of the ozone_httpfs_opt_newsize property is 1/8 the value of maximum heap size (-Xmx).</description>
+        <display-name>Ozone HTTPFS Gateway new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_httpfs_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_opt_maxnewsize</name>
+        <value>200</value>
+        <description>Ozone HTTPFS Gateway maximum new generation size</description>
+        <display-name>Ozone HTTPFS Gateway maximum new generation size</display-name>
+        <depends-on>
+            <property>
+                <type>ozone-env</type>
+                <name>ozone_httpfs_heapsize</name>
+            </property>
+        </depends-on>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>16384</maximum>
+            <unit>MB</unit>
+            <increment-step>256</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_opt_permsize</name>
+        <value>128</value>
+        <description>Ozone HTTPFS Gateway permanent generation size</description>
+        <display-name>Ozone HTTPFS Gateway permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_opt_maxpermsize</name>
+        <value>256</value>
+        <description>Ozone HTTPFS Gateway maximum permanent generation size</description>
+        <display-name>Ozone HTTPFS Gateway maximum permanent generation size</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+            <maximum>2096</maximum>
+            <unit>MB</unit>
+            <increment-step>128</increment-step>
+            <overridable>false</overridable>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_httpfs_java_opts</name>
+        <value> </value>
+        <description>Ozone HTTPFS Gateway JAVA Extra args</description>
+        <display-name>Ozone HTTPFS Gateway JAVA options</display-name>
+        <on-ambari-upgrade add="false"/>
+    </property>
     <property>
         <name>ozone_user</name>
         <display-name>Ozone User</display-name>
-        <value>hdfs</value>
+        <value>ozone</value>
         <property-type>USER</property-type>
         <description>User to run Ozone as</description>
         <value-attributes>
@@ -1016,12 +1127,23 @@
             export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
 
             {% if security_enabled %}
+            {% if role == 'ozone-manager' %}
             export OZONE_OM_OPTS="$OZONE_OM_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_om_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-scm' %}
             export OZONE_SMC_OPTS="$OZONE_SMC_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_scm_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-datanode' %}
             export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_datanode_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-recon' %}
             export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            {% endif %}
+            {% if role == 'ozone-s3g' %}
             export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             {% endif %}
+            {% endif %}
+
         </value>
         <value-attributes>
             <type>content</type>

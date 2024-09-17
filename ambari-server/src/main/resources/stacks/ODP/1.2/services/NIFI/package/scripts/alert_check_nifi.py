@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -25,8 +25,6 @@ from resource_management.core.exceptions import ComponentIsNotRunning
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.script import Script
 
-reload(sys)
-sys.setdefaultencoding('utf8')
 config = Script.get_config()
 
 nifi_pid_dir = config['configurations']['nifi-env']['nifi_pid_dir']

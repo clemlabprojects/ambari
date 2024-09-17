@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -20,8 +20,8 @@ limitations under the License.
 
 import logging
 from time import time
-from event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
-from metering import MeteringMetricHandler
+from resource_monitoring.core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
+from resource_monitoring.core.metering import MeteringMetricHandler
 
 logger = logging.getLogger()
 

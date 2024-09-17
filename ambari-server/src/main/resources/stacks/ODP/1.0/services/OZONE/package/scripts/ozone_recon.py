@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -69,7 +69,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if os.path.isdir(params.ozone_recon_scm_metadata_dir):
       Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_scm_metadata_dir)
@@ -79,7 +79,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if os.path.isdir(params.ozone_recon_om_metadata_dir):
       Logger.info("Directory %s already exists. Skipping" % params.ozone_recon_om_metadata_dir)
@@ -89,7 +89,7 @@ class OzoneReconDefault(OzoneRecon):
         owner = params.ozone_user,
         create_parents = True,
         cd_access = "a",
-        mode = 0750,
+        mode = 0o750,
       )
     if params.recon_ssl_enabled:
       passwords =  [
@@ -105,7 +105,7 @@ class OzoneReconDefault(OzoneRecon):
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_recon_credential_file_path, 'ozone', params.user_group,
-                      passwords, 'ozone-recon', separator)
+                      passwords, 'ozone-recon')
 
       file_to_chown = params.ozone_recon_credential_file_path.split(separator)[1]
       if os.path.exists(file_to_chown):

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -118,7 +118,7 @@ def main(argv=None):
   ctl = Controller(cfg)
   actionQueue = ActionQueue(cfg, ctl)
   heartbeat = Heartbeat(actionQueue)
-  print json.dumps(heartbeat.build('3',3))
+  print(json.dumps(heartbeat.build('3',3)))
 
 
 if __name__ == '__main__':

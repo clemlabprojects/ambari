@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -18,18 +18,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import optparse
-import httplib
+import argparse
+import http.client
 import socket
 import ssl
 
-class TLS1HTTPSConnection(httplib.HTTPSConnection):
+class TLS1HTTPSConnection(http.client.HTTPSConnection):
   """
   Some of python implementations does not work correctly with sslv3 but trying to use it, we need to change protocol to
   tls1.
   """
   def __init__(self, host, port, **kwargs):
-    httplib.HTTPSConnection.__init__(self, host, port, **kwargs)
+    http.client.HTTPSConnection.__init__(self, host, port, **kwargs)
 
   def connect(self):
     sock = socket.create_connection((self.host, self.port), self.timeout)
@@ -40,7 +40,7 @@ class TLS1HTTPSConnection(httplib.HTTPSConnection):
 
 def make_connection(host, port, https):
   try:
-    conn = httplib.HTTPConnection(host, port) if not https else httplib.HTTPSConnection(host, port)
+    conn = http.client.HTTPConnection(host, port) if not https else http.client.HTTPSConnection(host, port)
     conn.request("GET", "/")
     return conn.getresponse().status
   except ssl.SSLError:
@@ -50,21 +50,21 @@ def make_connection(host, port, https):
       tls1_conn.request("GET", "/")
       return tls1_conn.getresponse().status
     except Exception as e:
-      print e
+      print(e)
     finally:
       tls1_conn.close()
   except Exception as e:
-    print e
+    print(e)
   finally:
     conn.close()
 #
 # Main.
 #
 def main():
-  parser = optparse.OptionParser(usage="usage: %prog [options] component ")
-  parser.add_option("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
-  parser.add_option("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
-  parser.add_option("-s", "--https", dest="https", help="\"True\" if value of dfs.http.policy is \"HTTPS_ONLY\"")
+  parser = argparse.ArgumentParser(usage="usage: %prog [options] component ")
+  parser.add_argument("-m", "--hosts", dest="hosts", help="Comma separated hosts list for WEB UI to check it availability")
+  parser.add_argument("-p", "--port", dest="port", help="Port of WEB UI to check it availability")
+  parser.add_argument("-s", "--https", dest="https", help="\"True\" if value of dfs.http.policy is \"HTTPS_ONLY\"")
 
   (options, args) = parser.parse_args()
   
@@ -76,7 +76,7 @@ def main():
     httpCode = make_connection(host, port, https.lower() == "true")
 
     if httpCode != 200:
-      print "Cannot access WEB UI on: http://" + host + ":" + port if not https.lower() == "true" else "Cannot access WEB UI on: https://" + host + ":" + port
+      print("Cannot access WEB UI on: http://" + host + ":" + port if not https.lower() == "true" else "Cannot access WEB UI on: https://" + host + ":" + port)
       exit(1)
 
 if __name__ == "__main__":

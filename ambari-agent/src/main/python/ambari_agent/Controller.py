@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 
 '''
 Licensed to the Apache Software Foundation (ASF) under one
@@ -26,11 +26,11 @@ import os
 import socket
 import time
 import threading
-import urllib2
+import urllib.request
 import pprint
 from random import randint
 import re
-from ambari_commons import subprocess32
+import subprocess
 import functools
 
 import hostname
@@ -225,7 +225,7 @@ class Controller(threading.Thread):
         self.repeatRegistration = False
         self.isRegistered = False
         return
-      except Exception, ex:
+      except Exception as ex:
         # try a reconnect only after a certain amount of random time
         delay = randint(0, self.max_reconnect_retry_delay)
         logger.error("Unable to connect to: " + self.registerUrl, exc_info=True)
@@ -269,7 +269,7 @@ class Controller(threading.Thread):
     if commands:
       try:
         self.actionQueue.cancel(commands)
-      except Exception, err:
+      except Exception as err:
         logger.error("Exception occurred on commands cancel: %s", err.message)
 
   def addToQueue(self, commands):
@@ -476,7 +476,7 @@ class Controller(threading.Thread):
         self.isRegistered = False
         logger.exception("SSLError while trying to heartbeat.")
         return
-      except Exception, err:
+      except Exception as err:
         if "code" in err:
           logger.error(err.code)
         else:
@@ -527,8 +527,8 @@ class Controller(threading.Thread):
       self.register = Register(self.config)
       self.heartbeat = Heartbeat(self.actionQueue, self.config, self.alert_scheduler_handler.collector())
 
-      opener = urllib2.build_opener()
-      urllib2.install_opener(opener)
+      opener = urllib.request.build_opener()
+      urllib.request.install_opener(opener)
 
       while True:
         self.repeatRegistration = False
@@ -574,11 +574,11 @@ class Controller(threading.Thread):
     try:
       if self.cachedconnect is None: # Lazy initialization
         self.cachedconnect = security.CachedHTTPSConnection(self.config, self.serverHostname)
-      req = urllib2.Request(url, data, {'Content-Type': 'application/json',
+      req = urllib.request.Request(url, data, {'Content-Type': 'application/json',
                                         'Accept-encoding': 'gzip'})
       response = self.cachedconnect.request(req)
       return json.loads(response)
-    except Exception, exception:
+    except Exception as exception:
       if response is None:
         raise IOError('Request to {0} failed due to {1}'.format(url, str(exception)))
       else:
@@ -633,14 +633,14 @@ class Controller(threading.Thread):
         if os.path.exists(source_file) and not os.path.exists(destination_file):
           command = "mkdir -p %s" % os.path.dirname(destination_file)
           logger.info("Moving Data Dir Mount History file. Executing command: %s" % command)
-          return_code = subprocess32.call(command, shell=True)
+          return_code = subprocess.call(command, shell=True)
           logger.info("Return code: %d" % return_code)
 
           command = "mv %s %s" % (source_file, destination_file)
           logger.info("Moving Data Dir Mount History file. Executing command: %s" % command)
-          return_code = subprocess32.call(command, shell=True)
+          return_code = subprocess.call(command, shell=True)
           logger.info("Return code: %d" % return_code)
-    except Exception, e:
+    except Exception as e:
       logger.error("Exception in move_data_dir_mount_file(). Error: {0}".format(str(e)))
 
   def get_version(self):

@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import imp
+import importlib.util
 import json
 import os
 from unittest import TestCase
@@ -31,11 +31,15 @@ class TestHAWQ200ServiceAdvisor(TestCase):
 
   ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
   with open(ambari_configuration_path, 'rb') as fp:
-    imp.load_module('ambari_configuration', fp, ambari_configuration_path, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    ambari_configuration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ambari_configuration)
 
   stack_advisor_path = os.path.join(resources_path, 'stacks/stack_advisor.py')
   with open(stack_advisor_path, 'rb') as fp:
-    imp.load_module('stack_advisor', fp, stack_advisor_path, ('.py', 'rb', imp.PY_SOURCE))
+    spec = importlib.util.spec_from_file_location('stack_advisor', stack_advisor_path)
+    stack_advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stack_advisor)
 
   hawq200ServiceAdvisorPath = os.path.join(resources_path, 'common-services/HAWQ/2.0.0/service_advisor.py')
   with open(hawq200ServiceAdvisorPath, 'rb') as fp:
@@ -316,7 +320,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
 
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
     hdfs_site_desired_values = self.getDesiredHDFSSiteValues(False)
-    for property, value in hdfs_site_desired_values.iteritems():
+    for property, value in hdfs_site_desired_values.items():
       self.assertEquals(configurations["hdfs-site"]["properties"][property], value)
     self.assertEquals(configurations["core-site"]["properties"]["ipc.server.listen.queue.size"], "3300")
 
@@ -327,7 +331,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
 
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
     hdfs_site_desired_values = self.getDesiredHDFSSiteValues(True)
-    for property, value in hdfs_site_desired_values.iteritems():
+    for property, value in hdfs_site_desired_values.items():
       self.assertEquals(configurations["hdfs-site"]["properties"][property], value)
     self.assertEquals(configurations["core-site"]["properties"]["ipc.server.listen.queue.size"], "3300")
 
@@ -585,7 +589,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
       "hawq_rm_yarn_address": "true"
     }
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
-    for property, status in properties_visibility.iteritems():
+    for property, status in properties_visibility.items():
       self.assertEqual(configurations["hawq-site"]["property_attributes"][property]["visible"], status)
 
     # Case 2: When hawq_global_rm_type is none
@@ -600,7 +604,7 @@ class TestHAWQ200ServiceAdvisor(TestCase):
       "hawq_rm_yarn_address": "false"
     }
     self.serviceAdvisor.getServiceConfigurationRecommendations(configurations, None, services, hosts)
-    for property, status in properties_visibility.iteritems():
+    for property, status in properties_visibility.items():
       self.assertEqual(configurations["hawq-site"]["property_attributes"][property]["visible"], status)
 
     ## Test if maximum range of default_hash_table_bucket_number is set correctly
