@@ -229,12 +229,12 @@ def format_scm(force=None):
   import params
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
   cmd_env = {'JAVA_HOME': params.java_home }
+  prepareOzoneLayout(params.ozone_scm_db_dirs)
+  prepareOzoneLayout(params.ozone_scm_metadata_dir)
+  prepareOzoneLayout(params.ozone_scm_hdds_metadata_dir)
   if params.ozone_scm_ha_enabled:
     # format dir ozone_scm_ha_dirs
     prepareOzoneLayout(params.ozone_scm_ha_dirs)
-    prepareOzoneLayout(params.ozone_scm_db_dirs)
-    prepareOzoneLayout(params.ozone_scm_metadata_dir)
-    prepareOzoneLayout(params.ozone_scm_hdds_metadata_dir)
     Logger.info(format("Ozone SCM Server HA is enabled. Running bootstrapping actions..."))
     if is_scm_server_bootstrapped():
       Logger.info(format("Ozone SCM Server {params.hostname} is already bootstrapped."))

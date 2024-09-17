@@ -86,6 +86,7 @@ ROLE_NAME_MAP_CONF = {
       'ozone-datanode': 'ozone.datanode',
       'ozone-recon': 'ozone.recon',
       'ozone-scm': 'ozone.scm',
+      'ozone-httpfs': 'ozone.httpfs',
 
 }
 ROLE_NAME_MAP_DAEMON = {
@@ -94,6 +95,7 @@ ROLE_NAME_MAP_DAEMON = {
       'ozone-datanode': 'datanode',
       'ozone-recon': 'recon',
       'ozone-scm': 'scm',
+      'ozone-httpfs': 'httpfs',
 
 }
 ROLE_CONF_MAP = {
@@ -102,6 +104,7 @@ ROLE_CONF_MAP = {
       'ozone-datanode': {},
       'ozone-recon': {},
       'ozone-scm': {},
+      'ozone-httpfs': {},
       'ozone-client': {}
 }
 
@@ -270,7 +273,7 @@ s3g_ssl_enabled = default("/configurations/ozone-env/ozone_s3g_ssl_enabled", Fal
 s3g_ssl_server_dict = {}
 s3g_ssl_client_dict = {}
 if s3g_ssl_enabled:
-  Logger.debug("Preparing Ozone Datanode SSL/TLS Dictionnaries")
+  Logger.debug("Preparing Ozone S3 Gateway SSL/TLS Dictionnaries")
   for prop in config['configurations']['ssl-server-s3g'].keys():
     if prop not in ssl_server_props_ignore:
       s3g_ssl_server_dict[prop] = config['configurations']['ssl-server-s3g'][prop]
@@ -310,16 +313,20 @@ ozone_recon_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone
 ozone_recon_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_maxnewsize'])
 ozone_recon_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_permsize'])
 ozone_recon_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_recon_opt_maxpermsize'])
+ozone_httpfs_heapsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_httpfs_heapsize'])
+ozone_httpfs_opt_newsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_httpfs_opt_newsize'])
+ozone_httpfs_opt_maxnewsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_httpfs_opt_maxnewsize'])
+ozone_httpfs_opt_permsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_httpfs_opt_permsize'])
+ozone_httpfs_opt_maxpermsize = ensure_unit_for_memory(config['configurations']['ozone-env']['ozone_httpfs_opt_maxpermsize'])
 
 ## Ozone JAVA options
-
 ozone_client_java_opts = default("/configurations/ozone-env/ozone_java_opts", "")
 ozone_manager_java_opts = default("/configurations/ozone-env/ozone_manager_java_opts", "")
 ozone_scm_java_opts = default("/configurations/ozone-env/ozone_scm_java_opts", "")
 ozone_datanode_java_opts = default("/configurations/ozone-env/ozone_datanode_java_opts", "")
 ozone_recon_java_opts = default("/configurations/ozone-env/ozone_recon_java_opts", "")
 ozone_s3g_java_opts = default("/configurations/ozone-env/ozone_s3g_java_opts", "")
-
+ozone_httpfs_java_opts = default("/configurations/ozone-env/ozone_httpfs_java_opts", "")
 
 underscored_version = stack_version_unformatted.replace('.', '_')
 dashed_version = stack_version_unformatted.replace('.', '-')
@@ -438,6 +445,14 @@ ozone_recon_ozone_log_max_backup_size = default('configurations/ozone-log4j-reco
 ozone_recon_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-recon/ozone_log_number_of_backup_files',20)
 ozone_recon_log4j_content = config['configurations']['ozone-log4j-recon']['content']
 
+# HTTPFS Gateway
+ozone_httpfs_log_level = default('configurations/ozone-env/ozone_httpfs_log_level','INFO')
+ozone_httpfs_security_log_max_backup_size = default('configurations/ozone-log4j-httpfs/ozone_security_log_max_backup_size',256)
+ozone_httpfs_security_log_number_of_backup_files = default('configurations/ozone-log4j-httpfs/ozone_security_log_number_of_backup_files',20)
+ozone_httpfs_ozone_log_max_backup_size = default('configurations/ozone-log4j-httpfs/ozone_log_max_backup_size',256)
+ozone_httpfs_ozone_log_number_of_backup_files = default('configurations/ozone-log4j-httpfs/ozone_log_number_of_backup_files',20)
+ozone_httpfs_log4j_content = config['configurations']['ozone-log4j-httpfs']['content']
+
 # S3 Gateway
 ozone_s3g_log_level = default('configurations/ozone-env/ozone_s3g_log_level','INFO')
 ozone_s3g_security_log_max_backup_size = default('configurations/ozone-log4j-s3g/ozone_security_log_max_backup_size',256)
@@ -477,6 +492,7 @@ for prop in config['configurations']['ozone-site'].keys():
   ROLE_CONF_MAP['ozone-s3g'][prop] = config['configurations']['ozone-site'][prop]
   ROLE_CONF_MAP['ozone-recon'][prop] = config['configurations']['ozone-site'][prop]
   ROLE_CONF_MAP['ozone-scm'][prop] = config['configurations']['ozone-site'][prop]
+  ROLE_CONF_MAP['ozone-httpfs'][prop] = config['configurations']['ozone-site'][prop]
   ROLE_CONF_MAP['ozone-client'][prop] = config['configurations']['ozone-site'][prop]
 
 ozone_datanode_metadata_dir = config['configurations']['ozone-site']['ozone.metadata.dirs']
@@ -754,9 +770,58 @@ role_scm = ROLE_NAME_MAP_DAEMON['ozone-scm']
 role_om = ROLE_NAME_MAP_DAEMON['ozone-manager']
 role_s3g = ROLE_NAME_MAP_DAEMON['ozone-s3g']
 role_datanode = ROLE_NAME_MAP_DAEMON['ozone-datanode']
+role_httpfs = ROLE_NAME_MAP_DAEMON['ozone-httpfs']
 role_recon = ROLE_NAME_MAP_DAEMON['ozone-recon']
 ozone_scm_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_scm}.pid")
 ozone_datanode_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_datanode}.pid")
 ozone_manager_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_om}.pid")
+ozone_httpfs_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_httpfs}.pid")
 ozone_recon_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_recon}.pid")
 ozone_s3g_pid_file = format("{pid_dir}/ozone-{ozone_user}-{role_s3g}.pid")
+# Ozone HTTPFS Related properties
+
+httpfs_ssl_enabled = True if str(default('/configurations/ozone-httpfs-site/httpfs.ssl.enabled', False)).lower() == "true" else False
+ozone_httpfs_hosts  = default("/clusterHostInfo/ozone_httpfs_gateway_hosts", [])
+ozone_httpfs_properties = {}
+if len(ozone_httpfs_hosts) > 0 :
+  ozone_httpfs_properties = dict(config['configurations']['ozone-httpfs-site'])
+  ozone_httpfs_env_sh_template = config['configurations']['ozone-httpfs-env']['content']
+
+  ozone_httpfs_hadoop_auth_principal_name = default("/configurations/ozone-httpfs-site/httpfs.hadoop.authentication.kerberos.principal", None)
+  if ozone_httpfs_hadoop_auth_principal_name is not None:
+    ozone_httpfs_hadoop_auth_principal_name = ozone_httpfs_hadoop_auth_principal_name.replace('_HOST',_hostname_lowercase)
+
+  ozone_httpfs_principal_name = default("/configurations/ozone-httpfs-site/hadoop.http.authentication.kerberos.principal", None)
+  if ozone_httpfs_principal_name is not None:
+    ozone_httpfs_principal_name = ozone_httpfs_principal_name.replace('_HOST',_hostname_lowercase)
+  
+  # apply principal name
+  ozone_httpfs_properties['httpfs.hadoop.authentication.kerberos.principal'] = ozone_httpfs_hadoop_auth_principal_name
+  ozone_httpfs_properties['hadoop.http.authentication.kerberos.principal'] = ozone_httpfs_principal_name
+
+ozone_httpfs_max_threads = default("/configurations/ozone-httpfs-env/httpfs_max_threads", 1000)
+ozone_httpfs_max_header_size = default("/configurations/ozone-httpfs-env/httpfs_max_header_size", 65536)
+ozone_httpfs_http_port = default("/configurations/ozone-httpfs-env/httpfs_http_port", 14000)
+
+# Ozone HTTPFS Gateway TLS related params #
+ozone_httpfs_credential_file_path = config['configurations']['ssl-server-httpfs']['hadoop.security.credential.provider.path']
+ozone_httpfs_tls_ssl_keystore_password = config['configurations']['ssl-server-httpfs']['ssl.server.keystore.password']
+ozone_httpfs_tls_ssl_key_password = config['configurations']['ssl-server-httpfs']['ssl.server.keystore.keypassword']
+ozone_httpfs_tls_ssl_client_truststore_password = config['configurations']['ssl-client-httpfs']['ssl.client.truststore.password']
+
+httpfs_ssl_server_dict = {}
+httpfs_ssl_client_dict = {}
+if httpfs_ssl_enabled:
+  Logger.debug("Preparing Ozone HTTPFS Gateway SSL/TLS Dictionnaries")
+  ozone_httpfs_ssl_keystore_path = config['configurations']['ssl-server-httpfs']['ssl.server.keystore.location']
+  ozone_httpfs_ssl_keystore_password = config['configurations']['ssl-server-httpfs']['ssl.server.keystore.password']
+  for prop in config['configurations']['ssl-server-httpfs'].keys():
+    if prop not in ssl_server_props_ignore:
+      httpfs_ssl_server_dict[prop] = config['configurations']['ssl-server-httpfs'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing httpfs_ssl_server")
+  for prop in config['configurations']['ssl-client-httpfs'].keys():
+    if prop not in ssl_client_props_ignore:
+      httpfs_ssl_client_dict[prop] = config['configurations']['ssl-client-httpfs'][prop]
+    else:
+      Logger.debug("Skipping property {prop} when computing httpfs_ssl_client")

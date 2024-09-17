@@ -1,0 +1,115 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_final="false" supports_adding_forbidden="false">
+    <property>
+        <name>ozone_security_log_max_backup_size</name>
+        <value>256</value>
+        <description>The maximum size of backup file before the log is rotated</description>
+        <display-name>Ozone HTTPFS Gateway Manager Security Log: backup file size</display-name>
+        <value-attributes>
+            <unit>MB</unit>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_security_log_number_of_backup_files</name>
+        <value>20</value>
+        <description>The number of backup files</description>
+        <display-name>Ozone HTTPFS Gateway Manager Security Log: # of backup files</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_log_max_backup_size</name>
+        <value>256</value>
+        <description>The maximum size of backup file before the log is rotated</description>
+        <display-name>Ozone HTTPFS Gateway Manager Log: backup file size</display-name>
+        <value-attributes>
+            <unit>MB</unit>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>ozone_log_number_of_backup_files</name>
+        <value>10</value>
+        <description>The number of backup files</description>
+        <display-name>Ozone HTTPFS Gateway Manager Log: # of backup files</display-name>
+        <value-attributes>
+            <type>int</type>
+            <minimum>0</minimum>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+        <name>content</name>
+        <display-name>Ozone HTTPFS Gateway Log4j template</display-name>
+        <description>Custom log4j.properties</description>
+        <value>
+            ##           -----    Managed By Ambari ------           ##
+            # Define some default values that can be overridden by system properties
+            # To change daemon root logger use hadoop_root_logger in hadoop-env
+            #
+            # Licensed under the Apache License, Version 2.0 (the "License");
+            # you may not use this file except in compliance with the License.
+            # You may obtain a copy of the License at
+            #
+            #    http://www.apache.org/licenses/LICENSE-2.0
+            #
+            # Unless required by applicable law or agreed to in writing, software
+            # distributed under the License is distributed on an "AS IS" BASIS,
+            # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+            # See the License for the specific language governing permissions and
+            # limitations under the License. See accompanying LICENSE file.
+            #
+
+            # If the Java System property 'httpfs.log.dir' is not defined at HttpFSServer start up time
+            # Setup sets its value to '${httpfs.home}/logs'
+
+            log4j.appender.httpfs=org.apache.log4j.DailyRollingFileAppender
+            log4j.appender.httpfs.DatePattern='.'yyyy-MM-dd
+            log4j.appender.httpfs.File={{ozone_log_dir_prefix}}/httpfs.log
+            log4j.appender.httpfs.Append=true
+            log4j.appender.httpfs.layout=org.apache.log4j.PatternLayout
+            log4j.appender.httpfs.layout.ConversionPattern=%d{ISO8601} %5p %c{1} [%X{hostname}][%X{user}:%X{doAs}] %X{op} %m%n
+
+            log4j.appender.httpfsaudit=org.apache.log4j.DailyRollingFileAppender
+            log4j.appender.httpfsaudit.DatePattern='.'yyyy-MM-dd
+            log4j.appender.httpfsaudit.File={{ozone_log_dir_prefix}}/httpfs-audit.log
+            log4j.appender.httpfsaudit.Append=true
+            log4j.appender.httpfsaudit.layout=org.apache.log4j.PatternLayout
+            log4j.appender.httpfsaudit.layout.ConversionPattern=%d{ISO8601} %5p [%X{hostname}][%X{user}:%X{doAs}] %X{op} %m%n
+
+            log4j.logger.httpfsaudit={{ozone_log_level}}, httpfsaudit
+
+            log4j.logger.org.apache.hadoop.fs.http.server={{ozone_log_level}}, httpfs
+            log4j.logger.org.apache.hadoop.lib={{ozone_log_level}}, httpfs
+        </value>
+        <value-attributes>
+            <type>content</type>
+            <show-property-name>false</show-property-name>
+        </value-attributes>
+        <on-ambari-upgrade add="false"/>
+    </property>
+</configuration>
