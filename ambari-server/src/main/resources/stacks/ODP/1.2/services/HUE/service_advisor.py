@@ -193,6 +193,7 @@ class HueRecommender(service_advisor.ServiceAdvisor):
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     if hueEnvProperties and self.checkSiteProperties(hueEnvProperties, 'hue_user') and 'KERBEROS' in servicesList:
+      # HDFS core-site
       putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
       putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
       hueUser = hueEnvProperties['hue_user']
@@ -203,6 +204,18 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUserOld)})
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUser)})
 
+      # OZONE core-site
+      putCoreSiteProperty = self.putProperty(configurations, "ozone-core-site", services)
+      putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-core-site")
+      hueUser = hueEnvProperties['hue_user']
+      hueUserOld = self.getOldValue(services, 'hue-env', 'hue_user')
+      self.put_proxyuser_value(hueUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putCoreSiteProperty)
+      if hueUserOld is not None and hueUser != hueUserOld:
+        putCoreSitePropertyAttribute("hadoop.proxyuser.{0}.groups".format(hueUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "ozone-core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUserOld)})
+        services["forced-configurations"].append({"type" : "ozone-core-site", "name" : "hadoop.proxyuser.{0}.groups".format(hueUser)})
+
+      # HDFS 
       putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
       putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "httpfs-site")
       hueUser = hueEnvProperties['hue_user']
@@ -212,6 +225,18 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(hueUserOld), 'delete', 'true')
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUserOld)})
         services["forced-configurations"].append({"type" : "httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
+
+      # Ozone 
+      putHTTPFSSiteProperty = self.putProperty(configurations, "ozone-httpfs-site", services)
+      putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "ozone-httpfs-site")
+      hueUser = hueEnvProperties['hue_user']
+      hueUserOld = self.getOldValue(services, 'hue-env', 'hue_user')
+      self.put_proxyuser_value(hueUser, '*', is_groups=True, services=services, configurations=configurations, put_function=putHTTPFSSiteProperty)
+      if hueUserOld is not None and hueUser != hueUserOld:
+        putHTTPFSSitePropertyAttribute("httpfs.proxyuser.{0}.groups".format(hueUserOld), 'delete', 'true')
+        services["forced-configurations"].append({"type" : "ozone-httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUserOld)})
+        services["forced-configurations"].append({"type" : "ozone-httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
+
 
   def getDBConnectionHostPort(self, db_type, db_host):
       connection_string = ""

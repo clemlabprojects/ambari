@@ -572,7 +572,7 @@ else:
   hue_app_blacklist += ",hbase"
 
 ## Zookeeper Settings
-zookeeper_hosts_list = config['clusterHostInfo']['zookeeper_server_hosts']
+zookeeper_hosts_list = default("/clusterHostInfo/zookeeper_server_hosts", None)
 has_zookeeper = zookeeper_hosts_list != None
 if has_zookeeper:
   zookeeper_hosts_list.sort()
