@@ -48,7 +48,7 @@ class HueServiceCheckDefault(HueServiceCheck):
     else:
       smoke_cmd = validateStatusCmd
 
-    print "Test connectivity to Hue server"
+    print("Test connectivity to Hue server")
 
     File(validateHueFilePath,
          content=StaticFile(validateHueFileName),
