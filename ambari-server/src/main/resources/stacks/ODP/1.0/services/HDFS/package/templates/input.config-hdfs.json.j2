@@ -20,32 +20,37 @@
     {
       "type":"hdfs_datanode",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}*-datanode-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-datanode-*.out"
     },
     {
       "type":"hdfs_namenode",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-namenode-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-namenode-*.out"
     },
     {
       "type":"hdfs_journalnode",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-journalnode-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-journalnode-*.out"
     },
     {
       "type":"hdfs_secondary_namenode",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-secondarynamenode-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-secondarynamenode-*.out"
     },
     {
       "type":"hdfs_zkfc",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-zkfc-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-zkfc-*.out"
+    },
+    {
+      "type":"hdfs_httpfs",
+      "rowtype":"service",
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-httpfs-*.out"
     },
     {
       "type":"hdfs_nfs3",
       "rowtype":"service",
-      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/root/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-root-nfs3-*.log"
+      "path":"{{default('/configurations/hadoop-env/hdfs_log_dir_prefix', '/var/log/hadoop')}}/root/hadoop-{{default('configurations/hadoop-env/hdfs_user', 'hdfs')}}-root-nfs3-*.out"
     },
     {
       "type":"hdfs_audit",
@@ -71,13 +76,14 @@
             "hdfs_secondary_namenode",
             "hdfs_namenode",
             "hdfs_zkfc",
-            "hdfs_nfs3"
+            "hdfs_nfs3",
+            "hdfs_httpfs"
           ]
         }
       },
       "log4j_format":"%d{ISO8601} %-5p %c{2} (%F:%M(%L)) - %m%n",
       "multiline_pattern":"^(%{TIMESTAMP_ISO8601:logtime})",
-      "message_pattern":"(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}%{JAVACLASS:logger_name}%{SPACE}\\(%{JAVAFILE:file}:%{JAVAMETHOD:method}\\(%{INT:line_number}\\)\\)%{SPACE}-%{SPACE}%{GREEDYDATA:log_message}",
+      "message_pattern":"(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}%{LOGLEVEL:level}%{SPACE}\\[%{DATA:thread}\\]%{SPACE}%{JAVACLASS:logger_name}:%{SPACE}%{GREEDYDATA:log_message}",
       "post_map_values":{
         "logtime":{
           "map_date":{
