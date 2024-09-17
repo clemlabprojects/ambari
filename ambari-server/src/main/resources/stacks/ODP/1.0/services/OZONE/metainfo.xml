@@ -242,11 +242,78 @@
               <fileName>ozone-log4j.properties</fileName>
               <dictionaryName>ozone-log4j-properties</dictionaryName>
             </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-properties</dictionaryName>
+            </configFile>
           </configFiles>
           <configuration-dependencies>
             <config-type>ozone-log4j-properties</config-type>
             <config-type>ssl-client</config-type>
             <config-type>ssl-server</config-type>
+          </configuration-dependencies>
+        </component>
+        <component>
+          <name>OZONE_HTTPFS_GATEWAY</name>
+          <displayName>Ozone Httpfs Gateway Service</displayName>
+          <category>SLAVE</category>
+          <cardinality>0+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <commandScript>
+            <script>scripts/ozone_httpfs.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>1200</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>ozone_httpfs</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+          <dependencies>
+            <dependency>
+              <name>OZONE/OZONE_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+            </dependency>
+          </dependencies>
+          <configFiles>
+            <configFile>
+              <type>xml</type>
+              <fileName>ozone-site.xml</fileName>
+              <dictionaryName>ozone-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>xml</type>
+              <fileName>httpfs-site.xml</fileName>
+              <dictionaryName>ozone-httpfs-site</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>httpfs-env.sh</fileName>
+              <dictionaryName>ozone-httpfs-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>ozone-env.sh</fileName>
+              <dictionaryName>ozone-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>httpfs-log4j.properties</fileName>
+              <dictionaryName>ozone-log4j-httpfs</dictionaryName>
+            </configFile>
+          </configFiles>
+          <configuration-dependencies>
+            <config-type>ozone-log4j-properties</config-type>
+            <config-type>ssl-client</config-type>
+            <config-type>ssl-server</config-type>
+            <config-type>ozone-httpfs-env</config-type>
+            <config-type>ozone-httpfs-site</config-type>
+            <config-type>ozone-log4j-httpfs</config-type>
           </configuration-dependencies>
         </component>
 

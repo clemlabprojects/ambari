@@ -211,6 +211,55 @@
           ]
         },
         {
+          "name": "OZONE_HTTPFS_GATEWAY",
+          "configurations" : [
+            {
+              "ozone-core-site": {
+                "hadoop.proxyuser.${ozone-env/ozone_user}.groups": "*",
+                "hadoop.proxyuser.${ozone-env/ozone_user}.hosts": "${clusterHostInfo/ozone_ozone_httpfs_gateway_hosts}",
+                "httpfs.authentication.type": "kerberos"
+              },
+              "ozone-httpfs-site": {
+                "httpfs.authentication.type": "kerberos",
+                "httpfs.hadoop.authentication.type": "kerberos"
+              }
+            }
+          ],
+          "identities": [
+            {
+              "name": "ozone_httpfs_gateway",
+              "principal": {
+                "value": "${ozone-env/ozone_user}/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "ozone-httpfs-site/httpfs.hadoop.authentication.kerberos.principal",
+                "local_username" : "${ozone-env/ozone_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/ozone.httpfs.service.keytab",
+                "owner": {
+                  "name": "${ozone-env/ozone_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "ozone-httpfs-site/httpfs.hadoop.authentication.kerberos.keytab"
+              }
+            },
+            {
+              "name": "ozone_httpfs_httpfs_gateway_spnego",
+              "reference": "/spnego",
+              "principal": {
+                "configuration": "ozone-httpfs-site/hadoop.http.authentication.kerberos.principal"
+              },
+              "keytab": {
+                "configuration": "ozone-httpfs-site/hadoop.http.authentication.kerberos.keytab"
+              }
+            }
+          ]
+        },
+        {
           "name": "OZONE_S3_GATEWAY",
           "identities": [
             {
