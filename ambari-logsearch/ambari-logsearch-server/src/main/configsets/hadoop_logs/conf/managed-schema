@@ -135,6 +135,6 @@
   <dynamicField name="*_ds" type="tdoubles" indexed="true"  stored="true"/>
   <dynamicField name="random_*" type="random"/>
 
-  <copyField source="log_message" dest="key_log_message"/>
+  <copyField source="log_message" dest="key_log_message" maxChars="32766"/>
 
 </schema>

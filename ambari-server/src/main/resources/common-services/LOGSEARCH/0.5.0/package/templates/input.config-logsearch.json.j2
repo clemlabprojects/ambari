@@ -28,6 +28,16 @@
       "path":"{{default('/configurations/logfeeder-env/logfeeder_log_dir', '/var/log/ambari-logsearch-logfeeder')}}/logsearch-logfeeder.json"
     },
     {
+      "type":"logsearch_feeder_log",
+      "rowtype":"service",
+      "path":"{{default('/configurations/logfeeder-env/logfeeder_log_dir', '/var/log/ambari-logsearch-logfeeder')}}/logfeeder.out"
+    },
+    {
+      "type":"logsearch_log",
+      "rowtype":"service",
+      "path":"{{default('/configurations/logfeeder-env/logfeeder_log_dir', '/var/log/ambari-logsearch-logfeeder')}}/logsearch.out"
+    },
+    {
       "type":"logsearch_perf",
       "rowtype":"service",
       "path":"{{default('/configurations/logsearch-env/logsearch_log_dir', '/var/log/ambari-logsearch-portal')}}/logsearch-performance.json"
@@ -48,8 +58,32 @@
 
       }
 
-    }
-
-  ]
+    },
+    {
+      "filter": "grok",
+      "conditions": {
+          "fields": {
+              "type": [
+                  "logsearch_feeder_log",
+                  "logsearch_log"
+              ]
+          }
+      },
+      "skipOnError": false,
+      "deepExtract": false,
+      "post_map_values": {
+          "logtime": [
+              {
+                  "map_date": {
+                      "target_date_pattern": "yyyy-MM-dd HH:mm:ss,SSS"
+                  }
+              }
+          ]
+      },
+      "log4j_format": "%d{ISO8601} %-5p %c{2} (%F:%M(%L)) - %m%n",
+      "multiline_pattern": "^(%{TIMESTAMP_ISO8601:logtime})",
+      "message_pattern": "(?m)^%{TIMESTAMP_ISO8601:logtime}%{SPACE}\\[%{DATA:thread}\\]%{SPACE}%{LOGLEVEL:level}%{SPACE}%{JAVACLASS:logger_name}%{SPACE}\\(%{JAVAFILE:file}:%{INT:line_number}\\)%{SPACE}-%{SPACE}%{GREEDYDATA:log_message}"
+        }
+    ]
 
 }
