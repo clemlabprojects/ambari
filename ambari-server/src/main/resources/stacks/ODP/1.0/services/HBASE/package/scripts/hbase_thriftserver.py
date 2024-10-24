@@ -88,7 +88,7 @@ class HbaseThriftServerDefault(HbaseThriftServer):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    if params.hbase_thrift_stack_enabled:
+    if params.hbase_has_thrift:
       if params.thrift_ssl_enabled:
         Logger.info("TLS/SSL is enabled on HBase Thrift Server. Setting up keystore")
         ## creating ssl keystore credential file if needed

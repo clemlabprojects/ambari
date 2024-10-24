@@ -472,7 +472,8 @@ if 'viewfs-mount-table' in config['configurations']:
 
 ## AMBARI-137: add HBase thrift support for hue interface
 thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
-if hbase_thrift_stack_enabled  and hbase_thrift_hosts != None:
+hbase_has_thrift = hbase_thrift_stack_enabled  and hbase_thrift_hosts != None
+if hbase_has_thrift:
   # configure ssl keystore properties
   if thrift_ssl_enabled:
     thrift_ssl_keystore_password = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.password']
