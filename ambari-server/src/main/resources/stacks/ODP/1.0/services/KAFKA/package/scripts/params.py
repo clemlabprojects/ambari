@@ -104,7 +104,7 @@ zookeeper_hosts.sort()
 secure_acls = default("/configurations/kafka-broker/zookeeper.set.acl", False)
 kafka_security_migrator = os.path.join(kafka_home, "bin", "zookeeper-security-migration.sh")
 zookeeper_principal_name = default("/configurations/zookeeper-env/zookeeper_principal_name", "zookeeper/_HOST@EXAMPLE.COM")
-zk_principal_user = zk_principal_name.split('/')[0]
+zk_principal_user = zookeeper_principal_name.split('/')[0]
 
 all_hosts = default("/clusterHostInfo/all_hosts", [])
 all_racks = default("/clusterHostInfo/all_racks", [])
