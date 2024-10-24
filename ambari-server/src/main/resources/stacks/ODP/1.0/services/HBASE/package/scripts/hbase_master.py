@@ -93,7 +93,7 @@ class HbaseMasterDefault(HbaseMaster):
       setup_atlas_hook(SERVICE.HBASE,params.hbase_atlas_hook_properties,hbase_atlas_hook_file_path,params.hbase_user,params.user_group)
     else:
       Logger.info("Hbase Atlas hook is disabled, skippking Atlas configurations.")
-    if params.hbase_thrift_stack_enabled:
+    if params.hbase_has_thrift:
       if params.thrift_ssl_enabled:
         Logger.info("TLS/SSL is enabled on HBase Thrift Server. Setting up keystore")
         ## creating ssl keystore credential file if needed
