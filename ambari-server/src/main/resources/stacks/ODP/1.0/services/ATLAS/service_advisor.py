@@ -354,7 +354,7 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
       if atlas_server_metadata_size >= 1000000:
         atlas_server_xmx = 1024*16
 
-      atlas_server_max_new_size = (atlas_server_xmx / 100) * 30
+      atlas_server_max_new_size = round((atlas_server_xmx / 100) * 30)
 
       putAtlasEnvProperty("atlas_server_xmx", atlas_server_xmx)
       putAtlasEnvProperty("atlas_server_max_new_size", atlas_server_max_new_size)
