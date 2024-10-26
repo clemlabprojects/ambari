@@ -38,7 +38,7 @@
             {
               "name": "atlas",
               "principal": {
-                "value": "${atlas-env/atlas_user}/_HOST@${realm}",
+                "value": "${atlas-env/metadata_user}/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "application-properties/atlas.jaas.KafkaClient.option.principal",
                 "local_username" : "${atlas-env/metadata_user}"
