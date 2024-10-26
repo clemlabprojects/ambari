@@ -29,7 +29,7 @@
         {
           "name": "spark_service_keytab",
           "principal": {
-            "value": "spark/_HOST@${realm}",
+            "value": "${spark3-env/spark_user}/_HOST@${realm}",
             "type" : "service",
             "configuration": "spark3-hive-site-override/hive.server2.authentication.kerberos.principal",
             "local_username" : "${spark3-env/spark_user}"

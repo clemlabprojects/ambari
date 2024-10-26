@@ -20,7 +20,7 @@
             {
               "name": "zeppelin_master_zeppelin",
               "principal": {
-                "value": "zeppelin/_HOST@${realm}",
+                "value": "${zeppelin-env/zeppelin_user}/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "zeppelin-site/zeppelin.server.kerberos.principal",
                 "local_username": "${zeppelin-env/zeppelin_user}"
