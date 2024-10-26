@@ -604,6 +604,8 @@ if has_ranger_admin:
       ranger_env['admin_password'] = external_admin_password
       ranger_env['ranger_admin_username'] = external_ranger_admin_username
       ranger_env['ranger_admin_password'] = external_ranger_admin_password
+      ranger_admin_username = external_admin_username
+      ranger_admin_password = external_admin_password
 
     if has_ranger_admin:
       ranger_admin_username = config['configurations']['ranger-env']['admin_username']

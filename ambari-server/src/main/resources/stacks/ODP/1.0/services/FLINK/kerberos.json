@@ -29,7 +29,7 @@
         {
           "name": "flink_service_keytab",
           "principal": {
-            "value": "flink/_HOST@${realm}",
+            "value": "${flink-env/flink_user}/_HOST@${realm}",
             "type" : "service",
             "configuration": "flink-conf/security.kerberos.login.principal",
             "local_username" : "${flink-env/flink_user}"

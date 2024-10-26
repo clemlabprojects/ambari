@@ -60,7 +60,7 @@
                         {
                             "name": "hive_server_hive",
                             "principal": {
-                                "value": "hive/_HOST@${realm}",
+                                "value": "${hive-env/hive_user}/_HOST@${realm}",
                                 "type": "service",
                                 "configuration": "hive-site/hive.server2.authentication.kerberos.principal",
                                 "local_username": "${hive-env/hive_user}"
