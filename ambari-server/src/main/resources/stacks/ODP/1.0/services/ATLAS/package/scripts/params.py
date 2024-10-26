@@ -501,3 +501,12 @@ ranger_policy_config = {
       "delegateAdmin": "false"
     }]
   }
+# AMBARI-186 (clemlab): update Atlas Kafka ACL script by removing zookeeper reference to it
+atlas_kafka_3_acl_support = check_stack_feature(StackFeature.ATLAS_KAFKA_3_ACL_SUPPORT, version_for_stack_feature_checks)
+atlas_kafka_security_protocol = default("/configurations/application-properties/atlas.kafka.security.protocol", "PLAINTEXT")
+atlas_hook_publishers = []
+
+if atlas_kafka_3_acl_support:
+  atlas_kafka_setup = format("{exec_tmp_dir}/atlas_kafka_3_acl.sh")
+  kafka_cmd_config_file = format("{exec_tmp_dir}/atlas_kafka_3_cmd_config.txt")
+

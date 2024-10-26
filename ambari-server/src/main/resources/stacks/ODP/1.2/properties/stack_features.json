@@ -43,6 +43,11 @@
         "min_version": "1.2.4.0"
       },
       {
+        "name": "atlas_kafka_3_acl_support",
+        "description": "Atlas Kafka 3 Acl Support",
+        "min_version": "1.2.4.0"
+      },
+      {
         "name": "config_versioning",
         "description": "Configurable versions support",
         "min_version": "1.0.0.0"
