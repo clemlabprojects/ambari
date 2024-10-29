@@ -259,6 +259,7 @@ else:
   ams_collector_protocol = ''
 
 # logback support for zookeeper client
+version_for_stack_feature_checks = get_stack_feature_version(config)
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
   zookeeper_log_level = str(default('configurations/infra-solr-log4j/zookeeper_log_level', "INFO"))
