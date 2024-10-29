@@ -292,7 +292,9 @@ if check_stack_feature(StackFeature.ATLAS_UPGRADE_SUPPORT, version_for_stack_fea
 
   kafka_zk_endpoint = default("/configurations/kafka-broker/zookeeper.connect", None)
   kafka_kerberos_enabled = (('security.inter.broker.protocol' in config['configurations']['kafka-broker']) and
-                            ((config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_PLAINTEXT")))
+                            ((config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_PLAINTEXT") or 
+                             (config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_SSL")
+                            ))
   if security_enabled and stack_version_formatted != "" and 'kafka_principal_name' in config['configurations']['kafka-env'] \
     and check_stack_feature(StackFeature.KAFKA_KERBEROS, stack_version_formatted):
     _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
@@ -519,6 +521,28 @@ ranger_policy_config = {
 # AMBARI-186 (clemlab): update Atlas Kafka ACL script by removing zookeeper reference to it
 atlas_kafka_3_acl_support = check_stack_feature(StackFeature.ATLAS_KAFKA_3_ACL_SUPPORT, version_for_stack_feature_checks)
 atlas_kafka_security_protocol = default("/configurations/application-properties/atlas.kafka.security.protocol", "PLAINTEXT")
+# Kafka bootstrap servers
+kafka_bootstrap_servers = default("/configurations/application-properties/atlas.kafka.bootstrap.servers", None)
+
+if kafka_bootstrap_servers is None:
+  kafka_broker_hosts = default("/clusterHostInfo/kafka_broker_hosts", [])
+  atlas_kafka_security_protocol = default("/configurations/kafka-broker/security.inter.broker.protocol", "PLAINTEXT")
+
+  kafka_listeners = default("/configurations/kafka-broker/listeners", "").split(",")
+  kafka_bootstrap_servers = []
+  valid_protocols = ["SASL_SSL", "SASL_PLAINTEXT", "SSL", "PLAINTEXT"]
+  listener_protocols = [listener.split("://")[0] for listener in kafka_listeners]
+  if atlas_kafka_security_protocol not in listener_protocols:
+    for protocol in valid_protocols:
+      if protocol in listener_protocols:
+        atlas_kafka_security_protocol = protocol
+        break
+  for listener in kafka_listeners:
+    protocol, address = listener.split("://")
+    host, port = address.split(":")
+    if protocol == atlas_kafka_security_protocol:
+      kafka_bootstrap_servers.append(f"{host}:{port}")
+  kafka_bootstrap_servers = ",".join(kafka_bootstrap_servers)
 atlas_hook_publishers = []
 
 if atlas_kafka_3_acl_support:
@@ -599,7 +623,7 @@ if ranger_kafka_plugin_enabled:
         'isAllowed': True
         }
       ],
-      "users": [atlas_hook_publishers],
+      "users": atlas_hook_publishers,
       "groups": [],
       "roles": [],
       "conditions": [],
@@ -663,7 +687,7 @@ if ranger_kafka_plugin_enabled:
     "resources": {
       "topic": {
         "values": [
-            "ATLAS_ENTITIES"
+            "ATLAS_SPARK_HOOK"
         ],
         "isExcludes": False,
         "isRecursive": False

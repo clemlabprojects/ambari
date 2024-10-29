@@ -19,10 +19,11 @@
 
 
 create_topic() {
+    export KAFKA_HEAP_OPTS="-Xmx1024m -Xms256m"
     topic_name=$1
-    topics=`{{kafka_home}}/bin/kafka-topics.sh --bootstrap-server {{kafka_zk_endpoint}} --topic $topic_name --list --command-config={{kafka_cmd_config_file}}`
+    topics=`{{kafka_home}}/bin/kafka-topics.sh --bootstrap-server {{kafka_bootstrap_servers}} --topic $topic_name --list --command-config {{kafka_cmd_config_file}}`
     if [ -z $topics ]; then
-      {{kafka_home}}/bin/kafka-topics.sh --bootstrap-server {{kafka_zk_endpoint}} --topic $topic_name --create --partitions 1 --replication-factor {{default_replication_factor}} --command-config={{kafka_cmd_config_file}}
+      {{kafka_home}}/bin/kafka-topics.sh --bootstrap-server {{kafka_bootstrap_servers}} --topic $topic_name --create --partitions 1 --replication-factor {{default_replication_factor}} --command-config {{kafka_cmd_config_file}}
       echo "Created topic $topic_name with replication factor {{default_replication_factor}}"
     else
       echo "Topic $topic_name already exists"
@@ -33,12 +34,16 @@ create_topic ATLAS_HOOK
 create_topic ATLAS_SPARK_HOOK
 create_topic ATLAS_ENTITIES
 
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_HOOK --allow-principal User:* --producer
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_HOOK --allow-principal User:{{metadata_user}} --consumer --group atlas
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_SPARK_HOOK --allow-principal User:* --producer
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_SPARK_HOOK --allow-principal User:{{metadata_user}} --consumer --group atlas
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_ENTITIES --allow-principal User:{{metadata_user}} --producer
+{% if not ranger_kafka_plugin_enabled %}
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_HOOK --allow-principal User:* --producer
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_HOOK --allow-principal User:{{metadata_user}} --consumer --group atlas
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_SPARK_HOOK --allow-principal User:* --producer
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_SPARK_HOOK --allow-principal User:{{metadata_user}} --consumer --group atlas
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_ENTITIES --allow-principal User:{{metadata_user}} --producer
+
 
 {% if has_ranger_tagsync %}
-{{kafka_home}}/bin/kafka-acls.sh --authorizer-properties --bootstrap-server={{kafka_zk_endpoint}} --add --command-config={{kafka_cmd_config_file}} --topic ATLAS_ENTITIES --allow-principal User:{{rangertagsync_user}} --consumer --group ranger_entities_consumer
+{{kafka_home}}/bin/kafka-acls.sh --bootstrap-server {{kafka_bootstrap_servers}} --add --command-config {{kafka_cmd_config_file}} --topic ATLAS_ENTITIES --allow-principal User:{{rangertagsync_user}} --consumer --group ranger_entities_consumer
+{% endif %}
+
 {% endif %}

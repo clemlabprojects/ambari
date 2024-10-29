@@ -183,6 +183,7 @@ def metadata(type='server'):
             group=params.user_group,
             owner=params.kafka_user,
             content=Template("atlas_kafka_3_acl.sh.j2"))
+
         File(params.kafka_cmd_config_file,
             group=params.user_group,
             owner=params.kafka_user,

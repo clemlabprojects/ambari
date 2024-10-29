@@ -38,5 +38,7 @@ if not list.include? _tbl_audit
   end
 end
 
+{% if not enable_ranger_hbase %}
 grant _usr_atlas, 'RWCA', _tbl_titan
 grant _usr_atlas, 'RWCA', _tbl_audit
+{% endif %}

@@ -180,6 +180,29 @@ class AtlasServiceAdvisor(service_advisor.ServiceAdvisor):
           return False
 
 
+  @staticmethod
+  def isSSLEnabled(services, configurations):
+      """
+      Determines if ssl is enabled by testing the value of application-properties/atlas.enableTLS enabled.
+      If the property exists and is equal to "true", then is it enabled; otherwise is it assumed to be
+      disabled.
+
+      :type services: dict
+      :param services: the dictionary containing the existing configuration values
+      :type configurations: dict
+      :param configurations: the dictionary containing the updated configuration values
+      :rtype: bool
+      :return: True or False
+      """
+      if configurations and "application-properties" in configurations and \
+              "atlas.enableTLS" in configurations["application-properties"]["properties"]:
+          return configurations["application-properties"]["properties"]["atlas.enableTLS"].lower() == "true"
+      elif services and "application-properties" in services["configurations"] and \
+              "atlas.enableTLS" in services["configurations"]["application-properties"]["properties"]:
+          return services["configurations"]["application-properties"]["properties"]["atlas.enableTLS"].lower() == "true"
+      else:
+          return False
+
 
 class AtlasRecommender(service_advisor.ServiceAdvisor):
   """
@@ -416,6 +439,58 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
       if security_enabled:
         putAtlasApplicationProperty('atlas.graph.index.search.solr.kerberos-enabled', "true")
 
+    # Improve the logic Of Kafka Listeners discovery and protocol selection (It is bacward compatible with the all ODP version Kafka > 2.5)
+    # Check if Kafka version is higher than 3.x to apply only on ODP > 1.2.4.0
+    if "KAFKA" in servicesList and 'kafka-broker' in services['configurations']:
+      self.logger.info("Kafka Service is installed discovering valid protocols")
+
+      kafka_hosts = self.getHostNamesWithComponent("KAFKA", "KAFKA_BROKER", services)
+
+      if 'kafka-broker' in services['configurations'] and 'listeners' in services['configurations']['kafka-broker']['properties']:
+        kafka_server_listeners = services['configurations']['kafka-broker']['properties']['listeners']
+      else:
+        kafka_server_listeners = 'PLAINTEXT://localhost:6667'
+      
+      # Get Kerberos and TLS capabilities on ATLAS
+      security_enabled = AtlasServiceAdvisor.isKerberosEnabled(services, configurations)
+      ssl_enabled = AtlasServiceAdvisor.isSSLEnabled(services, configurations)
+
+      kafka_listeners = kafka_server_listeners.split(",")
+      kafka_bootstrap_servers = []
+
+      # Create a list of valid protocols priority based on the security and ssl configurations
+      valid_protocols = []
+      if security_enabled and ssl_enabled:
+        valid_protocols.append("SASL_SSL")
+      if security_enabled:
+        valid_protocols.append("SASL_PLAINTEXT")
+      if ssl_enabled:
+        valid_protocols.append("SSL")
+
+      valid_protocols.append("PLAINTEXT")
+
+      atlas_kafka_security_protocol = "PLAINTEXT"
+      # Iterate over the valid protocols and select the first one that matches the listener protocols 
+      listener_protocols = [listener.split("://")[0].strip() for listener in kafka_listeners] # strip the result to prevent spaces mistake from config
+      for protocol in valid_protocols:
+        if protocol in listener_protocols:
+          atlas_kafka_security_protocol = protocol
+          break
+
+      # Iterate over the kafka listeners create bootstrap servers string based on the selected protocol
+      kafka_host_arr = []
+      for listener in kafka_listeners:
+        protocol, address = listener.strip().split("://") # strip the result to prevent spaces mistake from config
+        _ , port = address.split(":")
+        if protocol == atlas_kafka_security_protocol:
+          for i in range(len(kafka_hosts)):
+            kafka_host_arr.append(kafka_hosts[i] + ':' + port)
+
+      kafka_bootstrap_servers = ",".join(kafka_host_arr)
+
+      putAtlasApplicationProperty('atlas.kafka.bootstrap.servers', kafka_bootstrap_servers)
+      putAtlasApplicationProperty('atlas.kafka.security.protocol', atlas_kafka_security_protocol)
+
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
     ambari_sso_details = ambari_configuration.get_ambari_sso_details() if ambari_configuration else None
@@ -446,7 +521,8 @@ class AtlasValidator(service_advisor.ServiceAdvisor):
     self.as_super.__init__(*args, **kwargs)
 
     self.validators = [("application-properties", self.validateAtlasConfigurationsFromHDP25),
-                       ("atlas-env", self.validateAtlasConfigurationsFromHDP30)]
+                       ("atlas-env", self.validateAtlasConfigurationsFromHDP30),
+                       ("application-properties", self.validateAtlasConfigurationsFromODP12),]
 
 
 
@@ -542,3 +618,35 @@ class AtlasValidator(service_advisor.ServiceAdvisor):
     if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', atlas_admin_password)) or bool(re.search('[\\\`"\']', atlas_admin_password)):
       validationItems.append({"config-name": 'atlas.admin.password', "item": self.getNotApplicableItem("Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are  \" ' \ `")})
     return self.toConfigurationValidationProblems(validationItems, 'atlas-env')
+
+
+  def validateAtlasConfigurationsFromODP12(self, properties, recommendedDefaults, configurations, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    application_properties = self.getSiteProperties(configurations, "application-properties")
+    validationItems = []
+    kafka_security_protocol = application_properties.get('atlas.kafka.security.protocol', 'PLAINTEXT')
+    kafka_bootstrap_servers = application_properties.get('atlas.kafka.bootstrap.servers', '')
+    # Check if Kafka is installed
+    if "KAFKA" in servicesList and 'kafka-broker' in services['configurations']:
+      kafka_server_listeners = services['configurations']['kafka-broker']['properties'].get('listeners', '')
+
+      # Creating the listener protocol port map {"SASL_PLAINTEXT": "9092", "PLAINTEXT": "6667"} based on the listener configuration
+      listener_protocol_port_map = {}
+      if kafka_server_listeners:
+        for listener in kafka_server_listeners.split(','):
+          protocol, address = listener.split("://")
+          host, port = address.split(":")
+          listener_protocol_port_map[protocol] = port
+
+      # Check if the Kafka bootstrap servers are using the correct port based on the security protocol
+      if kafka_bootstrap_servers:
+        kafka_bootstrap_servers_list = kafka_bootstrap_servers.split(',')
+        for server in kafka_bootstrap_servers_list:
+          host, port = server.split(':')
+          expected_port = listener_protocol_port_map.get(kafka_security_protocol, None)
+          if expected_port and port != expected_port:
+            validationItems.append({"config-name": "atlas.kafka.bootstrap.servers",
+                        "item": self.getErrorItem(
+                          f"{kafka_security_protocol} protocol should use port {expected_port} for Kafka bootstrap servers.")})
+
+      return self.toConfigurationValidationProblems(validationItems, "application-properties")
