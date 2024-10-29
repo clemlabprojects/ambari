@@ -100,6 +100,13 @@ def setup_infra_solr(name = None):
       )
 
   elif name == 'client':
+    if(params.logback_support):
+      File("/usr/lib/ambari-infra-solr-client/logback.xml",
+        owner=params.infra_solr_user,
+        group=params.user_group,
+        content=Template("zookeeper-logback.xml.j2"),
+        mode=0o644
+      )
     solr_cloud_util.setup_solr_client(params.config)
 
   else :

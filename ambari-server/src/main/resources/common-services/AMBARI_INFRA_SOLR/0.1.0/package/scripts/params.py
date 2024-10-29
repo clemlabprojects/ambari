@@ -23,6 +23,10 @@ from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
 
 import status_params
 
@@ -253,3 +257,8 @@ if metrics_enabled:
 else:
   ams_collector_port = ''
   ams_collector_protocol = ''
+
+# logback support for zookeeper client
+logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
+if logback_support:
+  zookeeper_log_level = str(default('configurations/infra-solr-log4j/zookeeper_log_level', "INFO"))
