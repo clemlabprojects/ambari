@@ -790,3 +790,5 @@ if ranger_kafka_plugin_enabled:
       "delegateAdmin": "false"
     }]
   })
+
+kafka_client_tools_log_level = default("/configurations/atlas-env/atlas.kafka.client.log.level", "WARN")

@@ -205,6 +205,12 @@ def metadata(type='server'):
              owner=params.kafka_user,
              content=Template("kafka_jaas.conf.j2"))
 
+        File(format("{kafka_conf_dir}/tools-log4j.properties"),
+             group=params.user_group,
+             owner=params.kafka_user,
+             content=Template("kafka-tools-log4j.properties.j2")
+        )
+
     if params.stack_supports_atlas_hdfs_site_on_namenode_ha and len(params.namenode_host) > 1:
       XmlConfig("hdfs-site.xml",
                 conf_dir=params.conf_dir,
