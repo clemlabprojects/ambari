@@ -314,6 +314,10 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <configuration-dependencies>
+            <config-type>httpfs-env</config-type>
+            <config-type>httpfs-site</config-type>
+          </configuration-dependencies>
           <logs>
             <log>
               <logId>hdfs_httpfs</logId>

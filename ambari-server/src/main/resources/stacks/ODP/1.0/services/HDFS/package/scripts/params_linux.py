@@ -647,4 +647,4 @@ cluster_name = config['clusterName']
 # logback support for zookeeper client
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
-  zookeeper_log_level = str(default('configurations/hdfs-log4j/zookeeper_log_level', "INFO"))
+  zookeeper_log_level = str(default('configurations/hadoop-env/hdfs.zookeeper.log.level', "INFO"))
