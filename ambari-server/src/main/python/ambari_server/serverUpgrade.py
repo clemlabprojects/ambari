@@ -170,7 +170,7 @@ def run_schema_upgrade(args):
 
   (retcode, stdout, stderr) = run_os_command(command, env=environ)
   if stdout == "" :
-    stdout = "\{\}" 
+    stdout = '{}' # if there is no output, return empty json
   upgrade_response = json.loads(stdout)
 
   check_gpl_license_approved(upgrade_response)
