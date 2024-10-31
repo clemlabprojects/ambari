@@ -114,8 +114,6 @@
             <type>application-properties</type>
             <set key="atlas.kafka.enable.idempotence" value="false"/>
           </definition>
-        </changes>
-        <changes>
           <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas">
             <type>atlas-env</type>
             <set key="atlas.kafka.client.log.level" value="WARN"/>
