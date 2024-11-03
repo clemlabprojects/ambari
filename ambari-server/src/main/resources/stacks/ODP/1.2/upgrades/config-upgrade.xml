@@ -85,7 +85,7 @@
             <set key="hadoop.security.credential.provider.path" value="localjceks://file//etc/hbase/conf/creds.localjceks"/>
           </definition>
           <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer">
-            <type>hbase-atlas-application.properties</type>
+            <type>hbase-atlas-application-properties</type>
             <set key="atlas.kafka.enable.idempotence" value="false"/>
           </definition>
         </changes>
