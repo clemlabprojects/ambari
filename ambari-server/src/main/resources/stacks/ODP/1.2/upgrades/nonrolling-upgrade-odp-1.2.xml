@@ -291,11 +291,6 @@
     <group xsi:type="cluster" name="Upgrade service configs" title="Upgrade service configs">
       <direction>UPGRADE</direction> <!--  prevent config changes on downgrade -->
       <skippable>true</skippable> <!-- May fix configuration problems manually In Case the component envs (hadoop-env, hbase-env...) have been changed manually -->
-      <execute-stage service="KNOX" title="Insert Knox Gateway log4j2.xml configuration">
-        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.CreateKnoxGatewayLog4j2">
-          <summary>Update Knox Log4j2</summary>
-        </task>
-      </execute-stage>
       
       <!-- ZOOKEEPER -->
       <execute-stage service="ZOOKEEPER" component="ZOOKEEPER_SERVER" title="Apply Zookeeper 3.8. logback config update">
