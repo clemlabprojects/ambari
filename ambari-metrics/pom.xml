@@ -36,7 +36,7 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <python.ver>python &gt;= 2.6</python.ver>
-    <deb.python.ver>python (&gt;= 2.6)</deb.python.ver>
+    <deb.python.ver>python3 (&gt;= 3.6)</deb.python.ver>
     <slf4j.version>2.0.0</slf4j.version>
     <odp.release.stack>1.2.1.0</odp.release.stack>
     <odp.release.number>134</odp.release.number>
