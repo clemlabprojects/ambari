@@ -452,6 +452,11 @@
         "name": "nifi_auto_client_registration",
         "description": "Supports NiFi's client registration in runtime",
         "min_version": "3.0.0.0"
+      },
+      {
+        "name": "ranger_compatibility_python2_python3",
+        "description": "Ranger DB Setup Python2 and Python3 Compatibility",
+        "min_version": "1.2.2.0"
       }
     ]
   }

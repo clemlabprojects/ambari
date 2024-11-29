@@ -522,3 +522,8 @@ if om_server_hosts != None:
 if kafka_server_hosts != None:
   if len(kafka_server_hosts) > 0 :
     policy_users_to_create.append('kafka')
+
+if version_for_stack_feature_checks.startswith('1.2.2.0'):
+  ranger_compatibility_python2_python3 = True
+  # Add your logic here if version_for_stack_feature_checks starts with 1.2.2.0
+  pass
