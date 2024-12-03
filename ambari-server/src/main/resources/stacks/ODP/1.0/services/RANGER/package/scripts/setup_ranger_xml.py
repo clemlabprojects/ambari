@@ -278,12 +278,12 @@ def setup_ranger_db(stack_version=None):
   # update db_setup.py with python2/3 compatibility for ODP 1.2.2.0 version as ambari can run in python 3 during the upgrade from ODP 1.2.2.0 -> 1.2.4.0
   if params.ranger_compatibility_python2_python3:
 
-    File("{ranger_home}/db_setup.py",
+    File(format("{ranger_home}/db_setup.py"),
        content=StaticFile('db_setup.py'),
        mode=0o755
     )
 
-  db_setup = format('ambari-python-wrap {ranger_home}/db_setup.py')
+  db_setup = format("ambari-python-wrap {ranger_home}/db_setup.py")
   Execute(db_setup,
           environment=env_dict,
           logoutput=True,
