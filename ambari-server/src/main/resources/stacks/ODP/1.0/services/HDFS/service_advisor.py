@@ -83,7 +83,7 @@ class HDFSServiceAdvisor(service_advisor.ServiceAdvisor):
     self.heap_size_properties = {"NAMENODE":
                                    [{"config-name": "hadoop-env",
                                      "property": "namenode_heapsize",
-                                     "default": "1024m"}],
+                                     "default": "2048m"}],
                                  "SECONDARY_NAMENODE":
                                    [{"config-name": "hadoop-env",
                                      "property": "namenode_heapsize",
@@ -196,11 +196,11 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
 
     totalAvailableRam = clusterData['totalAvailableRam']
     self.logger.info("Class: %s, Method: %s. Total Available Ram: %s" % (self.__class__.__name__, inspect.stack()[0][3], str(totalAvailableRam)))
-    putHDFSProperty('namenode_heapsize', max(int(totalAvailableRam / 2), 1024))
+    putHDFSProperty('namenode_heapsize', max(int(totalAvailableRam / 2), 2048))
     putHDFSProperty = self.putProperty(configurations, "hadoop-env", services)
-    putHDFSProperty('namenode_opt_newsize', max(int(totalAvailableRam / 8), 128))
+    putHDFSProperty('namenode_opt_newsize', max(int(totalAvailableRam / 8), 256))
     putHDFSProperty = self.putProperty(configurations, "hadoop-env", services)
-    putHDFSProperty('namenode_opt_maxnewsize', max(int(totalAvailableRam / 8), 256))
+    putHDFSProperty('namenode_opt_maxnewsize', max(int(totalAvailableRam / 8), 512))
 
     # Check if NN HA is enabled and recommend removing dfs.namenode.rpc-address
     hdfsSiteProperties = self.getServicesSiteProperties(services, "hdfs-site")
