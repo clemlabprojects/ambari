@@ -269,7 +269,12 @@ class WebHDFSUtil:
         raise Fail(format("File {file_to_put} is not found."))
 
       if file_to_put:
-        cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
+        if os.path.getsize(file_to_put) > 1 * 1024 * 1024 * 1024:
+          Logger.info("File {0} is larger than 1GB. Using streaming option with curl.".format(file_to_put))
+          cmd += ["-T", file_to_put, "-H", "Content-Type: application/octet-stream"]
+        else:
+          Logger.info("File {0} is smaller than 1GB. Using normal file upload with curl.".format(file_to_put))
+          cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
       else:
         cmd += ["-d", "", "-H", "Content-Length: 0"]
 
