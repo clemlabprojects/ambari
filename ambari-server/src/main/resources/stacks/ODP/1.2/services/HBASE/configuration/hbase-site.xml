@@ -65,13 +65,13 @@
   </property>
   <property>
     <name>hbase.thrift.ssl.keystore.store</name>
-    <value></value>
+    <value>/etc/security/serverKeys/keystore.jks</value>
     <description>HBase Thrift SSL Keystore Path</description>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase.thrift.ssl.keystore.password</name>
-    <value></value>
+    <value>hbase123</value>
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
@@ -87,7 +87,7 @@
       <type>password</type>
       <overridable>true</overridable>
     </value-attributes>
-    <value></value>
+    <value>hbase123</value>
     <description>HBase Thrift SSL Keystore Key Password</description>
     <on-ambari-upgrade add="true"/>
   </property>
