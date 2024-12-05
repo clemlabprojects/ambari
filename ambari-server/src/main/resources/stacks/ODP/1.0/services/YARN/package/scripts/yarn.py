@@ -816,12 +816,12 @@ def setup_system_services(config_dir=None):
                         owner=params.yarn_hbase_user
                         )
     # copy service-dep.tar.gz into hdfs
-    params.HdfsResource(format("{yarn_service_app_hdfs_path}"),
+    params.HdfsResource(yarn_service_app_hdfs_path,
                         type="directory",
                         action="create_on_execute",
                         owner=params.yarn_user,
                         group=params.user_group,
-                        mode=0o555,
+                        mode=0o755,
                         )
     params.HdfsResource(format("{yarn_service_app_hdfs_path}/service-dep.tar.gz"),
                     type="file",
