@@ -46,7 +46,7 @@ import javax.ws.rs.core.UriInfo;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.oozie.ambari.view.assets.AssetResource;
 import org.apache.oozie.ambari.view.exception.ErrorCode;
 import org.apache.oozie.ambari.view.exception.WfmException;
