@@ -228,6 +228,9 @@
                             <exclude>jdk.tools*.jar</exclude>
                             <exclude>hadoop*.jar</exclude>
                             <exclude>hbase*.jar</exclude>
+                            <exclude>re2j*.jar</exclude>
+                            <exclude>stax2*.jar</exclude>
+                            <exclude>woodstox-core*.jar</exclude>
                           </excludes>
                         </source>
                         <source>
