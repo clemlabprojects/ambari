@@ -662,11 +662,14 @@ if rm_ha_id is not None:
   yarn_hbase_app_hdfs_path = format("{yarn_hbase_app_hdfs_path}/{rm_ha_id}")
   yarn_service_app_hdfs_path = format("{yarn_service_app_hdfs_path}/{rm_ha_id}")
 yarn_service_dep_source_path = format("{stack_root}/{version}/hadoop-yarn/lib/service-dep.tar.gz")
-_yarn_service_framework_path = default("/configurations/yarn-site/yarn.service.framework.path", "/{}/apps/{}/{}/service-dep.tar.gz".format(
-  stack_name.lower(),
-  version,
-  yarn_user))
-yarn_service_framework_path = _yarn_service_framework_path.replace('${odp.version}', version)
+if version is not None:
+  _yarn_service_framework_path = default("/configurations/yarn-site/yarn.service.framework.path", "/{}/apps/{}/{}/service-dep.tar.gz".format(
+    stack_name.lower(),
+    version,
+    yarn_user))
+  yarn_service_framework_path = _yarn_service_framework_path.replace('${odp.version}', version)
+else:
+  yarn_service_framework_path = config['configurations']['yarn-site']['yarn.service.framework.path']
 yarn_hbase_user_version_path = format("{yarn_hbase_user}/{version}")
 yarn_hbase_user_tmp = format("{tmp_dir}/{yarn_hbase_user_version_path}")
 yarn_hbase_log_dir = os.path.join(yarn_log_dir_prefix, "embedded-yarn-ats-hbase")
