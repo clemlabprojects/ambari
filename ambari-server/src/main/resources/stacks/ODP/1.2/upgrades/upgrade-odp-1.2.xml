@@ -512,6 +512,7 @@
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_zk_server" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -603,6 +604,7 @@
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -614,6 +616,7 @@
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -716,6 +719,7 @@
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer" />
            <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -782,6 +786,7 @@
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
