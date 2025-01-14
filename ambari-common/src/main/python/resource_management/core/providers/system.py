@@ -160,8 +160,6 @@ class FileProvider(Provider):
           if self.resource.backup:
             self.resource.env.backup_file(path)
 
-    owner = self.resource.owner or "root"
-    group = self.resource.group or "root"
 
     if write:
       Logger.info("Writing %s because %s" % (self.resource, reason))
@@ -169,8 +167,8 @@ class FileProvider(Provider):
       def on_file_created(filename):
         _ensure_metadata(
           filename,
-          owner,
-          group,
+          self.resource.owner,
+          self.resource.group,
           mode=self.resource.mode,
           cd_access=self.resource.cd_access,
         )
@@ -181,7 +179,7 @@ class FileProvider(Provider):
       )
     else:
       _ensure_metadata(
-        path, owner, group, mode=self.resource.mode, cd_access=self.resource.cd_access
+        path, self.resource.owner, self.resource.group, mode=self.resource.mode, cd_access=self.resource.cd_access
       )
 
   def action_delete(self):
