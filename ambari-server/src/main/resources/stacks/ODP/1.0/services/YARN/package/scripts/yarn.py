@@ -212,6 +212,7 @@ def yarn(name=None, config_dir=None):
   )
 
   File(os.path.join(config_dir, "container-executor.cfg"),
+      owner='root',
       group=params.user_group,
       mode=0o644,
       content=InlineTemplate(params.container_executor_cfg_template)
