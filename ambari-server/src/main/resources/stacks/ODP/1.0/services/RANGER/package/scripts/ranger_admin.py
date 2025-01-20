@@ -148,7 +148,7 @@ class RangerAdmin(Script):
 
     # set up db if we are not upgrading and setup_db is true
     if setup_db and upgrade_type is None:
-      setup_ranger_xml.setup_ranger_db()
+      setup_ranger_xml.setup_ranger_db(upgrade_type=upgrade_type)
 
     setup_ranger_xml.ranger('ranger_admin', upgrade_type=upgrade_type)
 
@@ -197,7 +197,7 @@ class RangerAdmin(Script):
       target_version = upgrade_summary.get_target_version("RANGER", default_version = stack_version)
       Logger.info(format('Setting Ranger database schema, using version {target_version}'))
 
-      setup_ranger_xml.setup_ranger_db(stack_version = target_version)
+      setup_ranger_xml.setup_ranger_db(stack_version = target_version, upgrade_type = params.upgrade_type)
 
   def setup_ranger_java_patches(self, env):
     import params

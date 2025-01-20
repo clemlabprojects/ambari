@@ -59,10 +59,6 @@
           <provides>
             <provide>ambari-views-package</provide>
           </provides>
-          <prereqs>
-            <prereq>ambari-server &gt;= ${ambari.version}</prereq>
-          </prereqs>
-
           <mappings>
             <mapping>
               <directory>${views.directory}</directory>
