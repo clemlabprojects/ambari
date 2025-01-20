@@ -251,7 +251,7 @@ def setup_ranger_admin(upgrade_type=None):
     owner = params.unix_user,
   )
 
-def setup_ranger_db(stack_version=None):
+def setup_ranger_db(stack_version=None, upgrade_type=None):
   import params
 
   ranger_home = params.ranger_home
@@ -283,12 +283,12 @@ def setup_ranger_db(stack_version=None):
     Logger.info('Separate DBA property not set. Assuming Ranger DB and DB User exists!')
 
   # update db_setup.py with python2/3 compatibility for ODP 1.2.2.0 version as ambari can run in python 3 during the upgrade from ODP 1.2.2.0 -> 1.2.4.0
-  # if params.ranger_compatibility_python2_python3:
+  if params.ranger_compatibility_python2_python3 and upgrade_type is None:
 
-  #   File(format("{ranger_home}/db_setup.py"),
-  #      content=StaticFile('db_setup.py'),
-  #      mode=0o755
-  #   )
+    File(format("{ranger_home}/db_setup.py"),
+       content=StaticFile('db_setup.py'),
+       mode=0o755
+    )
 
   db_setup = format("ambari-python-wrap {ranger_home}/db_setup.py")
   Execute(db_setup,
