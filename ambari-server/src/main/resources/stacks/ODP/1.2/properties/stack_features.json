@@ -197,7 +197,8 @@
       {
         "name": "ranger_log4j_support",
         "description": "Ranger supporting log-4j properties (AMBARI-15681)",
-        "min_version": "1.0.0.0"
+        "min_version": "1.0.0.0",
+        "max_version": "1.3.1.0"
       },
       {
         "name": "ranger_kerberos_support",
