@@ -146,6 +146,8 @@ export HADOOP_CONF_DIR=${HADOOP_CONF_DIR:-{{hadoop_conf_dir}}}
 # The java implementation to use.
 export JAVA_HOME={{java_home}}
 
+# Add hadoop native libraries support for better performance
+export LD_LIBRARY_PATH=$HADOOP_HOME/lib/native/:$LD_LIBRARY_PATH
 </value>
     <value-attributes>
       <type>content</type>
