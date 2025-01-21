@@ -22,6 +22,7 @@ Ambari Agent
 import sys
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import conf_select
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.functions.format import format
@@ -68,6 +69,8 @@ class ZookeeperClientLinux(ZookeeperClient):
 
     if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, format_stack_version(params.version)):
       stack_select.select_packages(params.version)
+      conf_select.create(params.stack_name, "zookeeper", params.version)
+      conf_select.select(params.stack_name, "zookeeper", params.version)
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class ZookeeperClientWindows(ZookeeperClient):

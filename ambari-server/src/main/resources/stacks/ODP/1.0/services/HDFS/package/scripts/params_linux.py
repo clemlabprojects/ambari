@@ -144,28 +144,30 @@ else:
 
 httpfs_stack_enabled = check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks)
 if httpfs_stack_enabled:
-  httpfs_properties = dict(config['configurations']['httpfs-site'])
-  httpfs_ssl_enabled = True if str(default('/configurations/httpfs-site/httpfs.ssl.enabled', False)).lower() == "true" else False
-  httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
-  httpfs_ssl_keystore_path = config['configurations']['ssl-server']['ssl.server.keystore.location']
-  httpfs_ssl_keystore_password = config['configurations']['ssl-server']['ssl.server.keystore.password']
-  httpfs_env_sh_template = config['configurations']['httpfs-env']['content']
+  if 'httpfs-site' in config['configurations']:
+    httpfs_properties = dict(config['configurations']['httpfs-site'])
+    httpfs_ssl_enabled = True if str(default('/configurations/httpfs-site/httpfs.ssl.enabled', False)).lower() == "true" else False
+    httpfs_pid_file = format("{hadoop_pid_dir}/hadoop-{hdfs_user}-httpfs.pid")
+    httpfs_ssl_keystore_path = config['configurations']['ssl-server']['ssl.server.keystore.location']
+    httpfs_ssl_keystore_password = config['configurations']['ssl-server']['ssl.server.keystore.password']
+    httpfs_env_sh_template = config['configurations']['httpfs-env']['content']
 
-  httpfs_hadoop_auth_principal_name = default("/configurations/httpfs-site/httpfs.hadoop.authentication.kerberos.principal", None)
-  if httpfs_hadoop_auth_principal_name is not None:
-    httpfs_hadoop_auth_principal_name = httpfs_hadoop_auth_principal_name.replace('_HOST',_hostname_lowercase)
+    httpfs_hadoop_auth_principal_name = default("/configurations/httpfs-site/httpfs.hadoop.authentication.kerberos.principal", None)
+    if httpfs_hadoop_auth_principal_name is not None:
+      httpfs_hadoop_auth_principal_name = httpfs_hadoop_auth_principal_name.replace('_HOST',_hostname_lowercase)
 
-  httpfs_principal_name = default("/configurations/httpfs-site/hadoop.http.authentication.kerberos.principal", None)
-  if httpfs_principal_name is not None:
-    httpfs_principal_name = httpfs_principal_name.replace('_HOST',_hostname_lowercase)
-  
-  # apply principal name
-  httpfs_properties['httpfs.hadoop.authentication.kerberos.principal'] = httpfs_hadoop_auth_principal_name
-  httpfs_properties['hadoop.http.authentication.kerberos.principal'] = httpfs_principal_name
+    httpfs_principal_name = default("/configurations/httpfs-site/hadoop.http.authentication.kerberos.principal", None)
+    if httpfs_principal_name is not None:
+      httpfs_principal_name = httpfs_principal_name.replace('_HOST',_hostname_lowercase)
+    
+    # apply principal name
+    httpfs_properties['httpfs.hadoop.authentication.kerberos.principal'] = httpfs_hadoop_auth_principal_name
+    httpfs_properties['hadoop.http.authentication.kerberos.principal'] = httpfs_principal_name
 
-httpfs_max_threads = default("/configurations/httpfs-env/httpfs_max_threads", 1000)
-httpfs_max_header_size = default("/configurations/httpfs-env/httpfs_max_header_size", 65536)
-httpfs_http_port = default("/configurations/httpfs-env/httpfs_http_port", 14000)
+  if 'httpfs-env' in config['configurations']:
+    httpfs_max_threads = default("/configurations/httpfs-env/httpfs_max_threads", 1000)
+    httpfs_max_header_size = default("/configurations/httpfs-env/httpfs_max_header_size", 65536)
+    httpfs_http_port = default("/configurations/httpfs-env/httpfs_http_port", 14000)
 
 
 ambari_libs_dir = "/var/lib/ambari-agent/lib"
@@ -645,4 +647,4 @@ cluster_name = config['clusterName']
 # logback support for zookeeper client
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
-  zookeeper_log_level = str(default('configurations/hdfs-log4j/zookeeper_log_level', "INFO"))
+  zookeeper_log_level = str(default('configurations/hadoop-env/hdfs.zookeeper.log.level', "INFO"))

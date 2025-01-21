@@ -23,6 +23,7 @@ from resource_management.libraries.script import Script
 from resource_management.libraries.functions.default import default
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import File, Directory, Execute, Link
+from resource_management.core.source import InlineTemplate, StaticFile
 from resource_management.core.source import DownloadSource, InlineTemplate, Template
 from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.resources.modify_properties_file import ModifyPropertiesFile
@@ -274,7 +275,15 @@ def setup_ranger_db(stack_version=None):
   else:
     Logger.info('Separate DBA property not set. Assuming Ranger DB and DB User exists!')
 
-  db_setup = format('ambari-python-wrap {ranger_home}/db_setup.py')
+  # update db_setup.py with python2/3 compatibility for ODP 1.2.2.0 version as ambari can run in python 3 during the upgrade from ODP 1.2.2.0 -> 1.2.4.0
+  if params.ranger_compatibility_python2_python3:
+
+    File(format("{ranger_home}/db_setup.py"),
+       content=StaticFile('db_setup.py'),
+       mode=0o755
+    )
+
+  db_setup = format("ambari-python-wrap {ranger_home}/db_setup.py")
   Execute(db_setup,
           environment=env_dict,
           logoutput=True,

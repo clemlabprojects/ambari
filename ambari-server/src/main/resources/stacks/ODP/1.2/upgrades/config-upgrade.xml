@@ -19,18 +19,111 @@
 <upgrade-config-changes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-config.xsd">
   <services>
 
-    <service name="SPARK2">
-      <component name="SPARK2_JOBHISTORYSERVER">
+    <service name="ZOOKEEPER">
+      <component name="ZOOKEEPER_SERVER">
         <changes>
-          <definition xsi:type="configure" id="hdp_3_0_*_spark2-thrift-sparkconf">
-            <type>spark2-thrift-sparkconf</type>
-            <transfer operation="copy" from-type="spark2-defaults" from-key="spark.history.kerberos.keytab" to-key="spark.yarn.keytab" default-value=""  if-type="spark2-thrift-sparkconf" if-key="spark.yarn.keytab" if-key-state="absent"/>
-            <transfer operation="copy" from-type="spark2-defaults" from-key="spark.history.kerberos.principal" to-key="spark.yarn.principal" default-value=""  if-type="spark2-thrift-sparkconf" if-key="spark.yarn.principal" if-key-state="absent"/>
+          <definition xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_zk_server">
+            <type>zookeeper-log4j</type>
+            <set key="zookeeper_log_level" value="INFO"/>
           </definition>
         </changes>
       </component>
     </service>
 
+<<<<<<< HEAD
+=======
+    <service name="HDFS">
+      <component name="NAMENODE">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs">
+            <type>hadoop-env</type>
+            <set key="hdfs.zookeeper.log.level" value="ERROR"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+    <service name="KAFKA">
+      <component name="KAFKA_BROKER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction">
+            <type>kafka-broker</type>
+            <set key="transaction.state.log.min.isr" value="2"/>
+            <set key="transaction.state.log.replication.factor" value="3"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+    <service name="TEZ">
+      <component name="TEZ_CLIENT">
+        <changes>
+           <definition xsi:type="configure" id="odp_1_2_4_0_tez_harmonizegc_option" summary="Harmonize GC option trough task and am">
+            <type>tez-site</type>
+            <replace  key="tez.am.launch.cmd-opts"   find="-XX:+UseParallelGC" replace-with="-XX:+UseG1GC"/>
+            <replace  key="tez.task.launch.cmd-opts" find="-XX:+UseParallelGC" replace-with="-XX:+UseG1GC"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+             
+    <service name="HBASE">
+      <component name="HBASE_MASTER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase">
+            <type>hbase-env</type>
+            <set key="hbase.zookeeper.log.level" value="INFO"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift">
+            <type>hbase-site</type>
+            <set key="hbase.thrift.minWorkerThreads" value="200"/>
+            <set key="hbase.thrift.info.port" value="9095"/>
+            <set key="hbase.thrift.support.proxyuser" value="true"/>
+            <set key="hbase.thrift.info.bindAddress" value="0.0.0.0"/>
+            <set key="hbase.thrift.security.qop" value="auth-conf"/>
+            <set key="hbase.thrift.ssl.enabled" value="false"/>
+            <set key="hbase.thrift.ssl.keystore.store" value=""/>
+            <set key="hbase.thrift.ssl.keystore.password" value=""/>
+            <set key="hbase.thrift.ssl.keystore.keypassword" value=""/>
+            <set key="hbase.thrift.ssl.keystore.type" value="JKS"/>
+            <set key="hadoop.security.credential.provider.path" value="localjceks://file//etc/hbase/conf/creds.localjceks"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer">
+            <type>hbase-atlas-application-properties</type>
+            <set key="atlas.kafka.enable.idempotence" value="false"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
+    <service name="HIVE">
+      <component name="HIVE_SERVER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hive">
+            <type>hive-env</type>
+            <set key="hive.zookeeper.log.level" value="INFO"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer">
+            <type>hive-atlas-application.properties</type>
+            <set key="atlas.kafka.enable.idempotence" value="false"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
+    <service name="ATLAS">
+      <component name="ATLAS_SERVER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_atlas_consumer_producer">
+            <type>application-properties</type>
+            <set key="atlas.kafka.enable.idempotence" value="false"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas">
+            <type>atlas-env</type>
+            <set key="atlas.kafka.client.log.level" value="WARN"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+>>>>>>> 2.7.11.0-python3
 
   </services>
 </upgrade-config-changes>

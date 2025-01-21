@@ -24,6 +24,10 @@ from resource_management.libraries.functions.format import format
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import Fail
 from resource_management.core import sudo
+from resource_management.core.source import InlineTemplate
+from resource_management.core.resources.system import File
+from resource_management.core.resources.system import Execute
+
 
 class ServiceCheck(Script):
   def service_check(self, env):
@@ -37,8 +41,17 @@ class ServiceCheck(Script):
     topic = "ambari_kafka_service_check"
     create_topic_cmd_created_output = "Created topic ambari_kafka_service_check."
     create_topic_cmd_exists_output = "Topic \'ambari_kafka_service_check\' already exists."
-    source_cmd = format("source {conf_dir}/kafka-env.sh")
-    topic_exists_cmd = format(source_cmd + " ; " + "{kafka_home}/bin/kafka-topics.sh --zookeeper {kafka_config[zookeeper.connect]} --topic {topic} --list")
+    if params.kerberos_security_enabled:
+      kafka_kinit_cmd = format("{kinit_path_local} -kt {kafka_keytab_path} {kafka_jaas_principal};")
+      Execute(kafka_kinit_cmd, user=params.kafka_user)
+
+    cmdfile = format("{tmp_dir}/kafka_cmd_configs")
+    File(format(cmdfile),
+      owner=params.kafka_user,
+      content=InlineTemplate("security.protocol="+ params.kafka_security_protocol)
+     )
+    source_cmd = format(". {conf_dir}/kafka-env.sh")
+    topic_exists_cmd = format(source_cmd + " ; " + "{kafka_home}/bin/kafka-topics.sh --bootstrap-server {params.kafka_bootstrap_servers} --topic {topic} --list --command-config {cmdfile}")
     topic_exists_cmd_code, topic_exists_cmd_out = shell.call(topic_exists_cmd, logoutput=True, quiet=False, user=params.kafka_user)
 
     if topic_exists_cmd_code > 0:
@@ -50,12 +63,12 @@ class ServiceCheck(Script):
 
       # run create topic command only if the topic doesn't exists
     if topic not in topic_exists_cmd_out:
-      create_topic_cmd = format("{kafka_home}/bin/kafka-topics.sh --zookeeper {kafka_config[zookeeper.connect]} --create --topic {topic} --partitions 1 --replication-factor 1")
+      create_topic_cmd = format("{kafka_home}/bin/kafka-topics.sh --bootstrap-server {params.kafka_bootstrap_servers} --create --topic {topic} --partitions 1 --replication-factor 1 --command-config {cmdfile}")
       command = source_cmd + " ; " + create_topic_cmd
       Logger.info("Running kafka create topic command: %s" % command)
       call_and_match_output(command, format("({create_topic_cmd_created_output})|({create_topic_cmd_exists_output})"), "Failed to check that topic exists", user=params.kafka_user)
 
-    under_rep_cmd = format("{kafka_home}/bin/kafka-topics.sh --describe --zookeeper {kafka_config[zookeeper.connect]} --under-replicated-partitions")
+    under_rep_cmd = format(source_cmd + " ; " + "{kafka_home}/bin/kafka-topics.sh --describe --bootstrap-server {params.kafka_bootstrap_servers} --under-replicated-partitions --command-config {cmdfile}")
     under_rep_cmd_code, under_rep_cmd_out = shell.call(under_rep_cmd, logoutput=True, quiet=False, user=params.kafka_user)
 
     if under_rep_cmd_code > 0:

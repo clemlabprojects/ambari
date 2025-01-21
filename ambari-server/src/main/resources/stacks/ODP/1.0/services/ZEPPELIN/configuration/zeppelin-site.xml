@@ -106,14 +106,14 @@
     </property>
     <property>
       <name>zeppelin.interpreter.include</name>
-      <value></value>
+      <value> </value>
       <description>All the inteprreters that you would like to include. You can only specify either 'zeppelin.interpreter.include' or 'zeppelin.interpreter.exclude'. Specifying them together is not allowed.</description>
       <on-ambari-upgrade add="false"/>
     </property>
 
     <property>
       <name>zeppelin.interpreter.exclude</name>
-      <value></value>
+      <value> </value>
       <description>All the inteprreters that you would like to exclude. You can only specify either 'zeppelin.interpreter.include' or 'zeppelin.interpreter.exclude'. Specifying them together is not allowed.</description>
       <on-ambari-upgrade add="false"/>
     </property>

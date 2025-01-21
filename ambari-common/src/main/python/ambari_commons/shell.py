@@ -1,5 +1,4 @@
-# !/usr/bin/env python3
-
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -325,7 +324,7 @@ def chunks_reader(cmd, kill_timer):
 
     if not data_chunk:
       break
-    str_buffer += data_chunk
+    str_buffer += data_chunk.decode()
 
     if os.linesep in str_buffer:
       copy_offset = str_buffer.rindex(os.linesep)
@@ -812,8 +811,8 @@ class shellRunnerLinux(shellRunner):
     try:
       if self._threadLocal is not None:
         os.setuid(self._threadLocal.uid)
-    except Exception:
-      _logger.warn("can not switch user for running command.")
+    except Exception as e:
+      _logger.warn(f"Unable to switch user for running command. Error details: {e}")
 
   # Run any command
   def run(self, script, user=None):
@@ -825,8 +824,9 @@ class shellRunnerLinux(shellRunner):
       else:
         user = os.getuid()
       self._threadLocal.uid = user
-    except Exception:
-      _logger.warn("can not switch user for RUN_COMMAND.")
+    except Exception as e:
+      _logger.warn(f"Unable to switch user for RUN_COMMAND. Error details: {e}")
+
 
     cmd = script
 

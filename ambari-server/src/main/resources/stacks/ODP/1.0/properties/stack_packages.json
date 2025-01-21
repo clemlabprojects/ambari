@@ -677,7 +677,7 @@
             "tez-client"
           ],
           "STANDARD": [
-            "hadoop-client"
+            "tez-client"
           ]
         }
       },

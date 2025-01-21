@@ -391,6 +391,10 @@ smokeuser_principal = config['configurations']['cluster-env']['smokeuser_princip
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
 _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
+<<<<<<< HEAD
+=======
+hue_host_name = _hostname_lowercase
+>>>>>>> 2.7.11.0-python3
 if security_enabled:
   hue_keytab_path = config['configurations']['hue-ini-conf']['hue_keytab']
   hue_principal_name = config['configurations']['hue-env']['hue_principal'].replace('_HOST',_hostname_lowercase)

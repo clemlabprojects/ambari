@@ -25,18 +25,18 @@
 
   <properties>
     <jdk.version>1.8</jdk.version>
-    <solr.version>8.11.2</solr.version>
+    <solr.version>8.11.4</solr.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <python.ver>python &gt;= 2.6</python.ver>
-    <deb.python.ver>python2 (&gt;= 2.6)</deb.python.ver>
+    <deb.python.ver>python3 (&gt;= 3.6)</deb.python.ver>
     <deb.architecture>amd64</deb.architecture>
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>
-    <odp.release.stack>1.2.1.0</odp.release.stack>
-    <odp.release.number>134</odp.release.number>
-    <hadoop.version>3.3.4.1.2.1.0-${odp.release.number}</hadoop.version>
+    <odp.release.stack>1.2.2.0</odp.release.stack>
+    <odp.release.number>138</odp.release.number>
+    <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
     <!-- <zookeeper.version>3.8.4.${odp.release.stack}-${odp.release.number}</zookeeper.version> -->
-    <zookeeper.version>3.8.4.1.2.2.0-135</zookeeper.version>
+    <zookeeper.version>3.8.4.${odp.release.stack}-${odp.release.number}</zookeeper.version>
     <skipSurefireTests>false</skipSurefireTests>
     <log4j2.version>2.16.0</log4j2.version>
   </properties>

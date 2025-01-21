@@ -96,7 +96,7 @@ def wait_yarn_fast_launch_acls(afterwait_sleep=0, execute_kinit=True, retries=60
         else:
           Logger.info("Failed to Enable Yarn FastLaunch")
     except Fail:
-      Logger.error("Failed for HDFS to grant YARN FAstLaunch ACL")                
+      Logger.error("Failed for HDFS to grant YARN FastLaunch ACL")                
     counter += 1
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)

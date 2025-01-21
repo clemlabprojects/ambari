@@ -262,6 +262,14 @@ atlas_audit_hbase_tablename = default('/configurations/application-properties/at
 hbase_user_keytab = default('/configurations/hbase-env/hbase_user_keytab', None)
 hbase_principal_name = default('/configurations/hbase-env/hbase_principal_name', None)
 
+# Atlas Hooks
+hive_server_hosts = default('/clusterHostInfo/hive_server_hosts', [])
+has_hive_server = not len(hive_server_hosts) == 0
+
+# Nifi Publish
+nifi_hosts = default('/clusterHostInfo/nifi_master_hosts', [])
+has_nifi = not len(nifi_hosts) == 0
+
 # ToDo: Kafka port to Atlas
 # Used while upgrading the stack in a kerberized cluster and running kafka-acls.sh
 hosts_with_kafka = default('/clusterHostInfo/kafka_broker_hosts', [])
@@ -284,7 +292,9 @@ if check_stack_feature(StackFeature.ATLAS_UPGRADE_SUPPORT, version_for_stack_fea
 
   kafka_zk_endpoint = default("/configurations/kafka-broker/zookeeper.connect", None)
   kafka_kerberos_enabled = (('security.inter.broker.protocol' in config['configurations']['kafka-broker']) and
-                            ((config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_PLAINTEXT")))
+                            ((config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_PLAINTEXT") or 
+                             (config['configurations']['kafka-broker']['security.inter.broker.protocol'] == "SASL_SSL")
+                            ))
   if security_enabled and stack_version_formatted != "" and 'kafka_principal_name' in config['configurations']['kafka-env'] \
     and check_stack_feature(StackFeature.KAFKA_KERBEROS, stack_version_formatted):
     _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
@@ -404,6 +414,12 @@ if stack_supports_atlas_ranger_plugin and enable_ranger_atlas:
     ranger_env['admin_password'] = external_admin_password
     ranger_env['ranger_admin_username'] = external_ranger_admin_username
     ranger_env['ranger_admin_password'] = external_ranger_admin_password
+    ranger_admin_username = external_ranger_admin_username
+    ranger_admin_password = external_admin_password
+
+  if has_ranger_admin:
+    ranger_admin_username = config['configurations']['ranger-env']['admin_username']
+    ranger_admin_password = config['configurations']['ranger-env']['admin_password']
 
   ranger_plugin_properties = config['configurations']['ranger-atlas-plugin-properties']
   ranger_atlas_audit = config['configurations']['ranger-atlas-audit']
@@ -501,3 +517,278 @@ ranger_policy_config = {
       "delegateAdmin": "false"
     }]
   }
+
+# AMBARI-186 (clemlab): update Atlas Kafka ACL script by removing zookeeper reference to it
+atlas_kafka_3_acl_support = check_stack_feature(StackFeature.ATLAS_KAFKA_3_ACL_SUPPORT, version_for_stack_feature_checks)
+atlas_kafka_security_protocol = default("/configurations/application-properties/atlas.kafka.security.protocol", "PLAINTEXT")
+# Kafka bootstrap servers
+kafka_bootstrap_servers = default("/configurations/application-properties/atlas.kafka.bootstrap.servers", None)
+
+if kafka_bootstrap_servers is None:
+  kafka_broker_hosts = default("/clusterHostInfo/kafka_broker_hosts", [])
+  atlas_kafka_security_protocol = default("/configurations/kafka-broker/security.inter.broker.protocol", "PLAINTEXT")
+
+  kafka_listeners = default("/configurations/kafka-broker/listeners", "").split(",")
+  kafka_bootstrap_servers = []
+  valid_protocols = ["SASL_SSL", "SASL_PLAINTEXT", "SSL", "PLAINTEXT"]
+  listener_protocols = [listener.split("://")[0] for listener in kafka_listeners]
+  if atlas_kafka_security_protocol not in listener_protocols:
+    for protocol in valid_protocols:
+      if protocol in listener_protocols:
+        atlas_kafka_security_protocol = protocol
+        break
+  for listener in kafka_listeners:
+    protocol, address = listener.split("://")
+    host, port = address.split(":")
+    if protocol == atlas_kafka_security_protocol:
+      kafka_bootstrap_servers.append(f"{host}:{port}")
+  kafka_bootstrap_servers = ",".join(kafka_bootstrap_servers)
+atlas_hook_publishers = []
+
+if atlas_kafka_3_acl_support:
+  atlas_kafka_setup = format("{exec_tmp_dir}/atlas_kafka_3_acl.sh")
+  kafka_cmd_config_file = format("{exec_tmp_dir}/atlas_kafka_3_cmd_config.txt")
+
+# AMBARI-187 (clemlab) Authorize Atlas service to access Kafka notification with Ranger Kafka Plugin policies 
+# ranger kafka plugin enabled property
+ranger_kafka_plugin_enabled = default("/configurations/ranger-kafka-plugin-properties/ranger-kafka-plugin-enabled", "No")
+ranger_kafka_plugin_enabled = True if ranger_kafka_plugin_enabled.lower() == 'yes' else False
+ranger_tagsync_user = default("/configurations/ranger-tagsync-site/ranger.tagsync.kerberos.principal", "rangertagsync")
+if ranger_kafka_plugin_enabled:
+  # read user name from principal names
+  if security_enabled:
+    if has_ranger_tagsync:
+      tagsync_principal = config['configurations']['ranger-tagsync-site']['ranger.tagsync.kerberos.principal']
+      rangertagsync_user = tagsync_principal.split('@')[0]
+    if has_hbase_master:
+      hbase_user = config['configurations']['hbase-site']['hbase.master.kerberos.principal'].split('/')[0]
+      atlas_hook_publishers.append(hbase_user)
+    if has_hive_server:
+      hive_user = config['configurations']['hive-site']['hive.server2.authentication.kerberos.principal'].split('/')[0]
+      atlas_hook_publishers.append(hive_user)
+    if has_nifi:
+      nifi_user = config['configurations']['nifi-properties']['nifi.kerberos.service.principal'].split('/')[0]
+      atlas_hook_publishers.append(nifi_user)
+  else:
+    if has_hbase_master:
+      hbase_user = config['configurations']['hbase-env']['hbase_user']
+      atlas_hook_publishers.append(hbase_user)
+    if has_hive_server:
+      hive_user = config['configurations']['hive-env']['hive_user']
+      atlas_hook_publishers.append(hive_user)
+    if has_nifi:
+      nifi_user = config['configurations']['nifi-env']['nifi_user']
+      atlas_hook_publishers.append(nifi_user)
+  ranger_atlas_kafka_policies = []
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "ATLAS_HOOK",
+    "resources": {
+      "topic": {
+        "values": [
+            "ATLAS_HOOK"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'create',
+        'isAllowed': True
+        },{
+        'type': 'configure',
+        'isAllowed': True
+        },{
+        'type': 'consume',
+        'isAllowed': True
+        },
+        {
+        'type': 'publish',
+        'isAllowed': True
+        }
+      ],
+      "users": [metadata_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+    {
+      "accesses": [
+        {
+        'type': 'publish',
+        'isAllowed': True
+        }
+      ],
+      "users": atlas_hook_publishers,
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+
+    ]
+  })
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "ATLAS_ENTITIES",
+    "resources": {
+      "topic": {
+        "values": [
+            "ATLAS_ENTITIES"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'create',
+        'isAllowed': True
+        },{
+        'type': 'configure',
+        'isAllowed': True
+        },
+        {
+        'type': 'publish',
+        'isAllowed': True
+        }
+      ],
+      "users": [metadata_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+    {
+      "accesses": [
+        {
+        'type': 'consume',
+        'isAllowed': True
+        }
+      ],
+      "users": [rangertagsync_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+    ]
+  })
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "ATLAS_SPARK_HOOK",
+    "resources": {
+      "topic": {
+        "values": [
+            "ATLAS_SPARK_HOOK"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'create',
+        'isAllowed': True
+        },{
+        'type': 'configure',
+        'isAllowed': True
+        },
+        {
+        'type': 'consume',
+        'isAllowed': True
+        }
+      ],
+      "users": [metadata_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+    {
+      "accesses": [
+        {
+        'type': 'publish',
+        'isAllowed': True
+        }
+      ],
+      "users": [],
+      "groups": ["public"],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    },
+    ]
+  })
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "Atlas Consumer Group Access",
+    "resources": {
+      "consumergroup": {
+        "values": [
+            "atlas"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'describe',
+        'isAllowed': True
+        },
+        {
+        'type': 'consume',
+        'isAllowed': True
+        }
+      ],
+      "users": [metadata_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  })
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "Ranger Entities Consumergroup Access",
+    "resources": {
+      "consumergroup": {
+        "values": [
+            "ranger_entities_consumer"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {
+        'type': 'describe',
+        'isAllowed': True
+        },
+        {
+        'type': 'consume',
+        'isAllowed': True
+        }
+      ],
+      "users": [rangertagsync_user],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  })
+
+kafka_client_tools_log_level = default("/configurations/atlas-env/atlas.kafka.client.log.level", "WARN")

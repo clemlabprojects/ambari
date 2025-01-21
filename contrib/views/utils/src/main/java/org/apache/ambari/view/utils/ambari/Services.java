@@ -20,7 +20,8 @@ package org.apache.ambari.view.utils.ambari;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
+
+import org.apache.commons.lang3.StringUtils;
 import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
+
 
 /**
  * Utilities for specific Hadoop services and util functions for them

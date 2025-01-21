@@ -90,7 +90,7 @@
         keyTab="{{kafka_keytab_path}}"
         storeKey=true
         useTicketCache=false
-        serviceName="zookeeper"
+        serviceName="{{zk_principal_user}}"
         principal="{{kafka_jaas_principal}}";
         };
         com.sun.security.jgss.krb5.initiate {

@@ -118,15 +118,15 @@ def copy_hbase_package_to_hdfs():
         params.HdfsResource(format("{yarn_hbase_app_hdfs_path}"),
                             type="directory",
                             action="create_on_execute",
-                            owner=params.hdfs_user,
+                            owner=params.yarn_user,
                             group=params.hdfs_user,
-                            mode=0o555,
+                            mode=0o755,
                             )
         params.HdfsResource(format("{yarn_hbase_app_hdfs_path}/hbase.tar.gz"),
                             type="file",
                             action="create_on_execute",
                             source=format("{yarn_hbase_user_tmp}/hbase.tar.gz"),
-                            owner=params.hdfs_user,
+                            owner=params.yarn_user,
                             group=params.user_group,
                             mode=0o444,
                             )

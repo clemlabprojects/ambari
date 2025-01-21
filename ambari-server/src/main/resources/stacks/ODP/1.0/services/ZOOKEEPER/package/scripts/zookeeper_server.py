@@ -25,6 +25,7 @@ from ambari_commons.constants import UPGRADE_TYPE_NON_ROLLING
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions import get_unique_id_and_date
 from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import conf_select
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.functions.stack_features import check_stack_feature
@@ -74,6 +75,8 @@ class ZookeeperServerLinux(ZookeeperServer):
 
     if check_stack_feature(StackFeature.ROLLING_UPGRADE, format_stack_version(params.version)):
       stack_select.select_packages(params.version)
+      conf_select.create(params.stack_name, "zookeeper", params.version)
+      conf_select.select(params.stack_name, "zookeeper", params.version)
 
   def post_upgrade_restart(self, env, upgrade_type=None):
     # during an express upgrade, there is no quorum, so don't try to perform the check

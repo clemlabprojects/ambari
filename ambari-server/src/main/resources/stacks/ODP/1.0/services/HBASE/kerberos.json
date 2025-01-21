@@ -68,7 +68,7 @@
             {
               "name": "hbase_master_hbase",
               "principal": {
-                "value": "hbase/_HOST@${realm}",
+                "value": "${hbase-env/hbase_user}/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "hbase-site/hbase.master.kerberos.principal",
                 "local_username": "${hbase-env/hbase_user}"
@@ -133,7 +133,7 @@
             {
               "name": "hbase_regionserver_hbase",
               "principal": {
-                "value": "hbase/_HOST@${realm}",
+                "value": "${hbase-env/hbase_user}/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "hbase-site/hbase.regionserver.kerberos.principal",
                 "local_username": "${hbase-env/hbase_user}"
@@ -169,7 +169,7 @@
             {
               "name": "hbase_thriftserver_hbase",
               "principal": {
-                "value": "hbase/_HOST@${realm}",
+                "value": "${hbase-env/hbase_user}/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "hbase-site/hbase.thrift.kerberos.principal",
                 "local_username": "${hbase-env/hbase_user}"

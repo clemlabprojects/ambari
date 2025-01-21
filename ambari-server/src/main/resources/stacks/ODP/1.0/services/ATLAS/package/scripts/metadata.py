@@ -178,10 +178,21 @@ def metadata(type='server'):
 
     if is_atlas_upgrade_support and params.security_enabled:
 
-      File(params.atlas_kafka_setup,
-           group=params.user_group,
-           owner=params.kafka_user,
-           content=Template("atlas_kafka_acl.sh.j2"))
+      if params.atlas_kafka_3_acl_support:
+        File(params.atlas_kafka_setup,
+            group=params.user_group,
+            owner=params.kafka_user,
+            content=Template("atlas_kafka_3_acl.sh.j2"))
+
+        File(params.kafka_cmd_config_file,
+            group=params.user_group,
+            owner=params.kafka_user,
+            content=Template("atlas_kafka_3_cmd_config.txt.j2"))
+      else:
+        File(params.atlas_kafka_setup,
+            group=params.user_group,
+            owner=params.kafka_user,
+            content=Template("atlas_kafka_acl.sh.j2"))
 
       #  files required only in case if kafka broker is not present on the host as configured component
       if not params.host_with_kafka:
@@ -193,6 +204,12 @@ def metadata(type='server'):
              group=params.user_group,
              owner=params.kafka_user,
              content=Template("kafka_jaas.conf.j2"))
+
+        File(format("{kafka_conf_dir}/tools-log4j.properties"),
+             group=params.user_group,
+             owner=params.kafka_user,
+             content=Template("kafka-tools-log4j.properties.j2")
+        )
 
     if params.stack_supports_atlas_hdfs_site_on_namenode_ha and len(params.namenode_host) > 1:
       XmlConfig("hdfs-site.xml",

@@ -596,7 +596,7 @@ def check_ranger_service():
     if user_resp_code is not None and user_resp_code == 200:
       get_repo_flag = get_repo(policymgr_mgr_url, params.repo_name, ambari_username_password_for_ranger)
       if not get_repo_flag:
-        return create_repo(policymgr_mgr_url, json.dumps(params.kms_ranger_plugin_repo), ambari_username_password_for_ranger)
+        return create_repo(policymgr_mgr_url, json.dumps(params.kms_ranger_plugin_repo).encode('utf-8'), ambari_username_password_for_ranger)
       else:
         return True
     else:

@@ -131,3 +131,5 @@ class StackFeature:
   RANGER_SUPPORT_SECURITY_ZONE_FEATURE = 'ranger_support_security_zone_feature'
   ZOOKEEPER_SUPPORT_LOGBACK = 'zookeeper_support_logback'
   KNOX_SUPPORT_LOG4J2 = 'knox_support_log4j2'
+  ATLAS_KAFKA_3_ACL_SUPPORT =  'atlas_kafka_3_acl_support'
+  RANGER_COMPATIBILITY_PYTHON2_PYTHON3  = 'ranger_compatibility_python2_python3'

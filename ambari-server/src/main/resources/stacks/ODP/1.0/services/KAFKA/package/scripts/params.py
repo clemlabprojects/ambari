@@ -103,6 +103,8 @@ zookeeper_hosts = config['clusterHostInfo']['zookeeper_server_hosts']
 zookeeper_hosts.sort()
 secure_acls = default("/configurations/kafka-broker/zookeeper.set.acl", False)
 kafka_security_migrator = os.path.join(kafka_home, "bin", "zookeeper-security-migration.sh")
+zookeeper_principal_name = default("/configurations/zookeeper-env/zookeeper_principal_name", "zookeeper/_HOST@EXAMPLE.COM")
+zk_principal_user = zookeeper_principal_name.split('/')[0]
 
 all_hosts = default("/clusterHostInfo/all_hosts", [])
 all_racks = default("/clusterHostInfo/all_racks", [])
@@ -407,3 +409,25 @@ HdfsResource = functools.partial(
   immutable_paths = get_not_managed_resources(),
   dfs_type = dfs_type,
 )
+
+# Kafka 3 upgrade
+kafka_security_protocol = default("/configurations/kafka-broker/security.inter.broker.protocol", "PLAINTEXT")
+
+kafka_listeners = default("/configurations/kafka-broker/listeners", "").split(",")
+kafka_bootstrap_servers = []
+valid_protocols = ["SASL_SSL", "SASL_PLAINTEXT", "SSL", "PLAINTEXT"]
+listener_protocols = [listener.split("://")[0] for listener in kafka_listeners]
+if kafka_security_protocol not in listener_protocols:
+  for protocol in valid_protocols:
+    if protocol in listener_protocols:
+      kafka_security_protocol = protocol
+      break
+port = default("/configurations/kafka-broker/port", "6667")
+for listener in kafka_listeners:
+  protocol, address = listener.split("://")
+  host, configured_port = address.split(":")
+  if protocol == kafka_security_protocol:
+    port = configured_port
+for host in kafka_hosts:
+  kafka_bootstrap_servers.append(host + ":" + port)
+kafka_bootstrap_servers = ",".join(kafka_bootstrap_servers)

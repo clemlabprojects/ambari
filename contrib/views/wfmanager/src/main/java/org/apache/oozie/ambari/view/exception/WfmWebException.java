@@ -17,7 +17,7 @@
  */
 package org.apache.oozie.ambari.view.exception;
 
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.hadoop.security.AccessControlException;
 import org.json.simple.JSONObject;
 

@@ -290,23 +290,60 @@
 
     <group xsi:type="cluster" name="Upgrade service configs" title="Upgrade service configs">
       <direction>UPGRADE</direction> <!--  prevent config changes on downgrade -->
-      <skippable>true</skippable> <!-- May fix configuration problems manually -->
-
-      <execute-stage service="SPARK2" component="SPARK2_JOBHISTORYSERVER" title="Create spark.yarn.keytab/principal based on spark history keytab/principal">
-        <task xsi:type="configure" id="hdp_3_0_*_spark2-thrift-sparkconf"/>
+      <skippable>true</skippable> <!-- May fix configuration problems manually In Case the component envs (hadoop-env, hbase-env...) have been changed manually -->
+      
+      <!-- ZOOKEEPER -->
+      <execute-stage service="ZOOKEEPER" component="ZOOKEEPER_SERVER" title="Apply Zookeeper 3.8. logback config update">
+        <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_zk_server"/>
+      </execute-stage>
+      
+      <!-- HDFS -->
+      <execute-stage service="HDFS" component="NAMENODE" title="Apply Zookeeper Client changes for HDFS services">
+        <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs"/>
       </execute-stage>
 
-      <!-- ZEPPELIN -->
-      <execute-stage service="ZEPPELIN" component="ZEPPELIN_MASTER" title="Apply zeppelin.notebook.storage config">
-        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.FixNotebookStorage">
-          <summary>Adjusting Zeppelin Notebook properties</summary>
-        </task>
+      <!-- KAFKA -->
+      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>
       </execute-stage>
 
-      <execute-stage service="YARN" title="Apply config changes for Timeline Reader">
-        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.FixTimelineReaderAddress">
-          <summary>Setting YARN Timeline Reader Url</summary>
-        </task>
+      <!-- TEZ -->
+      <execute-stage service="TEZ" component="TEZ_CLIENT" title="Update TEZ GC Hamonization opts">
+        <task xsi:type="configure" id="odp_1_2_4_0_tez_harmonizegc_option"/>
+      </execute-stage>
+
+      <!-- HBASE -->
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Apply Zookeeper Client changes for HBase services">
+        <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase"/>
+      </execute-stage>
+
+      <!-- HBASE -->
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Add Default Properties For HBase Thrift Server Support">
+        <task xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift"/>
+      </execute-stage>
+
+      <!-- HBASE -->
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Update Atlas Hook Config for Kafka Major Version Update">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer"/>
+      </execute-stage>
+
+      <!-- HIVE -->
+      <execute-stage service="HIVE" component="HIVE_SERVER" title="Apply Zookeeper Client changes for HIVE services">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer"/>
+      </execute-stage>
+
+      <!-- HIVE -->
+      <execute-stage service="HIVE" component="HIVE_SERVER" title="Update Atlas Hook Config for Kafka Major Version Update">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer"/>
+      </execute-stage>
+
+      <!-- ATLAS -->
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Update Atlas Logging for Kafka Major Version Client Update">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_atlas_consumer_producer"/>
+      </execute-stage>
+
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Update Atlas for Kafka Major Version Update">
+        <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas"/>
       </execute-stage>
     </group>
 

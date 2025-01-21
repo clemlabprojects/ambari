@@ -213,12 +213,14 @@ smokeuser_permissions = "RWXCA"
 service_check_data = get_unique_id_and_date()
 user_group = config['configurations']['cluster-env']["user_group"]
 
+hbase_thrift_hosts = default("/clusterHostInfo/hbase_thriftserver_hosts", None)
+
 if security_enabled:
   _hostname_lowercase = config['agentLevelParams']['hostname'].lower()
   master_jaas_princ = config['configurations']['hbase-site']['hbase.master.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   master_keytab_path = config['configurations']['hbase-site']['hbase.master.keytab.file']
   regionserver_jaas_princ = config['configurations']['hbase-site']['hbase.regionserver.kerberos.principal'].replace('_HOST',_hostname_lowercase)
-  if hbase_thrift_stack_enabled:
+  if hbase_thrift_stack_enabled and hbase_thrift_hosts != None:
     thrift_keytab_path = config['configurations']['hbase-site']['hbase.thrift.keytab.file']
     thrift_jaas_princ = config['configurations']['hbase-site']['hbase.thrift.kerberos.principal'].replace('_HOST',_hostname_lowercase)
 
@@ -469,9 +471,10 @@ if 'viewfs-mount-table' in config['configurations']:
 
 
 ## AMBARI-137: add HBase thrift support for hue interface
-if hbase_thrift_stack_enabled:
+thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
+hbase_has_thrift = hbase_thrift_stack_enabled  and hbase_thrift_hosts != None
+if hbase_has_thrift:
   # configure ssl keystore properties
-  thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
   if thrift_ssl_enabled:
     thrift_ssl_keystore_password = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.password']
     thrift_ssl_keystore_keypassword = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.keypassword']
@@ -483,7 +486,6 @@ if hbase_thrift_stack_enabled:
 
   hbase_site = dict(config['configurations']['hbase-site'])
   hbase_site['hbase.thrift.ssl.keystore.keypassword'] = '**************'
-
 
 # logback support for zookeeper client
 hbase_zookeeper_log_level = default("/configurations/hbase-env/hbase.zookeeper.log.level", "INFO")

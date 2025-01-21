@@ -76,7 +76,7 @@ class MetadataServer(Script):
     daemon_cmd = format('source {params.conf_dir}/atlas-env.sh ; {params.metadata_start_script}')
     no_op_test = format('ls {params.pid_file} >/dev/null 2>&1 && ps -p `cat {params.pid_file}` >/dev/null 2>&1')
     atlas_hbase_setup_command = format("cat {atlas_hbase_setup} | hbase shell -n")
-    atlas_kafka_setup_command = format("bash {atlas_kafka_setup}")
+    atlas_kafka_setup_command = ". {0}; bash {1}".format(os.path.join(params.kafka_conf_dir,'kafka-env.sh'), params.atlas_kafka_setup)
     secure_atlas_hbase_setup_command = format("kinit -kt {hbase_user_keytab} {hbase_principal_name}; ") + atlas_hbase_setup_command
     # in case if principal was distributed across several hosts, pattern need to be replaced to right one
     secure_atlas_kafka_setup_command = format("kinit -kt {kafka_keytab} {kafka_principal_name}; ").replace("_HOST", params.hostname) + atlas_kafka_setup_command
