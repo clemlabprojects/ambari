@@ -94,6 +94,7 @@ def api_accessor(host, login, password, protocol, port, unsafe=None):
         response = urllib.request.urlopen(request, context=ctx)
       else:
         response = urllib.request.urlopen(request)
+        response_body = response_body.decode('utf-8') if isinstance(response_body, bytes) else response_body
 
       response_body = response.read()
     except Exception as exc:
@@ -125,6 +126,7 @@ def create_new_desired_config(cluster, config_type, properties, attributes, acce
   if len(attributes.keys()) > 0:
     new_config[CLUSTERS][DESIRED_CONFIGS][ATTRIBUTES] = attributes
   request_body = json.dumps(new_config)
+  request_body = request_body.encode('utf-8') if isinstance(request_body, str) else request_body
   new_file = 'doSet_{0}.json'.format(new_tag)
   logger.info('### PUTting json into: {0}'.format(new_file))
   output_to_file(new_file)(new_config)
