@@ -35,6 +35,16 @@
           8
         ]
       },
+      "fedora": {
+        "extends" : "redhat",
+        "distro": [
+          "fedora"
+        ],
+        "versions": [
+          36,
+          38
+        ]
+       },
       "amazonlinux": {
         "extends" : "redhat",
         "distro": [
@@ -50,8 +60,8 @@
           "debian"
         ],
         "versions": [
-          7,
-          9
+          10,
+          11
         ]
       },
       "ubuntu": {
@@ -59,11 +69,9 @@
           "ubuntu"
         ],
         "versions": [
-          12,
-          14,
-          16,
-          18,
-          22
+          20,
+          22,
+          24
         ]
       },
       "suse": {

@@ -19,40 +19,40 @@
   <latest>https://archive.clemlab.com/ODP/odp_urlinfo.json</latest>
   <os family="redhat7">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.2.1.0-134/rpms/</baseurl>
-      <repoid>ODP-1.2.1.0-134</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.2.2.0-138/rpms/</baseurl>
+      <repoid>ODP-1.2.2.0-138</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="redhat8">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.2.1.0-134/rpms/</baseurl>
-      <repoid>ODP-1.2.1.0-134</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos7/odp-release/1.2.2.0-138/rpms/</baseurl>
+      <repoid>ODP-1.2.2.0-138</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="redhat9">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos9/odp-release/1.2.1.0-134/rpms/</baseurl>
-      <repoid>ODP-1.2.1.0-134</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos9/odp-release/1.2.2.0-138/rpms/</baseurl>
+      <repoid>ODP-1.2.2.0-138</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="ubuntu18">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu18/odp-release/1.2.1.0-134/dist/ODP</baseurl>
-      <repoid>ODP-1.2.1.0-134</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu18/odp-release/1.2.2.0-138/dist/ODP</baseurl>
+      <repoid>ODP-1.2.2.0-138</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="ubuntu22">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/1.2.1.0-134/dist/ODP</baseurl>
-      <repoid>ODP-1.2.1.0-134</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/1.2.2.0-138/dist/ODP</baseurl>
+      <repoid>ODP-1.2.2.0-138</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
