@@ -127,6 +127,7 @@ class Master(Script):
               group=params.zeppelin_group,
               cd_access="a",
               create_parents=True,
+              recursive_ownership=True,
               mode=0o755
     )
     self.chown_zeppelin_pid_dir(env)
