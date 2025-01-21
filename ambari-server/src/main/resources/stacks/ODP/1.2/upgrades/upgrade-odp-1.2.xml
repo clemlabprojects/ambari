@@ -509,6 +509,10 @@
   <processing>
     <service name="ZOOKEEPER">
       <component name="ZOOKEEPER_SERVER">
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_zk_server" />
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -597,6 +601,10 @@
 
     <service name="KAFKA">
       <component name="KAFKA_BROKER">
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction" />
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -605,6 +613,10 @@
 
     <service name="HDFS">
       <component name="NAMENODE">
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs" />
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -701,6 +713,13 @@
 
     <service name="HBASE">
       <component name="HBASE_MASTER">
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase" />
+           <task xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift" />
+           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer" />
+           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase" />
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -727,7 +746,8 @@
 
     <service name="TEZ">
       <component name="TEZ_CLIENT">
-        <pre-upgrade><!--  no-op  -->
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_tez_harmonizegc_option" />
         </pre-upgrade>
 
         <pre-downgrade/> <!--  no-op to prevent config changes on downgrade -->
@@ -763,6 +783,10 @@
       </component>
 
       <component name="HIVE_SERVER">
+        <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer" />
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -989,6 +1013,8 @@
             <script>scripts/metadata_server.py</script>
             <function>update_atlas_simple_authz</function>
           </task>
+          <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_atlas_consumer_producer" />
+          <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas" />
         </pre-upgrade>
         <pre-downgrade/>
         <upgrade>
