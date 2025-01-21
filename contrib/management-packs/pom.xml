@@ -31,7 +31,7 @@
   <properties>
     <ambari.version>2.7.11.0.0</ambari.version>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
-    <hadoop.version>2.7.1</hadoop.version>
+    <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
   </properties>
   <modules>
     <module>microsoft-r_mpack</module>
