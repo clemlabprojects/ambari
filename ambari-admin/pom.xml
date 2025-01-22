@@ -292,5 +292,18 @@
           </plugins>
         </build>
       </profile>
+      <profile>
+        <id>skip-admin-web-tests</id>
+        <activation>
+          <property>
+            <name>skipAdminWebTests</name>
+            <value>true</value>
+          </property>
+        </activation>
+        <properties>
+          <skipTests>true</skipTests>
+          <maven.test.skip>true</maven.test.skip>
+        </properties>
+     </profile>
   </profiles>
 </project>
