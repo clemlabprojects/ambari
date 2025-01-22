@@ -16,7 +16,9 @@
         "url": "%@://%@:%@/commands/",
         "port":{
           "http_property": "admin.serverPort",
-          "http_default_port": "8180",
+          "http_default_port": "8080",
+          "https_property": "admin.serverPort",
+          "https_default_port": "8443",
           "regex": "^(\\d+)$",
           "site": "zoo.cfg"
         }
