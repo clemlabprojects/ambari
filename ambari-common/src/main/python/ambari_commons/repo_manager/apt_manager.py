@@ -252,6 +252,10 @@ class AptManager(GenericManager):
 
     apt_sources_list_tmp_dir = None
 
+    if (context.is_upgrade) and (name == "odp-select"):
+      Logger.info("Skipping upgrade of {0}".format(name))
+      return True
+
     if not name:
       raise ValueError("Installation command was executed with no package name")
     elif context.is_upgrade or context.use_repos or not self._check_existence(name):
