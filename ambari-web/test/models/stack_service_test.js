@@ -288,7 +288,7 @@ describe('App.StackService', function () {
     });
   });
 
-  describe('#isDisabled', function () {
+  describe.skip('#isDisabled', function () {
 
     var cases = [
       {

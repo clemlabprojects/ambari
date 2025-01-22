@@ -22,6 +22,10 @@ select.form-control {
   display: inline-block;
 }
 
+.time-form-select{
+  height:34px!important;
+  width:50px!important;
+} 
 .form-group {
   .help-block {
     &.help-inline {
@@ -222,8 +226,8 @@ select.form-control {
 }
 
 .dropdown-submenu > .dropdown-menu {
-  top: 0;
-  left: 100%;
+  top: 0!important;
+  left: 100%!important;
   margin-top: -6px;
   margin-left: -1px;
 }
@@ -430,8 +434,8 @@ select.form-control {
   padding-right: 10px;
 }
 
-.btn-group.open .dropdown-menu input[type="checkbox"] + label,
-.dropdown.open .dropdown-menu input[type="checkbox"] + label {
+.btn-group.open .dropdown-menu input[type="checkbox"] label,
+.dropdown.open .dropdown-menu input[type="checkbox"] label {
   line-height: @default-line-height;
 }
 
@@ -443,11 +447,11 @@ select.form-control {
   overflow-y: scroll;
 }
 
-input[type="checkbox"]:checked + label:after {
+input[type="checkbox"]:checked label:after {
   line-height: 2em;
 }
 
-.checkbox-colored-background input[type="checkbox"] + label:before {
+.checkbox-colored-background input[type="checkbox"] label:before {
   border-color: #999;
 }
 
@@ -457,4 +461,51 @@ input[type="checkbox"]:checked + label:after {
   label {
     vertical-align: middle;
   }
+}
+
+label[checked="checked"]:before {
+  background-color: #1491c1 !important;
+  border-color: #1491c1 !important;
+}
+
+.wizard-plain-text label[checked="checked"]:before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0px !important;
+  top: 4px !important;
+  width: 12px !important;
+  height: 12px !important;
+  box-sizing: border-box !important;
+  border-radius: 12px !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+}
+
+.wizard-plain-text label[checked="checked"]:after {
+  content: "" !important;
+  background-color: #fff !important;
+  position: absolute !important;
+  top: 7px !important;
+  left: 3px !important;
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 6px !important;
+}
+
+label[checked="checked"]:after {
+  content: "\2714" !important;
+  color: #fff !important;
+  position: absolute !important;
+  top: -8px !important;
+  left: 2px !important;
+  font-size: 9px !important;
+}
+
+label[checked="checked"]:after {
+  content: "\2714" !important;
+  color: #fff !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 2px !important;
+  font-size: 9px !important;
 }

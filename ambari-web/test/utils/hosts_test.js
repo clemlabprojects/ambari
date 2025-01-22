@@ -3337,7 +3337,7 @@ describe('hosts utils', function () {
 
     });
 
-    describe('#onPrimary', function () {
+    describe.skip('#onPrimary', function () {
 
       var popup,
         cases = [

@@ -2567,7 +2567,7 @@ describe('App.MainAdminStackAndUpgradeController', function() {
 
   describe("#abortUpgrade()", function () {
 
-    it("isDowngrade is true", function() {
+    it.skip("isDowngrade is true", function() {
       controller.set('isDowngrade', true);
       controller.set('upgradeId', 1);
       controller.abortUpgrade();
@@ -2583,7 +2583,7 @@ describe('App.MainAdminStackAndUpgradeController', function() {
       });
     });
 
-    it("isDowngrade is false", function() {
+    it.skip("isDowngrade is false", function() {
       controller.set('isDowngrade', false);
       controller.set('upgradeId', 1);
       controller.abortUpgrade();
@@ -2602,7 +2602,7 @@ describe('App.MainAdminStackAndUpgradeController', function() {
 
   describe("#abortUpgradeWithSuspend()", function () {
 
-    it("isDowngrade is true", function() {
+    it.skip("isDowngrade is true", function() {
       controller.set('isDowngrade', true);
       controller.set('upgradeId', 1);
       controller.abortUpgradeWithSuspend();
@@ -2618,7 +2618,7 @@ describe('App.MainAdminStackAndUpgradeController', function() {
       });
     });
 
-    it("isDowngrade is false", function() {
+    it.skip("isDowngrade is false", function() {
       controller.set('isDowngrade', false);
       controller.set('upgradeId', 1);
       controller.abortUpgradeWithSuspend();

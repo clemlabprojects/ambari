@@ -3321,11 +3321,11 @@ var formatUrl = function (url, data) {
  * this = object from config
  * @return {Object}
  */
-var formatRequest = function (data) {
+var formatRequest = function (data,dataType='json') {
   var opt = {
     type: this.type || 'GET',
     timeout: App.timeout,
-    dataType: 'json',
+    dataType,
     headers: {}
   };
   if (App.get('testMode')) {
@@ -3449,7 +3449,7 @@ var ajax = Em.Object.extend({
       console.warn('Invalid name provided `' + config.name + '`!');
       return null;
     }
-    opt = formatRequest.call(urls[config.name], params);
+    opt = formatRequest.call(urls[config.name], params,config.dataType);
 
     var consoleMsg = this.consoleMsg(config.name, opt.url);
 
@@ -3529,7 +3529,7 @@ var ajax = Em.Object.extend({
     var self = this;
     showStatus = (Em.isNone(showStatus)) ? this.get('statuses') : [showStatus];
     try {
-      var json = $.parseJSON(jqXHR.responseText);
+      var json = JSON.parse(jqXHR.responseText);
       var message = json.message;
     } catch (err) {
     }
@@ -3561,7 +3561,7 @@ var ajax = Em.Object.extend({
    */
   getKDCErrorMgs: function(jqXHR) {
     try {
-      var message = $.parseJSON(jqXHR.responseText).message;
+      var message = JSON.parse(jqXHR.responseText).message;
     } catch (err) {}
     if (jqXHR.status === 400 && message) {
       return App.format.kdcErrorMsg(message, true);
