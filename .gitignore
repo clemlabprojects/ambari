@@ -33,3 +33,4 @@ createDDL.jdbc
 /build
 ambari_python.egg-info
 db-ambari-test
+.org.chromium.*

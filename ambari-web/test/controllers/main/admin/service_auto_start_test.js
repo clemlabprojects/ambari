@@ -153,6 +153,7 @@ describe('App.MainAdminServiceAutoStartController', function() {
       expect(args[0]).to.be.eql({
         name: 'admin.save_configs',
         sender: controller,
+        dataType: 'text',
         data: {
           siteName: 'cluster-env',
           properties: {
@@ -170,6 +171,7 @@ describe('App.MainAdminServiceAutoStartController', function() {
       expect(args[0]).to.be.eql({
         name: 'components.update',
         sender: controller,
+        dataType: 'text',
         data: {
           ServiceComponentInfo: {
             recovery_enabled: true
