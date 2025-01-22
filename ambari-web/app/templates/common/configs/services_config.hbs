@@ -48,8 +48,8 @@
       {{#each service in controller.stepConfigs}}
         {{#if service.showConfig}}
           {{#view App.ServiceConfigTab}}
-            <a href="#{{unbound service.serviceName}}" {{bindAttr class=":active service.selected:new"}}
-               data-toggle="tab" {{action selectService service target="controller"}}>
+            <a href="#{{unbound service.serviceName}}" {{bindAttr class="service.selected:new"}}
+                data-bs-toggle="tab" {{action selectService service target="controller"}}>
               {{service.displayName}}{{#if service.errorCount}}<span
                 class="badge badge-important" {{QAAttr "error-badge"}}>{{service.errorCount}}</span>{{/if}}</a>
           {{/view}}
