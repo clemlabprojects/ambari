@@ -45,18 +45,18 @@ def get_metric_collectors_from_properties_file(sink_name):
   try:
     hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
   except Exception as e:
-    raise Exception("Couldn't define hadoop_conf_dir: {0}".format(e))
+    raise Exception(f"Couldn't define hadoop_conf_dir: {e}")
   properties_filepath = os.path.join(hadoop_conf_dir, DEFAULT_METRICS2_PROPERTIES_FILE_NAME)
 
   if not os.path.exists(properties_filepath):
-    raise Exception("Properties file doesn't exist : {0}. Can't define metric collector hosts".format(properties_filepath))
+    raise Exception(f"Properties file doesn't exist : {properties_filepath}. Can't define metric collector hosts")
   props = load_properties_from_file(properties_filepath)
 
   property_key = sink_name + DEFAULT_COLLECTOR_SUFFIX
   if property_key in props:
     return props.get(property_key)
   else:
-    raise Exception("Properties file doesn't contain {0}. Can't define metric collector hosts".format(property_key))
+    raise Exception(f"Properties file doesn't contain {property_key}. Can't define metric collector hosts")
 
 def load_properties_from_file(filepath, sep='=', comment_char='#'):
   """

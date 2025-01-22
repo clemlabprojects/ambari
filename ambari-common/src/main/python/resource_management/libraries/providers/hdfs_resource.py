@@ -105,7 +105,7 @@ class HdfsResourceJar:
         except namenode_ha_utils.NoActiveNamenodeException as ex:
           # one of ns can be down (during initial start forexample) no need to worry for federated cluster
           if len(nameservices) > 1:
-            Logger.exception("Cannot run HdfsResource for nameservice {0}. Due to no active namenode present".format(nameservice))
+            Logger.exception(f"Cannot run HdfsResource for nameservice {nameservice}. Due to no active namenode present")
           else:
             raise
 
@@ -227,7 +227,7 @@ class WebHDFSUtil:
         raise
 
     while True:
-      Logger.info("Retrying after {0} seconds. Reason: {1}".format(try_sleep, str(last_exception)))
+      Logger.info(f"Retrying after {try_sleep} seconds. Reason: {str(last_exception)}")
       try_count -= 1
       time.sleep(try_sleep)
 
@@ -270,10 +270,10 @@ class WebHDFSUtil:
 
       if file_to_put:
         if os.path.getsize(file_to_put) > 1 * 1024 * 1024 * 1024:
-          Logger.info("File {0} is larger than 1GB. Using streaming option with curl.".format(file_to_put))
+          Logger.info(f"File {file_to_put} is larger than 1GB. Using streaming option with curl.")
           cmd += ["-T", file_to_put, "-H", "Content-Type: application/octet-stream"]
         else:
-          Logger.info("File {0} is smaller than 1GB. Using normal file upload with curl.".format(file_to_put))
+          Logger.info(f"File {file_to_put} is smaller than 1GB. Using normal file upload with curl.")
           cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
       else:
         cmd += ["-d", "", "-H", "Content-Length: 0"]
@@ -383,7 +383,7 @@ class HdfsResourceWebHDFS:
         except namenode_ha_utils.NoActiveNamenodeException as ex:
           # one of ns can be down (during initial start forexample) no need to worry for federated cluster
           if len(nameservices) > 1:
-            Logger.exception("Cannot run HdfsResource for nameservice {0}. Due to no active namenode present".format(nameservice))
+            Logger.exception(f"Cannot run HdfsResource for nameservice {nameservice}. Due to no active namenode present")
           else:
             raise
 
@@ -673,7 +673,7 @@ class HdfsResourceProvider(Provider):
     self.manage_if_exists = not parsed_path in parsed_not_managed_paths
 
     if parsed_path in self.ignored_resources_list:
-      Logger.info("Skipping '{0}' because it is in ignore file {1}.".format(self.resource, self.resource.hdfs_resource_ignore_file))
+      Logger.info(f"Skipping '{self.resource}' because it is in ignore file {self.resource.hdfs_resource_ignore_file}.")
       return
     
     self.get_hdfs_resource_executor().action_delayed(action_name, self)
@@ -698,7 +698,7 @@ class HdfsResourceProvider(Provider):
   
   def assert_parameter_is_set(self, parameter_name):
     if not getattr(self.resource, parameter_name):
-      raise Fail("Resource parameter '{0}' is not set.".format(parameter_name))
+      raise Fail(f"Resource parameter '{parameter_name}' is not set.")
     return True
   
   def kinit(self):

@@ -55,17 +55,16 @@ class RepositoryUtil:
 
     if 0 == len(self.command_repository.items):
       Logger.warning(
-        "Repository for {0}/{1} has no repositories.  Ambari may not be managing this version.".format(
-          self.command_repository.stack_name, self.command_repository.version_string))
+        f"Repository for {self.command_repository.stack_name}/{self.command_repository.version_string} has no repositories.  Ambari may not be managing this version.")
       return {}
 
     repo_files = {}
     for repository in self.command_repository.items:
       if repository.repo_id is None:
-        raise Fail("Repository with url {0} has no id".format(repository.base_url))
+        raise Fail(f"Repository with url {repository.base_url} has no id")
 
       if self.tags_to_skip & repository.tags:
-        Logger.info("Repository with url {0} is not created due to its tags: {1}".format(repository.base_url, repository.tags))
+        Logger.info(f"Repository with url {repository.base_url} is not created due to its tags: {repository.tags}")
         continue
 
       if not repository.ambari_managed:
@@ -130,7 +129,7 @@ class CommandRepository(object):
     elif isinstance(repo_object, basestring):
       json_dict = json.loads(repo_object)
     else:
-      raise Fail("Cannot deserialize command repository {0}".format(str(repo_object)))
+      raise Fail(f"Cannot deserialize command repository {str(repo_object)}")
 
     # version_id is the primary id of the repo_version table in the database
     self.version_id = _find_value(json_dict, 'repoVersionId')

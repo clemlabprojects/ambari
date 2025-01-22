@@ -35,7 +35,7 @@ def safe_open_scmanager():
   try:
     _schSCManager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
   except win32api.error as details:
-    raise Fail("Error opening Service Control Manager on the local machine: {0}".format(details.winerror))
+    raise Fail(f"Error opening Service Control Manager on the local machine: {details.winerror}")
 
   return _schSCManager
 
@@ -45,9 +45,9 @@ def safe_open_service(hSCM, service_name):
                                              win32service.SERVICE_ALL_ACCESS)
   except win32api.error as details:
     if details.winerror == winerror.ERROR_SERVICE_DOES_NOT_EXIST:
-      err_msg = "Invalid service name: {0}".format(service_name)
+      err_msg = f"Invalid service name: {service_name}"
     else:
-      err_msg = "Error configuring service {0}: {1}".format(service_name, details.winerror)
+      err_msg = f"Error configuring service {service_name}: {details.winerror}"
     raise Fail(err_msg)
 
   return hSvc
@@ -96,7 +96,7 @@ class ServiceProvider(Provider):
                                          None)
       win32service.CloseServiceHandle(hSvc)
     except win32api.error as details:
-      raise Fail("Error enabling service {0}: {1}".format(self.resource.service_name, details.winerror))
+      raise Fail(f"Error enabling service {self.resource.service_name}: {details.winerror}")
     finally:
       win32service.CloseServiceHandle(hSCM)
 
@@ -146,7 +146,7 @@ class ServiceConfigProvider(Provider):
 
       win32service.CloseServiceHandle(hSvc)
     except win32api.error as details:
-      raise Fail("Error creating service {0}: {1}".format(self.resource.service_name, details.winerror))
+      raise Fail(f"Error creating service {self.resource.service_name}: {details.winerror}")
     finally:
       win32service.CloseServiceHandle(hSCM)
 
@@ -176,7 +176,7 @@ class ServiceConfigProvider(Provider):
           except NotImplementedError:
             pass    ## ChangeServiceConfig2 and description do not exist on NT
       except win32api.error as details:
-        raise Fail("Error configuring service {0}: {1}".format(self.resource.service_name, details.winerror))
+        raise Fail(f"Error configuring service {self.resource.service_name}: {details.winerror}")
       finally:
         win32service.CloseServiceHandle(hSvc)
     finally:
@@ -203,7 +203,7 @@ class ServiceConfigProvider(Provider):
                                          self.resource.password,
                                          None)
       except win32api.error as details:
-        raise Fail("Error changing user for service {0}: {1}".format(self.resource.service_name, details.winerror))
+        raise Fail(f"Error changing user for service {self.resource.service_name}: {details.winerror}")
       finally:
         win32service.CloseServiceHandle(hSvc)
     finally:
@@ -221,7 +221,7 @@ class ServiceConfigProvider(Provider):
           # Nothing to do
           return
         else:
-          raise Fail("Error removing service {0}: {1}".format(self.resource.service_name, details.winerror))
+          raise Fail(f"Error removing service {self.resource.service_name}: {details.winerror}")
 
       try:
         win32service.DeleteService(hSvc)
@@ -240,8 +240,8 @@ class ServiceConfigProvider(Provider):
         win32service.SERVICE_AUTO_START,
         win32service.SERVICE_DISABLED,
         win32service.SERVICE_DEMAND_START]):
-      Logger.warning("Invalid service start type specified: service='{0}', start type='{1}'. Ignoring.".format(
-        self.resource.service_name, str(self.resource.start_type)))
+      Logger.warning(f"Invalid service start type specified: service='{self.resource.service_name}',"
+                     f" start type='{str(self.resource.start_type)}'. Ignoring.")
       self.resource.start_type = win32service.SERVICE_NO_CHANGE
 
   def _fix_user_name(self):
