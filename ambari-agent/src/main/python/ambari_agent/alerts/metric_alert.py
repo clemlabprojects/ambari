@@ -32,6 +32,7 @@ from resource_management.libraries.functions.get_port_from_url import get_port_f
 from resource_management.libraries.functions.curl_krb_request import curl_krb_request
 from ambari_commons import inet_utils
 from ambari_commons.constants import AGENT_TMP_DIR
+from ambari_commons.ast_checker import ASTChecker,BlacklistRule
 
 logger = logging.getLogger(__name__)
 
@@ -287,9 +288,14 @@ def f(args):
     self.custom_module = None
     self.property_list = jmx_info['property_list']
     self.property_map = {}
+    self.safeChecker = ASTChecker([BlacklistRule()], use_blacklist=True)
 
     if 'value' in jmx_info:
       realcode = re.sub('(\{(\d+)\})', 'args[\g<2>]', jmx_info['value'])
+      if not self.safeChecker.is_safe_expression(realcode):
+        logger.exception(f"The expression {realcode} is not safe,blocked by checker")
+        raise Exception(f"The expression {realcode} is not safe")
+
 
       self.custom_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_TEMPLATE.format(realcode)

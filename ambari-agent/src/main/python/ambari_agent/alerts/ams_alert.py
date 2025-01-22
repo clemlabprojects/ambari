@@ -30,6 +30,7 @@ import uuid
 
 from resource_management.libraries.functions.get_port_from_url import get_port_from_url
 from ambari_commons import inet_utils
+from ambari_commons.ast_checker import ASTChecker,BlacklistRule
 
 logger = logging.getLogger(__name__)
 
@@ -210,9 +211,13 @@ def f(args):
     self.interval = metric_info['interval'] # in minutes
     self.app_id = metric_info['app_id']
     self.minimum_value = metric_info['minimum_value']
+    self.safeChecker = ASTChecker([BlacklistRule()], use_blacklist=True)
 
     if 'value' in metric_info:
       realcode = re.sub('(\{(\d+)\})', 'args[\g<2>][k]', metric_info['value'])
+      if not self.safeChecker.is_safe_expression(realcode):
+        logger.exception(f"AmsMetric: Value expression {realcode} is not safe,blocked by checker")
+        raise Exception(f"AmsMetric: Value expression {realcode} is not safe")
 
       self.custom_value_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_VALUE_TEMPLATE.format(realcode)
@@ -220,6 +225,10 @@ def f(args):
 
     if 'compute' in metric_info:
       realcode = metric_info['compute']
+      if not self.safeChecker.is_safe_expression(realcode):
+        logger.exception(f"AmsMetric: compute expression {realcode} is not safe,blocked by checker")
+        raise Exception(f"AmsMetric: compute expression {realcode} is not safe")
+
       self.custom_compute_module =  types.ModuleType(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_COMPUTE_TEMPLATE.format(realcode)
       exec(code, self.custom_compute_module.__dict__)
