@@ -360,6 +360,7 @@ public class ViewRegistry {
         ViewModule viewModule = new ViewModule();
 
         try {
+          LOG.info("Extracting view archive: " + archivePath);
           if (extractViewArchive(archivePath, viewModule, true)) {
             System.exit(0);
           }
@@ -1712,9 +1713,11 @@ public class ViewRegistry {
                                 String viewNameRegExp) {
     try {
 
+      LOG.debug("Reading view archives.");
       File viewDir = configuration.getViewsDir();
       String extractedArchivesPath = viewDir.getAbsolutePath() +
           File.separator + EXTRACTED_ARCHIVES_DIR;
+      LOG.debug("Extracted archives path: " + extractedArchivesPath);
 
       if (extractor.ensureExtractedArchiveDirectory(extractedArchivesPath)) {
 
@@ -1725,16 +1728,19 @@ public class ViewRegistry {
           Set<Runnable> extractionRunnables = new HashSet<>();
 
           final String serverVersion = ambariMetaInfoProvider.get().getServerVersion();
-
+          LOG.debug("Server version: " + serverVersion);
           for (final File archiveFile : files) {
             if (!archiveFile.isDirectory()) {
 
               try {
+                LOG.debug("Reading view archive " + archiveFile.getAbsolutePath() + ".");
                 final ViewConfig viewConfig = archiveUtility.getViewConfigFromArchive(archiveFile);
 
                 String commonName = viewConfig.getName();
                 String version = viewConfig.getVersion();
                 String viewName = ViewEntity.getViewName(commonName, version);
+                LOG.debug("View name: " + commonName);
+                LOG.debug("View version: " + version);
 
                 if (!viewName.matches(viewNameRegExp)) {
                   continue;
@@ -1742,7 +1748,8 @@ public class ViewRegistry {
 
                 final String extractedArchiveDirPath = extractedArchivesPath + File.separator + viewName;
                 final File extractedArchiveDirFile = archiveUtility.getFile(extractedArchiveDirPath);
-
+                LOG.debug("Extracted archive directory: " + extractedArchiveDirPath);
+                LOG.debug("Extracted archive directory file: " + extractedArchiveDirFile.getAbsolutePath());
                 final ViewEntity viewDefinition = new ViewEntity(viewConfig, configuration, extractedArchiveDirPath);
 
                 boolean systemView = viewDefinition.isSystem();
@@ -1817,6 +1824,8 @@ public class ViewRegistry {
       // extract the archive and get the class loader
       List<File> additionalPaths = getViewsAdditionalClasspath(configuration);
 
+      LOG.info("Extracting view archive " + archiveFile + " to " + extractedArchiveDirPath + ".");
+      LOG.info("viewDefinition: " + viewDefinition.getName());
       ClassLoader cl = extractor.extractViewArchive(viewDefinition, archiveFile, extractedArchiveDirFile, additionalPaths);
 
       configureViewLogging(viewDefinition, cl);
