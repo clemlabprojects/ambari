@@ -34,7 +34,7 @@
   </description>
 
   <properties>
-    <deb.dependency.list>ambari-server (&gt;= ${ambari.version})</deb.dependency.list>
+    <deb.dependency.list>ambari-server</deb.dependency.list>
     <views.directory>/var/lib/ambari-server/resources/views</views.directory>
     <deb.architecture>amd64</deb.architecture>
   </properties>
