@@ -513,14 +513,6 @@
         <version>${jetty.version}</version>
       </dependency>
       <dependency>
-<<<<<<< HEAD
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-core</artifactId>
-        <version>${fasterxml-jackson.version}</version>
-      </dependency>
-      <dependency>
-=======
->>>>>>> 2.7.11.0-python3
         <groupId>org.apache.curator</groupId>
         <artifactId>jcurator-framework</artifactId>
         <version>${curator.version}</version>
