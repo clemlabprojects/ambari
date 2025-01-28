@@ -466,9 +466,12 @@ public class ViewRegistry {
     }
 
     View view = definition.getView();
+
     if (view != null) {
+      LOG.info("Creating instanceDefinition {}", instanceDefinition.getName());
       view.onCreate(instanceDefinition);
     }
+    LOG.info("Adding instanceDefinition {} to instanceDefinitions", instanceDefinition.getName());
     instanceDefinitions.put(instanceDefinition.getName(), instanceDefinition);
   }
 
@@ -2249,7 +2252,7 @@ public class ViewRegistry {
   private ViewInstanceEntity getLatestUnregisteredInstance(String serverVersion, ViewInstanceEntity instance)
       throws JAXBException, IOException, SAXException {
     File viewDir = configuration.getViewsDir();
-
+    LOG.info("Getting Latest Unregistered Instance of views");
     String extractedArchivesPath = viewDir.getAbsolutePath() +
         File.separator + EXTRACTED_ARCHIVES_DIR;
 
@@ -2261,6 +2264,7 @@ public class ViewRegistry {
     if (extractedArchives != null) {
 
       for (File archiveDir : extractedArchives) {
+        LOG.info("Checking Archive Direct {}", archiveDir.getAbsolutePath());
         if (archiveDir.isDirectory()) {
           ViewConfig uViewConfig = archiveUtility.getViewConfigFromExtractedArchive(archiveDir.getPath(), false);
           if (!uViewConfig.isSystem()) {

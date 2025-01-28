@@ -65,7 +65,9 @@ public class ViewArchiveUtility {
    */
   public ViewConfig getViewConfigFromArchive(File archiveFile)
       throws JAXBException, IOException {
-    ClassLoader cl = URLClassLoader.newInstance(new URL[]{archiveFile.toURI().toURL()});
+
+    System.out.print("Extracting View Config from archiveFile: "+ archiveFile);
+    ClassLoader cl = URLClassLoader.newInstance(new URL[]{archiveFile.toURI().toURL()}, null);
 
     InputStream configStream = cl.getResourceAsStream(VIEW_XML);
     if (configStream == null) {
