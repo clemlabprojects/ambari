@@ -822,11 +822,7 @@ def setup_system_services(config_dir=None):
                         action="create_on_execute",
                         owner=params.yarn_user,
                         group=params.user_group,
-<<<<<<< HEAD
-                        mode=0o555,
-=======
                         mode=0o755,
->>>>>>> 2.7.11.0-python3
                         )
     params.HdfsResource(format("{yarn_service_app_hdfs_path}/service-dep.tar.gz"),
                     type="file",
