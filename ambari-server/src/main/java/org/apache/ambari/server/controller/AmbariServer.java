@@ -466,7 +466,6 @@ public class AmbariServer {
       //Check and load requestlog handler.
       loadRequestlogHandler(handlerList, serverForAgent, configsMap);
 
-      enableLog4jMonitor(configsMap);
 
       if (configs.isGzipHandlerEnabledForJetty()) {
         GzipHandler gzipHandler = new GzipHandler();
@@ -1004,25 +1003,6 @@ public class AmbariServer {
     LOG.info(Joiner.on("\n" + linePrefix).join(rawMessages));
   }
 
-  /**
-   * To change log level without restart.
-   */
-  public static void enableLog4jMonitor(Map<String, String> configsMap){
-
-    String log4jpath = AmbariServer.class.getResource("/"+Configuration.AMBARI_LOG_FILE).toString();
-    String monitorDelay = configsMap.get(Configuration.LOG4JMONITOR_DELAY.getKey());
-    long monitorDelayLong = Configuration.LOG4JMONITOR_DELAY.getDefaultValue();
-
-    try{
-      log4jpath = log4jpath.replace("file:", "");
-      if(StringUtils.isNotBlank(monitorDelay)) {
-        monitorDelayLong = Long.parseLong(monitorDelay);
-      }
-      PropertyConfigurator.configureAndWatch(log4jpath,  monitorDelayLong);
-    }catch(Exception e){
-      LOG.error("Exception in setting log4j monitor delay of {} for {}", monitorDelay, log4jpath, e);
-    }
-  }
 
   /**
    * For loading requestlog handlers

@@ -273,6 +273,11 @@
     </file>
     <file>
       <fileMode>755</fileMode>
+      <source>conf/unix/logback.xml</source>
+      <outputDirectory>/etc/ambari-server/conf</outputDirectory>
+    </file>
+    <file>
+      <fileMode>755</fileMode>
       <source>conf/unix/metrics.properties</source>
       <outputDirectory>/etc/ambari-server/conf</outputDirectory>
     </file>

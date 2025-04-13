@@ -318,9 +318,6 @@ public class Configuration {
    */
   public static final String SERVER_VERSION_KEY = "version";
 
-  // Ambari server log4j file name
-  public static final String AMBARI_LOG_FILE = "log4j.properties";
-
   @Markdown(
     description = "Interval for heartbeat presence checks.",
     examples = {"60000","600000"} )
@@ -3086,42 +3083,12 @@ public class Configuration {
     properties = readConfigFile();
   }
 
-  /**
-   * Find, read, and parse the log4j.properties file.
-   * @return the properties that were found or empty if no file was found
-   */
-  public Properties getLog4jProperties() {
-    if (!log4jProperties.isEmpty()) {
-      return log4jProperties;
-    }
-
-    //Get log4j.properties file stream from classpath
-    InputStream inputStream = Configuration.class.getClassLoader().getResourceAsStream(AMBARI_LOG_FILE);
-
-    if (inputStream == null) {
-      throw new RuntimeException(AMBARI_LOG_FILE + " not found in classpath");
-    }
-
-    // load the properties
-    try {
-      log4jProperties.load(inputStream);
-      inputStream.close();
-    } catch (FileNotFoundException fnf) {
-      LOG.info("No configuration file " + AMBARI_LOG_FILE + " found in classpath.", fnf);
-    } catch (IOException ie) {
-      throw new IllegalArgumentException("Can't read configuration file " +
-              AMBARI_LOG_FILE, ie);
-    }
-
-    return log4jProperties;
-  }
-
 
   public void writeToAmbariUpgradeConfigUpdatesFile(Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog,
                                                      String configType, String serviceName, String writeToAmbariUpgradeConfigUpdatesFile) {
     try {
       if (ambariUpgradeConfigUpdatesFilePath == null) {
-        Properties log4jProperties = getLog4jProperties();
+
         if (log4jProperties != null) {
           String logPath = log4jProperties.getProperty("ambari.log.dir");
           String rootPath = log4jProperties.getProperty("ambari.root.dir");

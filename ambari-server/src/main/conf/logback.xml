@@ -1,0 +1,130 @@
+<configuration scan="true" scanPeriod="60 seconds">
+
+  <!-- Variables -->
+  <property name="AMBARI_ROOT_DIR" value="/" />
+  <property name="AMBARI_LOG_DIR" value="${AMBARI_ROOT_DIR}/var/log/ambari-server" />
+  
+  <!-- Appenders -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-server.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <fileNamePattern>${AMBARI_LOG_DIR}/ambari-server.log.%i</fileNamePattern>
+      <minIndex>1</minIndex>
+      <maxIndex>60</maxIndex>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <maxFileSize>80MB</maxFileSize>
+    </triggeringPolicy>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{1}:%L - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="CONFIGCHANGE" class="ch.qos.logback.core.FileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-config-changes.log</file>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="ALERTS" class="ch.qos.logback.core.FileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-alerts.log</file>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="DBCHECK" class="ch.qos.logback.core.FileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-server-check-database.log</file>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="STACKMERGER" class="ch.qos.logback.core.FileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-stack-merger.log</file>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="CONSOLE-STACKMERGER" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="ECLIPSELINK" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-eclipselink.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <fileNamePattern>${AMBARI_LOG_DIR}/ambari-eclipselink.log.%i</fileNamePattern>
+      <minIndex>1</minIndex>
+      <maxIndex>10</maxIndex>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <maxFileSize>50MB</maxFileSize>
+    </triggeringPolicy>
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${AMBARI_LOG_DIR}/ambari-audit.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <fileNamePattern>${AMBARI_LOG_DIR}/ambari-audit.log.%i.gz</fileNamePattern>
+      <minIndex>1</minIndex>
+      <maxIndex>13</maxIndex>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <maxFileSize>50MB</maxFileSize>
+    </triggeringPolicy>
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Root logger -->
+  <root level="INFO">
+    <appender-ref ref="FILE" />
+  </root>
+
+  <!-- Specific loggers -->
+  <logger name="configchange" level="INFO" additivity="false">
+    <appender-ref ref="CONFIGCHANGE" />
+  </logger>
+
+  <logger name="alerts" level="INFO" additivity="false">
+    <appender-ref ref="ALERTS" />
+  </logger>
+
+  <logger name="org.apache.ambari.server.checks.DatabaseConsistencyChecker" level="INFO" additivity="false">
+    <appender-ref ref="DBCHECK" />
+  </logger>
+
+  <logger name="org.apache.ambari.server.checks.DatabaseConsistencyCheckHelper" level="INFO" additivity="false">
+    <appender-ref ref="DBCHECK" />
+  </logger>
+
+  <logger name="org.apache.ambari.server.stack.StackMerger" level="INFO" additivity="false">
+    <appender-ref ref="STACKMERGER" />
+    <appender-ref ref="CONSOLE-STACKMERGER" />
+  </logger>
+
+  <logger name="eclipselink" level="TRACE" additivity="false">
+    <appender-ref ref="ECLIPSELINK" />
+  </logger>
+
+  <logger name="com.sun.jersey" level="WARN" />
+  <logger name="org.glassfish.jersey" level="WARN" />
+  <logger name="org.eclipse.jetty" level="WARN" />
+  <logger name="audit" level="INFO" additivity="false">
+    <appender-ref ref="AUDIT" />
+  </logger>
+
+  <logger name="org.apache.hadoop.yarn.client" level="WARN" />
+  <logger name="org.apache.ambari.server.security.authorization" level="WARN" />
+  <logger name="org.apache.ambari.server.security.authorization.AuthorizationHelper" level="INFO" />
+  <logger name="org.apache.ambari.server.security.authorization.AmbariLdapBindAuthenticator" level="INFO" />
+
+</configuration>
