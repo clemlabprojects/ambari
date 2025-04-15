@@ -20,9 +20,10 @@
         <name>content</name>
         <display-name>usersync-logback-xml template</display-name>
         <description>This is the jinja template for ranger usersync logback.xml file</description>
-        <value/>
         <property-type>VALUE_FROM_PROPERTY_FILE</property-type>
+        <value/>
         <value-attributes>
+        <type>content</type>
             <property-file-name>usersync-logback.xml.j2</property-file-name>
             <property-file-type>xml</property-file-type>
         </value-attributes>

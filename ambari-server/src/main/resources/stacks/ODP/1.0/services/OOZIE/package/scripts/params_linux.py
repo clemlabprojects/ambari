@@ -211,12 +211,11 @@ oozie_metastore_user_name = config['configurations']['oozie-site']['oozie.servic
 if credential_store_enabled:
   if 'hadoop.security.credential.provider.path' in config['configurations']['oozie-site']:
     cs_lib_path = config['configurations']['oozie-site']['credentialStoreClassPath']
-    java_home = config['ambariLevelParams']['java_home']
     alias = 'oozie.service.JPAService.jdbc.password'
     alias_keystore_passwd = 'oozie.https.keystore.pass'
     provider_path = config['configurations']['oozie-site']['hadoop.security.credential.provider.path']
-    oozie_metastore_user_passwd = PasswordString(get_password_from_credential_store(alias, provider_path, cs_lib_path, java_home, jdk_location))
-    # oozie_server_keystore_passwd = PasswordString(get_password_from_credential_store(alias_keystore_passwd, provider_path, cs_lib_path, java_home, jdk_location))
+    oozie_metastore_user_passwd = PasswordString(get_password_from_credential_store(alias, provider_path, cs_lib_path, ambari_java_home, jdk_location))
+    # oozie_server_keystore_passwd = PasswordString(get_password_from_credential_store(alias_keystore_passwd, provider_path, cs_lib_path, ambari_java_home, jdk_location))
   else:
     raise Exception("hadoop.security.credential.provider.path property should be set")
 else:
