@@ -1,0 +1,14 @@
+{
+  "ODP": {
+    "stack_selector": [
+      "odp-select",
+      "/usr/bin/odp-select",
+      "odp-select"
+    ],
+    "conf_selector": [
+      "odp-conf-select",
+      "/usr/bin/odp-conf-select",
+      "odp-conf-select"
+    ]
+  }
+}
