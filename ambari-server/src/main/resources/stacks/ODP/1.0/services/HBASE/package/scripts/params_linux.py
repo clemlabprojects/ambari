@@ -77,6 +77,13 @@ region_drainer2 = "/usr/lib/hbase/bin/draining_servers2.rb"
 hbase_cmd = "/usr/lib/hbase/bin/hbase"
 hbase_max_direct_memory_size = None
 
+# Rest and Thrift hosts
+
+hbase_thrift_hosts = default("/clusterHostInfo/hbase_thriftserver_hosts", None)
+hbase_rest_hosts = default("/clusterHostInfo/hbase_restserver_hosts", None)
+has_hbase_thrift = hbase_thrift_hosts != None
+has_hbase_rest = hbase_rest_hosts != None
+
 # hadoop parameters for stacks supporting rolling_upgrade
 if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, stack_version_formatted):
   daemon_script = format('{stack_root}/current/hbase-client/bin/hbase-daemon.sh')
@@ -223,9 +230,12 @@ if security_enabled:
   master_jaas_princ = config['configurations']['hbase-site']['hbase.master.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   master_keytab_path = config['configurations']['hbase-site']['hbase.master.keytab.file']
   regionserver_jaas_princ = config['configurations']['hbase-site']['hbase.regionserver.kerberos.principal'].replace('_HOST',_hostname_lowercase)
-  if hbase_thrift_stack_enabled and hbase_thrift_hosts != None:
+  if has_hbase_thrift:
     thrift_keytab_path = config['configurations']['hbase-site']['hbase.thrift.keytab.file']
     thrift_jaas_princ = config['configurations']['hbase-site']['hbase.thrift.kerberos.principal'].replace('_HOST',_hostname_lowercase)
+  if has_hbase_rest:
+    rest_keytab_path = config['configurations']['hbase-site']['hbase.rest.keytab.file']
+    rest_jaas_princ = config['configurations']['hbase-site']['hbase.rest.kerberos.principal'].replace('_HOST',_hostname_lowercase)
 
   _queryserver_jaas_princ = config['configurations']['hbase-site']['phoenix.queryserver.kerberos.principal']
   if not is_empty(_queryserver_jaas_princ):
@@ -475,8 +485,10 @@ if 'viewfs-mount-table' in config['configurations']:
 
 ## AMBARI-137: add HBase thrift support for hue interface
 thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
-hbase_has_thrift = hbase_thrift_stack_enabled  and hbase_thrift_hosts != None
-if hbase_has_thrift:
+rest_ssl_enabled = default('/configurations/hbase-site/hbase.rest.ssl.enabled', False)
+if has_hbase_thrift or has_hbase_rest:
+  hbase_site = dict(config['configurations']['hbase-site'])
+if has_hbase_thrift:
   # configure ssl keystore properties
   if thrift_ssl_enabled:
     thrift_ssl_keystore_password = config['configurations']['hbase-site']['hbase.thrift.ssl.keystore.password']
@@ -484,11 +496,20 @@ if hbase_has_thrift:
     hbase_thrift_creds_file = config['configurations']['hbase-site']['hadoop.security.credential.provider.path']
   
   # mask ssl password properties
-  hbase_site = dict(config['configurations']['hbase-site'])
   hbase_site['hbase.thrift.ssl.keystore.password'] = '**************'
-
-  hbase_site = dict(config['configurations']['hbase-site'])
   hbase_site['hbase.thrift.ssl.keystore.keypassword'] = '**************'
+
+if has_hbase_rest:
+  # configure ssl keystore properties
+  if rest_ssl_enabled:
+    rest_ssl_keystore_password = config['configurations']['hbase-site']['hbase.rest.ssl.keystore.password']
+    rest_ssl_keystore_keypassword = config['configurations']['hbase-site']['hbase.rest.ssl.keystore.keypassword']
+    hbase_rest_creds_file = config['configurations']['hbase-site']['hadoop.security.credential.provider.path']
+  
+  # mask ssl password properties
+  hbase_site['hbase.rest.ssl.keystore.password'] = '**************'
+  hbase_site['hbase.rest.ssl.keystore.keypassword'] = '**************'
+
 
 # logback support for zookeeper client
 hbase_zookeeper_log_level = default("/configurations/hbase-env/hbase.zookeeper.log.level", "INFO")

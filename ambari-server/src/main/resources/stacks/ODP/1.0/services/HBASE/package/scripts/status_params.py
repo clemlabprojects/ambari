@@ -32,6 +32,8 @@ from resource_management.libraries.script.script import Script
 SERVER_ROLE_DIRECTORY_MAP = {
   'HBASE_MASTER' : 'hbase-master',
   'HBASE_REGIONSERVER' : 'hbase-regionserver',
+  'HBASE_RESTSERVER' : 'hbase-rest',
+  'HBASE_THRIFTSERVER' : 'hbase-thrift',
   'HBASE_CLIENT' : 'hbase-client'
 }
 
@@ -42,6 +44,7 @@ config = Script.get_config()
 if OSCheck.is_windows_family():
   hbase_master_win_service_name = "master"
   hbase_thrift_win_service_name = "thrift"
+  hbase_rest_win_service_name = "rest"
   hbase_regionserver_win_service_name = "regionserver"
 else:
   pid_dir = config['configurations']['hbase-env']['hbase_pid_dir']
@@ -49,6 +52,7 @@ else:
 
   hbase_master_pid_file = format("{pid_dir}/hbase-{hbase_user}-master.pid")
   hbase_thrift_pid_file = format("{pid_dir}/hbase-{hbase_user}-thrift.pid")
+  hbase_rest_pid_file = format("{pid_dir}/hbase-{hbase_user}-rest.pid")
   regionserver_pid_file = format("{pid_dir}/hbase-{hbase_user}-regionserver.pid")
   phoenix_pid_file = format("{pid_dir}/phoenix-{hbase_user}-queryserver.pid")
 

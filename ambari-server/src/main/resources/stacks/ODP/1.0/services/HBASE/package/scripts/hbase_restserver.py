@@ -41,11 +41,11 @@ from resource_management.libraries.functions.setup_credential_file import setup_
 
 
 
-class HbaseThriftServer(Script):
+class HbaseRestServer(Script):
   def configure(self, env):
     import params
     env.set_params(params)
-    hbase(name='thrift')
+    hbase(name='rest')
 
   def install(self, env):
     import params
@@ -59,26 +59,26 @@ class HbaseThriftServer(Script):
 
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
-class HbaseThriftServerWindows(HbaseThriftServer):
+class HbaseRestServerWindows(HbaseRestServer):
   def start(self, env):
     import status_params
     self.configure(env)
-    Service(status_params.hbase_thrift_win_service_name, action="start")
+    Service(status_params.hbase_rest_win_service_name, action="start")
 
   def stop(self, env):
     import status_params
     env.set_params(status_params)
-    Service(status_params.hbase_thrift_win_service_name, action="stop")
+    Service(status_params.hbase_rest_win_service_name, action="stop")
 
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    check_windows_service_status(status_params.hbase_thrift_win_service_name)
+    check_windows_service_status(status_params.hbase_rest_win_service_name)
 
 
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
-class HbaseThriftServerDefault(HbaseThriftServer):
+class HbaseRestServerDefault(HbaseRestServer):
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
@@ -87,22 +87,22 @@ class HbaseThriftServerDefault(HbaseThriftServer):
   def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    self.configure(env) # for security
-    if params.thrift_ssl_enabled:
-      Logger.info("TLS/SSL is enabled on HBase Thrift Server. Setting up keystore")
+    self.configure(env) # for security  
+    if params.rest_ssl_enabled:
+      Logger.info("TLS/SSL is enabled on HBase Rest Server. Setting up keystore")
       ## creating ssl keystore credential file if needed
-      if params.thrift_ssl_enabled is not None and params.thrift_ssl_enabled:
-        passwords =  [ {'alias': 'hbase.thrift.ssl.keystore.password', 'value': format('{thrift_ssl_keystore_password}')},
-          {'alias': 'hbase.thrift.ssl.keystore.keypassword', 'value': format('{thrift_ssl_keystore_keypassword}')}
+      if params.rest_ssl_enabled is not None and params.rest_ssl_enabled:
+        passwords =  [ {'alias': 'hbase.rest.ssl.keystore.password', 'value': format('{rest_ssl_keystore_password}')},
+          {'alias': 'hbase.rest.ssl.keystore.keypassword', 'value': format('{rest_ssl_keystore_keypassword}')}
         ]
-        if params.hbase_thrift_creds_file.startswith('localjceks'):
+        if params.hbase_rest_creds_file.startswith('localjceks'):
           separator = 'localjceks://file'
         else:
           separator = 'jceks://file'
         setup_credential_file(params.java64_home, None,
-                          params.hbase_thrift_creds_file, 'hbase', params.user_group,
-                          passwords, 'hbase-thrift', separator )
-        file_to_chown = params.hbase_thrift_creds_file.split(separator)[1]
+                          params.hbase_rest_creds_file, 'hbase', params.user_group,
+                          passwords, 'hbase-rest', separator )
+        file_to_chown = params.hbase_rest_creds_file.split(separator)[1]
         if os.path.exists(file_to_chown):
             Execute(('chown', format('{params.hbase_user}:{params.user_group}'), file_to_chown),
                     sudo=True
@@ -111,19 +111,19 @@ class HbaseThriftServerDefault(HbaseThriftServer):
                     sudo=True
                     )
     else:
-      Logger.info("TLS/SSL is disabled on HBase Thrift Server. Skipping")
-    hbase_service('thrift', action = 'start')
+      Logger.info("TLS/SSL is disabled on HBase Rest Server. Skipping")
+    hbase_service('rest', action = 'start')
     
   def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    hbase_service('thrift', action = 'stop')
+    hbase_service('rest', action = 'stop')
 
   def status(self, env):
     import status_params
     env.set_params(status_params)
 
-    check_process_status(status_params.hbase_thrift_pid_file)
+    check_process_status(status_params.hbase_rest_pid_file)
 
   def security_status(self, env):
     import status_params
@@ -132,9 +132,9 @@ class HbaseThriftServerDefault(HbaseThriftServer):
     if status_params.security_enabled:
       props_value_check = {"hbase.security.authentication" : "kerberos",
                            "hbase.security.authorization": "true"}
-      props_empty_check = ['hbase.thrift.keytab.file',
-                           'hbase.thrift.kerberos.principal']
-      props_read_check = ['hbase.thrift.keytab.file']
+      props_empty_check = ['hbase.rest.keytab.file',
+                           'hbase.rest.kerberos.principal']
+      props_read_check = ['hbase.rest.keytab.file']
       hbase_site_expectations = build_expectations('hbase-site', props_value_check, props_empty_check,
                                                   props_read_check)
 
@@ -148,8 +148,8 @@ class HbaseThriftServerDefault(HbaseThriftServer):
         try:
           # Double check the dict before calling execute
           if ( 'hbase-site' not in security_params
-               or 'hbase.thrift.keytab.file' not in security_params['hbase-site']
-               or 'hbase.thrift.kerberos.principal' not in security_params['hbase-site']):
+               or 'hbase.rest.keytab.file' not in security_params['hbase-site']
+               or 'hbase.rest.kerberos.principal' not in security_params['hbase-site']):
             self.put_structured_out({"securityState": "UNSECURED"})
             self.put_structured_out(
               {"securityIssuesFound": "Keytab file or principal are not set property."})
@@ -157,8 +157,8 @@ class HbaseThriftServerDefault(HbaseThriftServer):
 
           cached_kinit_executor(status_params.kinit_path_local,
                                 status_params.hbase_user,
-                                security_params['hbase-site']['hbase.thrift.keytab.file'],
-                                security_params['hbase-site']['hbase.thrift.kerberos.principal'],
+                                security_params['hbase-site']['hbase.rest.keytab.file'],
+                                security_params['hbase-site']['hbase.rest.kerberos.principal'],
                                 status_params.hostname,
                                 status_params.tmp_dir)
           self.put_structured_out({"securityState": "SECURED_KERBEROS"})
@@ -184,7 +184,7 @@ class HbaseThriftServerDefault(HbaseThriftServer):
 
   def get_pid_files(self):
     import status_params
-    return [status_params.hbase_thrift_pid_file]
+    return [status_params.hbase_rest_pid_file]
 
 if __name__ == "__main__":
-  HbaseThriftServer().execute()
+  HbaseRestServer().execute()

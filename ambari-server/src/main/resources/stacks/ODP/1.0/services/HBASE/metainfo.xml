@@ -187,6 +187,42 @@
             </log>
           </logs>
         </component>
+        <component>
+          <name>HBASE_RESTSERVER</name>
+          <displayName>HBase Rest Server</displayName>
+          <category>SLAVE</category>
+          <cardinality>0+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <timelineAppid>HBASE</timelineAppid>
+          <dependencies>
+            <dependency>
+              <name>HDFS/HDFS_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+            </dependency>
+            <dependency>
+              <name>ZOOKEEPER/ZOOKEEPER_SERVER</name>
+              <scope>cluster</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+                <co-locate>HBASE/HBASE_MASTER</co-locate>
+              </auto-deploy>
+            </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/hbase_restserver.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>1200</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>hbase_restserver</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+        </component>
 
       </components>
 

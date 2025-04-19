@@ -38,7 +38,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
 def hbase(name=None):
   import params
-  if params.hbase_has_thrift:
+  if params.has_hbase_thrift or params.has_hbase_rest:
     XmlConfig("hbase-site.xml",
               conf_dir = params.hbase_conf_dir,
               configurations = params.hbase_site,
