@@ -266,6 +266,12 @@ ranger_xa_log_maxfilesize = default('/configurations/admin-log4j/ranger_xa_log_m
 ranger_xa_log_maxbackupindex = default('/configurations/admin-log4j/ranger_xa_log_maxbackupindex',20)
 
 # ranger logback.xml
+ranger_xa_logback_maxfilesize = default('/configurations/admin-logback/ranger_xa_logback_maxfilesize',256)
+ranger_xa_logback_maxbackupindex = default('/configurations/admin-logback/ranger_xa_logback_maxbackupindex',20)
+ranger_usersync_logback_maxfilesize = default('/configurations/usersync-log4j/ranger_usersync_logback_maxfilesize',256)
+ranger_usersync_logback_maxbackupindex = default('/configurations/usersync-log4j/ranger_usersync_logback_maxbackupindex',20)
+ranger_tagsync_logback_maxfilesize = default('/configurations/tagsync-log4j/ranger_tagsync_logback_maxfilesize',256)
+ranger_tagsync_logback_number_of_backup_files = default('/configurations/tagsync-log4j/ranger_tagsync_logback_number_of_backup_files',20)
 admin_logback_content = config['configurations']['admin-logback']['content']
 usersync_logback_content = config['configurations']['usersync-logback']['content']
 tagsync_logback_content = config['configurations']['tagsync-logback']['content']

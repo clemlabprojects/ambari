@@ -17,16 +17,144 @@
 -->
 <configuration supports_adding_forbidden="true">
   <property>
+    <name>ranger_xa_logback_maxfilesize</name>
+    <value>256</value>
+   <description>The maximum size of backup file before the log is rotated</description>
+    <display-name>Ranger Log: backup file size</display-name>
+    <value-attributes>
+      <unit>MB</unit>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+   </property>
+   <property>
+    <name>ranger_xa_logback_maxbackupindex</name>
+    <value>20</value>
+    <description>The number of backup files</description>
+    <display-name>Ranger Log: # of backup files</display-name>
+    <value-attributes>
+      <type>int</type>
+      <minimum>0</minimum>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>content</name>
     <display-name>admin-logback-xml template</display-name>
-    <description>This is the jinja template for ranger admin logback.xml file</description>
-    <property-type>VALUE_FROM_PROPERTY_FILE</property-type>
-    <value/>
-    <value-attributes>
-      <type>content</type>
-      <property-file-name>admin-logback.xml.j2</property-file-name>
-      <property-file-type>xml</property-file-type>
-    </value-attributes>
+    <description>Ranger admin logback.xml template</description>
+    <value>
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements...
+--&gt;
+
+&lt;configuration&gt;
+  &lt;appender name=&quot;xa_log_appender&quot; class=&quot;ch.qos.logback.core.rolling.RollingFileAppender&quot;&gt;
+    &lt;file&gt;{{admin_log_dir}}/ranger-admin-${hostname}-${user}.log&lt;/file&gt;
+    &lt;append&gt;true&lt;/append&gt;
+    &lt;encoder&gt;
+      &lt;pattern&gt;%date [%thread] %level{5} [%file:%line] %msg%n&lt;/pattern&gt;
+    &lt;/encoder&gt;
+    &lt;rollingPolicy class=&quot;ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy&quot;&gt;
+      &lt;fileNamePattern&gt;{{admin_log_dir}}/ranger-admin-${hostname}-${user}.log.%d{yyyy-MM-dd}.%i.gz&lt;/fileNamePattern&gt;
+      &lt;maxFileSize&gt;{{ ranger_xa_logback_maxfilesize }}&lt;/maxFileSize&gt;
+      &lt;maxHistory&gt;{{ ranger_xa_logback_maxbackupindex }}&lt;/maxHistory&gt;
+      &lt;cleanHistoryOnStart&gt;true&lt;/cleanHistoryOnStart&gt;
+    &lt;/rollingPolicy&gt;
+  &lt;/appender&gt;
+
+  &lt;appender name=&quot;sql_appender&quot; class=&quot;ch.qos.logback.core.rolling.RollingFileAppender&quot;&gt;
+    &lt;file&gt;{{admin_log_dir}}/ranger_admin_sql.log&lt;/file&gt;
+    &lt;append&gt;true&lt;/append&gt;
+    &lt;encoder&gt;
+      &lt;pattern&gt;%d [%t] %-5p %C{6} \(%F:%L\) %msg%n&lt;/pattern&gt;
+    &lt;/encoder&gt;
+    &lt;rollingPolicy class=&quot;ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy&quot;&gt;
+      &lt;fileNamePattern&gt;{{admin_log_dir}}/ranger_admin_sql.log.%d{yyyy-MM-dd}.%i.gz&lt;/fileNamePattern&gt;
+      &lt;maxFileSize&gt;{{ ranger_xa_logback_maxfilesize }}&lt;/maxFileSize&gt;
+      &lt;maxHistory&gt;{{ ranger_xa_logback_maxbackupindex }}&lt;/maxHistory&gt;
+      &lt;cleanHistoryOnStart&gt;true&lt;/cleanHistoryOnStart&gt;
+    &lt;/rollingPolicy&gt;
+  &lt;/appender&gt;
+
+  &lt;appender name=&quot;perf_appender&quot; class=&quot;ch.qos.logback.core.rolling.RollingFileAppender&quot;&gt;
+    &lt;file&gt;{{admin_log_dir}}/ranger_admin_perf.log&lt;/file&gt;
+    &lt;append&gt;true&lt;/append&gt;
+    &lt;encoder&gt;
+      &lt;pattern&gt;%d [%t] %msg%n&lt;/pattern&gt;
+    &lt;/encoder&gt;
+    &lt;rollingPolicy class=&quot;ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy&quot;&gt;
+      &lt;fileNamePattern&gt;{{admin_log_dir}}/ranger_admin_perf.log.%d{yyyy-MM-dd}.%i.gz&lt;/fileNamePattern&gt;
+      &lt;maxFileSize&gt;{{ ranger_xa_logback_maxfilesize }}&lt;/maxFileSize&gt;
+      &lt;maxHistory&gt;{{ ranger_xa_logback_maxbackupindex }}&lt;/maxHistory&gt;
+      &lt;cleanHistoryOnStart&gt;true&lt;/cleanHistoryOnStart&gt;
+    &lt;/rollingPolicy&gt;
+  &lt;/appender&gt;
+
+  &lt;appender name=&quot;patch_logger&quot; class=&quot;ch.qos.logback.core.rolling.RollingFileAppender&quot;&gt;
+    &lt;append&gt;true&lt;/append&gt;
+    &lt;file&gt;{{admin_log_dir}}/ranger_db_patch.log&lt;/file&gt;
+    &lt;encoder&gt;
+      &lt;pattern&gt;%d [%t] %-5p %C{6} \(%F:%L\) %msg%n&lt;/pattern&gt;
+    &lt;/encoder&gt;
+    &lt;rollingPolicy class=&quot;ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy&quot;&gt;
+      &lt;fileNamePattern&gt;{{admin_log_dir}}/ranger_db_patch.log.%d{yyyy-MM-dd}.%i.gz&lt;/fileNamePattern&gt;
+      &lt;maxFileSize&gt;{{ ranger_xa_logback_maxfilesize }}&lt;/maxFileSize&gt;
+      &lt;maxHistory&gt;{{ ranger_xa_logback_maxbackupindex }}&lt;/maxHistory&gt;
+      &lt;cleanHistoryOnStart&gt;true&lt;/cleanHistoryOnStart&gt;
+    &lt;/rollingPolicy&gt;
+  &lt;/appender&gt;
+
+  &lt;logger name=&quot;xa&quot; additivity=&quot;false&quot; level=&quot;info&quot;&gt;
+    &lt;appender-ref ref=&quot;xa_log_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;jdbc.connection&quot; additivity=&quot;false&quot; level=&quot;error&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;com.mchange&quot; additivity=&quot;false&quot; level=&quot;warn&quot; /&gt;
+  &lt;logger name=&quot;org.apache.ranger.perf&quot; additivity=&quot;false&quot; level=&quot;info&quot;&gt;
+    &lt;appender-ref ref=&quot;perf_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;jdbc.audit&quot; additivity=&quot;false&quot; level=&quot;error&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;org.apache.ranger.patch&quot; additivity=&quot;false&quot; level=&quot;info&quot;&gt;
+    &lt;appender-ref ref=&quot;patch_logger&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;jdbc.resultset&quot; additivity=&quot;false&quot; level=&quot;error&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;org.springframework&quot; additivity=&quot;false&quot; level=&quot;warn&quot;&gt;
+    &lt;appender-ref ref=&quot;patch_logger&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;jdbc.sqltiming&quot; additivity=&quot;false&quot; level=&quot;warn&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;org.hibernate.SQL&quot; additivity=&quot;false&quot; level=&quot;warn&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;org.apache.ranger&quot; additivity=&quot;false&quot; level=&quot;info&quot;&gt;
+    &lt;appender-ref ref=&quot;xa_log_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;logger name=&quot;jdbc.sqlonly&quot; additivity=&quot;false&quot; level=&quot;error&quot;&gt;
+    &lt;appender-ref ref=&quot;sql_appender&quot;/&gt;
+  &lt;/logger&gt;
+
+  &lt;root level=&quot;warn&quot;&gt;
+    &lt;appender-ref ref=&quot;xa_log_appender&quot;/&gt;
+  &lt;/root&gt;
+&lt;/configuration&gt;
+    </value>
     <on-ambari-upgrade add="true" update="true"/>
   </property>
 </configuration>
