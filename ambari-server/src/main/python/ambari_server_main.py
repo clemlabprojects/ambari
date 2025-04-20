@@ -215,11 +215,11 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
     exception = FatalException(-1, JDK_VERSION_NOT_SUPPORTED.format(JDK_VERSION))
     raise exception
 
-  command_base = SERVER_START_CMD_DEBUG if debug_start else SERVER_START_CMD
-
   if not IS_FOREGROUND:
     SERVER_START_CMD += " &"
     SERVER_START_CMD_DEBUG += " &"
+
+  command_base = SERVER_START_CMD_DEBUG if debug_start else SERVER_START_CMD
 
   ulimit_cmd = "%s %s" % (ULIMIT_CMD, str(get_ulimit_open_files(properties)))
   command = command_base.format(java_exe,
