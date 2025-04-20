@@ -388,6 +388,9 @@
           </defineStatements>
           <requires>
             <require>${rpm.dependency.list}</require>
+            <require>python39</require>
+            <require>python39-devel</require>
+            <require>python39-pip</require>
           </requires>
           <defineStatements>
             <defineStatement>__python python3</defineStatement>
