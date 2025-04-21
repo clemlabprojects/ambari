@@ -44,11 +44,11 @@
     <ambari.arch>x86_64</ambari.arch>
     <python.ver>python3 &gt;= 3.0</python.ver>
     <python.devel>python3-devel</python.devel>
-    <python.rhel8.ver>python3 &gt;= 3.9</python.rhel8.ver>
+    <python.rhel8.ver>python39 &gt;= 3.9</python.rhel8.ver>
     <python.rhel8.devel>python39-devel</python.rhel8.devel>
     <python.rhel8.pip>python39-pip</python.rhel8.pip>
-    <python.rhel9.ver>python &gt;= 3.9</python.rhel9.ver>
-    <python.rhel9.devel>python-devel</python.rhel9.devel>
+    <python.rhel9.ver>python3 &gt;= 3.9</python.rhel9.ver>
+    <python.rhel9.devel>python3-devel</python.rhel9.devel>
     <deb.publisher>Clemlab</deb.publisher>
     <deb.section>universe/admin</deb.section>
     <deb.architecture>i386 amd64</deb.architecture>
