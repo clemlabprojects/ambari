@@ -110,7 +110,7 @@ def hbase(name=None):
     )
     Execute(("chmod", "1777", parent_dir), sudo=True)
 
-  if params.hbase_has_thrift:
+  if params.hbase_has_thrift or params.hbase_has_rest:
     XmlConfig( "hbase-site.xml",
               conf_dir = params.hbase_conf_dir,
               configurations = params.hbase_site,

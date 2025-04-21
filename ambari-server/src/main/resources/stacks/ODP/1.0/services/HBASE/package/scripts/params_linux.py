@@ -483,6 +483,15 @@ if 'viewfs-mount-table' in config['configurations']:
     mount_table_content = mount_table['content']
 
 
+hbase_has_rest = False
+if has_hbase_rest:
+  if hostname in hbase_rest_hosts:
+    hbase_has_rest = True
+
+hbase_has_thrift = False
+if has_hbase_thrift:
+  if hostname in hbase_thrift_hosts:
+    hbase_has_thrift = True
 ## AMBARI-137: add HBase thrift support for hue interface
 thrift_ssl_enabled = default('/configurations/hbase-site/hbase.thrift.ssl.enabled', False)
 rest_ssl_enabled = default('/configurations/hbase-site/hbase.rest.ssl.enabled', False)
