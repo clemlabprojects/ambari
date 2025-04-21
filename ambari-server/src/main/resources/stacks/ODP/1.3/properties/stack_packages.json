@@ -115,6 +115,18 @@
           "STANDARD": [
             "hbase-thrift"
           ]
+        },
+        "HBASE_RESTSERVER": {
+          "STACK-SELECT-PACKAGE": "hbase-rest",
+          "INSTALL": [
+            "hbase-rest"
+          ],
+          "PATCH": [
+            "hbase-rest"
+          ],
+          "STANDARD": [
+            "hbase-rest"
+          ]
         }
       },
       "HDFS": {
