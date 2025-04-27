@@ -615,24 +615,35 @@ public class StageUtils {
    */
   public static void useStackJdkIfExists(Map<String, String> hostLevelParams, Configuration configuration) {
     // set defaults first
+    LOG.debug("Setting default host level params");
+    LOG.debug("Setting JAVA_HOME to: {}", configuration.getJavaHome());
+    LOG.debug("Setting JDK_NAME to: {}", configuration.getJDKName());
+    LOG.debug("Setting JCE_NAME to: {}", configuration.getJCEName());
+    LOG.debug("Setting JAVA_VERSION to: {}", configuration.getJavaVersion());
     hostLevelParams.put(JAVA_HOME, configuration.getJavaHome());
     hostLevelParams.put(JDK_NAME, configuration.getJDKName());
     hostLevelParams.put(JCE_NAME, configuration.getJCEName());
     hostLevelParams.put(JAVA_VERSION, String.valueOf(configuration.getJavaVersion()));
     if (StringUtils.isNotEmpty(configuration.getStackJavaHome())
       && !configuration.getStackJavaHome().equals(configuration.getJavaHome())) {
+      LOG.debug("Overriding JAVA_HOME to: {}", configuration.getStackJavaHome());
       hostLevelParams.put(JAVA_HOME, configuration.getStackJavaHome());
       if (StringUtils.isNotEmpty(configuration.getStackJavaVersion())) {
+        LOG.debug("Overriding JAVA_VERSION to: {}", configuration.getStackJavaVersion());
         hostLevelParams.put(JAVA_VERSION, configuration.getStackJavaVersion());
       }
       if (StringUtils.isNotEmpty(configuration.getStackJDKName())) {
+        LOG.debug("Overriding JDK_NAME to: {}", configuration.getStackJDKName());
         hostLevelParams.put(JDK_NAME, configuration.getStackJDKName());
       } else {
+        LOG.debug("Overriding JDK_NAME to: null");
         hostLevelParams.put(JDK_NAME, null); // custom jdk for stack
       }
       if (StringUtils.isNotEmpty(configuration.getStackJCEName())) {
+        LOG.debug("Overriding JCE_NAME to: {}", configuration.getStackJCEName());
         hostLevelParams.put(JCE_NAME, configuration.getStackJCEName());
       } else {
+        LOG.debug("Overriding JCE_NAME to: null");
         hostLevelParams.put(JCE_NAME, null); // custom jdk for stack
       }
     }

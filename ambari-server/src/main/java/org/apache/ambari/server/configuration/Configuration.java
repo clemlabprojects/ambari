@@ -3317,6 +3317,8 @@ public class Configuration {
       return 11;
     } else if (versionStr.startsWith("17")) {
       return 17;
+    } else if (versionStr.startsWith("21")) {
+      return 21;
     }else { // Some unsupported java version
       return -1;
     }

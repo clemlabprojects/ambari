@@ -1262,6 +1262,7 @@ public class AmbariCustomCommandExecutionHelper {
     }
 
     TreeMap<String, String> hostLevelParams = new TreeMap<>();
+    LOG.debug("Creating default host params for stackId: {}", stackId);
     StageUtils.useStackJdkIfExists(hostLevelParams, configs);
     hostLevelParams.put(JDK_LOCATION, managementController.getJdkResourceUrl());
     hostLevelParams.put(STACK_NAME, stackId.getStackName());
@@ -1275,6 +1276,9 @@ public class AmbariCustomCommandExecutionHelper {
     hostLevelParams.put(AGENT_STACK_RETRY_ON_UNAVAILABILITY, configs.isAgentStackRetryOnInstallEnabled());
     hostLevelParams.put(AGENT_STACK_RETRY_COUNT, configs.getAgentStackRetryOnInstallCount());
     hostLevelParams.put(GPL_LICENSE_ACCEPTED, configs.getGplLicenseAccepted().toString());
+    for (Map.Entry<String, String> entry : hostLevelParams.entrySet()) {
+      LOG.debug("Adding host level parameter: key={}, value={}", entry.getKey(), entry.getValue());
+    }
 
     Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     Map<PropertyInfo, String> notManagedHdfsPathMap = configHelper.getPropertiesWithPropertyType(stackId, PropertyType.NOT_MANAGED_HDFS_PATH, cluster, desiredConfigs);
