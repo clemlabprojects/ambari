@@ -34,14 +34,23 @@ WARN_MSG = "Command {0} returned exit code {1} with message: {2}"
 ULIMIT_CMD = "ulimit -n"
 
 
-def os_run_os_command(cmd, env=None, shell=False, cwd=None):
+def os_run_os_command(cmd, env=None, shell=False, cwd=None, stdoutfile=None, stderrfile=None):
   print_info_msg('about to run command: ' + str(cmd))
   if type(cmd) == str:
     cmd = shlex.split(cmd)
+  if stdoutfile != None:
+    stdout = open(stdoutfile, 'w')
+  else:
+    stdout = subprocess.PIPE
+
+  if stderrfile != None:
+    stderr = open(stderrfile, 'w')
+  else:
+    stderr = subprocess.PIPE
   process = subprocess.Popen(cmd,
-                             stdout=subprocess.PIPE,
+                             stdout=stdout,
                              stdin=subprocess.PIPE,
-                             stderr=subprocess.PIPE,
+                             stderr=stderr,
                              env=env,
                              cwd=cwd,
                              shell=shell,

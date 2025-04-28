@@ -379,6 +379,8 @@ class ServerConfigDefaults(object):
     self.OUT_DIR = parse_log4j_file(get_conf_dir() + "/log4j.properties")['ambari.log.dir'].replace("//", "/")
     self.SERVER_OUT_FILE = os.path.join(self.OUT_DIR, "ambari-server.out")
     self.SERVER_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server.log")
+    self.SERVER_UPGRADE_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server-upgrade.log")
+    self.SERVER_UPGRADE_ERR_FILE = os.path.join(self.OUT_DIR, "ambari-server-upgrade.err")
     self.DB_CHECK_LOG = os.path.join(self.OUT_DIR, "ambari-server-check-database.log")
     self.ROOT_FS_PATH = os.sep
 

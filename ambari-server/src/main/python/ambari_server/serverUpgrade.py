@@ -32,12 +32,12 @@ import ambari_simplejson as json
 
 from ambari_commons.exceptions import FatalException
 from ambari_commons.logging_utils import print_info_msg, print_warning_msg, print_error_msg, get_verbose
-from ambari_commons.os_utils import is_root, run_os_command
+from ambari_commons.os_utils import is_root, run_os_command, run_in_shell
 from ambari_server.dbConfiguration import DBMSConfigFactory, CUSTOM_JDBC_DB_NAMES, TAR_GZ_ARCHIVE_TYPE,  check_jdbc_drivers, \
   get_jdbc_driver_path, ensure_jdbc_driver_is_installed, LINUX_DBMS_KEYS_LIST, default_connectors_map
 from ambari_server.properties import Properties
 from ambari_server.serverConfiguration import configDefaults, get_resources_location, update_properties, \
-  check_database_name_property, get_ambari_properties, get_ambari_version, \
+  check_database_name_property, get_ambari_properties, get_ambari_version, get_JAVA_HOME, \
   get_java_exe_path, get_stack_location, parse_properties_file, read_ambari_user, update_ambari_properties, \
   update_database_name_property, get_admin_views_dir, get_views_dir, get_views_jars, \
   AMBARI_PROPERTIES_FILE, CLIENT_SECURITY, RESOURCES_DIR_PROPERTY, GPL_LICENSE_ACCEPTED_PROPERTY, \
@@ -49,36 +49,51 @@ from ambari_server.utils import compare_versions, get_json_url_from_repo_file, u
 from ambari_server.serverUtils import is_server_runing, get_ambari_server_api_base, get_ssl_context
 from ambari_server.userInput import get_validated_string_input, get_prompt_default, read_password, get_YN_input
 from ambari_server.serverClassPath import ServerClassPath
+from ambari_server.serverSetup import JDKSetup, getJDKVersion
 from ambari_server.setupMpacks import replay_mpack_logs
 from ambari_commons.logging_utils import get_debug_mode, set_debug_mode_from_options, get_silent
 
 logger = logging.getLogger(__name__)
-
-JDK_VERSION = get_ambari_properties().get_property('java.home')
 # constants
 STACK_NAME_VER_SEP = "-"
 
-SCHEMA_UPGRADE_HELPER_CMD = "{0} -cp {1} " + \
-                            "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
-                            " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
+# set defaults values because on installation we don't have access to JDK properties
+SCHEMA_UPGRADE_HELPER_CMD = "{0} " \
+                          "--add-opens java.base/java.lang=ALL-UNNAMED " \
+                          "-cp {1} " + \
+                          "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                          " > " + configDefaults.SERVER_UPGRADE_LOG_FILE + " 2>&1"
+SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
+                        "-server -XX:NewRatio=2 " \
+                        " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+                        "server=y,suspend={2} " \
+                        "--add-opens java.base/java.lang=ALL-UNNAMED " \
+                        "-cp {1} " + \
+                        "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                        " > " + configDefaults.SERVER_UPGRADE_LOG_FILE + " 2>&1"
 
-if JDK_VERSION == 8:
-  SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
-                          "-server -XX:NewRatio=2 " \
-                          "-XX:+UseConcMarkSweepGC " + \
-                          " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
-                          "server=y,suspend={2} " \
-                          "-cp {1} " + \
-                          "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
-                          " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
-else:
-  SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
-                          "-server -XX:NewRatio=2 " \
-                          " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
-                          "server=y,suspend={2} " \
-                          "-cp {1} " + \
-                          "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
-                          " > " + configDefaults.SERVER_OUT_FILE + " 2>&1"
+
+if get_JAVA_HOME() is not None:
+  JDK_VERSION = getJDKVersion(get_JAVA_HOME(), JDKSetup().JAVA_BIN)
+
+  try:
+    JDK_VERSION = int(JDK_VERSION)
+  except (ValueError, TypeError):
+    print_error_msg("Invalid JDK version specified in properties. Please ensure it is a valid integer.")
+    sys.exit(1)
+
+  if JDK_VERSION <= 8:
+    SCHEMA_UPGRADE_HELPER_CMD = "{0} -cp {1} " + \
+                              "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                              " > " + configDefaults.SERVER_UPGRADE_LOG_FILE + " 2>&1"
+    SCHEMA_UPGRADE_HELPER_CMD_DEBUG = "{0} " \
+                            "-server -XX:NewRatio=2 " \
+                            "-XX:+UseConcMarkSweepGC " + \
+                            " -Xdebug -Xrunjdwp:transport=dt_socket,address=5005," \
+                            "server=y,suspend={2} " \
+                            "-cp {1} " + \
+                            "org.apache.ambari.server.upgrade.SchemaUpgradeHelper" + \
+                            " > " + configDefaults.SERVER_UPGRADE_LOG_FILE + " 2>&1"
 
 SCHEMA_UPGRADE_DEBUG = False
 
@@ -168,8 +183,10 @@ def run_schema_upgrade(args):
   current_user = ensure_can_start_under_current_user(ambari_user)
   environ = generate_env(args, ambari_user, current_user)
 
-  (retcode, stdout, stderr) = run_os_command(command, env=environ)
-  if stdout == "" :
+  stdoutfile = os.path.join(configDefaults.SERVER_UPGRADE_LOG_FILE)
+  stderrfile = os.path.join(configDefaults.SERVER_UPGRADE_ERR_FILE)
+  (retcode, stdout, stderr) = run_os_command(command, env=environ, stdoutfile=stdoutfile, stderrfile=stderrfile)
+  if stdout == None :
     stdout = '{}' # if there is no output, return empty json
   upgrade_response = json.loads(stdout)
 
