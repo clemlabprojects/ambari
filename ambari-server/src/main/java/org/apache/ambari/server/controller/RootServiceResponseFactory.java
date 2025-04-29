@@ -159,6 +159,10 @@ public class RootServiceResponseFactory extends
       case AMBARI_SERVER:
         response = configs.getAmbariProperties();
         response.put(JDK_LOCATION, managementController.getJdkResourceUrl());
+        // Log all system properties for debugging
+        System.getProperties().forEach((key, value) -> {
+          System.out.println("RootServiceResponseFactory: DEBUG: System Property: " + key + " = " + value);
+        });
         response.put("java.version", System.getProperty("java.specification.version"));
         propertiesToHideInResponse = configs.getPropertiesToBlackList();
         for(String key : propertiesToHideInResponse) {

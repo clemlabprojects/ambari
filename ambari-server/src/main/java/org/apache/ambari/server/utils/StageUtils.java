@@ -620,6 +620,7 @@ public class StageUtils {
     LOG.debug("Setting JDK_NAME to: {}", configuration.getJDKName());
     LOG.debug("Setting JCE_NAME to: {}", configuration.getJCEName());
     LOG.debug("Setting JAVA_VERSION to: {}", configuration.getJavaVersion());
+    LOG.debug("Reading stack STACK_JAVA_HOME to: {}", configuration.getStackJavaVersion());
     hostLevelParams.put(JAVA_HOME, configuration.getJavaHome());
     hostLevelParams.put(JDK_NAME, configuration.getJDKName());
     hostLevelParams.put(JCE_NAME, configuration.getJCEName());

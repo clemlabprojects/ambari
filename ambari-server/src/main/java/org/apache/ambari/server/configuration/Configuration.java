@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.server.configuration;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -46,6 +47,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.ambari.annotations.ClusterScale;
@@ -759,6 +761,16 @@ public class Configuration {
       examples = { "/usr/jdk64/jdk1.8.0_112" })
   public static final ConfigurationProperty<String> JAVA_HOME = new ConfigurationProperty<>(
       "java.home", null);
+
+  /**
+   * The location of the JDK on the Ambari Agent hosts.
+   */
+  @Markdown(
+      description = "The Java version of the JDK on the Ambari Agent hosts. If stack.java.version exists, that is only used by Ambari Server (or you can find that as ambari_java_version in the commandParams on the agent side)",
+      examples = { "1.8" })
+  public static final ConfigurationProperty<String> JAVA_VERSION = new ConfigurationProperty<>(
+      "java.version", null);
+
 
   /**
    * The location of the JDK on the Ambari Agent hosts.
@@ -3263,6 +3275,58 @@ public class Configuration {
     return jsonObject;
   }
 
+  private Integer getJavaVersionFromJDK() {
+    LOG.debug("Default agent configs - setting JAVA_HOME as : {}", getProperty(JAVA_HOME));
+    String javaHome = getProperty(JAVA_HOME);
+    Integer javaVersion = -1;
+    String versionStr = System.getProperty("java.version");
+
+    if (javaHome != null && !javaHome.isEmpty()) {
+      try {
+        Process process = new ProcessBuilder(javaHome + "/bin/java", "-version").start();
+        StringBuilder builder = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+          // java --version sends output to errorStream instead of inputStream
+          String line = null;
+          while ((line = reader.readLine()) != null) {
+            builder.append(line + "\n");
+          }
+          LOG.debug("java -version output is : {}", builder.toString());
+          String versionOutput = builder.toString();
+          Pattern pattern = Pattern.compile("(\\d+\\.\\d+(\\.\\d+)?(_\\d+)?)( LTS)?");
+          Matcher matcher = pattern.matcher(versionOutput);
+          LOG.debug("Matcher did found : {}", matcher.find());
+          if (matcher.find()) {
+            String version = matcher.group(1);
+            // Extract main version number - first digit for versions < 9 and 2 first digits for versions >= 9
+            LOG.debug("Found version for java from binary as : {}", version);
+            versionStr = version;
+          } else {
+            LOG.warn("Unable to determine Java version from output: {}", versionOutput);
+          }
+        }
+      } catch (IOException e) {
+        LOG.warn("Unable to determine Java version using 'java --version': {}", e.getMessage());
+      }
+    }
+    if (versionStr.startsWith("1.6")) {
+      javaVersion =  6;
+    } else if (versionStr.startsWith("1.7")) {
+      javaVersion =   7;
+    } else if (versionStr.startsWith("1.8")) {
+      javaVersion =   8;
+    } else if (versionStr.startsWith("11")) {
+      javaVersion =   11;
+    } else if (versionStr.startsWith("17")) {
+      javaVersion =   17;
+    } else if (versionStr.startsWith("21")) {
+      javaVersion =   21;
+    } else { // Some unsupported java version
+      javaVersion =   -1;
+    }
+    return javaVersion;
+  }
+
   /**
    * Get the views directory.
    *
@@ -3306,22 +3370,7 @@ public class Configuration {
    * If java version is not supported, returns -1
    */
   public int getJavaVersion() {
-    String versionStr = System.getProperty("java.version");
-    if (versionStr.startsWith("1.6")) {
-      return 6;
-    } else if (versionStr.startsWith("1.7")) {
-      return 7;
-    } else if (versionStr.startsWith("1.8")) {
-      return 8;
-    } else if (versionStr.startsWith("11")) {
-      return 11;
-    } else if (versionStr.startsWith("17")) {
-      return 17;
-    } else if (versionStr.startsWith("21")) {
-      return 21;
-    }else { // Some unsupported java version
-      return -1;
-    }
+    return getJavaVersionFromJDK();
   }
 
   public File getBootStrapDir() {

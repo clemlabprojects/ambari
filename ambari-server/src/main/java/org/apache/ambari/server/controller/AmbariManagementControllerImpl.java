@@ -5894,6 +5894,17 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
 
   public TreeMap<String, String> getMetadataAmbariLevelParams() {
     TreeMap<String, String> clusterLevelParams = new TreeMap<>();
+    
+    LOG.debug("Setting JDK_LOCATION: {}", getJdkResourceUrl());
+    LOG.debug("Setting JAVA_HOME: {}", getJavaHome());
+    LOG.debug("Setting AMBARI_JAVA_HOME: {}", getAmbariJavaHome());
+    LOG.debug("Setting JAVA_VERSION: {}", configs.getJavaVersion());
+    LOG.debug("Setting JDK_NAME: {}", getJDKName());
+    LOG.debug("Setting JCE_NAME: {}", getJCEName());
+    LOG.debug("Setting DB_NAME: {}", getServerDB());
+    LOG.debug("Setting MYSQL_JDBC_URL: {}", getMysqljdbcUrl());
+    LOG.debug("Setting ORACLE_JDBC_URL: {}", getOjdbcUrl());
+    LOG.debug("Setting DB_DRIVER_FILENAME: {}", configs.getMySQLJarName());
     clusterLevelParams.put(JDK_LOCATION, getJdkResourceUrl());
     clusterLevelParams.put(JAVA_HOME, getJavaHome());
     clusterLevelParams.put(AMBARI_JAVA_HOME, getAmbariJavaHome());
