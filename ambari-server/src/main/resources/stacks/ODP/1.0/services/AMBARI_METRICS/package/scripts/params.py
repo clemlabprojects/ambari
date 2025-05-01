@@ -213,6 +213,7 @@ ambari_java_home = default("/ambariLevelParams/ambari_java_home", None)
 # not supporting 32 bit jdk.
 java64_home = ambari_java_home if ambari_java_home is not None else java_home
 ambari_java_version = default("/ambariLevelParams/ambari_java_version", None)
+# starts ams with the same java version as ambari server as it is built with the same jdk
 if ambari_java_version:
   java_version = expect("/ambariLevelParams/ambari_java_version", int)
 else :

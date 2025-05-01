@@ -782,6 +782,15 @@ public class Configuration {
           "ambari.java.home", null);
 
   /**
+   * The Version of the Ambari JDK on the Ambari Agent hosts.
+   */
+  @Markdown(
+          description = "The location of the JDK on the Ambari Agent hosts. This is only used by Ambari Server and Ambari Agent",
+          examples = { "17" })
+  public static final ConfigurationProperty<String> AMBARI_JAVA_VERSION = new ConfigurationProperty<>(
+          "ambari.java.version", null);
+
+  /**
    * The name of the JDK installation binary.
    */
   @Markdown(
@@ -3327,6 +3336,57 @@ public class Configuration {
     return javaVersion;
   }
 
+  private Integer getAmbariJavaVersionFromJDK() {
+    LOG.debug("Default agent configs - setting AMBARI_JAVA_HOME as : {}", getProperty(AMBARI_JAVA_HOME));
+    String javaHome = getProperty(AMBARI_JAVA_HOME);
+    Integer javaVersion = -1;
+    String versionStr = System.getProperty("ambari.java.version");
+
+    if (javaHome != null && !javaHome.isEmpty()) {
+      try {
+        Process process = new ProcessBuilder(javaHome + "/bin/java", "-version").start();
+        StringBuilder builder = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+          // java --version sends output to errorStream instead of inputStream
+          String line = null;
+          while ((line = reader.readLine()) != null) {
+            builder.append(line + "\n");
+          }
+          LOG.debug("ambari.java -version output is : {}", builder.toString());
+          String versionOutput = builder.toString();
+          Pattern pattern = Pattern.compile("(\\d+\\.\\d+(\\.\\d+)?(_\\d+)?)( LTS)?");
+          Matcher matcher = pattern.matcher(versionOutput);
+          LOG.debug("ambari.java. Matcher did found : {}", matcher.find());
+          if (matcher.find()) {
+            String version = matcher.group(1);
+            // Extract main version number - first digit for versions < 9 and 2 first digits for versions >= 9
+            LOG.debug("Found version for ambari.java from binary as : {}", version);
+            versionStr = version;
+          } else {
+            LOG.warn("Unable to determine Java version from output: {}", versionOutput);
+          }
+        }
+      } catch (IOException e) {
+        LOG.warn("Unable to determine Java version using 'java --version': {}", e.getMessage());
+      }
+    }
+    if (versionStr.startsWith("1.6")) {
+      javaVersion =  6;
+    } else if (versionStr.startsWith("1.7")) {
+      javaVersion =   7;
+    } else if (versionStr.startsWith("1.8")) {
+      javaVersion =   8;
+    } else if (versionStr.startsWith("11")) {
+      javaVersion =   11;
+    } else if (versionStr.startsWith("17")) {
+      javaVersion =   17;
+    } else if (versionStr.startsWith("21")) {
+      javaVersion =   21;
+    } else { // Some unsupported java version
+      javaVersion =   -1;
+    }
+    return javaVersion;
+  }
   /**
    * Get the views directory.
    *
@@ -4093,6 +4153,10 @@ public class Configuration {
 
   public String getAmbariJavaHome() {
     return getProperty(AMBARI_JAVA_HOME);
+  }
+
+  public int getAmbariJavaVersion() {
+    return getAmbariJavaVersionFromJDK();
   }
 
   public String getJDKName() {

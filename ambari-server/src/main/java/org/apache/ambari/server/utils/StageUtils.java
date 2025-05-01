@@ -600,7 +600,7 @@ public class StageUtils {
   public static void useAmbariJdkInCommandParams(Map<String, String> commandParams, Configuration configuration) {
     if (StringUtils.isNotEmpty(configuration.getJavaHome()) && !configuration.getJavaHome().equals(configuration.getStackJavaHome())) {
       commandParams.put(AMBARI_JAVA_HOME, configuration.getAmbariJavaHome());
-      commandParams.put(AMBARI_JAVA_VERSION, String.valueOf(configuration.getJavaVersion()));
+      commandParams.put(AMBARI_JAVA_VERSION, String.valueOf(configuration.getAmbariJavaVersion()));
       if (StringUtils.isNotEmpty(configuration.getJDKName())) { // if not custom jdk
         commandParams.put(AMBARI_JDK_NAME, configuration.getJDKName());
       }

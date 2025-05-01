@@ -712,6 +712,12 @@ public interface AmbariManagementController {
   String getAmbariJavaHome();
 
   /**
+  * Getter for the java version, read or computed from ambari.properties
+  */
+  int getAmbariJavaVersion();
+
+
+  /**
    * Getter for the jdk name, stored in ambari.properties
    */
   String getJDKName();
