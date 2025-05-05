@@ -106,9 +106,9 @@ class HueGatewayDefault(HueGateway):
             environment={'HUE_CONF_DIR': params.hue_conf_dir}
     )
     command = "chown {0}:{1} {2}/.secret".format(params.hue_user, params.hue_group, params.hue_conf_dir)
-    Execute(command)
-    command = "chmod 0400 {0}/.secret".format(params.hue_conf_dir)
-    Execute(command)
+    Execute(command, user=params.hue_user)
+    command = "chmod 0660 {0}/.secret".format(params.hue_conf_dir)
+    Execute(command, user=params.hue_user)
 
     ## encrypt database password
     cmd = format('{params.hue_home_dir}/bin/encrypt.sh encrypt db-secret-password {hue_db_password!p}')
@@ -117,9 +117,9 @@ class HueGatewayDefault(HueGateway):
             environment={'HUE_CONF_DIR': params.hue_conf_dir}
     )
     command = "chown {0}:{1} {2}/db-secret-password".format(params.hue_user, params.hue_group, params.hue_conf_dir)
-    Execute(command)
-    command = "chmod 0600 {0}/db-secret-password".format(params.hue_conf_dir)
-    Execute(command)
+    Execute(command, user=params.hue_user)
+    command = "chmod 0660 {0}/db-secret-password".format(params.hue_conf_dir)
+    Execute(command, user=params.hue_user)
     
     if params.ldap_auth:
       ## encrypt ldap password
@@ -129,9 +129,9 @@ class HueGatewayDefault(HueGateway):
               environment={'HUE_CONF_DIR': params.hue_conf_dir}
       )
       command = "chown {0}:{1} {2}/ldap-secret-password".format(params.hue_user, params.hue_group, params.hue_conf_dir)
-      Execute(command)
-      command = "chmod 0600 {0}/ldap-secret-password".format(params.hue_conf_dir)
-      Execute(command)
+      Execute(command, user=params.hue_user)
+      command = "chmod 0660 {0}/ldap-secret-password".format(params.hue_conf_dir)
+      Execute(command, user=params.hue_user)
 
     ## encrypt Cookie password
     cmd = format('{params.hue_home_dir}/bin/encrypt.sh encrypt cookie-secret-password {hue_cookie_password!p}')
@@ -140,9 +140,9 @@ class HueGatewayDefault(HueGateway):
             environment={'HUE_CONF_DIR': params.hue_conf_dir}
     )
     command = "chown {0}:{1} {2}/cookie-secret-password".format(params.hue_user, params.hue_group, params.hue_conf_dir)
-    Execute(command)
+    Execute(command, user=params.hue_user)
     command = "chmod 0600 {0}/cookie-secret-password".format(params.hue_conf_dir)
-    Execute(command)
+    Execute(command, user=params.hue_user)
 
 
     ## Run HUE DB migration script
@@ -153,7 +153,7 @@ class HueGatewayDefault(HueGateway):
     first_time = False
     ## Create the default admin password ## need to change password before creating user
     create_cmd = format('{params.hue_home_dir}/build/env/bin/hue createsuperuser --username {params.hue_admin_username}  --email {params.hue_admin_username}@hadoop.com --noinput')
-    change_password_cmd = format('export HUE_HOME_DIR={params.hue_home_dir}; {params.hue_home_dir}/bin/changepassword.sh {params.hue_admin_username} {params.hue_admin_password!p}')
+    change_password_cmd = as_user(format('export HUE_HOME_DIR={params.hue_home_dir}; {params.hue_home_dir}/bin/changepassword.sh {params.hue_admin_username} {params.hue_admin_password!p}'), user=params.hue_user)
     try:
       Logger.info(format('Changing password for Hue {params.hue_admin_username} super admin user'))
       code, output = shell.call(change_password_cmd, timeout=20)
