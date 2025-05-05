@@ -172,8 +172,8 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
 
       # check if authorization provider already added
       topologyContent = services["configurations"]["topology"]["properties"]["content"]
-      parser = etree.XMLParser(recover=True)
-      root = etree.fromstring(topologyContent, parser=parser)
+      import xml.etree.ElementTree as ET
+      root = ET.fromstring(topologyContent)
       authorizationProviderExists = False
       authNameChanged = False
       if root is not None:
