@@ -195,23 +195,22 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     
     ## Get HDFS Default Scheme
     if 'flink-conf' in services["configurations"]:
+      isHDFS = False
+      defaultFs = "file:///"
       defaultScheme = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
       completedJobs = services["configurations"]['flink-conf']["properties"]["jobmanager.archive.fs.dir"]
-      defaultFs = "file:///"
-    if "core-site" in services["configurations"] and \
-      "fs.defaultFS" in services["configurations"]["core-site"]["properties"]:
-      defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
-    isHDFS = completedJobs.startswith("hdfs:")
-    if not isHDFS:
-      completedJobs = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
-    completedJobsReplaced = re.sub("^hdfs:\/\/localhost([:\d]*)", defaultFs, completedJobs, count=1)
-    putClusterProperties("fs.default-scheme", defaultFs)
-    putClusterProperties("jobmanager.archive.fs.dir", completedJobsReplaced)
+      if "core-site" in services["configurations"] and \
+        "fs.defaultFS" in services["configurations"]["core-site"]["properties"]:
+        defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
+      if not completedJobs.startswith("hdfs:"):
+        completedJobs = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
+      completedJobsReplaced = re.sub("^hdfs:\/\/localhost([:\d]*)", defaultFs, completedJobs, count=1)
+      putClusterProperties("fs.default-scheme", defaultFs)
+      putClusterProperties("jobmanager.archive.fs.dir", completedJobsReplaced)
 
-    ## configure HighAvailability with Zookeeper
-    zk_host_port = self.getZKHostPortString(services)
-    putClusterProperties("high-availability.zookeeper.quorum", zk_host_port)
-
+      ## configure HighAvailability with Zookeeper
+      zk_host_port = self.getZKHostPortString(services)
+      putClusterProperties("high-availability.zookeeper.quorum", zk_host_port)
 
     self.putProperty(configurations, "flink-conf", services)
 
