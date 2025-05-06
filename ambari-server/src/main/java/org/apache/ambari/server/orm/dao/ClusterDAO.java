@@ -19,6 +19,7 @@
 package org.apache.ambari.server.orm.dao;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import javax.persistence.EntityManager;
@@ -228,7 +229,7 @@ public class ClusterDAO {
       .createNamedQuery("ClusterConfigEntity.findLatestConfigsByStackWithTypes", ClusterConfigEntity.class)
       .setParameter("clusterId", clusterId)
       .setParameter("stack", stackEntity)
-      .setParameter("types", configTypes));
+      .setParameter("types", configTypes.isEmpty() ? Collections.singleton("__never__") : configTypes)); // __never__ is a dummy value to avoid empty IN clause with jdk 17 strict mode
   }
 
   /**
