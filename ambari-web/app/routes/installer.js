@@ -404,8 +404,8 @@ module.exports = Em.Route.extend(App.RouterRedirections, {
       (function() {
         var script = document.createElement('script');
         script.type = 'text/javascript';
-        script.text=`setTimeout(()=>{const tooltipTriggerLis2 = document.querySelectorAll('[data-bs-toggle="tooltip"]')
-        console.log("List is",tooltipTriggerList)
+        script.text=`setTimeout(()=>{const tooltipTriggerList2 = document.querySelectorAll('[data-bs-toggle="tooltip"]')
+        console.log("List is",tooltipTriggerList2)
         const tooltipList2 = [...tooltipTriggerList2].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl))},3000)`
         document.getElementsByTagName('head')[0].appendChild(script);
         })();

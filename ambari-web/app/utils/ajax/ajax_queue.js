@@ -144,35 +144,62 @@ App.ajaxQueue = Em.Object.extend({
    */
   runNextRequest: function() {
     var queue = this.get('queue');
+
     if (queue.length === 0) {
       this.finishedCallback();
       return;
     }
-    var r = App.ajax.send(queue.shift());
+
+    var request = queue.shift();
+    var r = App.ajax.send(request);
     this.propertyDidChange('queue');
-    if (r) {
-      r.then(this._complete.bind(this));
-    }
-    else {
+
+    if (r && typeof r.done === 'function' && typeof r.fail === 'function') {
+      // jQuery Deferred-style (classic $.ajax)
+      r.done((data, textStatus, jqXHR) => {
+        this._complete(jqXHR);  // jqXHR gives access to .status
+      }).fail((jqXHR) => {
+        this._complete(jqXHR);  // still call _complete so it knows about failure
+      });
+    } else if (r && typeof r.then === 'function') {
+      // Generic Promise (possibly only resolves with `data`)
+      r.then(() => {
+        // Assume success
+        this.runNextRequest();
+      }).catch(() => {
+        if (this.get('abortOnError')) {
+          this.clear();
+        } else {
+          this.runNextRequest();
+        }
+      });
+    } else {
+      // Not a Promise or jqXHR — fail-safe fallback
       if (this.get('abortOnError')) {
         this.clear();
-      }
-      else {
+      } else {
         this.runNextRequest();
       }
     }
   },
 
   _complete: function(xhr) {
-    if(xhr.status>=200 && xhr.status <= 299) {
-      this.runNextRequest();
-    }
-    else {
+    if (xhr.status >= 200 && xhr.status <= 299) {
+
+      if (this.get('queue.length') === 0) {
+        this.finishedCallback(); // ✅ Trigger callback when last request completed
+      } else {
+        this.runNextRequest();
+      }
+    } else {
       if (this.get('abortOnError')) {
         this.clear();
-      }
-      else {
-        this.runNextRequest();
+      } else {
+        if (this.get('queue.length') === 0) {
+          this.finishedCallback(); // ✅ Still call on failure if continuing
+        } else {
+          this.runNextRequest();
+        }
       }
     }
   },
