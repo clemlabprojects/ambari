@@ -66,7 +66,8 @@ def setup_credential_file(java_home, hadoop_bin_override,
       exists_cmd = format('{hadoop_bin} credential list -provider {credential_path}')
       code, output = shell.call(exists_cmd, timeout=5)
       if code == 0:
-        if format('{password.alias}') in output:
+        aliases = output.splitlines()[1:]  # Skip the first line which is the header
+        if format('{password.alias}') in aliases:
           Logger.info("Entry \'{password.alias}\' exists in credential file \'{credential_path}\'")
           Logger.info("checking if it matches")
           check_match_cmd = '{0} credential check {1} -value \'{2}\' -provider {3}'.format(hadoop_bin, password['alias'], PasswordString(password['value']), credential_path)
