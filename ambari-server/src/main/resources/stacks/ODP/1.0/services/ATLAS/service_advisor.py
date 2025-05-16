@@ -497,6 +497,7 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
     putAtlasApplicationProperty = self.putProperty(configurations, "application-properties", services)
 
     atlasServiceVersion = [service['StackServices']['service_version'] for service in services["services"] if service['StackServices']['service_name'] == 'ATLAS'][0]
+    security_enabled = AtlasServiceAdvisor.isKerberosEnabled(services, configurations)
     if atlasServiceVersion == '2.4.0':
       if security_enabled:
         putAtlasApplicationProperty('atlas.graph.index.search.solr.kerberos-enabled', "true")
