@@ -504,7 +504,7 @@ hive_server_hosts = default("/clusterHostInfo/hive_server_hosts", None)
 hms_server_hosts = default("/clusterHostInfo/hive_metastore_hosts", None)
 om_server_hosts = default("/clusterHostInfo/ozone_manager_hosts", None)
 kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
-kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
+atlas_server_hosts = default("/clusterHostInfo/atlas_server_hosts", None)
 
 policy_users_to_create = []
 ## ODP Hadoop based Policy user
@@ -530,6 +530,9 @@ if om_server_hosts != None:
 if kafka_server_hosts != None:
   if len(kafka_server_hosts) > 0 :
     policy_users_to_create.append('kafka')
+if atlas_server_hosts != None:
+  if len(atlas_server_hosts) > 0 :
+    policy_users_to_create.append('atlas')
 
 if version_for_stack_feature_checks.startswith('1.2.2.0'):
   ranger_compatibility_python2_python3 = True
