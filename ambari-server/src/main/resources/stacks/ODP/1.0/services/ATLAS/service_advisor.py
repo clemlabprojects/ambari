@@ -129,6 +129,7 @@ class AtlasServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendAtlasConfigurationsFromHDP25(configurations, clusterData, services, hosts)
     recommender.recommendAtlasConfigurationsFromHDP26(configurations, clusterData, services, hosts)
     recommender.recommendAtlasConfigurationsFromODP12(configurations, clusterData, services, hosts)
+    recommender.recommendAtlasConfigurationsFromODP13(configurations, clusterData, services, hosts)
     recommender.recommendConfigurationsForSSO(configurations, clusterData, services, hosts)
 
 
@@ -490,6 +491,15 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
 
       putAtlasApplicationProperty('atlas.kafka.bootstrap.servers', kafka_bootstrap_servers)
       putAtlasApplicationProperty('atlas.kafka.security.protocol', atlas_kafka_security_protocol)
+
+  def recommendAtlasConfigurationsFromODP13(self, configurations, clusterData, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    putAtlasApplicationProperty = self.putProperty(configurations, "application-properties", services)
+
+    atlasServiceVersion = [service['StackServices']['service_version'] for service in services["services"] if service['StackServices']['service_name'] == 'ATLAS'][0]
+    if atlasServiceVersion == '2.4.0':
+      if security_enabled:
+        putAtlasApplicationProperty('atlas.graph.index.search.solr.kerberos-enabled', "true")
 
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)
