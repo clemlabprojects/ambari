@@ -509,7 +509,7 @@ class RangeradminV2:
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
-          if response_code == 201:
+          if response_code == 201 or response_code == 204:
             Logger.info(format('{policy_user} user creation successful.'))
             return response_code
           else:
