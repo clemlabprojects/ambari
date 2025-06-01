@@ -489,6 +489,16 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
 
       kafka_bootstrap_servers = ",".join(kafka_host_arr)
 
+      if atlas_kafka_security_protocol == "SASL_SSL":
+        if 'truststore.file' in services['configurations']['application-properties']['properties'] and
+           'truststore.password' in services['configurations']['application-properties']['properties']:
+          putAtlasApplicationProperty('atlas.kafka.ssl.truststore.location',
+                                      services['configurations']['application-properties']['properties']['truststore.file'])
+          putAtlasApplicationProperty('atlas.kafka.ssl.truststore.password',
+                                      services['configurations']['application-properties']['properties']['truststore.password'])
+        else:
+          atlas_kafka_security_protocol = "SASL_PLAINTEXT"
+
       putAtlasApplicationProperty('atlas.kafka.bootstrap.servers', kafka_bootstrap_servers)
       putAtlasApplicationProperty('atlas.kafka.security.protocol', atlas_kafka_security_protocol)
 

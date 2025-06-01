@@ -61,4 +61,20 @@
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>
+  <property>
+    <name>atlas.hook.spool.enabled</name>
+    <value>true</value>
+    <description/>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>aatlas.hook.spool.dir</name>
+    <value>/var/log/atlas/kafka_notification_spool</value>
+    <description/>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  
 </configuration>

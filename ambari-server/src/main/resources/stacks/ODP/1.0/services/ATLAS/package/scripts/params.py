@@ -791,5 +791,64 @@ if ranger_kafka_plugin_enabled:
       "delegateAdmin": "false"
     }]
   })
-
+  ranger_atlas_kafka_policies.append({
+    "isEnabled": "true",
+    "service": cluster_name + "_kafka",
+    "name": "Atlas Hive Hook Kafka Cluster ACL",
+    "resources": {
+      "cluster": {
+        "values": [
+          "kafka-cluster"
+        ],
+        "isExcludes": False,
+        "isRecursive": False
+      }
+    },
+    "policyItems": [
+      {
+        "accesses": [
+          {
+            "type": "describe_configs",
+            "isAllowed": True
+          },
+          {
+            "type": "alter_configs",
+            "isAllowed": True
+          },
+          {
+            "type": "idempotent_write",
+            "isAllowed": True
+          },
+          {
+            "type": "create",
+            "isAllowed": True
+          },
+          {
+            "type": "configure",
+            "isAllowed": True
+          },
+          {
+            "type": "describe",
+            "isAllowed": True
+          },
+          {
+            "type": "kafka_admin",
+            "isAllowed": True
+          },
+          {
+            "type": "cluster_action",
+            "isAllowed": True
+          },
+          {
+            "type": "alter",
+            "isAllowed": True
+          }
+        ],
+        "users": [
+          hive_user, metadata_user
+        ],
+        "delegateAdmin": False
+      }
+    ],
+  })
 kafka_client_tools_log_level = default("/configurations/atlas-env/atlas.kafka.client.log.level", "WARN")

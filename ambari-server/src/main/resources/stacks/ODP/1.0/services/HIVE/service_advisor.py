@@ -598,6 +598,27 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
         putHiveAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "delete", "true")
         putHiveAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.option.useTicketCache", "delete", "true")
 
+  def recommendHiveConfigurationsFromODP13(self, configurations, clusterData, services, hosts):
+    hiveSiteProperties = self.getSiteProperties(services["configurations"], "hive-site")
+    hiveEnvProperties = self.getSiteProperties(services["configurations"], "hive-env")
+
+    putHiveEnvProperty = self.putProperty(configurations, "hive-env", services)
+    putHiveSiteProperty = self.putProperty(configurations, "hive-site", services)
+    putHiveProperty = self.putProperty(configurations, "hive-site", services)
+    putHiveServerProperty = self.putProperty(configurations, "hiveserver2-site", services)
+    putHiveInteractiveEnvProperty = self.putProperty(configurations, "hive-interactive-env", services)
+    putHiveInteractiveSiteProperty = self.putProperty(configurations, self.HIVE_INTERACTIVE_SITE, services)
+    putRangerHivePluginProperty = self.putProperty(configurations, "ranger-hive-plugin-properties", services)
+    putHiveAtlasHookProperty = self.putProperty(configurations, "hive-atlas-application.properties", services)
+
+    putHiveSitePropertyAttribute = self.putPropertyAttribute(configurations, "hive-site")
+    putHiveEnvPropertyAttribute = self.putPropertyAttribute(configurations, "hive-env")
+    putHiveServerPropertyAttribute = self.putPropertyAttribute(configurations, "hiveserver2-site")
+    putHiveInteractiveEnvPropertyAttribute = self.putPropertyAttribute(configurations, "hive-interactive-env")
+    putHiveInteractiveSitePropertyAttribute = self.putPropertyAttribute(configurations, "hive-interactive-site")
+    putHiveAtlasHookPropertyAttribute = self.putPropertyAttribute(configurations,"hive-atlas-application.properties")
+
+    putHiveAtlasHookProperty()
   def setLlapDaemonQueuePropAttributes(self, services, configurations):
     """
     Checks and sets the 'Hive Server Interactive' 'hive.llap.daemon.queue.name' config Property Attributes.  Takes into
