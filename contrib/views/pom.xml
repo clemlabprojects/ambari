@@ -32,7 +32,7 @@
     <ambari.version>2.7.11.0.0</ambari.version>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
     <odp.release.stack>1.2.2.0</odp.release.stack>
-    <odp.release.number>138</odp.release.number>
+    <odp.release.number>155</odp.release.number>
     <!-- <hadoop.version>3.1.0.1.2.1.0-${odp.release.number}</hadoop.version> -->
     <hadoop.version>3.1.0.${odp.release.stack}-${odp.release.number}</hadoop.version>
     <views.jars.dir>views-jars</views.jars.dir>
