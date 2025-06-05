@@ -63,11 +63,11 @@ class HiveMetastore(Script):
 
     create_hive_metastore_schema() # before starting metastore create info schema
 
-    hive_service('metastore', action='start', upgrade_type=upgrade_type)
-
     # below function call is used for cluster depolyed in cloud env to create ranger hive service in ranger admin.
     setup_ranger_hive_metastore_service()
     setup_ranger_hive_metastore_plugin(upgrade_type=upgrade_type)
+
+    hive_service('metastore', action='start', upgrade_type=upgrade_type)
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -171,16 +171,16 @@ class HiveMetastore(Script):
     # the conf.server directory changed locations between stack versions
     # since the configurations have not been written out yet during an upgrade
     # we need to choose the original legacy location
-    schematool_hive_server_conf_dir = params.hive_server_conf_dir
+    schematool_hive_metastore_conf_dir = params.hive_server_conf_dir
 
     upgrade_from_version = upgrade_summary.get_source_version("HIVE",
       default_version = params.version_for_stack_feature_checks)
 
-    if not(check_stack_feature(StackFeature.CONFIG_VERSIONING, upgrade_from_version)):
-      schematool_hive_server_conf_dir = LEGACY_HIVE_SERVER_CONF
+    if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, upgrade_from_version):
+      schematool_hive_metastore_conf_dir = params.hive_metastore_conf_dir
 
     env_dict = {
-      'HIVE_CONF_DIR': schematool_hive_server_conf_dir
+      'HIVE_CONF_DIR': schematool_hive_metastore_conf_dir
     }
 
     command = format("{binary} -dbType {hive_metastore_db_type} -upgradeSchema")

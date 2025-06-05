@@ -606,6 +606,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     putHiveSiteProperty = self.putProperty(configurations, "hive-site", services)
     putHiveProperty = self.putProperty(configurations, "hive-site", services)
     putHiveServerProperty = self.putProperty(configurations, "hiveserver2-site", services)
+    putHiveMetastoreProperty = self.putProperty(configurations, "hivemetastore-site", services)
     putHiveInteractiveEnvProperty = self.putProperty(configurations, "hive-interactive-env", services)
     putHiveInteractiveSiteProperty = self.putProperty(configurations, self.HIVE_INTERACTIVE_SITE, services)
     putRangerHivePluginProperty = self.putProperty(configurations, "ranger-hive-plugin-properties", services)
@@ -618,7 +619,11 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     putHiveInteractiveSitePropertyAttribute = self.putPropertyAttribute(configurations, "hive-interactive-site")
     putHiveAtlasHookPropertyAttribute = self.putPropertyAttribute(configurations,"hive-atlas-application.properties")
 
+    if ("RANGER" in servicesList):
+      putHiveMetastoreProperty.set("hive.metastore.pre.event.listeners", "org.apache.hadoop.hive.ql.security.authorization.plugin.metastore.HiveMetaStoreAuthorizer")
+      putHiveMetastoreProperty.set("hive.metastore.filter.hook", "org.apache.hadoop.hive.ql.security.authorization.plugin.metastore.HiveMetaStoreAuthorizer")
     putHiveAtlasHookProperty()
+    
   def setLlapDaemonQueuePropAttributes(self, services, configurations):
     """
     Checks and sets the 'Hive Server Interactive' 'hive.llap.daemon.queue.name' config Property Attributes.  Takes into

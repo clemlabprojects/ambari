@@ -126,6 +126,29 @@ def hive(name=None):
 def setup_hiveserver2():
   import params
 
+  if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
+    # if conf directories are separated, we need to fill hiveserver2 conf dir with atlas and env configs
+    # Generate atlas-application.properties.xml file
+    if params.enable_atlas_hook:
+      atlas_hook_filepath = os.path.join(params.hive_server_conf_dir, params.atlas_hook_filename)
+      setup_atlas_hook(SERVICE.HIVE, params.hive_atlas_application_properties, atlas_hook_filepath, params.hive_user, params.user_group)
+
+    File(format("{params.hive_server_conf_dir}/hive-env.sh"),
+        owner=params.hive_user,
+        group=params.user_group,
+        content=InlineTemplate(params.hive_env_sh_template),
+        mode=0o755
+    )
+    hiveserver2_site = get_config("hiveserver2-site")
+    hive_config = hive_site_config.update(hiveserver2_site_config)
+    XmlConfig("hive-site.xml",
+            conf_dir=params.params.hive_server_conf_dir,
+            configurations=hive_config,
+            configuration_attributes=params.config['configurationAttributes']['hiveserver2-site'],
+            owner=params.hive_user,
+            group=params.user_group,
+            mode=0o600)
+
   File(params.start_hiveserver2_path,
        mode=0o755,
        content=Template(format('{start_hiveserver2_script}'))
@@ -340,19 +363,47 @@ def setup_non_client():
 
 def setup_metastore():
   import params
+  
+  hive_conf_dir = params.hive_server_conf_dir
+  print("params.version_for_stack_feature_checks:")
+  if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
+    hive_conf_dir = params.hive_metastore_conf_dir
 
+    # if conf directories are separated, we need to fill metastore conf dir with atlas and env configs
+    # Generate atlas-application.properties.xml file
+    if params.enable_atlas_hook:
+      atlas_hook_filepath = os.path.join(hive_conf_dir, params.atlas_hook_filename)
+      setup_atlas_hook(SERVICE.HIVE, params.hive_atlas_application_properties, atlas_hook_filepath, params.hive_user, params.user_group)
+
+    File(format("{hive_conf_dir}/hive-env.sh"),
+        owner=params.hive_user,
+        group=params.user_group,
+        content=InlineTemplate(params.hive_env_sh_template),
+        mode=0o755
+    )
+    hivemetastore_site = get_config("hivemetastore-site")
+    hive_config = hive_site_config.update(hivemetastore_site_config)
+    XmlConfig("hive-site.xml",
+            conf_dir=params.hive_conf_dir,
+            configurations=hive_config,
+            configuration_attributes=params.config['configurationAttributes']['hivemetastore-site'],
+            owner=params.hive_user,
+            group=params.user_group,
+            mode=0o600)
+  
+  # no dispatch common code
   if params.hive_metastore_site_supported:
     hivemetastore_site_config = get_config("hivemetastore-site")
     if hivemetastore_site_config:
       XmlConfig("hivemetastore-site.xml",
-                conf_dir=params.hive_server_conf_dir,
+                conf_dir=hive_conf_dir,
                 configurations=params.config['configurations']['hivemetastore-site'],
                 configuration_attributes=params.config['configurationAttributes']['hivemetastore-site'],
                 owner=params.hive_user,
                 group=params.user_group,
                 mode=0o600)
 
-  File(os.path.join(params.hive_server_conf_dir, "hadoop-metrics2-hivemetastore.properties"),
+  File(os.path.join(hive_conf_dir, "hadoop-metrics2-hivemetastore.properties"),
        owner=params.hive_user,
        group=params.user_group,
        content=Template("hadoop-metrics2-hivemetastore.properties.j2"),
@@ -401,14 +452,16 @@ def refresh_yarn():
 
 def create_hive_metastore_schema():
   import params
-
+  hive_conf_dir = params.hive_server_conf_dir
+  if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
+    hive_conf_dir = params.hive_metastore_conf_dir
   SYS_DB_CREATED_FILE = "/etc/hive/sys.db.created"
 
   if os.path.isfile(SYS_DB_CREATED_FILE):
     Logger.info("Sys DB is already created")
     return
 
-  create_hive_schema_cmd = format("export HIVE_CONF_DIR={hive_server_conf_dir} ; "
+  create_hive_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
                                   "{hive_schematool_bin}/schematool -initSchema "
                                   "-dbType hive "
                                   "-metaDbType {hive_metastore_db_type} "
@@ -416,7 +469,7 @@ def create_hive_metastore_schema():
                                   "-passWord {hive_metastore_user_passwd!p} "
                                   "-verbose")
 
-  check_hive_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_server_conf_dir} ; "
+  check_hive_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
                                           "{hive_schematool_bin}/schematool -info "
                                           "-dbType hive "
                                           "-metaDbType {hive_metastore_db_type} "
@@ -452,14 +505,16 @@ def create_hive_metastore_schema():
 
 def create_metastore_schema():
   import params
-
-  create_schema_cmd = format("export HIVE_CONF_DIR={hive_server_conf_dir} ; "
+  hive_conf_dir = params.hive_server_conf_dir
+  if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
+    hive_conf_dir = params.hive_metastore_conf_dir
+  create_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
                              "{hive_schematool_bin}/schematool -initSchema "
                              "-dbType {hive_metastore_db_type} "
                              "-userName {hive_metastore_user_name} "
                              "-passWord {hive_metastore_user_passwd!p} -verbose")
 
-  check_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_server_conf_dir} ; "
+  check_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
                                     "{hive_schematool_bin}/schematool -info "
                                     "-dbType {hive_metastore_db_type} "
                                     "-userName {hive_metastore_user_name} "

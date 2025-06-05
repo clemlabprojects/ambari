@@ -24,6 +24,8 @@ from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.functions.ranger_functions_v2 import RangeradminV2
 from resource_management.libraries.functions.setup_ranger_plugin_xml import generate_ranger_service_config
 from resource_management.libraries.functions.setup_ranger_plugin_xml import setup_ranger_plugin
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.constants import StackFeature
 
 def setup_ranger_hive(upgrade_type = None):
   import params
@@ -140,14 +142,17 @@ def setup_ranger_hive_metastore_plugin(upgrade_type = None):
         Logger.exception("Audit directory creation in HDFS for HIVE Ranger plugin failed with error:\n{0}".format(err))
 
     api_version='v2'
-
+    hive_conf_dir = params.hive_server_conf_dir
+    if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.stack_version_formatted_major):
+      hive_conf_dir = params.hive_metastore_conf_dir
+      Logger.info("Hive Metastore conf dir is set to: {0}".format(hive_conf_dir))
     setup_ranger_plugin('hive-metastore', 'hive', params.ranger_previous_jdbc_jar,
                         params.ranger_downloaded_custom_connector, params.ranger_driver_curl_source,
                         params.ranger_driver_curl_target, params.java64_home,
                         params.repo_name, params.hive_ranger_plugin_repo,
                         params.ranger_env, params.ranger_plugin_properties,
                         params.policy_user, params.policymgr_mgr_url,
-                        params.enable_ranger_hive, conf_dict=params.hive_server_conf_dir,
+                        params.enable_ranger_hive, conf_dict=hive_conf_dir,
                         component_user=params.hive_user, component_group=params.user_group, cache_service_list=['hiveServer2'],
                         plugin_audit_properties=params.config['configurations']['ranger-hive-audit'], plugin_audit_attributes=params.config['configurationAttributes']['ranger-hive-audit'],
                         plugin_security_properties=params.config['configurations']['ranger-hive-security'], plugin_security_attributes=params.config['configurationAttributes']['ranger-hive-security'],

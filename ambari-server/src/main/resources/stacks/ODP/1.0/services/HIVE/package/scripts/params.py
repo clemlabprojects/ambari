@@ -188,6 +188,7 @@ hive_home_dir = status_params.hive_home_dir
 hive_config_dir = status_params.hive_config_dir
 hive_client_conf_dir = status_params.hive_client_conf_dir
 hive_server_conf_dir = status_params.hive_server_conf_dir
+hive_metastore_conf_dir = status_params.hive_metastore_conf_dir
 tez_conf_dir = status_params.tez_conf_dir
 
 
@@ -390,7 +391,7 @@ hive_conf_dirs_list = [hive_client_conf_dir]
 # These are the folders to which the configs will be written to.
 ranger_hive_ssl_config_file = os.path.join(hive_server_conf_dir, "ranger-policymgr-ssl.xml")
 if status_params.role == "HIVE_METASTORE" and hive_metastore_hosts is not None and hostname in hive_metastore_hosts:
-  hive_conf_dirs_list.append(hive_server_conf_dir)
+  hive_conf_dirs_list.append(hive_metastore_conf_dir)
 elif status_params.role == "HIVE_SERVER" and hive_server_hosts is not None and hostname in hive_server_hosts:
   hive_conf_dirs_list.append(hive_server_conf_dir)
 elif status_params.role == "HIVE_SERVER_INTERACTIVE" and hive_server_interactive_hosts is not None and hostname in hive_server_interactive_hosts:

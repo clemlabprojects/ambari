@@ -482,6 +482,11 @@
         "name": "nifi_auto_client_registration",
         "description": "Supports NiFi's client registration in runtime",
         "min_version": "3.0.0.0"
+      },
+      {
+        "name": "hive_separated_conf_dir_hs2_and_metastore",
+        "description": "Configurable versions support",
+        "min_version": "1.3.1.0"
       }
     ]
   }

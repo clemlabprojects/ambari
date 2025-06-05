@@ -43,14 +43,25 @@ def hive_service(name, action='start', upgrade_type=None):
 
   import params
   import status_params
-
+  hadoop_home = params.hadoop_home
+  hive_bin = "hive"
+  environment = { 
+      'HADOOP_HOME': hadoop_home,
+      'JAVA_HOME': params.java64_home,
+      'HIVE_BIN': hive_bin,
+      'TEZ_CONF_DIR': params.tez_conf_dir
+  }
   if name == 'metastore':
     pid_file = status_params.hive_metastore_pid
-    cmd = format("{start_metastore_path} {hive_log_dir}/hive.out {hive_log_dir}/hive.err {pid_file} {hive_server_conf_dir}")
+    cmd = format("{start_metastore_path} {hive_log_dir}/hive.out {hive_log_dir}/hive.err {pid_file}")
+    if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
+      environment['HIVE_CONF_DIR'] = params.hive_metastore_conf_dir
+    else:
+      environment['HIVE_CONF_DIR'] = params.hive_server_conf_dir
   elif name == 'hiveserver2':
     pid_file = status_params.hive_pid
-    cmd = format("{start_hiveserver2_path} {hive_log_dir}/hive-server2.out {hive_log_dir}/hive-server2.err {pid_file} {hive_server_conf_dir} {tez_conf_dir}")
-
+    cmd = format("{start_hiveserver2_path} {hive_log_dir}/hive-server2.out {hive_log_dir}/hive-server2.err {pid_file}")
+    environment['HIVE_CONF_DIR'] = params.hive_server_conf_dir
 
     if params.security_enabled and check_stack_feature(StackFeature.HIVE_SERVER2_KERBERIZED_ENV, params.version_for_stack_feature_checks):
       hive_kinit_cmd = format("{kinit_path_local} -kt {hive_server2_keytab} {hive_principal}; ")
@@ -64,8 +75,6 @@ def hive_service(name, action='start', upgrade_type=None):
       check_fs_root(params.hive_server_conf_dir, params.execute_path)
 
     daemon_cmd = cmd
-    hadoop_home = params.hadoop_home
-    hive_bin = "hive"
 
     # upgrading hiveserver2 (rolling_restart) means that there is an existing,
     # de-registering hiveserver2; the pid will still exist, but the new
@@ -79,7 +88,7 @@ def hive_service(name, action='start', upgrade_type=None):
       
     Execute(daemon_cmd, 
       user = params.hive_user,
-      environment = { 'HADOOP_HOME': hadoop_home, 'JAVA_HOME': params.java64_home, 'HIVE_BIN': hive_bin },
+      environment = environment,
       path = params.execute_path,
       not_if = process_id_exists_command)
 

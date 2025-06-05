@@ -21,5 +21,5 @@
 #
 HIVE_BIN=${HIVE_BIN:-"hive"}
 
-HIVE_CONF_DIR=$4 $HIVE_BIN --service metastore > $1 2> $2 &
+$HIVE_BIN --service metastore > $1 2> $2 &
 echo $!|cat>$3

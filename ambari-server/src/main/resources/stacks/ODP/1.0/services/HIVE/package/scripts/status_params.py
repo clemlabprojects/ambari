@@ -27,9 +27,9 @@ from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.script.script import Script
-
 
 # a map of the Ambari role to the component name
 # for use with <stack-root>/current/<component>
@@ -76,7 +76,14 @@ hive_user = config['configurations']['hive-env']['hive_user']
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin")
 
-hive_server_conf_dir = "/etc/hive/conf"
+version_for_stack_feature_checks = get_stack_feature_version(config)
+if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, version_for_stack_feature_checks):
+  hive_server_conf_dir = "/etc/hive/conf/hive-server2"
+  hive_metastore_conf_dir = "/etc/hive/conf/hive-metastore"
+else:
+  # legacy configuration directories for older stacks
+  hive_server_conf_dir = "/etc/hive/conf"
+  hive_metastore_conf_dir = "/etc/hive/conf"
 hive_server_interactive_conf_dir = "/etc/hive_llap/conf"
 tez_conf_dir = "/etc/tez/conf"
 tez_interactive_conf_dir = "/etc/tez_llap/conf"
