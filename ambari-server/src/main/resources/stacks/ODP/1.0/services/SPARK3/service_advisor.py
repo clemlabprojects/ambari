@@ -130,6 +130,7 @@ class Spark3ServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender = Spark3Recommender()
     recommender.recommendSpark3ConfigurationsFromHDP25(configurations, clusterData, services, hosts)
     recommender.recommendSPARK3ConfigurationsFromHDP26(configurations, clusterData, services, hosts)
+    recommender.recommendSPARK3ConfigurationsFromODP13(configurations, clusterData, services, hosts)
 
 
 
@@ -223,6 +224,23 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
 
 
     self.__addZeppelinToLivy2SuperUsers(configurations, services)
+
+  def recommendSPARK3ConfigurationsFromODP13(self, configurations, clusterData, services, hosts):
+    """
+    :type configurations dict
+    :type clusterData dict
+    :type services dict
+    :type hosts dict
+    """
+
+    if Spark3ServiceAdvisor.isKerberosEnabled(services, configurations):
+
+      spark3_defaults = self.getServicesSiteProperties(services, "spark3-defaults")
+
+      if spark3_defaults:
+        putSpark3DafaultsProperty = self.putProperty(configurations, "spark3-defaults", services)
+        putSpark3DafaultsProperty('spark.ui.filters', 'org.apache.spark.deploy.yarn.YarnProxyRedirectFilter')
+
 
 
   def __addZeppelinToLivy2SuperUsers(self, configurations, services):

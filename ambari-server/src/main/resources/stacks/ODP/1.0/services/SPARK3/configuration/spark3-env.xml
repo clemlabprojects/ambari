@@ -114,11 +114,6 @@
 #SPARK_YARN_DIST_FILES="" #Comma separated list of files to be distributed with the job.
 #SPARK_YARN_DIST_ARCHIVES="" #Comma separated list of archives to be distributed with the job.
 
-{% if security_enabled %}
-export SPARK_HISTORY_OPTS='-Dspark.ui.filters=org.apache.hadoop.security.authentication.server.AuthenticationFilter -Dspark.org.apache.hadoop.security.authentication.server.AuthenticationFilter.params="type=kerberos,kerberos.principal={{spnego_principal}},kerberos.keytab={{spnego_keytab}}"'
-{% endif %}
-
-
 # Generic options for the daemons used in the standalone deploy mode
 
 # Alternate conf dir. (Default: ${SPARK_HOME}/conf)
