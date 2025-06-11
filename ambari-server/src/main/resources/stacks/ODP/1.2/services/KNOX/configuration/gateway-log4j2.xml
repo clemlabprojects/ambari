@@ -23,8 +23,7 @@
   <property>
     <name>content</name>
     <display-name>gateway-log4j2 template</display-name>
-    <value>
-&lt;Configuration&gt;
+    <value>&lt;Configuration&gt;
     &lt;Properties&gt;
         &lt;Property name="app.log.dir"&gt;${sys:launcher.dir}/../logs&lt;/Property&gt;
         &lt;Property name="app.log.file"&gt;${sys:launcher.name}.log&lt;/Property&gt;
