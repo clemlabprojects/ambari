@@ -34,7 +34,11 @@
 {%   endfor %}
 {% endif %}
       "{{logfeeder_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logfeeder}}", "{{infra_solr_role_dev}}"],
+{% if enable_atlas_server_rule %}
+{%   for atlas_kerberos_service_user in atlas_kerberos_service_users %}
       "{{atlas_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_atlas}}", "{{infra_solr_role_ranger_audit}}", "{{infra_solr_role_dev}}"],
+{%   endfor %}
+{% endif %}
 {% if infra_solr_ranger_audit_service_users %}
 {%   for ranger_audit_service_user in infra_solr_ranger_audit_service_users %}
       "{{ranger_audit_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_ranger_audit}}", "{{infra_solr_role_dev}}"],

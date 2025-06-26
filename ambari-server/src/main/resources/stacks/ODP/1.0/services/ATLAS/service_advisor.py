@@ -490,7 +490,7 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
       kafka_bootstrap_servers = ",".join(kafka_host_arr)
 
       if atlas_kafka_security_protocol == "SASL_SSL":
-        if 'truststore.file' in services['configurations']['application-properties']['properties'] and
+        if 'truststore.file' in services['configurations']['application-properties']['properties'] and \
            'truststore.password' in services['configurations']['application-properties']['properties']:
           putAtlasApplicationProperty('atlas.kafka.ssl.truststore.location',
                                       services['configurations']['application-properties']['properties']['truststore.file'])
@@ -593,7 +593,7 @@ class AtlasValidator(service_advisor.ServiceAdvisor):
                               "item": self.getErrorItem(
                                 "If AMBARI_INFRA_SOLR is not installed then the SOLR zookeeper url configuration must be specified.")})
 
-    if not application_properties['atlas.kafka.bootstrap.servers']:
+    if 'atlas.kafka.bootstrap.servers' not in application_properties:
       validationItems.append({"config-name": "atlas.kafka.bootstrap.servers",
                               "item": self.getErrorItem(
                                 "If KAFKA is not installed then the Kafka bootstrap servers configuration must be specified.")})

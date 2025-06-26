@@ -132,8 +132,9 @@
       export JAVA_HOME={{java64_home}}
 
       # any additional java opts you want to set. This will apply to both client and server operations
+      # tell solrj to use the Kerberos HttpClient builder if security is enabled
       {% if security_enabled %}
-      export ATLAS_OPTS="{{metadata_opts}} -Djava.security.auth.login.config={{atlas_jaas_file}}"
+      export ATLAS_OPTS="{{metadata_opts}} -Djava.security.auth.login.config={{atlas_jaas_file}} -Dsolr.httpclient.builder.factory=org.apache.solr.client.solrj.impl.Krb5HttpClientBuilder -Djavax.security.auth.useSubjectCredsOnly=false"
       {% else %}
       export ATLAS_OPTS="{{metadata_opts}}"
       {% endif %}

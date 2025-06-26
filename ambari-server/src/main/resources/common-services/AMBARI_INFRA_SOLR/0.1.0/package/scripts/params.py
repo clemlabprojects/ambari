@@ -240,6 +240,15 @@ if security_enabled:
     ranger_admin_service_users = map(to_ambari_infra_rangeradmin_rule,ranger_admin_hosts)
     # map each host on logfeeder principal
 
+atlas_server_hosts = default("/clusterHostInfo/atlas_server_hosts", [])
+enable_atlas_server_rule = False
+if security_enabled:
+  def to_ambari_infra_atlasserver_rule(host):
+    return format("{atlas_kerberos_service_user}/{host}")
+  if len(atlas_server_hosts) > 0:
+    enable_atlas_server_rule = True
+    atlas_kerberos_service_users = map(to_ambari_infra_atlasserver_rule,atlas_server_hosts)
+    # map each host on logfeeder principal
 infra_solr_role_ranger_admin = default('configurations/infra-solr-security-json/infra_solr_role_ranger_admin', 'ranger_user')
 infra_solr_role_ranger_audit = default('configurations/infra-solr-security-json/infra_solr_role_ranger_audit', 'ranger_audit_user')
 infra_solr_role_atlas = default('configurations/infra-solr-security-json/infra_solr_role_atlas', 'atlas_user')
