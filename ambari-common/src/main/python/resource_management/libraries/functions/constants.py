@@ -48,6 +48,7 @@ class StackFeature:
   ROLLING_UPGRADE = "rolling_upgrade"
   CONFIG_VERSIONING = "config_versioning"
   FALCON_EXTENSIONS = "falcon_extensions"
+  FLINK_CONFIG_YAML_SUPPORT = "flink_config_yaml_support"
   DATANODE_NON_ROOT = "datanode_non_root"
   SECURE_ZOOKEEPER = "secure_zookeeper"
   HADOOP_CUSTOM_EXTENSIONS = "hadoop_custom_extensions"

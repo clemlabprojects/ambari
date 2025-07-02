@@ -212,6 +212,12 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
       zk_host_port = self.getZKHostPortString(services)
       putClusterProperties("high-availability.zookeeper.quorum", zk_host_port)
 
+    if 'yarn-env' in services["configurations"]:
+      yarn_user = 'yarn'
+      if "yarn_user" in services["configurations"]['yarn-env']["properties"]:
+        yarn_user = services["configurations"]['yarn-env']["properties"]["yarn_user"]
+      putClusterProperties("security.kerberos.token.provider.hadoopfs.renewer", yarn_user)
+
     self.putProperty(configurations, "flink-conf", services)
 
 

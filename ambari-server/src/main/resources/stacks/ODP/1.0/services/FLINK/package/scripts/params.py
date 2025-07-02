@@ -20,12 +20,14 @@ limitations under the License.
 
 import socket
 import status_params
+import functools
 from urllib.parse import urlparse
 
 from ambari_commons.constants import AMBARI_SUDO_BINARY
 
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions import conf_select, stack_select
 from resource_management.libraries.functions.version import format_stack_version, get_major_version
 from resource_management.libraries.functions.copy_tarball import get_sysprep_skip_copy_tarballs_hdfs
@@ -208,8 +210,6 @@ dfs_type = default("/clusterLevelParams/dfs_type", "")
 
 is_webhdfs_enabled = hdfs_site['dfs.webhdfs.enabled']
 
-
-import functools
 #create partial functions with common arguments for every HdfsResource call
 #to create/delete hdfs directory/file/copyfromlocal we need to call params.HdfsResource in code
 HdfsResource = functools.partial(
@@ -229,3 +229,49 @@ HdfsResource = functools.partial(
 )
 
 log4j_file_name = ''
+
+
+
+def nest_dict(flat_dict, sep='.'):
+  """
+  Recursively nests a flat dict with dot-separated keys.
+  Example: {'a.b.c': 1, 'a.b.d': 2, 'x': 3} -> {'a': {'b': {'c': 1, 'd': 2}}, 'x': 3}
+  """
+  nested = {}
+  for key, value in flat_dict.items():
+    parts = key.split(sep)
+    d = nested
+    for part in parts[:-1]:
+      if part not in d or not isinstance(d[part], dict):
+        d[part] = {}
+      d = d[part]
+    d[parts[-1]] = value
+  return nested
+
+# Starting with ODP 1.3 and Flink 1.20 flink-conf is deprecated in favor of config.yaml
+if stack_version_formatted and check_stack_feature(StackFeature.FLINK_CONFIG_YAML_SUPPORT, stack_version_formatted):
+  # Convert flat dict to nested dict for YAML
+  # Flink client Properties
+  flink_client_properties = nest_dict(flink_client_properties)
+  # Flink History Server Properties
+  flink_history_server_properties = nest_dict(flink_history_server_properties)
+
+  java_version = expect("/ambariLevelParams/java_version", int)
+if java_version >= 17:
+  java_opts_nested = {
+    'env': {
+      'java': {
+        'opts': {
+          'all': '--add-exports=java.base/sun.net.util=ALL-UNNAMED --add-exports=java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED --add-exports=java.security.jgss/sun.security.krb5=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.time=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED'
+        }
+      }
+    }
+  }
+  # Merge into flink_client_properties_yaml12
+  def deep_merge(dct, merge_dct):
+    for k, v in merge_dct.items():
+      if (k in dct and isinstance(dct[k], dict) and isinstance(v, dict)):
+        deep_merge(dct[k], v)
+      else:
+        dct[k] = v
+  deep_merge(flink_client_properties, java_opts_nested)
