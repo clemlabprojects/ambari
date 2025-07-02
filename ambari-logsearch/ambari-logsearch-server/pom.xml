@@ -158,7 +158,7 @@
                   <goal>copy-dependencies</goal>
                 </goals>
                 <configuration>
-                  <excludeArtifactIds>ambari-logsearch-web,spring-boot-starter,spring-boot-starter-actuator,
+                  <excludeArtifactIds>ambari-logsearch-web,spring-boot-starter,spring-boot-starter-actuator,log4j-slf4j-impl,
                     spring-boot-starter-freemarker,spring-boot-starter-jersey,spring-boot-starter-jetty,spring-boot-starter-json,
                     spring-boot-starter-log4j2,spring-boot-starter-security,spring-boot-starter-validation,spring-boot-starter-web</excludeArtifactIds>
                   <outputAbsoluteArtifactFilename>true</outputAbsoluteArtifactFilename>
@@ -314,6 +314,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-log4j2</artifactId>
       <version>${spring-boot.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.logging.log4j</groupId>
+          <artifactId>log4j-slf4j-impl</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -448,6 +454,10 @@
       <exclusions>
         <exclusion>
           <groupId>org.eclipse.jetty</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.eclipse.jetty.http2</groupId>
           <artifactId>*</artifactId>
         </exclusion>
       </exclusions>
