@@ -116,6 +116,12 @@
 
       # History server pid
       export HADOOP_PID_DIR={{mapred_pid_dir_prefix}}/$USER
+
+      # JDK specific option section
+      {% if java_version &gt;= 11 %}
+      export JDK_OPTS="--add-opens java.base/java.text=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.math=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED"
+      export MAPRED_HISTORYSERVER_OPTS="$JDK_OPTS $MAPRED_HISTORYSERVER_OPTS"
+      {% endif %}
     </value>
     <value-attributes>
       <type>content</type>

@@ -133,8 +133,10 @@ def checkAndStopRegistyDNS(cmd):
   import status_params
 
   hadoop_env_exports = {
-    'HADOOP_LIBEXEC_DIR': params.hadoop_libexec_dir
+    'HADOOP_LIBEXEC_DIR': params.hadoop_libexec_dir,
+    'JAVA_HOME': params.java64_home,
   }
+
   componentName = 'registrydns'
   daemon_cmd = format("{cmd} stop {componentName}")
   log_dir = params.yarn_log_dir

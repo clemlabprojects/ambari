@@ -333,7 +333,7 @@
   </property>
   <property>
     <name>yarn.app.mapreduce.am.admin-command-opts</name>
-    <value>-Dhdp.version=${odp.version}</value>
+    <value>-Dodp.version=${odp.version}</value>
     <description>
       Java opts for the MR App Master processes.
       The following symbol, if present, will be interpolated: @taskid@ is replaced
@@ -357,13 +357,13 @@
   </property>
   <property>
     <name>mapreduce.admin.map.child.java.opts</name>
-    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${odp.version}</value>
+    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dodp.version=${odp.version}</value>
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>mapreduce.admin.reduce.child.java.opts</name>
-    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dhdp.version=${odp.version}</value>
+    <value>-server -XX:NewRatio=8 -Djava.net.preferIPv4Stack=true -Dodp.version=${odp.version}</value>
     <description/>
     <on-ambari-upgrade add="false"/>
   </property>

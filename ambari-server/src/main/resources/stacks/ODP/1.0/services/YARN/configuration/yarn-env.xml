@@ -332,6 +332,18 @@ export YARN_RESOURCEMANAGER_OPTS="$YARN_RESOURCEMANAGER_OPTS -Dyarn.server.resou
 export YARN_REGISTRYDNS_SECURE_USER={{yarn_user}}
 export YARN_REGISTRYDNS_SECURE_EXTRA_OPTS="-jvm server"
 {% endif %}
+
+# JDK specific option section
+{% if java_version &gt;= 11 %}
+export JDK_OPTS="--add-opens java.base/java.text=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.math=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED"
+export YARN_RESOURCEMANAGER_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED $YARN_RESOURCEMANAGER_OPTS"
+export YARN_NODEMANAGER_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED $YARN_NODEMANAGER_OPTS"
+export YARN_TIMELINESERVER_OPTS="$JDK_OPTS $YARN_TIMELINESERVER_OPTS"
+export YARN_REGISTRYDNS_OPTS=" $YARN_REGISTRYDNS_OPTS"
+export YARN_TIMELINEREADER_OPTS="$JDK_OPTS $YARN_TIMELINEREADER_OPTS"
+export YARN_CLIENT_OPTS=" $JDK_OPTS $YARN_CLIENT_OPTS"
+export HADOOP_CLIENT_OPTS=" $JDK_OPTS $HADOOP_CLIENT_OPTS"
+{% endif %}
     </value>
     <value-attributes>
       <type>content</type>
