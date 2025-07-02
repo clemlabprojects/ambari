@@ -25,9 +25,9 @@ from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.stack_features import get_stack_feature_version
-
 import status_params
 
 
@@ -77,6 +77,7 @@ ambari_java_home = default("/ambariLevelParams/ambari_java_home", None)
 ambari_java_exec = f"{ambari_java_home}/bin/java"
 java64_home = java_home
 java_exec = format("{java64_home}/bin/java")
+java_version = expect("/ambariLevelParams/java_version", int)
 zookeeper_hosts_list = config['clusterHostInfo']['zookeeper_server_hosts']
 zookeeper_hosts_list.sort()
 # get comma separated list of zookeeper hosts from clusterHostInfo

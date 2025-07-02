@@ -24,7 +24,7 @@ SOLR_JAVA_MEM="-Xms{{infra_solr_min_mem}}m -Xmx{{infra_solr_max_mem}}m"
 
 SOLR_JAVA_STACK_SIZE="-Xss{{infra_solr_java_stack_size}}m"
 
-GC_LOG_OPTS="{{infra_solr_gc_log_opts}} -Xloggc:{{infra_solr_log_dir}}/solr_gc.log"
+GC_LOG_OPTS="{{infra_solr_gc_log_opts}}"
 
 GC_TUNE="{{infra_solr_gc_tune}}"
 
@@ -105,4 +105,15 @@ SOLR_OPTS="$SOLR_OPTS {{zk_security_opts}}"
 
 SOLR_AUTH_TYPE="kerberos"
 SOLR_AUTHENTICATION_OPTS=" -DauthenticationPlugin=org.apache.solr.security.KerberosPlugin -Djava.security.auth.login.config=$SOLR_JAAS_FILE -Dsolr.kerberos.principal=${SOLR_KERB_PRINCIPAL} -Dsolr.kerberos.keytab=${SOLR_KERB_KEYTAB} -Dsolr.kerberos.cookie.domain=${SOLR_HOST}"
+{% endif %}
+
+{% if java_version == 8 %}
+export GC_TUNE="$GC_TUNE -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 -XX:+CMSScavengeBeforeRemark -XX:PretenureSizeThreshold=64m -XX:+UseCMSInitiatingOccupancyOnly -XX:CMSInitiatingOccupancyFraction=50 -XX:CMSMaxAbortablePrecleanTime=6000 -XX:+CMSParallelRemarkEnabled -XX:+ParallelRefProcEnabled"
+export GC_LOG_OPTS="$GC_LOG_OPTS  -verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=15 -XX:GCLogFileSize=200M -Xloggc:{{infra_solr_log_dir}}/solr_gc.log"
+{% elif java_version == 11 %}
+export GC_TUNE="$GC_TUNE -XX:ParallelGCThreads=4 -XX:+ParallelRefProcEnabled"
+export GC_LOG_OPTS="$GC_LOG_OPTS -Xlog:gc*,gc+heap=info,gc+age=info:file={{infra_solr_log_dir}}/gc.log:time,uptime,level,tags:filecount=15,filesize=200M"
+{% else %}
+export GC_TUNE="$GC_TUNE -XX:ParallelGCThreads=4 -XX:+ParallelRefProcEnabled"
+export GC_LOG_OPTS="$GC_LOG_OPTS -Xlog:gc*,gc+heap=info,gc+age=info:file={{infra_solr_log_dir}}/gc.log:time,uptime,level,tags:filecount=15,filesize=200M"
 {% endif %}
