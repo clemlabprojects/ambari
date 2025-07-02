@@ -595,7 +595,7 @@ class RangeradminV2:
       raise Fail('Error in call for getting Ranger service:\n {0}'.format(err))
 
   @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
-  def create_repository_curl(self, component_user, component_user_keytab, component_user_principal, name, data, policy_user, is_keyadmin = False):
+  def create_repository_curl(self, component_user, component_user_keytab, component_user_principal, name, data, policy_user, is_keyadmin=False):
     """
     :param component_user: service user for which call is to be made
     :param component_user_keytab: keytab of service user
@@ -610,15 +610,26 @@ class RangeradminV2:
         search_repo_url = '{0}?suser=keyadmin'.format(search_repo_url)
       header = 'Content-Type: application/json'
       method = 'POST'
-      response,error_message,time_in_millis = self.call_curl_request(component_user,component_user_keytab,component_user_principal,search_repo_url,False,method,data.decode('utf-8'),header)
-
+      # In Python 3, ensure data is str for decoding
+      if isinstance(data, bytes):
+          data = data.decode('utf-8')
+      response, error_message, time_in_millis = self.call_curl_request(
+        component_user,
+        component_user_keytab,
+        component_user_principal,
+        search_repo_url,
+        False,
+        method,
+        data,
+        header
+      )
       if response and len(response) > 0:
         response_json = json.loads(response)
         if 'name' in response_json and response_json['name'].lower() == name.lower():
           Logger.info('Repository created Successfully')
           return response_json
         elif 'exists' in response.lower():
-          Logger.info(f'Repository {name} already exists')
+          Logger.info('Repository {0} already exists'.format(name))
           return response_json
         else:
           Logger.info('Repository creation failed')
