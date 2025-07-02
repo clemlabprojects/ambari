@@ -29,6 +29,9 @@ def ranger_service(name, action=None):
   if params.db_flavor.lower() == 'sqla':
     env_dict = {'JAVA_HOME': params.java_home, 'LD_LIBRARY_PATH': params.ld_lib_path}
 
+  if params.java_version >= 11:
+    env_dict["JAVA_OPTS"] = "--add-opens java.base/java.text=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.math=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED "
+
   if name == 'ranger_admin':
     no_op_test = format('ps -ef | grep proc_rangeradmin | grep -v grep')
     try:

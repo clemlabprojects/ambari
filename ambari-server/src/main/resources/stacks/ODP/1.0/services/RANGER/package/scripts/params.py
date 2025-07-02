@@ -25,6 +25,7 @@ from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.functions.constants import Direction
+from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.functions import StackFeature
@@ -117,6 +118,7 @@ usersync_start = format('{usersync_services_file} start')
 java_home = config['ambariLevelParams']['java_home']
 ambari_java_home = config['ambariLevelParams']['ambari_java_home']
 ambari_java_exec = format("{ambari_java_home}/bin/java")
+java_version = expect("/ambariLevelParams/java_version", int)
 unix_user  = config['configurations']['ranger-env']['ranger_user']
 unix_group = config['configurations']['ranger-env']['ranger_group']
 ranger_pid_dir = default("/configurations/ranger-env/ranger_pid_dir", "/var/run/ranger")
@@ -505,34 +507,69 @@ hms_server_hosts = default("/clusterHostInfo/hive_metastore_hosts", None)
 om_server_hosts = default("/clusterHostInfo/ozone_manager_hosts", None)
 kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
 atlas_server_hosts = default("/clusterHostInfo/atlas_server_hosts", None)
+kms_server_hosts = default("/clusterHostInfo/ranger_kms_server_hosts", None)
 
 policy_users_to_create = []
+policy_users_to_create_for_kms = []
 ## ODP Hadoop based Policy user
 # TODO: check if need for nifi, nifi-registry
 if namenode_hosts != None:
   if len(namenode_hosts) > 0 :
-    policy_users_to_create.append('hdfs')
+    hdfs_user = default("/configurations/hadoop-env/hdfs_user", "hdfs")
+    policy_users_to_create.append(hdfs_user)
 if rm_hosts != None:
   if len(rm_hosts) > 0 :
-    policy_users_to_create.append('yarn')
+    yarn_user = default("/configurations/yarn-env/yarn_user", "yarn")
+    policy_users_to_create.append(yarn_user)    
 if hbase_master_hosts != None:
   if len(hbase_master_hosts) > 0 :
-    policy_users_to_create.append('hbase')
+    hbase_user = default("/configurations/hbase-env/hbase_user", "hbase")
+    policy_users_to_create.append(hbase_user)
 if hive_server_hosts != None:
   if len(hive_server_hosts) > 0 :
-    policy_users_to_create.append('hive')
+    hive_user = default("/configurations/hive-env/hive_user", "hive")
+    policy_users_to_create.append(hive_user)
 if hms_server_hosts != None:
   if len(hms_server_hosts) > 0 :
-    policy_users_to_create.append('hive')
+    hive_metastore_user = default("/configurations/hive-env/hive_user", "hive")
+    policy_users_to_create.append(hive_metastore_user)
 if om_server_hosts != None:
   if len(om_server_hosts) > 0 :
-    policy_users_to_create.append('ozone')
+    ozone_user = config['configurations']['ozone-env']['ozone_user']
+    policy_users_to_create.append(ozone_user)
 if kafka_server_hosts != None:
   if len(kafka_server_hosts) > 0 :
-    policy_users_to_create.append('kafka')
+    kafka_user = default("/configurations/kafka-env/kafka_user", "kafka")
+    policy_users_to_create.append(kafka_user)
 if atlas_server_hosts != None:
   if len(atlas_server_hosts) > 0 :
+    atlas_user = default("/configurations/atlas-env/atlas_user", "atlas")
+    policy_users_to_create.append(atlas_user)
+if kms_server_hosts != None:
+  policy_users_to_create.append('ranger') # since ranger 2.6, ranger user is required for KMS policies
+  # also when creating ranger kms policies, we need to create hardcoded following users
+  if 'hbase' not in policy_users_to_create:
+    policy_users_to_create.append('hbase')
+  if 'om' not in policy_users_to_create:
+    policy_users_to_create.append('om')
+  if 'hdfs' not in policy_users_to_create:
+    policy_users_to_create.append('hdfs')
+  if 'hive' not in policy_users_to_create:
+    policy_users_to_create.append('hive')
+  if 'atlas' not in policy_users_to_create:
     policy_users_to_create.append('atlas')
+  if 'kafka' not in policy_users_to_create:
+    policy_users_to_create.append('kafka')
+  if len(kms_server_hosts) > 0 :
+    if security_enabled:
+      rangerkms_principal = config['configurations']['dbks-site']['ranger.ks.kerberos.principal']
+      rangerkms_keytab = config['configurations']['dbks-site']['ranger.ks.kerberos.keytab']
+      if not is_empty(rangerkms_principal) and rangerkms_principal != '':
+        rangerkms_bare_principal = get_bare_principal(rangerkms_principal)
+        policy_users_to_create.append(rangerkms_bare_principal)
+    else:
+      kms_user = default("/configurations/kms-env/kms_user", "rangerkms")
+      policy_users_to_create.append(kms_user)
 
 if version_for_stack_feature_checks.startswith('1.2.2.0'):
   ranger_compatibility_python2_python3 = True
