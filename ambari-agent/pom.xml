@@ -54,6 +54,11 @@
     <customActionsLocation>${target.cache.dir}/custom_actions</customActionsLocation>
     <empty.dir>src/packages/tarball</empty.dir> <!-- any directory in project with not very big amount of files (not to waste-load them) -->
     <python.test.mask>[Tt]est*.py</python.test.mask>
+    <odp.release.stack>1.2.2.0</odp.release.stack>
+    <odp.release.number>155</odp.release.number>
+    <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
+    <hadoop-auth.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop-auth.version>
+    <hadoop-shaded-guava.version>1.1.1</hadoop-shaded-guava.version>
   </properties>
   <dependencies>
     <dependency>

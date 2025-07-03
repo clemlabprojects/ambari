@@ -87,7 +87,7 @@
     <deb.dependency.list>${deb.python.ver}</deb.dependency.list>
     <solr.version>8.11.4</solr.version>
     <odp.release.stack>1.2.2.0</odp.release.stack>
-    <odp.release.number>138</odp.release.number>
+    <odp.release.number>155</odp.release.number>
     <!-- <hadoop.version>3.1.0.1.2.1.0-${odp.release.number}</hadoop.version> -->
     <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
     <common.io.version>2.5</common.io.version>
