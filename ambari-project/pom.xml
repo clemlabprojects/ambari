@@ -50,7 +50,7 @@
     <surefire.argLine>-Xmx1024m -Xms512m</surefire.argLine>
     <jersey.version>2.41</jersey.version>
     <odp.release.stack>1.2.2.0</odp.release.stack>
-    <odp.release.number>138</odp.release.number>
+    <odp.release.number>155</odp.release.number>
   </properties>
   <profiles>
     <profile>

@@ -65,7 +65,7 @@
     <commons-compress.version>1.21</commons-compress.version>
     <guava.version>27.0-jre</guava.version>
     <odp.release.stack>1.2.2.0</odp.release.stack>
-    <odp.release.number>138</odp.release.number>
+    <odp.release.number>155</odp.release.number>
     <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
     <hadoop-auth.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop-auth.version>
     <hadoop-shaded-guava.version>1.1.1</hadoop-shaded-guava.version>
