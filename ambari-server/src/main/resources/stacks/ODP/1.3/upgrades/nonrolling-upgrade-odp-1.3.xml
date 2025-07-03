@@ -302,6 +302,11 @@
         <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs"/>
       </execute-stage>
 
+      <execute-stage service="HDFS" component="NAMENODE" title="Update Hadoop Env Configuration Runtime">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.UpdateHadoopEnvContentJDK11andJDK17Runtime">
+          <summary>Update Hadoop Env Configuration for JDK 11/17 Runtime</summary>
+        </task>
+      </execute-stage>
       <!-- KAFKA -->
       <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>
@@ -345,6 +350,7 @@
       <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Update Atlas for Kafka Major Version Update">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas"/>
       </execute-stage>
+
     </group>
 
 
