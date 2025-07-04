@@ -434,8 +434,7 @@
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
-  </property>
-    <property>
+  <property>
     <name>security.kerberos.token.provider.hadoopfs.renewer</name>
     <value>yarn</value>
     <description>The renewer used for submitting job</description>
