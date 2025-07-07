@@ -41,6 +41,7 @@ from ambari_server.userInput import get_validated_string_input
 from ambari_server.utils import locate_file
 from ambari_server.ambariPath import AmbariPath
 from ambari_server.userInput import get_YN_input
+import re
 
 
 OS_VERSION = OSCheck().get_os_major_version()
@@ -1151,11 +1152,96 @@ def update_ambari_env():
            "%s may not include any user customization.") % (configDefaults.AMBARI_ENV_BACKUP_FILE, AMBARI_ENV_FILE))
     return 0
 
+  # Extract Xmx, Xms, Xmn from ambari-env.sh.rpmsave if present
+  xmx = xms = xmn = None
+  if prev_env_file and os.path.exists(prev_env_file):
+    with open(prev_env_file, "r") as f:
+      lines = f.readlines()
+    # Concatenate all AMBARI_JVM_ARGS assignments
+    jvm_args = ""
+    for line in lines:
+      # Remove export if present
+      line = line.strip()
+      if line.startswith("export "):
+        line = line[len("export "):]
+      # Look for AMBARI_JVM_ARGS assignments
+      if line.startswith("AMBARI_JVM_ARGS"):
+        # Handle += or = assignments
+        if "+=" in line:
+          val = line.split("+=", 1)[1].strip()
+          # Remove leading/trailing quotes if present
+          if val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+          jvm_args += " " + val
+        elif "=" in line:
+          val = line.split("=", 1)[1].strip()
+          if val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+          jvm_args = val  # reset if direct assignment
+    # Now extract -Xmx, -Xms, -Xmn
+    xmx_match = re.search(r'-Xmx([0-9]+[kKmMgG]?)', jvm_args)
+    xms_match = re.search(r'-Xms([0-9]+[kKmMgG]?)', jvm_args)
+    xmn_match = re.search(r'-Xmn([0-9]+[kKmMgG]?)', jvm_args)
+    xmx = xmx_match.group(1) if xmx_match else None
+    xms = xms_match.group(1) if xms_match else None
+    xmn = xmn_match.group(1) if xmn_match else None
+    print("INFO: Extracted JVM options: Xmx={}, Xms={}, Xmn={}".format(xmx, xms, xmn))
+
+
   try:
     if env_file is not None:
-      os.remove(env_file)
-      os.rename(prev_env_file, env_file)
-      print(("INFO: Original file %s kept") % (AMBARI_ENV_FILE))
+      print(("INFO: Keeping Original file %s kept as %s.rpmsave before upgrading ambari-env.sh") % (AMBARI_ENV_FILE, AMBARI_ENV_FILE))
+      # os.remove(env_file)
+      # os.rename(prev_env_file, env_file)
+      # Read the current env_file content
+      with open(env_file, "r") as f:
+        env_lines = f.readlines()
+
+      # Prepare new lines with updated Xmx, Xms, Xmn if they exist
+      new_env_lines = []
+      for line in env_lines:
+        # Remove export if present for matching
+        stripped_line = line.strip()
+        is_export = False
+        if stripped_line.startswith("export "):
+          stripped_line = stripped_line[len("export "):]
+          is_export = True
+
+        # Only update AMBARI_JVM_ARGS lines
+        if stripped_line.startswith("AMBARI_JVM_ARGS"):
+          # Replace -Xmx, -Xms, -Xmn if extracted values exist
+          def replace_jvm_arg(arg, value, text):
+            if value is None:
+              return text
+            # Replace -Xmx, -Xms, -Xmn with new value if present, else append
+            if re.search(r'-%s[0-9]+[kKmMgG]?' % arg, text):
+              return re.sub(r'-%s[0-9]+[kKmMgG]?' % arg, '-%s%s' % (arg, value), text)
+            # else:
+            #   return text + " -%s%s" % (arg, value)
+          jvm_args_match = re.match(r'(AMBARI_JVM_ARGS\s*[\+\=]*)\s*["\']?(.*)["\']?', stripped_line)
+          if jvm_args_match:
+            prefix = jvm_args_match.group(1)
+            args = jvm_args_match.group(2)
+            if not xmx is None and re.search(r'-Xmx([0-9]+[kKmMgG]?)', stripped_line):
+              args = replace_jvm_arg("Xmx", xmx, args)
+            if not xms is None and re.search(r'-Xms([0-9]+[kKmMgG]?)', stripped_line):
+              args = replace_jvm_arg("Xms", xms, args)
+            if not xmn is None and re.search(r'-Xmn([0-9]+[kKmMgG]?)', stripped_line):
+              args = replace_jvm_arg("Xmn", xmn, args)
+            # Reconstruct the line, preserving quotes if present
+            new_line = prefix + '"' + args.strip() + '\n'
+            if is_export:
+              new_line = "export " + new_line
+            new_env_lines.append(new_line)
+            continue
+        new_env_lines.append(line)
+
+      # Write back the updated env_file
+      with open(env_file, "w") as f:
+        f.writelines(new_env_lines)
+      print(("INFO: Upgrade: file  %s has been overrided with user customization") % (AMBARI_ENV_FILE))
+      os.remove(prev_env_file)
+      print(("INFO: ambari-env.sh updated successfully. Delete %s.rpmsave after upgrading ambari-env.sh") % (AMBARI_ENV_FILE))
   except OSError as e:
     print_error_msg ( "Couldn't move %s file: %s" % (prev_env_file, str(e)))
     return -1
