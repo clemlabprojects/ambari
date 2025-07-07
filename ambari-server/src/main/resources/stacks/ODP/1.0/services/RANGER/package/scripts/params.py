@@ -129,6 +129,8 @@ security_app_context_file = format('{ranger_conf}/security-applicationContext.xm
 ranger_ugsync_default_file = format('{ranger_ugsync_conf}/ranger-ugsync-default.xml')
 usgsync_log4j_file = format('{ranger_ugsync_conf}/log4j.xml')
 if stack_supports_ranger_log4j:
+  admin_log4j = config['configurations']['admin-log4j']['content']
+  usersync_log4j = config['configurations']['usersync-log4j']['content']
   usgsync_log4j_file = format('{ranger_ugsync_conf}/log4j.properties')
 cred_validator_file = format('{usersync_home}/native/credValidator.uexe')
 
