@@ -25,6 +25,7 @@ import string
 import resource
 from ambari_commons import OSCheck
 from string import Template
+import xml.etree.ElementTree as ET
 
 if OSCheck.is_windows_family():
   pass
@@ -212,6 +213,103 @@ def parse_log4j_file(filename):
     
   return properties
 
+import xml.etree.ElementTree as ET
+import re
+
+def parse_logback_file(filename):
+    def resolve_variables(text, properties):
+        """Resolve ${variable} placeholders in text using properties dictionary"""
+        if not text:
+            return text
+
+        def replace_var(match):
+            var_name = match.group(1)
+            # Handle default values syntax: ${var:-defaultValue}
+            if ':-' in var_name:
+                var_name, default_value = var_name.split(':-', 1)
+                return properties.get(var_name, default_value)
+            return properties.get(var_name, match.group(0))
+        return re.sub(r'\$\{([^}]+)\}', replace_var, text)
+
+    properties = {}
+
+    try:
+        tree = ET.parse(filename)
+        root = tree.getroot()
+
+        # First pass: collect all property definitions
+        for property_elem in root.findall('.//property'):
+            name = property_elem.get('name')
+            value = property_elem.get('value')
+
+            if name and value is not None:
+                # Resolve variables in the value using already defined properties
+                resolved_value = resolve_variables(value, properties)
+                properties[name] = resolved_value
+
+        # Second pass: resolve variables in all text content and attributes
+        def process_element(elem):
+            # Process element text
+            if elem.text:
+                elem.text = resolve_variables(elem.text, properties)
+
+            # Process element tail text
+            if elem.tail:
+                elem.tail = resolve_variables(elem.tail, properties)
+
+            # Process all attributes
+            for attr_name, attr_value in elem.attrib.items():
+                elem.set(attr_name, resolve_variables(attr_value, properties))
+
+            # Recursively process child elements
+            for child in elem:
+                process_element(child)
+
+        process_element(root)
+
+        # Extract configuration information
+        config = {
+            'properties': properties,
+            'root_level': None,
+            'loggers': [],
+            'appenders': []
+        }
+
+        # Extract root logger configuration
+        root_logger = root.find('root')
+        if root_logger is not None:
+            config['root_level'] = root_logger.get('level')
+
+        # Extract logger configurations
+        for logger in root.findall('logger'):
+            logger_config = {
+                'name': logger.get('name'),
+                'level': logger.get('level'),
+                'additivity': logger.get('additivity', 'true')
+            }
+            config['loggers'].append(logger_config)
+
+        # Extract appender configurations
+        for appender in root.findall('appender'):
+            appender_config = {
+                'name': appender.get('name'),
+                'class': appender.get('class'),
+                'properties': {}
+            }
+
+            # Extract appender-specific properties
+            for child in appender:
+                if child.tag in ['file', 'pattern', 'maxFileSize', 'maxHistory']:
+                    appender_config['properties'][child.tag] = child.text
+
+            config['appenders'].append(appender_config)
+
+        return config
+
+    except ET.ParseError as e:
+        raise ValueError(f"Invalid XML format in {filename}: {e}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Logback configuration file not found: {filename}")
 #
 # Chololatey package manager constants for Windows
 #

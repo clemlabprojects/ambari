@@ -33,7 +33,7 @@ import ambari_server.serverClassPath
 from ambari_commons.exceptions import FatalException
 from ambari_commons.os_check import OSCheck, OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
-from ambari_commons.os_utils import run_os_command, search_file, set_file_permissions, parse_log4j_file
+from ambari_commons.os_utils import run_os_command, search_file, set_file_permissions, parse_log4j_file, parse_logback_file
 from ambari_commons.logging_utils import get_debug_mode, print_info_msg, print_warning_msg, print_error_msg, \
   set_debug_mode
 from ambari_server.properties import Properties
@@ -41,8 +41,6 @@ from ambari_server.userInput import get_validated_string_input
 from ambari_server.utils import locate_file
 from ambari_server.ambariPath import AmbariPath
 from ambari_server.userInput import get_YN_input
-import re
-
 
 OS_VERSION = OSCheck().get_os_major_version()
 OS_TYPE = OSCheck.get_os_type()
@@ -377,7 +375,8 @@ class ServerConfigDefaults(object):
   
     self.JAVA_SHARE_PATH = "/usr/share/java"
     self.SHARE_PATH = "/usr/share"
-    self.OUT_DIR = parse_log4j_file(get_conf_dir() + "/log4j.properties")['ambari.log.dir'].replace("//", "/")
+    # self.OUT_DIR = parse_log4j_file(get_conf_dir() + "/log4j.properties")['ambari.log.dir'].replace("//", "/")
+    self.OUT_DIR = parse_logback_file(get_conf_dir() + "/logback.xml")['properties']['AMBARI_LOG_DIR'].replace("//", "/")
     self.SERVER_OUT_FILE = os.path.join(self.OUT_DIR, "ambari-server.out")
     self.SERVER_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server.log")
     self.SERVER_UPGRADE_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server-upgrade.log")
@@ -1229,7 +1228,11 @@ def update_ambari_env():
             if not xmn is None and re.search(r'-Xmn([0-9]+[kKmMgG]?)', stripped_line):
               args = replace_jvm_arg("Xmn", xmn, args)
             # Reconstruct the line, preserving quotes if present
-            new_line = prefix + '"' + args.strip() + '\n'
+            # If the original line looked like 'export AMBARI_JVM_ARGS', avoid adding an unclosed quote
+            if is_export and not re.match(r'AMBARI_JVM_ARGS\s*[\+\=]*\s*["\']', line.strip()):
+              new_line = prefix + args.strip() + '\n'
+            else:
+              new_line = prefix + '"' + args.strip() + '\n'
             if is_export:
               new_line = "export " + new_line
             new_env_lines.append(new_line)

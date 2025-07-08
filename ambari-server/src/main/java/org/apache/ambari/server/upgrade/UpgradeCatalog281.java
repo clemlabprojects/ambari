@@ -34,7 +34,7 @@ import com.google.inject.Injector;
 
 
 /**
- * The {@link UpgradeCatalog281} upgrades Ambari from 2.7.9 to 2.8.1.
+ * The {@link UpgradeCatalog281} upgrades Ambari from 2.7.11 to 2.8.1.
  */
 public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
@@ -49,7 +49,7 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
     @Override
     public String getSourceVersion() {
-        return "2.7.9";
+        return "2.7.11";
     }
 
     @Override
@@ -58,6 +58,7 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
     }
 
     protected static final String AMS_ENV_CONFIG = "ams-env";
+    protected static final String AMS_HBASE_ENV_CONFIG = "ams-hbase-env";
     @Override
     protected void executeDDLUpdates() throws AmbariException, SQLException {
     }
@@ -196,8 +197,8 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
                         newAMSEnvProperties.put("content", amvEnvConfig);
                         newAMSEnvHBaseProperties.put("content",amsHBaseEnv);
-                        updateConfigurationPropertiesForCluster(cluster, "ams-env", newAMSEnvProperties, true, false);
-                        updateConfigurationPropertiesForCluster(cluster, "ams-hbase-env", newAMSEnvHBaseProperties, true, false);
+                        updateConfigurationPropertiesForCluster(cluster, AMS_ENV_CONFIG, newAMSEnvProperties, true, false);
+                        updateConfigurationPropertiesForCluster(cluster, AMS_HBASE_ENV_CONFIG, newAMSEnvHBaseProperties, true, false);
 
 
                     }
