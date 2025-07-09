@@ -34,7 +34,7 @@ import com.google.inject.Injector;
 
 
 /**
- * The {@link UpgradeCatalog281} upgrades Ambari from 2.7.11 to 2.8.1.
+ * The {@link UpgradeCatalog281} upgrades Ambari from 2.8.0 to 2.8.1.
  */
 public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
@@ -49,7 +49,7 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
     @Override
     public String getSourceVersion() {
-        return "2.7.11";
+        return "2.8.0";
     }
 
     @Override
