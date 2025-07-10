@@ -89,7 +89,8 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
                             Map<String, String> newAMSEnvProperties = new HashMap<>();
                             Map<String, String> newAMSEnvHBaseProperties = new HashMap<>();
-                            String amvEnvConfig = "\n# Set environment variables here.\n\n"
+                            String amsEnvConfig = 
+                                "\n# Set environment variables here.\n\n"
                                 + "# AMS instance name\n"
                                 + "export AMS_INSTANCE_NAME={{hostname}}\n\n"
                                 + "# The java implementation to use. Java 1.6 required.\n"
@@ -109,18 +110,30 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
                                 + "# HBase Tables Initialization check enabled\n"
                                 + "export AMS_HBASE_INIT_CHECK_ENABLED={{ams_hbase_init_check_enabled}}\n\n"
                                 + "# AMS Collector options\n"
+                                + "{% if java_version <= 8 %}\n"
                                 + "export AMS_COLLECTOR_OPTS=\"-Djava.library.path=/usr/lib/ams-hbase/lib/hadoop-native\"\n"
+                                + "{% else %}\n"
+                                + "export AMS_COLLECTOR_OPTS=\"-Djava.library.path=/usr/lib/ams-hbase/lib/hadoop-native "
+                                + "--add-opens java.base/java.lang=ALL-UNNAMED\"\n"
+                                + "{% endif %}\n"
                                 + "{% if security_enabled %}\n"
                                 + "export AMS_COLLECTOR_OPTS=\"$AMS_COLLECTOR_OPTS -Djava.security.auth.login.config="
                                 + "{{ams_collector_jaas_config_file}}\"\n"
                                 + "{% endif %}\n\n"
                                 + "# AMS Collector GC options\n"
+                                + "{% if java_version <= 8 %}\n"
                                 + "export AMS_COLLECTOR_GC_OPTS=\"-XX:+UseConcMarkSweepGC -verbose:gc -XX:+PrintGCDetails "
                                 + "-XX:+PrintGCDateStamps -Xloggc:{{ams_collector_log_dir}}/collector-gc.log-`date +'%Y%m%d%H%M'`\"\n"
-                                + "export AMS_COLLECTOR_OPTS=\"$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS\"\n\n"
+                                + "export AMS_COLLECTOR_OPTS=\"$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS\"\n"
+                                + "{% else %}\n"
+                                + "export AMS_COLLECTOR_GC_OPTS=\" -verbose:gc -XX:+PrintGCDetails "
+                                + "-Xloggc:{{ams_collector_log_dir}}/collector-gc.log-`date +'%Y%m%d%H%M'`\"\n"
+                                + "export AMS_COLLECTOR_OPTS=\"$AMS_COLLECTOR_OPTS $AMS_COLLECTOR_GC_OPTS\"\n"
+                                + "{% endif %}\n\n"
                                 + "# Metrics collector host will be blacklisted for specified number of seconds if metric monitor "
                                 + "failed to connect to it.\n"
-                                + "export AMS_FAILOVER_STRATEGY_BLACKLISTED_INTERVAL={{failover_strategy_blacklisted_interval}}\n\n"
+                                + "export AMS_FAILOVER_STRATEGY_BLACKLISTED_INTERVAL="
+                                + "{{failover_strategy_blacklisted_interval}}\n\n"
                                 + "# Extra Java CLASSPATH elements for Metrics Collector. Optional.\n"
                                 + "export COLLECTOR_ADDITIONAL_CLASSPATH={{ams_classpath_additional}}\n";
 
@@ -195,7 +208,7 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
                                         + "export HBASE_HOME={{ams_hbase_home_dir}}\n";
 
 
-                        newAMSEnvProperties.put("content", amvEnvConfig);
+                        newAMSEnvProperties.put("content", amsEnvConfig);
                         newAMSEnvHBaseProperties.put("content",amsHBaseEnv);
                         updateConfigurationPropertiesForCluster(cluster, AMS_ENV_CONFIG, newAMSEnvProperties, true, false);
                         updateConfigurationPropertiesForCluster(cluster, AMS_HBASE_ENV_CONFIG, newAMSEnvHBaseProperties, true, false);
