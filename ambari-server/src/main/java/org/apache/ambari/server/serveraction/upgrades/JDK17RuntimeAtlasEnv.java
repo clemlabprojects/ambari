@@ -26,11 +26,12 @@ import com.google.inject.Inject;
 import com.google.inject.Injector;
 
 //
-public class UpdateHadoopEnvContentJDK11andJDK17Runtime extends AbstractUpgradeServerAction{
+public class JDK17RuntimeAtlasEnv extends AbstractUpgradeServerAction{
 
-    private static final String TARGET_CONFIG_TYPE = "hadoop-env";
+
     private static final String CONTENT_PROPERTY_NAME = "content";
-
+    private static final String TARGET_CONFIG_TYPE = "atlas-env";
+    private static final String SERVICE_NAME = "ATLAS";
     @Inject
     private Injector injector;
     private UpgradeContext upgradeContext;
@@ -41,6 +42,7 @@ public class UpdateHadoopEnvContentJDK11andJDK17Runtime extends AbstractUpgradeS
 
         String clusterName = getExecutionCommand().getClusterName();
         Cluster cluster = getClusters().getCluster(clusterName);
+//        Set<String> installedServices = cluster.getServices().keySet();
         Config config = cluster.getDesiredConfigByType(TARGET_CONFIG_TYPE);
         AmbariMetaInfo ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
         AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
@@ -53,15 +55,17 @@ public class UpdateHadoopEnvContentJDK11andJDK17Runtime extends AbstractUpgradeS
         }
         if (targetStack == null) {
             return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-                    String.format("Target Stack %s not found", TARGET_CONFIG_TYPE), "");
+                    String.format("Target Stack %s not found", stackId.getStackName()+"-"+stackId.getStackVersion()), "");
         }
 
-        Configuration targetHDFSConfiguration = targetStack.getConfiguration(Arrays.asList("HDFS"));
+        Configuration targetConfigurations = targetStack.getConfiguration(Arrays.asList(SERVICE_NAME));
         Map<String, String> properties = config.getProperties();
         // if content != targetContent ?
         // String content = properties.get(CONTENT_PROPERTY_NAME);
-        Map<String, String> hadoopEnvDefault = targetHDFSConfiguration.getProperties().get(TARGET_CONFIG_TYPE);
-        properties.put(CONTENT_PROPERTY_NAME, hadoopEnvDefault.get(CONTENT_PROPERTY_NAME));
+//        Service service = cluster.getService("HDFS");
+        Map<String, String> envDefault = targetConfigurations.getProperties().get(TARGET_CONFIG_TYPE);
+
+        properties.put(CONTENT_PROPERTY_NAME, envDefault.get(CONTENT_PROPERTY_NAME));
 
 
         config.setProperties(properties);
@@ -69,7 +73,7 @@ public class UpdateHadoopEnvContentJDK11andJDK17Runtime extends AbstractUpgradeS
         agentConfigsHolder.updateData(cluster.getClusterId(), cluster.getHosts().stream().map(Host::getHostId).collect(Collectors.toList()));
 
         return createCommandReport(0, HostRoleStatus.COMPLETED, "{}",
-                String.format("Override %s in service HDFS to config to content", TARGET_CONFIG_TYPE), "");
+                String.format("Overrided %s in service %s successfully", TARGET_CONFIG_TYPE, SERVICE_NAME), "");
 
     }
     /**
