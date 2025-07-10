@@ -59,6 +59,13 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
 
     protected static final String AMS_ENV_CONFIG = "ams-env";
     protected static final String AMS_HBASE_ENV_CONFIG = "ams-hbase-env";
+
+    protected static final String INFRA_SOLR_ENV_CONFIG = "infra-solr-env";
+    protected static final String INFRA_SOLR_ENV_GC_TUNE = "infra_solr_gc_tune";
+
+    protected static final String INFRA_SOLR_ENV_GC_LOG_OPTS = "infra_solr_gc_log_opts";
+
+    protected static final String INFRA_SOLR_ENV_CONTENT = "content";
     @Override
     protected void executeDDLUpdates() throws AmbariException, SQLException {
     }
@@ -70,6 +77,7 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
     @Override
     protected void executeDMLUpdates() throws AmbariException, SQLException {
         removeAmbariMetricsEnvJDK8Options();
+        removeAmbariInfraSolrEnvJDK8Options();
     }
 
     protected void removeAmbariMetricsEnvJDK8Options() throws AmbariException {
@@ -220,4 +228,167 @@ public class UpgradeCatalog281 extends AbstractUpgradeCatalog {
         }
 
 
+    protected void removeAmbariInfraSolrEnvJDK8Options() throws AmbariException {
+        AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
+        Clusters clusters = ambariManagementController.getClusters();
+        if (clusters != null) {
+            Map<String, Cluster> clusterMap = getCheckedClusterMap(clusters);
+            if (clusterMap != null && !clusterMap.isEmpty()) {
+                for (final Cluster cluster : clusterMap.values()) {
+                    Set<String> installedServices = cluster.getServices().keySet();
+
+                    // Technically, ambari env as part of the stack should be based in java_home which is made for stack JDK version
+                    // and its properties should be updated during cluster upgrade
+                    // because Ambari Metrics is part of Apache Ambari, we need to update its env to support JDK 17 prior to stack upgrade
+                    // which can be done during schema upgrade during ambari-server upgrade command.
+                    Map<String, String> newInfraSolrEnv = new HashMap<>();
+                    String infraSolrEnvGCTune = "-XX:NewRatio=3 -XX:SurvivorRatio=4 -XX:TargetSurvivorRatio=90 -XX:MaxTenuringThreshold=8";
+                    String infraSolrEnvGCLogOPTS = "";
+                    String infraSolrEnvContent =
+                            "#!/bin/bash\n" +
+                            "# Licensed to the Apache Software Foundation (ASF) under one or more\n" +
+                            "# contributor license agreements. See the NOTICE file distributed with\n" +
+                            "# this work for additional information regarding copyright ownership.\n" +
+                            "# The ASF licenses this file to You under the Apache License, Version 2.0\n" +
+                            "# (the \"License\"); you may not use this file except in compliance with\n" +
+                            "# the License. You may obtain a copy of the License at\n" +
+                            "#\n" +
+                            "# http://www.apache.org/licenses/LICENSE-2.0\n" +
+                            "#\n" +
+                            "# Unless required by applicable law or agreed to in writing, software\n" +
+                            "# distributed under the License is distributed on an \"AS IS\" BASIS,\n" +
+                            "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n" +
+                            "# See the License for the specific language governing permissions and\n" +
+                            "# limitations under the License.\n" +
+                            "\n" +
+                            "# By default the script will use JAVA_HOME to determine which java\n" +
+                            "# to use, but you can set a specific path for Solr to use without\n" +
+                            "# affecting other Java applications on your server/workstation.\n" +
+                            "SOLR_JAVA_HOME={{java64_home}}\n" +
+                            "\n" +
+                            "# Increase Java Min/Max Heap as needed to support your indexing / query needs\n" +
+                            "SOLR_JAVA_MEM=\"-Xms{{infra_solr_min_mem}}m -Xmx{{infra_solr_max_mem}}m\"\n" +
+                            "\n" +
+                            "SOLR_JAVA_STACK_SIZE=\"-Xss{{infra_solr_java_stack_size}}m\"\n" +
+                            "\n" +
+                            "GC_LOG_OPTS=\"{{infra_solr_gc_log_opts}}\"\n" +
+                            "\n" +
+                            "GC_TUNE=\"{{infra_solr_gc_tune}}\"\n" +
+                            "\n" +
+                            "# Set the ZooKeeper connection string if using an external ZooKeeper ensemble\n" +
+                            "# e.g. host1:2181,host2:2181/chroot\n" +
+                            "# Leave empty if not using SolrCloud\n" +
+                            "ZK_HOST=\"{{zookeeper_quorum}}{{infra_solr_znode}}\"\n" +
+                            "\n" +
+                            "# Set the ZooKeeper client timeout (for SolrCloud mode)\n" +
+                            "ZK_CLIENT_TIMEOUT=\"60000\"\n" +
+                            "\n" +
+                            "# By default the start script uses \"localhost\"; override the hostname here\n" +
+                            "# for production SolrCloud environments to control the hostname exposed to " +
+                            "cluster state\n" +
+                            "SOLR_HOST=`hostname -f`\n" +
+                            "\n" +
+                            "# By default the start script uses UTC; override the timezone if needed\n" +
+                            "#SOLR_TIMEZONE=\"UTC\"\n" +
+                            "\n" +
+                            "# Set to true to activate the JMX RMI connector to allow remote JMX client " +
+                            "applications\n" +
+                            "# to monitor the JVM hosting Solr; set to \"false\" to disable that behavior\n" +
+                            "# (false is recommended in production environments)\n" +
+                            "ENABLE_REMOTE_JMX_OPTS=\"{{infra_solr_jmx_enabled}}\"\n" +
+                            "\n" +
+                            "# The script will use SOLR_PORT+10000 for the RMI_PORT or you can set it here\n" +
+                            "RMI_PORT={{infra_solr_jmx_port}}\n" +
+                            "\n" +
+                            "# Anything you add to the SOLR_OPTS variable will be included in the java\n" +
+                            "# start command line as-is, in ADDITION to other options. If you specify the\n" +
+                            "# -a option on start script, those options will be appended as well. Examples:\n" +
+                            "#SOLR_OPTS=\"$SOLR_OPTS -Dsolr.autoSoftCommit.maxTime=3000\"\n" +
+                            "#SOLR_OPTS=\"$SOLR_OPTS -Dsolr.autoCommit.maxTime=60000\"\n" +
+                            "#SOLR_OPTS=\"$SOLR_OPTS -Dsolr.clustering.enabled=true\"\n" +
+                            "SOLR_OPTS=\"$SOLR_OPTS -Djava.rmi.server.hostname={{hostname}}\"\n" +
+                            "{% if infra_solr_extra_java_opts -%}\n" +
+                            "SOLR_OPTS=\"$SOLR_OPTS {{infra_solr_extra_java_opts}}\"\n" +
+                            "{% endif %}\n" +
+                            "\n" +
+                            "# Location where the bin/solr script will save PID files for running instances\n" +
+                            "# If not set, the script will create PID files in $SOLR_TIP/bin\n" +
+                            "SOLR_PID_DIR={{infra_solr_piddir}}\n" +
+                            "\n" +
+                            "# Path to a directory where Solr creates index files, the specified directory\n" +
+                            "# must contain a solr.xml; by default, Solr will use server/solr\n" +
+                            "SOLR_HOME={{infra_solr_datadir}}\n" +
+                            "\n" +
+                            "# Solr provides a default Log4J configuration properties file in server/resources\n" +
+                            "# however, you may want to customize the log settings and file appender location\n" +
+                            "# so you can point the script to use a different log4j.properties file\n" +
+                            "LOG4J_PROPS={{infra_solr_conf}}/log4j2.xml\n" +
+                            "\n" +
+                            "# Location where Solr should write logs to; should agree with the file appender\n" +
+                            "# settings in server/resources/log4j.properties\n" +
+                            "SOLR_LOGS_DIR={{infra_solr_log_dir}}\n" +
+                            "\n" +
+                            "# Sets the port Solr binds to, default is 8983\n" +
+                            "SOLR_PORT={{infra_solr_port}}\n" +
+                            "\n" +
+                            "# Be sure to update the paths to the correct keystore for your environment\n" +
+                            "{% if infra_solr_ssl_enabled %}\n" +
+                            "SOLR_SSL_KEY_STORE={{infra_solr_keystore_location}}\n" +
+                            "SOLR_SSL_KEY_STORE_PASSWORD={{infra_solr_keystore_password}}\n" +
+                            "SOLR_SSL_TRUST_STORE={{infra_solr_truststore_location}}\n" +
+                            "SOLR_SSL_TRUST_STORE_PASSWORD={{infra_solr_truststore_password}}\n" +
+                            "SOLR_SSL_NEED_CLIENT_AUTH=false\n" +
+                            "SOLR_SSL_WANT_CLIENT_AUTH=false\n" +
+                            "{% endif %}\n" +
+                            "\n" +
+                            "# Uncomment to set a specific SSL port (-Djetty.ssl.port=N); if not set\n" +
+                            "# and you are using SSL, then the start script will use SOLR_PORT for the SSL port\n" +
+                            "#SOLR_SSL_PORT=\n" +
+                            "\n" +
+                            "{% if security_enabled -%}\n" +
+                            "SOLR_JAAS_FILE={{infra_solr_jaas_file}}\n" +
+                            "SOLR_KERB_KEYTAB={{infra_solr_web_kerberos_keytab}}\n" +
+                            "SOLR_KERB_PRINCIPAL={{infra_solr_web_kerberos_principal}}\n" +
+                            "SOLR_OPTS=\"$SOLR_OPTS -Dsolr.hdfs.security.kerberos.principal=" +
+                            "{{infra_solr_kerberos_principal}}\"\n" +
+                            "SOLR_OPTS=\"$SOLR_OPTS {{zk_security_opts}}\"\n" +
+                            "\n" +
+                            "SOLR_AUTH_TYPE=\"kerberos\"\n" +
+                            "SOLR_AUTHENTICATION_OPTS=\" -DauthenticationPlugin=org.apache.solr.security." +
+                            "KerberosPlugin -Djava.security.auth.login.config=$SOLR_JAAS_FILE -Dsolr.kerberos." +
+                            "principal=${SOLR_KERB_PRINCIPAL} -Dsolr.kerberos.keytab=${SOLR_KERB_KEYTAB} " +
+                            "-Dsolr.kerberos.cookie.domain=${SOLR_HOST}\"\n" +
+                            "{% endif %}\n" +
+                            "\n" +
+                            "{% if java_version == 8 %}\n" +
+                            "export GC_TUNE=\"$GC_TUNE -XX:+UseConcMarkSweepGC -XX:+UseParNewGC " +
+                            "-XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 -XX:+CMSScavengeBeforeRemark " +
+                            "-XX:PretenureSizeThreshold=64m -XX:+UseCMSInitiatingOccupancyOnly " +
+                            "-XX:CMSInitiatingOccupancyFraction=50 -XX:CMSMaxAbortablePrecleanTime=6000 " +
+                            "-XX:+CMSParallelRemarkEnabled -XX:+ParallelRefProcEnabled\"\n" +
+                            "export GC_LOG_OPTS=\"$GC_LOG_OPTS  -verbose:gc -XX:+PrintHeapAtGC " +
+                            "-XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps " +
+                            "-XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime " +
+                            "-XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=15 -XX:GCLogFileSize=200M " +
+                            "-Xloggc:{{infra_solr_log_dir}}/solr_gc.log\"\n" +
+                            "{% elif java_version == 11 %}\n" +
+                            "export GC_TUNE=\"$GC_TUNE -XX:ParallelGCThreads=4 -XX:+ParallelRefProcEnabled\"\n" +
+                            "export GC_LOG_OPTS=\"$GC_LOG_OPTS -Xlog:gc*,gc+heap=info,gc+age=info:file=" +
+                            "{{infra_solr_log_dir}}/gc.log:time,uptime,level,tags:filecount=15,filesize=200M\"\n" +
+                            "{% else %}\n" +
+                            "export GC_TUNE=\"$GC_TUNE -XX:ParallelGCThreads=4 -XX:+ParallelRefProcEnabled\"\n" +
+                            "export GC_LOG_OPTS=\"$GC_LOG_OPTS -Xlog:gc*,gc+heap=info,gc+age=info:file=" +
+                            "{{infra_solr_log_dir}}/gc.log:time,uptime,level,tags:filecount=15,filesize=200M\"\n" +
+                            "{% endif %}";
+                    newInfraSolrEnv.put(INFRA_SOLR_ENV_GC_TUNE, infraSolrEnvGCTune);
+                    newInfraSolrEnv.put(INFRA_SOLR_ENV_GC_LOG_OPTS, infraSolrEnvGCLogOPTS);
+                    newInfraSolrEnv.put(INFRA_SOLR_ENV_CONTENT, infraSolrEnvContent);
+                    updateConfigurationPropertiesForCluster(cluster, INFRA_SOLR_ENV_CONFIG, newInfraSolrEnv, true, false);
+
+
+
+                }
+            }
+        }
+    }
 }
