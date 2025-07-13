@@ -49,7 +49,8 @@ import org.apache.ambari.server.state.stack.upgrade.RepositoryVersionHelper;
 import org.apache.ambari.server.state.stack.upgrade.UpgradeType;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
-import org.codehaus.jackson.annotate.JsonProperty;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import com.google.common.collect.Lists;
 import com.google.gson.Gson;
@@ -520,6 +521,14 @@ public abstract class AbstractCheckDescriptor {
     public int compareTo(ServiceDetail other) {
       return serviceName.compareTo(other.serviceName);
     }
+
+    /**
+     * Gets the name of the service.
+     * @return
+     */
+    public String getServiceName() {
+        return serviceName;
+    }
   }
 
   /**
@@ -537,6 +546,14 @@ public abstract class AbstractCheckDescriptor {
       this.serviceName = serviceName;
       this.componentName = componentName;
     }
+    
+    public String getServiceName() {
+        return serviceName;
+    }
+    
+    public String getComponentName() {
+        return componentName;
+    }
 
     /**
      * {@inheritDoc}
@@ -551,18 +568,8 @@ public abstract class AbstractCheckDescriptor {
      */
     @Override
     public boolean equals(Object obj) {
-      if (this == obj) {
-        return true;
-      }
-
-      if (obj == null) {
-        return false;
-      }
-
-      if (getClass() != obj.getClass()) {
-        return false;
-      }
-
+      if (this == obj) return true;
+      if (obj == null || getClass() != obj.getClass()) return false;
       ServiceComponentDetail other = (ServiceComponentDetail) obj;
       return Objects.equals(serviceName, other.serviceName)
           && Objects.equals(componentName, other.componentName);
@@ -595,6 +602,14 @@ public abstract class AbstractCheckDescriptor {
       this.hostName = hostName;
     }
 
+    public Long getHostId() {
+        return hostId;
+    }
+    
+    public String getHostName() {
+        return hostName;
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -608,18 +623,8 @@ public abstract class AbstractCheckDescriptor {
      */
     @Override
     public boolean equals(Object obj) {
-      if (this == obj) {
-        return true;
-      }
-
-      if (obj == null) {
-        return false;
-      }
-
-      if (getClass() != obj.getClass()) {
-        return false;
-      }
-
+      if (this == obj) return true;
+      if (obj == null || getClass() != obj.getClass()) return false;
       HostDetail other = (HostDetail) obj;
       return Objects.equals(hostId, other.hostId) && Objects.equals(hostName, other.hostName);
     }
