@@ -46,8 +46,8 @@ public class JDK17RuntimeHiveEnv extends AbstractUpgradeServerAction{
         Config config = cluster.getDesiredConfigByType(TARGET_CONFIG_TYPE);
         AmbariMetaInfo ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
         AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
-        StackId stackId = getTargetStackId(cluster);
         upgradeContext = getUpgradeContext(cluster);
+        StackId stackId = getTargetStackId(cluster);
         Stack targetStack = new Stack(stackId.getStackName(),stackId.getStackVersion(),ambariManagementController);
         if (!stackId.getStackVersion().equals("1.3")){
             return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
