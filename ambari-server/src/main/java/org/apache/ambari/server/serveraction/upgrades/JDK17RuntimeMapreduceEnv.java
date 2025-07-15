@@ -31,7 +31,7 @@ public class JDK17RuntimeMapreduceEnv extends AbstractUpgradeServerAction{
 
     private static final String CONTENT_PROPERTY_NAME = "content";
     private static final String TARGET_CONFIG_TYPE = "mapred-env";
-    private static final String SERVICE_NAME = "MAPREDUCE";
+    private static final String SERVICE_NAME = "MAPREDUCE2";
     @Inject
     private Injector injector;
     private UpgradeContext upgradeContext;
