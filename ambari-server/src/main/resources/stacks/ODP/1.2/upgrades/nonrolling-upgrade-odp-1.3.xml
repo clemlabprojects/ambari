@@ -204,6 +204,8 @@
         <component>HBASE_REGIONSERVER</component>
         <component>HBASE_MASTER</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
 
       <service name="KAFKA">
@@ -217,6 +219,7 @@
         <component>ZKFC</component>
         <component>JOURNALNODE</component>
         <component>NFS_GATEWAY</component>
+        <component>HTTPFS_GATEWAY</component>
       </service>
 
       <service name="OZONE">
@@ -225,6 +228,7 @@
         <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
         <component>OZONE_MANAGER</component>
         <component>OZONE_RECON_UI</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
 
       <service name="RANGER">
@@ -431,6 +435,7 @@
         <component>SECONDARY_NAMENODE</component>
         <component>NFS_GATEWAY</component>
         <component>HDFS_CLIENT</component>
+        <component>HTTPFS_GATEWAY</component>
       </service>
     </group>
 
@@ -478,6 +483,7 @@
         <component>OZONE_RECON_UI</component>
         <component>OZONE_S3_GATEWAY</component>
         <component>OZONE_CLIENT</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
     </group>
 
@@ -585,6 +591,8 @@
         <component>HBASE_REGIONSERVER</component>
         <component>HBASE_CLIENT</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
     </group>
 
@@ -984,6 +992,12 @@
       </component>
 
       <component name="NFS_GATEWAY">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+
+      <component name="HTTPFS_GATEWAY">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>

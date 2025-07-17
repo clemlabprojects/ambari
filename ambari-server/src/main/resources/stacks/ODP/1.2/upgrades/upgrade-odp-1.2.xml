@@ -171,6 +171,7 @@
 
       <service name="HBASE">
         <component>HBASE_MASTER</component>
+        
       </service>
 
       <service name="OZONE">
@@ -202,11 +203,14 @@
       <service name="HDFS">
         <component>DATANODE</component>
         <component>NFS_GATEWAY</component>
+        <component>HTTPFS_GATEWAY</component>
       </service>
 
       <service name="HBASE">
         <component>HBASE_REGIONSERVER</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
 
       <service name="YARN">
@@ -214,7 +218,8 @@
       </service>
 
       <service name="OZONE">
-        <component>OZONE_DATANODe</component>
+        <component>OZONE_DATANODE</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
 
       <batch>
