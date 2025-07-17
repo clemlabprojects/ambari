@@ -455,8 +455,8 @@ def setup_usersync(upgrade_type=None):
       mode=0o644
     )
   elif upgrade_type is not None and not params.stack_supports_ranger_log4j:
-    src_file = format('{usersync_home}/conf.dist/log4j.xml')
-    dst_file = format('{usersync_home}/conf/log4j.xml')
+    src_file = format('{usersync_home}/conf.dist/logback.xml')
+    dst_file = format('{usersync_home}/conf/logback.xml')
     Execute(('cp', '-f', src_file, dst_file), sudo=True)
   else:
     File(format("{params.ranger_ugsync_conf}/logback.xml"),
