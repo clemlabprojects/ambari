@@ -29,7 +29,7 @@
   <version>2.8.2.0.0</version>
   <name>Ambari Contrib Views</name>
   <properties>
-    <ambari.version>2.7.11.0.0</ambari.version>
+    <ambari.version>2.8.1.0.0</ambari.version>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
     <odp.release.stack>1.2.2.0</odp.release.stack>
     <odp.release.number>155</odp.release.number>
@@ -43,6 +43,7 @@
     <module>commons</module>
     <module>files</module>
     <module>tez</module>
+    <module>k8s</module>
     <!-- <module>pig</module> -->
     <module>capacity-scheduler</module>
     <!-- <module>wfmanager</module> -->
