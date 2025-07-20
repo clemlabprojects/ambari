@@ -1,0 +1,8 @@
+/* ui/src/pages/Page.css */
+/* Styles communs pour les pages */
+.page-header {
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

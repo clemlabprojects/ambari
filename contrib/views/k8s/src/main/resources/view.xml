@@ -1,0 +1,52 @@
+<view>
+    <name>K8S_VIEW</name>
+    <label>Ambari K8S View</label>
+    <version>1.0.0.0</version>
+    <build>${env.BUILD_NUMBER}</build>
+    <min-ambari-version>2.5.0</min-ambari-version>
+
+    <description>Une vue Ambari pour interagir avec un cluster Kubernetes.</description>
+    
+    <!--
+      Déclaration de notre service REST. Le nom 'api' sera utilisé dans l'URL.
+      Exemple: /api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/stats
+    -->
+    <resource>
+        <name>api</name>
+        <service-class>org.apache.ambari.view.k8s.KubeService</service-class>
+    </resource>
+    
+    <system-services>
+        <service>
+            <class>org.glassfish.jersey.media.multipart.MultiPartFeature</class>
+        </service>
+    </system-services>
+    <parameter>
+        <name>k8s.view.working.dir</name>
+        <description>Le répertoire sur le serveur Ambari où stocker les fichiers de configuration de la vue.</description>
+        <label>Répertoire de Travail</label>
+        <required>false</required>
+        <default-value>/var/lib/ambari-server/resources/views/work/k8s-view</default-value>
+    </parameter>
+    <!--
+      Définition d'une instance par défaut.
+      Contrairement à la vue Capacity Scheduler, nous n'utilisons pas <auto-instance>
+      car notre vue ne dépend pas d'un service géré par Ambari (comme YARN).
+      Une création manuelle est plus appropriée.
+    -->
+    <instance>
+        <name>K8S_VIEW_INSTANCE</name>
+        <label>Kubernetes Cluster Manager</label>
+        <description>Instance par défaut pour la vue Kubernetes</description>
+        <visible>true</visible>
+        <public>false</public>
+        <roles>
+            <role>CLUSTER.ADMINISTRATOR</role>
+            <role>CLUSTER.OPERATOR</role>
+            <role>SERVICE.ADMINISTRATOR</role>
+            <role>SERVICE.OPERATOR</role>
+            <role>CLUSTER.USER</role>
+        </roles>
+    </instance>
+    
+</view>
