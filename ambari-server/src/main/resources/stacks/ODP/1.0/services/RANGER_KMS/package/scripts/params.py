@@ -23,7 +23,7 @@ from resource_management.libraries.script import Script
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.default import default
-from resource_management.libraries.functions.expect import expectfrom resource_management.libraries.functions.expect import expect
+from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.functions import StackFeature
