@@ -341,6 +341,11 @@
           <summary>Update Hive Interactive Env Configuration for JDK 11/17 Runtime</summary>
         </task>
       </execute-stage>
+      <execute-stage service="OOZIE" component="OOZIE_SERVER" title="Update Oozie Server Env Configuration Runtime">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeOozieEnv">
+          <summary>Update Oozie Server Env Configuration for JDK 11/17 Runtime</summary>
+        </task>
+      </execute-stage>
       <!-- KAFKA -->
       <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>

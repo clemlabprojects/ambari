@@ -929,8 +929,11 @@
             <script>scripts/oozie_server_upgrade.py</script>
             <function>upgrade_oozie_database_and_sharelib</function>
           </task>
-        </pre-upgrade>
 
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeOozieEnv">
+            <summary>Update Oozie Env Configuration for JDK 11/17 Runtime</summary>
+          </task>
+        </pre-upgrade>
         <pre-downgrade>
           <task xsi:type="execute" hosts="all" sequential="true">
             <summary>Shut down all Oozie servers</summary>
