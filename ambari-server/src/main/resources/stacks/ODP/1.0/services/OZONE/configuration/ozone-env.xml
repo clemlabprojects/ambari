@@ -1070,9 +1070,11 @@
             # Java property: hadoop.log.dir
             export OZONE_SECURE_LOG=${OZONE_LOG_DIR}
             {% if java_version &lt; 8 %}
-            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log"
+                JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log"
+            {% elif java_version == 8 %}
+                JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log -Xloggc:{{ozone_log_dir_prefix}}/gc.log-`date +'%Y%m%d%H%M'` -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:CMSInitiatingOccupancyFraction=70 -XX:+UseCMSInitiatingOccupancyOnly"
             {% else %}
-            JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseConcMarkSweepGC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log -Xloggc:{{ozone_log_dir_prefix}}/gc.log-`date +'%Y%m%d%H%M'` -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:CMSInitiatingOccupancyFraction=70 -XX:+UseCMSInitiatingOccupancyOnly"
+                JAVA_GC_ARGS="-XX:ParallelGCThreads=8 -XX:+UseG1GC -XX:ErrorFile={{ozone_log_dir_prefix}}/hs_err_pid%p.log -Xlog:gc*:file={{ozone_log_dir_prefix}}/gc.log-`date +'%Y%m%d%H%M'`:time,uptime:filecount=5,filesize=10M"
             {% endif %}
             #
             # When running a secure daemon, the default value of OZONE_IDENT_STRING

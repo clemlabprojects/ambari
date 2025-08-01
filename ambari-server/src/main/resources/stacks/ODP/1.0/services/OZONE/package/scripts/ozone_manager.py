@@ -31,11 +31,12 @@ import upgrade
 from setup_ranger_ozone import setup_ranger_ozone
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
-from ambari_commons.constants import SERVICE
+from ambari_commons.constants import SERVICE, UPGRADE_TYPE_NON_ROLLING, UPGRADE_TYPE_ROLLING
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.libraries.functions.setup_credential_file import setup_credential_file
+
 import sys, os
 import upgrade
 import time
@@ -94,7 +95,36 @@ class OzoneManagerDefault(OzoneManager):
 
     setup_ranger_ozone(upgrade_type=upgrade_type, service_name="ozone-manager")
     ozone_service('ozone-manager', action = 'start')
-    
+
+  def finalize_non_rolling_upgrade(self, env):
+    """
+    Finalize the Ozone Manager after a NonRolling Upgrade.
+    This is a no-op for Ozone Manager as it does not have a finalize step.
+    """
+    import params
+    env.set_params(params)
+    finalize_ozone_manager_upgrade()
+
+  def prepare_express_upgrade(self, env):
+    """
+    If using OM HA and currently running Ozone 1.2.0 or greater, prepare the Ozone Manager.
+    If OM HA is not being used, this step can be skipped.
+    """
+    import params
+    if not params.ozone_om_ha_is_enabled:
+      Logger.info("Skipping Ozone Manager prepare for upgrade as HA is not enabled")
+      return
+
+    Logger.info("Preparing the Ozone Managers for a NonRolling (aka Express) Upgrade.")
+    if params.upgrade_type == UPGRADE_TYPE_ROLLING:
+      Logger.error("Rolling upgrade is not supported for Ozone Manager")
+      return
+    if params.upgrade_type == UPGRADE_TYPE_NON_ROLLING:
+      prepare_om_server_for_upgrade()
+      # If using OM HA and currently running Ozone 1.2.0 or greater, prepare the Ozone Manager.
+      # If OM HA is not being used, this step can be skipped.
+      return
+
   def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
@@ -219,6 +249,57 @@ def wait_for_om_leader_to_be_active(ozone_binary='ozone', afterwait_sleep=0, exe
         Logger.error("The Primordial SCM Server is still down. Waiting....")
         time.sleep(afterwait_sleep)
   return
+
+def prepare_om_server_for_upgrade():
+  import params
+  """
+    The prepare command will block the Ozone Managers from receiving all write requests.
+  """
+  cmd_env = {'JAVA_HOME': params.java_home }
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
+  if not params.ozone_om_ha_is_enabled:
+    Logger.info("No need to prepare Ozone Manager for upgrade as HA is not enabled")
+    return
+  else:
+      if params.security_enabled:
+        kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
+        Execute(kinit_command, user=params.ozone_user, logoutput=True)
+      try:
+        Execute(format("ozone --config {conf_dir} admin om prepare -id={params.ozone_om_ha_current_cluster_nameservice}"),
+          user = params.ozone_user,
+          environment = cmd_env,
+          path = params.hadoop_ozone_bin_dir,
+          logoutput=True
+        )
+      except Fail:
+        Logger.error("Failed to prepare Ozone Manager for upgrade")
+  return
+
+
+def finalize_ozone_manager_upgrade():
+  import params
+  """
+    At this point, the cluster is upgraded to a pre-finalized state and fully operational.
+    The cluster can be downgraded by repeating the above steps, but restoring the older versions of components in step 3, instead of the newer versions.
+    To finalize the cluster to use new features, continue on with the following steps.
+  """
+  cmd_env = {'JAVA_HOME': params.java_home }
+  conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
+  if params.security_enabled:
+    kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
+    Execute(kinit_command, user=params.ozone_user, logoutput=True)
+  try:
+    Execute(format("ozone --config {conf_dir} admin om finalizeupgrade -id={params.ozone_om_ha_current_cluster_nameservice}"),
+      user = params.ozone_user,
+      environment = cmd_env,
+      path = params.hadoop_ozone_bin_dir,
+      logoutput=True
+    )
+    return 
+  except Fail:
+    Logger.error("Failed to prepare Ozone Manager for upgrade")
+    return
+
 
 def wait_for_om_leader_to_be_started(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   import params

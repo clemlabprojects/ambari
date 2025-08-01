@@ -175,6 +175,13 @@
         </task>
       </execute-stage>
 
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Prepare Ozone Manager">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_manager.py</script>
+          <function>prepare_express_upgrade</function>
+        </task>
+      </execute-stage>
+
       <execute-stage service="RANGER" component="RANGER_ADMIN" title="Backup Ranger Database">
         <task xsi:type="manual">
           <message>Before continuing, please backup the Ranger Admin database on the following host(s): {{hosts.all}}.</message>
@@ -344,6 +351,11 @@
       <execute-stage service="OOZIE" component="OOZIE_SERVER" title="Update Oozie Server Env Configuration Runtime">
         <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeOozieEnv">
           <summary>Update Oozie Server Env Configuration for JDK 11/17 Runtime</summary>
+        </task>
+      </execute-stage>
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Update Ozone Env Configuration Runtime">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeOzoneEnv">
+          <summary>Update Ozone Env Configuration for JDK 11/17 Runtime</summary>
         </task>
       </execute-stage>
       <!-- KAFKA -->
@@ -886,6 +898,20 @@
       <execute-stage service="HDFS" component="NAMENODE" title="Execute HDFS Finalize">
         <task xsi:type="execute" hosts="master">
           <script>scripts/namenode.py</script>
+          <function>finalize_non_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="OZONE" component="OZONE_STORAGE_CONTAINER_MANAGER" title="Execute Ozone SCM Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_scm_server.py</script>
+          <function>finalize_non_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Execute Ozone Manager Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_manager.py</script>
           <function>finalize_non_rolling_upgrade</function>
         </task>
       </execute-stage>

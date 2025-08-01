@@ -18,10 +18,13 @@ limitations under the License.
 
 """
 
+from ambari_commons.constants import  UPGRADE_TYPE_NON_ROLLING, UPGRADE_TYPE_ROLLING
+
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.core.shell import as_sudo
 from resource_management.core.resources.system import Execute, File, Directory
+
 import os
 
 def ozone_service(
@@ -43,7 +46,15 @@ def ozone_service(
     no_op_test = as_sudo(["test", "-f", pid_file]) + format(" && ps -p `{pid_expression}` >/dev/null 2>&1")
     
     if action == 'start':
-      daemon_cmd = format("{cmd} --daemon start {role}")
+      suffix_upgrade = ""
+      if name == "ozone-manager":
+        if params.upgrade_type is not None:
+          if params.upgrade_type == UPGRADE_TYPE_ROLLING:
+            raise Fail("Rolling upgrade is not supported for Ozone Manager")
+          if params.upgrade_type == UPGRADE_TYPE_NON_ROLLING:
+            suffix_upgrade = "--upgrade"
+
+      daemon_cmd = format("{cmd} --daemon start {role} {suffix_upgrade}")
       
       try:
         Execute ( daemon_cmd,

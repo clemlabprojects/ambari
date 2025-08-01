@@ -60,6 +60,40 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     env.set_params(params)
     upgrade.prestart(env)
 
+  def finalize_non_rolling_upgrade(self, env):
+    """
+    Finalize the Ozone Storage Container after a NonRolling Upgrade.
+    This is a no-op for Ozone Storage Container as it does not have a finalize step.
+    """
+    import params
+    env.set_params(params)
+    finalize_ozone_storage_container_upgrade()
+
+  def finalize_ozone_storage_container_upgrade():
+    import params
+    """
+      At this point, the cluster is upgraded to a pre-finalized state and fully operational.
+      The cluster can be downgraded by repeating the above steps, but restoring the older versions of components in step 3, instead of the newer versions.
+      To finalize the cluster to use new features, continue on with the following steps.
+    """
+    cmd_env = {'JAVA_HOME': params.java_home }
+    conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
+    finalize_cmd = format("ozone --config {conf_dir} ") + "scm finalizeupgrade"
+    if params.security_enabled:
+      kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
+      Execute(kinit_command, user=params.ozone_user, logoutput=True)
+    try:
+      Execute(finalize_cmd,
+        user = params.ozone_user,
+        environment = cmd_env,
+        path = params.hadoop_ozone_bin_dir,
+        logoutput=True
+      )
+      return 
+    except Fail:
+      Logger.error("Failed to prepare Finalize Ozone SCM after upgrade")
+      return
+
   def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
