@@ -26,7 +26,7 @@ import com.google.inject.Inject;
 import com.google.inject.Injector;
 
 //
-public class JDK17RuntimeOozieEnv extends AbstractUpgradeServerAction{
+public class JDK17RuntimeOzoneEnv extends AbstractUpgradeServerAction{
 
 
     private static final String CONTENT_PROPERTY_NAME = "content";
