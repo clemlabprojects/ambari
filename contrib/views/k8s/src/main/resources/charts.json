@@ -1,0 +1,86 @@
+{
+  "trino": {
+    "label": "Trino",
+    "chart": "trinodb/trino",
+    "form": [
+      { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "default" },
+      {
+        "name": "networkAccess",
+        "label": "Accès Réseau (Exposition du service Trino)",
+        "type": "group",
+        "fields": [
+          {
+            "name": "service.enabled",
+            "label": "Activer l'accès interne (ClusterIP)",
+            "type": "boolean",
+            "defaultValue": true,
+            "disabled": true,
+            "help": "Un service interne est toujours créé pour la communication dans le cluster."
+          },
+          {
+            "name": "nodePort.enabled",
+            "label": "Activer l'accès externe (NodePort)",
+            "type": "boolean",
+            "defaultValue": false,
+            "help": "Crée un second service de type NodePort pour l'accès depuis l'extérieur du cluster (ex: Hue)."
+          },
+          {
+            "name": "nodePort.port",
+            "label": "Port du Nœud (Optionnel)",
+            "type": "number",
+            "help": "Laisser vide pour un port aléatoire (recommandé). Doit être entre 30000-32767.",
+            "condition": { "field": "nodePort.enabled", "value": true }
+          }
+        ]
+      },
+      {
+        "name": "coordinatorResources",
+        "label": "Ressources du Coordinateur",
+        "type": "group",
+        "fields": [
+          { "name": "coordinator.resources.requests.cpu", "label": "CPU Demandé", "type": "string", "defaultValue": "1" },
+          { "name": "coordinator.resources.requests.memory", "label": "Mémoire Demandée", "type": "string", "defaultValue": "4Gi" },
+          { "name": "coordinator.resources.limits.cpu", "label": "CPU Limite", "type": "string", "defaultValue": "2" },
+          { "name": "coordinator.resources.limits.memory", "label": "Mémoire Limite", "type": "string", "defaultValue": "8Gi" }
+        ]
+      },
+      {
+        "name": "workerResources",
+        "label": "Ressources des Workers",
+        "type": "group",
+        "fields": [
+          { "name": "worker.replicas", "label": "Nombre de Workers", "type": "number", "defaultValue": 3 },
+          { "name": "worker.resources.requests.cpu", "label": "CPU Demandé / Worker", "type": "string", "defaultValue": "1" },
+          { "name": "worker.resources.requests.memory", "label": "Mémoire Demandée / Worker", "type": "string", "defaultValue": "4Gi" },
+          { "name": "worker.resources.limits.cpu", "label": "CPU Limite / Worker", "type": "string", "defaultValue": "2" },
+          { "name": "worker.resources.limits.memory", "label": "Mémoire Limite / Worker", "type": "string", "defaultValue": "8Gi" }
+        ]
+      },
+      {
+        "name": "hadoopIntegration",
+        "label": "Intégration Hadoop",
+        "type": "group",
+        "fields": [
+          {
+            "name": "additionalCatalogs.hive.config.hive\\.metastore\\.uri",
+            "label": "Service Hive Metastore",
+            "type": "service-select",
+            "serviceType": "HIVE_METASTORE",
+            "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
+          }
+        ]
+      }
+    ]
+  },
+  "prometheus": {
+    "label": "Prometheus",
+    "chart": "prometheus-community/prometheus",
+    "form": [
+      { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "monitoring" },
+      { "name": "alertmanager.enabled", "label": "Activer Alertmanager", "type": "boolean", "defaultValue": true },
+      { "name": "server.retention", "label": "Rétention des données", "type": "string", "defaultValue": "14d", "help": "Exemples : 14d, 2w, 1y" }
+    ]
+  }
+}

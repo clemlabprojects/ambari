@@ -1,7 +1,7 @@
 <view>
-    <name>K8S_VIEW</name>
+    <name>K8S-VIEW</name>
     <label>Ambari K8S View</label>
-    <version>1.0.0.0</version>
+    <version>1.0.0.1</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
 
@@ -18,7 +18,10 @@
     
     <system-services>
         <service>
-            <class>org.glassfish.jersey.media.multipart.MultiPartFeature</class>
+          <class>org.glassfish.jersey.media.multipart.MultiPartFeature</class>
+        </service>
+        <service>
+          <class>org.apache.ambari.view.k8s.service.GsonConfigurator</class>
         </service>
     </system-services>
     <parameter>
@@ -28,6 +31,23 @@
         <required>false</required>
         <default-value>/var/lib/ambari-server/resources/views/work/k8s-view</default-value>
     </parameter>
+    <persistence>
+        <!-- Fully qualified name of your @Entity class -->
+        <entity>
+          <class>org.apache.ambari.view.k8s.store.HelmRepoEntity</class>
+          <id-property>id</id-property>
+        </entity>
+        <entity>
+          <class>org.apache.ambari.view.k8s.store.K8sReleaseEntity</class>
+          <id-property>id</id-property>
+        </entity>
+        <entity>
+          <class>org.apache.ambari.view.k8s.store.CommandStatusEntity</class>
+          <id-property>id</id-property>
+        </entity>
+        <!-- If more entities are added later, list them here as well -->
+        <!-- <entity class="org.apache.ambari.view.k8s.store.OtherEntity"/> -->
+    </persistence>
     <!--
       Définition d'une instance par défaut.
       Contrairement à la vue Capacity Scheduler, nous n'utilisons pas <auto-instance>

@@ -9,8 +9,8 @@ import './Page.css';
 const { Title, Text, Paragraph } = Typography;
 
 const DashboardPage: React.FC = () => {
-    const { status, stats, components, events } = useClusterStatus();
-
+    const { status, stats, components, events, mainLoaderActive } = useClusterStatus();
+    console.log('DEBUG: DashboardPage - Cluster status:', status);
     // Si la connexion a échoué, on affiche un message à la place du contenu.
     if (status === 'error') {
         return (
@@ -23,8 +23,12 @@ const DashboardPage: React.FC = () => {
     }
 
     // Si les données sont en cours de chargement, on affiche un spinner.
-    if (!stats || !components || !events) {
-      return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
+    console.log('DEBUG: DashboardPage - Cluster stats:', stats);
+    console.log('DEBUG: DashboardPage - Cluster components:', components);
+    console.log('DEBUG: DashboardPage - Cluster events:', events);
+    console.log('DEBUG: DashboardPage - Main loader active:', mainLoaderActive);
+    if (mainLoaderActive){
+        return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
     }
     
     const helmChartData = [

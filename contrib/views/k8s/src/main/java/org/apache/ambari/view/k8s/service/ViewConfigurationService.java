@@ -5,9 +5,16 @@ import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardOpenOption;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Map;
@@ -36,7 +43,6 @@ public class ViewConfigurationService {
             }
         }else {
             LOG.info("View is not configured. No kubeconfig path set.");
-    
         }
     }
 
@@ -69,6 +75,7 @@ public class ViewConfigurationService {
             outputStream.write(encryptedBytes);
         }
         LOG.info("Successfully wrote {} encrypted bytes to {}", encryptedBytes.length, configFile.getAbsolutePath());
+        saveKubeconfigPath(configFile.getAbsolutePath());
         return configFile;
     }
 
@@ -88,6 +95,28 @@ public class ViewConfigurationService {
             }
         } catch (Exception e) {
             LOG.error("An error occurred while calling putInstanceData", e);
+        }
+    }
+
+    /** Retourne le contenu YAML en clair (chaîne). */
+    public String getKubeconfigContents() {
+        LOG.info("Attempting to retrieve kubeconfig contents from encrypted file.");
+        Path encryptedKubeconfigFile = Paths.get(getKubeconfigPath());
+        if (encryptedKubeconfigFile == null) {
+            LOG.error("kubeconfig.path is not set for this view instance");
+            throw new IllegalStateException("Kubeconfig non configuré");
+        }
+        if (!Files.exists(encryptedKubeconfigFile)) {
+            LOG.error("Kubeconfig file does not exist at path: {}", encryptedKubeconfigFile);
+            throw new IllegalStateException("Kubeconfig non configuré");
+        }
+        try {
+            byte[] encryptedBytes = Files.readAllBytes(encryptedKubeconfigFile);
+            byte[] plain = encryptionService.decrypt(encryptedBytes);
+            LOG.info("Loaded kubeconfig contents ({} bytes) from {}", plain.length, encryptedKubeconfigFile);
+            return new String(plain, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+        throw new UncheckedIOException("Lecture du kubeconfig chiffré échouée", e);
         }
     }
 
@@ -122,4 +151,5 @@ public class ViewConfigurationService {
         LOG.info("isConfigured() check result: {}", uploaded);
         return "true".equalsIgnoreCase(uploaded);
     }
+
 }

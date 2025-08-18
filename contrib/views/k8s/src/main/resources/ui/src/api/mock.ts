@@ -1,8 +1,7 @@
 // ui/src/api/mock.ts
 import { UserPermissions, UserRole, HelmRelease, ClusterNode, ClusterStats, ClusterEvent, ComponentStatus } from '../types';
-
 // ... (getMockPermissions, getMockHelmReleases, getMockNodes, getMockClusterStats restent les mêmes) ...
-
+import type { HelmRepo } from '../types';
 export const getMockPermissions = (role: UserRole): UserPermissions => {
   switch (role) {
     case 'ADMIN':
@@ -39,7 +38,7 @@ export const getMockClusterStats = (): ClusterStats => ({
     cpu: { used: 9.8, total: 32 },
     memory: { used: 45.2, total: 128 },
     pods: { used: 157, total: 400 },
-    nodes: { ready: 4, total: 6 },
+    nodes: { used: 1, total: 2 },
     helm: { deployed: 4, pending: 1, failed: 2, total: 8 },
 });
 
@@ -59,3 +58,159 @@ export const getMockClusterEvents = (): ClusterEvent[] => ([
     { id: 'evt3', type: 'Info', message: 'Helm release "grafana" was upgraded to 6.58.5', timestamp: 'il y a 1h' },
     { id: 'evt4', type: 'Alert', message: 'PersistentVolume "pvc-data-trino-0" is unbound', timestamp: 'il y a 3h' },
 ]);
+
+export const getAvailableServices = (): string[] => (
+    ['trino', 'prometheus', 'grafana', 'cert-manager', 'argo-cd']
+);
+
+export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: number }): Promise<HelmRepo[]> {
+  const { signal, delayMs = 400 } = init ?? {};
+
+  // simple sleep with abort support
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      if (signal) {
+        const onAbort = () => {
+          clearTimeout(t);
+          reject(new DOMException('Aborted', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+
+  await sleep(delayMs);
+
+  return [
+    {
+      id: 'bitnami',
+      type: 'HTTP',
+      name: 'Bitnami',
+      url: 'https://charts.bitnami.com/bitnami',
+      authMode: 'anonymous',
+      authInvalid: false,
+      createdAt: '2025-08-01T12:00:00Z',
+      updatedAt: '2025-08-01T12:00:00Z',
+    },
+    {
+      id: 'my-http',
+      type: 'HTTP',
+      name: 'Private HTTP',
+      url: 'https://helm.example.com/charts',
+      authMode: 'basic',
+      username: 'ci',
+      authInvalid: false,
+      createdAt: '2025-08-02T08:00:00Z',
+      updatedAt: '2025-08-02T08:10:00Z',
+    },
+    {
+      id: 'ghcr',
+      type: 'OCI',
+      name: 'GitHub Container Registry',
+      url: 'ghcr.io/stefanprodan/charts',
+      authMode: 'anonymous',
+      authInvalid: false,
+      createdAt: '2025-07-30T09:00:00Z',
+      updatedAt: '2025-07-30T09:00:00Z',
+    },
+    {
+      id: 'ecr',
+      type: 'OCI',
+      name: 'AWS ECR',
+      url: '123456789012.dkr.ecr.eu-west-1.amazonaws.com/helm',
+      authMode: 'token',
+      username: 'AWS',
+      authInvalid: true, // simulate an expired/invalid login
+      createdAt: '2025-08-02T10:00:00Z',
+      updatedAt: '2025-08-02T10:05:00Z',
+    },
+  ];
+}
+
+export const getChartsJSON = (): any => (
+    {
+      "trino": {
+        "label": "Trino",
+        "chart": "trinodb/trino",
+        "form": [
+          { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+          { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "default" },
+          {
+            "name": "networkAccess",
+            "label": "Accès Réseau (Exposition du service Trino)",
+            "type": "group",
+            "fields": [
+              {
+                "name": "service.enabled",
+                "label": "Activer l'accès interne (ClusterIP)",
+                "type": "boolean",
+                "defaultValue": true,
+                "disabled": true,
+                "help": "Un service interne est toujours créé pour la communication dans le cluster."
+              },
+              {
+                "name": "nodePort.enabled",
+                "label": "Activer l'accès externe (NodePort)",
+                "type": "boolean",
+                "defaultValue": false,
+                "help": "Crée un second service de type NodePort pour l'accès depuis l'extérieur du cluster (ex: Hue)."
+              },
+              {
+                "name": "nodePort.port",
+                "label": "Port du Nœud (Optionnel)",
+                "type": "number",
+                "help": "Laisser vide pour un port aléatoire (recommandé). Doit être entre 30000-32767.",
+                "condition": { "field": "nodePort.enabled", "value": true }
+              }
+            ]
+          },
+          {
+            "name": "coordinatorResources",
+            "label": "Ressources du Coordinateur",
+            "type": "group",
+            "fields": [
+              { "name": "coordinator.resources.requests.cpu", "label": "CPU Demandé", "type": "string", "defaultValue": "1" },
+              { "name": "coordinator.resources.requests.memory", "label": "Mémoire Demandée", "type": "string", "defaultValue": "4Gi" },
+              { "name": "coordinator.resources.limits.cpu", "label": "CPU Limite", "type": "string", "defaultValue": "2" },
+              { "name": "coordinator.resources.limits.memory", "label": "Mémoire Limite", "type": "string", "defaultValue": "8Gi" }
+            ]
+          },
+          {
+            "name": "workerResources",
+            "label": "Ressources des Workers",
+            "type": "group",
+            "fields": [
+              { "name": "worker.replicas", "label": "Nombre de Workers", "type": "number", "defaultValue": 3 },
+              { "name": "worker.resources.requests.cpu", "label": "CPU Demandé / Worker", "type": "string", "defaultValue": "1" },
+              { "name": "worker.resources.requests.memory", "label": "Mémoire Demandée / Worker", "type": "string", "defaultValue": "4Gi" },
+              { "name": "worker.resources.limits.cpu", "label": "CPU Limite / Worker", "type": "string", "defaultValue": "2" },
+              { "name": "worker.resources.limits.memory", "label": "Mémoire Limite / Worker", "type": "string", "defaultValue": "8Gi" }
+            ]
+          },
+          {
+            "name": "hadoopIntegration",
+            "label": "Intégration Hadoop",
+            "type": "group",
+            "fields": [
+              {
+                "name": "additionalCatalogs.hive.config.hive\\.metastore\\.uri",
+                "label": "Service Hive Metastore",
+                "type": "service-select",
+                "serviceType": "HIVE_METASTORE",
+                "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
+              }
+            ]
+          }
+        ]
+      },
+      "prometheus": {
+        "label": "Prometheus",
+        "chart": "prometheus-community/prometheus",
+        "form": [
+          { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+          { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "monitoring" },
+          { "name": "alertmanager.enabled", "label": "Activer Alertmanager", "type": "boolean", "defaultValue": true },
+          { "name": "server.retention", "label": "Rétention des données", "type": "string", "defaultValue": "14d", "help": "Exemples : 14d, 2w, 1y" }
+        ]
+      }
+    })
