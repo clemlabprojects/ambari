@@ -4,6 +4,7 @@ import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, messa
 import { UploadOutlined, FileTextOutlined, ApiOutlined } from '@ant-design/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
 
@@ -24,8 +25,7 @@ clusters:
 
 const ConfigurationPage: React.FC = () => {
     const { permissions } = usePermissions();
-    const { status, fetchData } = useClusterStatus();
-
+    const { status, fetchData, setClusterStatus } = useClusterStatus();
 
     const handleCustomRequest = (options: RcCustomRequestOptions) => {
         const { onSuccess, onError, file, onProgress } = options;
@@ -48,25 +48,28 @@ const ConfigurationPage: React.FC = () => {
         };
         
         xhr.onerror = () => {
-            if (onError) onError(new Error('Erreur réseau lors du téléversement.'), xhr);
+            if (onError) onError(new Error('Failed to upload the kubeconfig yaml'), xhr);
         };
 
-        xhr.open('POST', `/api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/config`, true);
+        xhr.open('POST', `/api/v1/views/K8S-VIEW/versions/1.0.0.1/instances/K8S_VIEW_INSTANCE/resources/api/cluster/config`, true);
         xhr.setRequestHeader('X-Requested-By', 'ambari');
         xhr.setRequestHeader('Content-Type', 'application/octet-stream'); // On envoie le fichier comme un flux binaire
         xhr.send(file as Blob); // Le fichier est directement le corps de la requête
     };
 
+    let navigate = useNavigate();
     const uploadProps = {
         name: 'file',
         customRequest: handleCustomRequest,
         showUploadList: true,
         onChange(info: any) {
             if (info.file.status === 'done') {
-                message.success(`${info.file.name} téléversé avec succès. Reconnexion...`);
-                setTimeout(() => {
-                    fetchData();
-                }, 1000);
+                message.success(`${info.file.name} successfully uploaded. Reconnecting...`);
+                console.log('DEBUG: Upload successful, fetching cluster data...');
+                setClusterStatus('connected')
+                console.log('DEBUG: Fetching cluster data after upload...');
+                navigate("/"); // Redirects to the dashboard after successful uploads
+                fetchData();
             } else if (info.file.status === 'error') {
                 message.error(`Échec du téléversement de ${info.file.name}.`);
             }
