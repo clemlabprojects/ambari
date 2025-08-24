@@ -1,13 +1,12 @@
 package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
-import org.apache.ambari.view.k8s.api.dto.HelmRepoDTO;
+import org.apache.ambari.view.k8s.model.HelmRepoDTO;
 import org.apache.ambari.view.k8s.service.HelmRepositoryService;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.List;
 import java.util.stream.Collectors;

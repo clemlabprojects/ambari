@@ -1,31 +1,58 @@
 package org.apache.ambari.view.k8s.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+/**
+ * Represents a cluster event from Kubernetes
+ */
 public class ClusterEvent {
-    private String id;
-    private String type;
-    private String message;
-    private String timestamp;
+    
+    @JsonProperty("id")
+    private String eventId;
+    
+    @JsonProperty("type")
+    private String eventType;
+    
+    @JsonProperty("message") 
+    private String eventMessage;
+    
+    @JsonProperty("timestamp")
+    private String eventTimestamp;
 
-    public ClusterEvent(String id, String type, String message, String timestamp) {
-        this.id = id;
-        this.type = type;
-        this.message = message;
-        this.timestamp = timestamp;
+    // Default constructor for Jackson
+    public ClusterEvent() {
     }
 
-    public String getId() {
-        return id;
+    public ClusterEvent(String eventId, String eventType, String eventMessage, String eventTimestamp) {
+        this.eventId = eventId;
+        this.eventType = eventType;
+        this.eventMessage = eventMessage;
+        this.eventTimestamp = eventTimestamp;
     }
 
-    public String getType() {
-        return type;
+    public String getEventId() {
+        return eventId;
     }
 
-    public String getMessage() {
-        return message;
+    public String getEventType() {
+        return eventType;
     }
 
-    public String getTimestamp() {
-        return timestamp;
+    public String getEventMessage() {
+        return eventMessage;
+    }
+
+    public String getEventTimestamp() {
+        return eventTimestamp;
+    }
+    
+    @Override
+    public String toString() {
+        return "ClusterEvent{" +
+                "eventId='" + eventId + '\'' +
+                ", eventType='" + eventType + '\'' +
+                ", eventMessage='" + eventMessage + '\'' +
+                ", eventTimestamp='" + eventTimestamp + '\'' +
+                '}';
     }
 }

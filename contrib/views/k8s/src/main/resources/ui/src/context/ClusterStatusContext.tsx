@@ -9,8 +9,8 @@ interface ClusterStatusContextType {
   status: Status;
   stats: ClusterStats | null;
   components: ComponentStatus[] | null;
-  nodes: ClusterNode[] | null; // Ajout
-  helmReleases: HelmRelease[] | null; // Ajout
+  nodes: ClusterNode[] | null; // Addition
+  helmReleases: HelmRelease[] | null; // Addition
   events: ClusterEvent[] | null;
   error: string | null;
   mainLoaderActive?: boolean; // Optional loader status
@@ -54,7 +54,6 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
-
   const fetchData = React.useCallback(async () => {
     console.log('DEBUG: Fetching cluster data...');
     setStatus('loading');
@@ -92,7 +91,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Alias explicite à utiliser partout (après uninstall / deploy, etc.)
+  // Explicit alias to use everywhere (after uninstall / deploy, etc.)
   const refresh = React.useCallback(async () => {
     await fetchData();
   }, [fetchData]);
@@ -101,7 +100,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     if (viewConfigured){
       refresh();
     }else {
-      console.log('DEBUG: First EffectM Checking if view is configured...');
+      console.log('DEBUG: First Effect, Checking if view is configured...');
       checkViewIsConfigured().then((configured) => {
         if (configured) {
           console.log('DEBUG: View is configured, fetching data...');

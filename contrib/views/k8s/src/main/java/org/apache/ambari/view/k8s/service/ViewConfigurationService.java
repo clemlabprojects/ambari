@@ -19,64 +19,70 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Map;
 
+/**
+ * Service for managing view configuration including kubeconfig file handling
+ */
 public class ViewConfigurationService {
+    private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
+    
     private static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
     private static final String KUBECONFIG_UPLOADED = "kubeconfig.uploaded";
+    
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
-    private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
 
     public ViewConfigurationService(ViewContext viewContext) {
         this.viewContext = viewContext;
         this.encryptionService = new EncryptionService();
+        
         // Check if the view is configured and if the kubeconfig file exists
         if (isConfigured()) {
             String kubeconfigPath = getKubeconfigPath();
             if (kubeconfigPath != null) {
-            File kubeconfigFile = new File(kubeconfigPath);
-            if (!kubeconfigFile.exists()) {
-                LOG.warn("Kubeconfig file does not exist at path: {}. Setting '{}' to false.", kubeconfigPath, KUBECONFIG_UPLOADED);
-                viewContext.putInstanceData(KUBECONFIG_UPLOADED, "false");
-            } else {
-                LOG.info("Kubeconfig file exists at path: {}. No action needed.", kubeconfigPath);
+                File kubeconfigFile = new File(kubeconfigPath);
+                if (!kubeconfigFile.exists()) {
+                    LOG.warn("Kubeconfig file does not exist at path: {}. Setting '{}' to false.", kubeconfigPath, KUBECONFIG_UPLOADED);
+                    viewContext.putInstanceData(KUBECONFIG_UPLOADED, "false");
+                } else {
+                    LOG.info("Kubeconfig file exists at path: {}. No action needed.", kubeconfigPath);
+                }
             }
-            }
-        }else {
+        } else {
             LOG.info("View is not configured. No kubeconfig path set.");
         }
     }
 
     public File saveKubeconfigFile(InputStream inputStream, String fileName) throws IOException {
-        String workingDirPath = viewContext.getProperties().get("k8s.view.working.dir");
+        String workingDirectoryPath = viewContext.getProperties().get("k8s.view.working.dir");
         
-        if (workingDirPath == null || workingDirPath.trim().isEmpty()) {
-            workingDirPath = "/var/lib/ambari-server/resources/views/work/k8s-view";
-            LOG.warn("Working directory property 'k8s.view.working.dir' is not set. Using default: {}", workingDirPath);
+        if (workingDirectoryPath == null || workingDirectoryPath.trim().isEmpty()) {
+            workingDirectoryPath = "/var/lib/ambari-server/resources/views/work/k8s-view";
+            LOG.warn("Working directory property 'k8s.view.working.dir' is not set. Using default: {}", workingDirectoryPath);
         } else {
-            LOG.info("Using configured working directory: {}", workingDirPath);
+            LOG.info("Using configured working directory: {}", workingDirectoryPath);
         }
         
-        File workingDir = new File(workingDirPath);
-        if (!workingDir.exists()) {
-            LOG.info("Working directory does not exist. Creating it at: {}", workingDirPath);
-            if (!workingDir.mkdirs()) {
-                throw new IOException("Could not create working directory: " + workingDirPath);
+        File workingDirectory = new File(workingDirectoryPath);
+        if (!workingDirectory.exists()) {
+            LOG.info("Working directory does not exist. Creating it at: {}", workingDirectoryPath);
+            if (!workingDirectory.mkdirs()) {
+                throw new IOException("Could not create working directory: " + workingDirectoryPath);
             }
         }
         
         String sanitizedFileName = new File(fileName).getName();
-        File configFile = new File(workingDir, sanitizedFileName + ".enc");
-        LOG.info("Preparing to save uploaded file to: {}", configFile.getAbsolutePath());
+        File configurationFile = new File(workingDirectory, sanitizedFileName + ".enc");
+        LOG.info("Preparing to save uploaded file to: {}", configurationFile.getAbsolutePath());
 
-        byte[] contentBytes = inputStream.readAllBytes();
-        byte[] encryptedBytes = encryptionService.encrypt(contentBytes);
+        byte[] fileContentBytes = inputStream.readAllBytes();
+        byte[] encryptedContentBytes = encryptionService.encrypt(fileContentBytes);
 
-        try (OutputStream outputStream = new FileOutputStream(configFile)) {
-            outputStream.write(encryptedBytes);
+        try (OutputStream fileOutputStream = new FileOutputStream(configurationFile)) {
+            fileOutputStream.write(encryptedContentBytes);
         }
-        LOG.info("Successfully wrote {} encrypted bytes to {}", encryptedBytes.length, configFile.getAbsolutePath());
-        saveKubeconfigPath(configFile.getAbsolutePath());
-        return configFile;
+        LOG.info("Successfully wrote {} encrypted bytes to {}", encryptedContentBytes.length, configurationFile.getAbsolutePath());
+        saveKubeconfigPath(configurationFile.getAbsolutePath());
+        return configurationFile;
     }
 
     public void saveKubeconfigPath(String kubeconfigPath) {
@@ -84,6 +90,7 @@ public class ViewConfigurationService {
         try {
             viewContext.putInstanceData(KUBECONFIG_PATH_KEY, kubeconfigPath);
             LOG.info("Successfully called putInstanceData for key '{}'", KUBECONFIG_PATH_KEY);
+            
             // Verify that the data is correctly stored by retrieving it
             String retrievedPath = getKubeconfigPath();
             if (!kubeconfigPath.equals(retrievedPath)) {
@@ -98,37 +105,39 @@ public class ViewConfigurationService {
         }
     }
 
-    /** Retourne le contenu YAML en clair (chaîne). */
+    /**
+     * Returns the plain YAML content as a string.
+     */
     public String getKubeconfigContents() {
         LOG.info("Attempting to retrieve kubeconfig contents from encrypted file.");
-        Path encryptedKubeconfigFile = Paths.get(getKubeconfigPath());
-        if (encryptedKubeconfigFile == null) {
+        Path encryptedKubeconfigFilePath = Paths.get(getKubeconfigPath());
+        if (encryptedKubeconfigFilePath == null) {
             LOG.error("kubeconfig.path is not set for this view instance");
-            throw new IllegalStateException("Kubeconfig non configuré");
+            throw new IllegalStateException("Kubeconfig not configured");
         }
-        if (!Files.exists(encryptedKubeconfigFile)) {
-            LOG.error("Kubeconfig file does not exist at path: {}", encryptedKubeconfigFile);
-            throw new IllegalStateException("Kubeconfig non configuré");
+        if (!Files.exists(encryptedKubeconfigFilePath)) {
+            LOG.error("Kubeconfig file does not exist at path: {}", encryptedKubeconfigFilePath);
+            throw new IllegalStateException("Kubeconfig not configured");
         }
         try {
-            byte[] encryptedBytes = Files.readAllBytes(encryptedKubeconfigFile);
-            byte[] plain = encryptionService.decrypt(encryptedBytes);
-            LOG.info("Loaded kubeconfig contents ({} bytes) from {}", plain.length, encryptedKubeconfigFile);
-            return new String(plain, StandardCharsets.UTF_8);
+            byte[] encryptedBytes = Files.readAllBytes(encryptedKubeconfigFilePath);
+            byte[] plainTextBytes = encryptionService.decrypt(encryptedBytes);
+            LOG.info("Loaded kubeconfig contents ({} bytes) from {}", plainTextBytes.length, encryptedKubeconfigFilePath);
+            return new String(plainTextBytes, StandardCharsets.UTF_8);
         } catch (IOException e) {
-        throw new UncheckedIOException("Lecture du kubeconfig chiffré échouée", e);
+            throw new UncheckedIOException("Failed to read encrypted kubeconfig", e);
         }
     }
 
     public String getKubeconfigPath() {
         LOG.debug("Attempting to retrieve instance data for key: '{}'", KUBECONFIG_PATH_KEY);
-        String path = viewContext.getInstanceData(KUBECONFIG_PATH_KEY);
-        if (path == null) {
+        String configurationPath = viewContext.getInstanceData(KUBECONFIG_PATH_KEY);
+        if (configurationPath == null) {
             LOG.debug("No value found for key '{}' in instance data.", KUBECONFIG_PATH_KEY);
         } else {
-            LOG.debug("Found value for key '{}': '{}'", KUBECONFIG_PATH_KEY, path);
+            LOG.debug("Found value for key '{}': '{}'", KUBECONFIG_PATH_KEY, configurationPath);
         }
-        return path;
+        return configurationPath;
     }
 
     public void removeKubeconfigPath() {
@@ -143,13 +152,12 @@ public class ViewConfigurationService {
 
     public boolean isConfigured() {
         LOG.info("Checking if view is configured...");
-        String uploaded = viewContext.getInstanceData(KUBECONFIG_UPLOADED);
-        if (!"true".equalsIgnoreCase(uploaded)) {
+        String uploadedFlag = viewContext.getInstanceData(KUBECONFIG_UPLOADED);
+        if (!"true".equalsIgnoreCase(uploadedFlag)) {
             LOG.debug("Kubeconfig not uploaded or flag not set to true.");
             return false;
         }
-        LOG.info("isConfigured() check result: {}", uploaded);
-        return "true".equalsIgnoreCase(uploaded);
+        LOG.info("isConfigured() check result: {}", uploadedFlag);
+        return "true".equalsIgnoreCase(uploadedFlag);
     }
-
 }
