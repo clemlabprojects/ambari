@@ -17,148 +17,156 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Service for managing Helm repository configurations and operations
+ */
 public class HelmRepositoryService {
 
-  private static final Logger LOG = LoggerFactory.getLogger(HelmRepositoryService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(HelmRepositoryService.class);
 
-  private static final String SECRET_PREFIX = "helm.repo.secret.";
+    private static final String SECRET_PREFIX = "helm.repo.secret.";
 
-  private final ViewContext viewContext;
-  private final HelmRepoRepo repo;
-  private final HelmClient helm;
-  private final EncryptionService encryption = new EncryptionService();
-  private final PathConfig paths;
+    private final ViewContext viewContext;
+    private final HelmRepoRepo repositoryDao;
+    private final HelmClient helmClient;
+    private final EncryptionService encryptionService = new EncryptionService();
+    private final PathConfig pathConfig;
 
-  public HelmRepositoryService(ViewContext ctx) {
-    this(ctx, new HelmClientDefault());
-  }
-
-  public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
-    this.viewContext = ctx;
-    this.repo = new HelmRepoRepo(ctx.getDataStore());
-    this.helm = helm;
-    this.paths = new PathConfig(ctx);
-    this.paths.ensureDirs();
-  }
-
-  /* ------------------- CRUD ------------------- */
-
-  public Collection<HelmRepoEntity> list() {
-    return repo.findAll();
-  }
-
-  public HelmRepoEntity get(String id) {
-    return repo.findById(id);
-  }
-
-  public HelmRepoEntity save(HelmRepoEntity e, String plainSecret) {
-    Objects.requireNonNull(e, "repo must not be null");
-    validate(e);
-
-    if (plainSecret != null && !plainSecret.isBlank()) {
-      String ref = SECRET_PREFIX + e.getId();
-      String encB64 = Base64.getEncoder().encodeToString(encryption.encrypt(plainSecret.getBytes()));
-      viewContext.putInstanceData(ref, encB64);
-      e.setSecretRef(ref);
+    public HelmRepositoryService(ViewContext ctx) {
+        this(ctx, new HelmClientDefault());
     }
 
-    e.setAuthInvalid(false);
-    // timestamps handled by BaseRepo via When, but ensure updatedAt now if not present
-    if (e.getUpdatedAt() == null) e.setUpdatedAt(Instant.now().toString());
-    return repo.upsert(e);
-  }
-
-  public void delete(String id) {
-    HelmRepoEntity e = repo.findById(id);
-    if (e != null && e.getSecretRef() != null) {
-      viewContext.removeInstanceData(e.getSecretRef());
+    public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
+        this.viewContext = ctx;
+        this.repositoryDao = new HelmRepoRepo(ctx.getDataStore());
+        this.helmClient = helm;
+        this.pathConfig = new PathConfig(ctx);
+        this.pathConfig.ensureDirs();
     }
-    repo.deleteById(id);
-  }
 
-  private void validate(HelmRepoEntity e) {
-    if (e.getId() == null || e.getId().isBlank())
-      throw new IllegalArgumentException("id is required");
-    if (e.getType() == null || e.getType().isBlank())
-      throw new IllegalArgumentException("type is required (HTTP|OCI)");
-    if (e.getName() == null || e.getName().isBlank())
-      throw new IllegalArgumentException("name is required");
-    if (e.getUrl() == null || e.getUrl().isBlank())
-      throw new IllegalArgumentException("url is required");
-    if (e.getAuthMode() == null || e.getAuthMode().isBlank())
-      e.setAuthMode("anonymous");
-  }
+    // Repository CRUD Operations
 
-  /* ------------------- Secrets ------------------- */
-
-  public String readPlainSecret(String secretRef) {
-    if (secretRef == null || secretRef.isBlank()) return null;
-    String b64 = viewContext.getInstanceData(secretRef);
-    if (b64 == null) return null;
-    byte[] cipher = Base64.getDecoder().decode(b64);
-    byte[] plain  = encryption.decrypt(cipher);
-    return new String(plain);
-  }
-
-  /* ------------------- Helm actions ------------------- */
-
-  public Path ensureHttpRepo(String repoId) {
-    HelmRepoEntity e = mustGet(repoId);
-    if (!"HTTP".equalsIgnoreCase(e.getType())) {
-      throw new IllegalArgumentException("Repository " + repoId + " is not HTTP");
+    public Collection<HelmRepoEntity> list() {
+        return repositoryDao.findAll();
     }
-    String pwd = readPlainSecret(e.getSecretRef());
-    Path cfg = paths.repositoriesConfig();
-    helm.ensureHttpRepo(cfg, e.getName(), URI.create(e.getUrl()), e.getUsername(), pwd);
-    e.setAuthInvalid(false);
-    e.setUpdatedAt(Instant.now().toString());
-    repo.update(e);
-    return cfg;
-  }
 
-  public void ociLogin(String repoId) {
-    HelmRepoEntity e = mustGet(repoId);
-    if (!"OCI".equalsIgnoreCase(e.getType())) {
-      throw new IllegalArgumentException("Repository " + repoId + " is not OCI");
+    public HelmRepoEntity get(String id) {
+        return repositoryDao.findById(id);
     }
-    String pwd = readPlainSecret(e.getSecretRef());
-    helm.ociLogin(e.getUrl(), e.getUsername(), pwd, paths.registryConfig());
-    e.setAuthInvalid(false);
-    e.setUpdatedAt(Instant.now().toString());
-    repo.update(e);
-  }
 
-  
-  public void loginOrSync(String repoId) {
-    LOG.info("Attempting to login or sync repository with id: {}", repoId);
-    try {
-      HelmRepoEntity e = mustGet(repoId);
-      if ("HTTP".equalsIgnoreCase(e.getType())) {
-        LOG.info("Ensuring HTTP repository: {}", e.getName());
-        ensureHttpRepo(repoId);
-      } else {
-        LOG.info("Logging in to OCI repository: {}", e.getName());
-        ociLogin(repoId);
-      }
-    } catch (RuntimeException ex) {
-      LOG.error("Failed to login or sync repository {}: {}", repoId, ex.getMessage());
-      HelmRepoEntity e = repo.findById(repoId);
-      if (e != null) {
-        LOG.warn("Marking repository {} as authInvalid due to error: {}", repoId, ex.getMessage());
-        // Mark the repository as authInvalid if an error occurs during login or sync
-        e.setAuthInvalid(true);
-        e.setUpdatedAt(Instant.now().toString());
-        repo.update(e);
-      }
-      throw ex;
+    public HelmRepoEntity save(HelmRepoEntity entity, String plainSecret) {
+        Objects.requireNonNull(entity, "repo must not be null");
+        validate(entity);
+
+        if (plainSecret != null && !plainSecret.isBlank()) {
+            String secretReference = SECRET_PREFIX + entity.getId();
+            String encryptedBase64 = Base64.getEncoder().encodeToString(
+                encryptionService.encrypt(plainSecret.getBytes()));
+            viewContext.putInstanceData(secretReference, encryptedBase64);
+            entity.setSecretRef(secretReference);
+        }
+
+        entity.setAuthInvalid(false);
+        // timestamps handled by BaseRepo via When, but ensure updatedAt now if not present
+        if (entity.getUpdatedAt() == null) {
+            entity.setUpdatedAt(Instant.now().toString());
+        }
+        return repositoryDao.upsert(entity);
     }
-  }
 
-  private HelmRepoEntity mustGet(String id) {
-    HelmRepoEntity e = repo.findById(id);
-    if (e == null) throw new IllegalArgumentException("Unknown repository: " + id);
-    return e;
-  }
+    public void delete(String id) {
+        HelmRepoEntity entity = repositoryDao.findById(id);
+        if (entity != null && entity.getSecretRef() != null) {
+            viewContext.removeInstanceData(entity.getSecretRef());
+        }
+        repositoryDao.deleteById(id);
+    }
 
-  public PathConfig paths() { return paths; }
+    private void validate(HelmRepoEntity entity) {
+        if (entity.getId() == null || entity.getId().isBlank())
+            throw new IllegalArgumentException("id is required");
+        if (entity.getType() == null || entity.getType().isBlank())
+            throw new IllegalArgumentException("type is required (HTTP|OCI)");
+        if (entity.getName() == null || entity.getName().isBlank())
+            throw new IllegalArgumentException("name is required");
+        if (entity.getUrl() == null || entity.getUrl().isBlank())
+            throw new IllegalArgumentException("url is required");
+        if (entity.getAuthMode() == null || entity.getAuthMode().isBlank())
+            entity.setAuthMode("anonymous");
+    }
+
+    // Secret Management
+
+    public String readPlainSecret(String secretRef) {
+        if (secretRef == null || secretRef.isBlank()) return null;
+        String base64Data = viewContext.getInstanceData(secretRef);
+        if (base64Data == null) return null;
+        byte[] cipherData = Base64.getDecoder().decode(base64Data);
+        byte[] plainData = encryptionService.decrypt(cipherData);
+        return new String(plainData);
+    }
+
+    // Helm Operations
+
+    public Path ensureHttpRepo(String repoId) {
+        HelmRepoEntity entity = mustGet(repoId);
+        if (!"HTTP".equalsIgnoreCase(entity.getType())) {
+            throw new IllegalArgumentException("Repository " + repoId + " is not HTTP");
+        }
+        String password = readPlainSecret(entity.getSecretRef());
+        Path configPath = pathConfig.repositoriesConfig();
+        helmClient.ensureHttpRepo(configPath, entity.getName(), URI.create(entity.getUrl()), 
+                                 entity.getUsername(), password);
+        entity.setAuthInvalid(false);
+        entity.setUpdatedAt(Instant.now().toString());
+        repositoryDao.update(entity);
+        return configPath;
+    }
+
+    public void ociLogin(String repoId) {
+        HelmRepoEntity entity = mustGet(repoId);
+        if (!"OCI".equalsIgnoreCase(entity.getType())) {
+            throw new IllegalArgumentException("Repository " + repoId + " is not OCI");
+        }
+        String password = readPlainSecret(entity.getSecretRef());
+        helmClient.ociLogin(entity.getUrl(), entity.getUsername(), password, pathConfig.registryConfig());
+        entity.setAuthInvalid(false);
+        entity.setUpdatedAt(Instant.now().toString());
+        repositoryDao.update(entity);
+    }
+
+    public void loginOrSync(String repoId) {
+        LOG.info("Attempting to login or sync repository with id: {}", repoId);
+        try {
+            HelmRepoEntity entity = mustGet(repoId);
+            if ("HTTP".equalsIgnoreCase(entity.getType())) {
+                LOG.info("Ensuring HTTP repository: {}", entity.getName());
+                ensureHttpRepo(repoId);
+            } else {
+                LOG.info("Logging in to OCI repository: {}", entity.getName());
+                ociLogin(repoId);
+            }
+        } catch (RuntimeException ex) {
+            LOG.error("Failed to login or sync repository {}: {}", repoId, ex.getMessage());
+            HelmRepoEntity entity = repositoryDao.findById(repoId);
+            if (entity != null) {
+                LOG.warn("Marking repository {} as authInvalid due to error: {}", repoId, ex.getMessage());
+                // Mark the repository as authInvalid if an error occurs during login or sync
+                entity.setAuthInvalid(true);
+                entity.setUpdatedAt(Instant.now().toString());
+                repositoryDao.update(entity);
+            }
+            throw ex;
+        }
+    }
+
+    private HelmRepoEntity mustGet(String id) {
+        HelmRepoEntity entity = repositoryDao.findById(id);
+        if (entity == null) throw new IllegalArgumentException("Unknown repository: " + id);
+        return entity;
+    }
+
+    public PathConfig paths() { 
+        return pathConfig; 
+    }
 }

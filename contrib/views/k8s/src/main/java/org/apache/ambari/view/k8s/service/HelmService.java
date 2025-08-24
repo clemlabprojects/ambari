@@ -16,123 +16,127 @@ import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-
+/**
+ * Service for managing Helm operations including deployments, upgrades, and releases
+ */
 public class HelmService {
 
-  private final ViewContext ctx;
-  private final HelmClient helm;
-  private final HelmRepositoryService repos;
-  private final PathConfig paths;
+    private static final Logger LOG = LoggerFactory.getLogger(HelmService.class);
 
-  private static final Logger LOG = LoggerFactory.getLogger(HelmService.class);
+    private final ViewContext viewContext;
+    private final HelmClient helmClient;
+    private final HelmRepositoryService repositoryService;
+    private final PathConfig pathConfiguration;
 
-
-  public HelmService(ViewContext ctx) {
-    this(ctx, new HelmClientDefault());
-  }
-
-  public HelmService(ViewContext ctx, HelmClient helm) {
-    this.ctx = ctx;
-    this.helm = helm;
-    this.repos = new HelmRepositoryService(ctx, helm);
-    this.paths = repos.paths();
-  }
-
-  public List<Release> list(String namespace, String kubeconfig) {
-    LOG.info("Listing Helm releases in namespace: '{}', kubeconfig: '{}'", namespace, kubeconfig);
-    if (namespace == null) {
-      return helm.list(null, kubeconfig, false);
-    } else {
-      return helm.list(namespace, kubeconfig, false);
+    public HelmService(ViewContext ctx) {
+        this(ctx, new HelmClientDefault());
     }
-  }
 
-  public void uninstall(String namespace, String name, String kubeconfig) {
-    helm.uninstall(name, namespace, kubeconfig);
-  }
+    public HelmService(ViewContext ctx, HelmClient helm) {
+        this.viewContext = ctx;
+        this.helmClient = helm;
+        this.repositoryService = new HelmRepositoryService(ctx, helm);
+        this.pathConfiguration = repositoryService.paths();
+    }
 
-  public void rollback(String namespace, String name, int revision, String kubeconfig) {
-    helm.rollback(name, namespace, revision, kubeconfig);
-  }
-
-  public Release deployOrUpgrade(
-      HelmDeployRequest req, String kubeconfig, String repoIdOpt, String versionOpt) {
-
-    // valeurs par défaut souhaitées
-    int     timeoutSec = 900;
-    boolean wait       = true;
-    boolean atomic     = false;
-
-    return deployOrUpgrade(req, kubeconfig, repoIdOpt, versionOpt, timeoutSec, wait, atomic);
-  }
-
-  public Release deployOrUpgrade(HelmDeployRequest req, String kubeconfig, String repoIdOpt, String versionOpt, int timeoutSec, boolean wait, boolean atomic) {
-    final String namespace = req.getNamespace();
-    final String release   = req.getReleaseName();
-    Map<String,Object> values = req.getValues();
-    String chartRef  = req.getChart();
-
-    LOG.info("Upsert Helm release: ns={}, name={}, chart={}, repoId={}, version={}",
-      namespace, release, chartRef, repoIdOpt, versionOpt);
-
-    // Normalize chartRef if repoId is provided
-    if (repoIdOpt != null && !repoIdOpt.isBlank()) {
-      HelmRepoEntity repo = repos.get(repoIdOpt);
-      if (repo == null) {
-        throw new IllegalArgumentException("Unknown repository: " + repoIdOpt);
-      }
-      if ("HTTP".equalsIgnoreCase(repo.getType())) {
-        repos.ensureHttpRepo(repo.getId()); // ensures repo is in repositories.yaml (and login if needed)
-        if (!chartRef.contains("/")) {
-          chartRef = repo.getName() + "/" + chartRef; // e.g. bitnami/trino
+    public List<Release> list(String namespace, String kubeconfig) {
+        LOG.info("Listing Helm releases in namespace: '{}', kubeconfig: '{}'", namespace, kubeconfig);
+        if (namespace == null) {
+            return helmClient.list(null, kubeconfig, false);
+        } else {
+            return helmClient.list(namespace, kubeconfig, false);
         }
-      } else {
-        // OCI
-        repos.ociLogin(repo.getId());
-        if (!chartRef.startsWith("oci://")) {
-          String base = repo.getUrl();
-          if (base.endsWith("/")) base = base.substring(0, base.length()-1);
-          chartRef = "oci://" + base + "/" + chartRef;
+    }
+
+    public void uninstall(String namespace, String name, String kubeconfig) {
+        helmClient.uninstall(name, namespace, kubeconfig);
+    }
+
+    public void rollback(String namespace, String name, int revision, String kubeconfig) {
+        helmClient.rollback(name, namespace, revision, kubeconfig);
+    }
+
+    public Release deployOrUpgrade(
+            HelmDeployRequest req, String kubeconfig, String repoIdOpt, String versionOpt) {
+
+        // Default values for deployment configuration
+        int timeoutSeconds = 900;
+        boolean wait = true;
+        boolean atomic = false;
+
+        return deployOrUpgrade(req, kubeconfig, repoIdOpt, versionOpt, timeoutSeconds, wait, atomic);
+    }
+
+    public Release deployOrUpgrade(HelmDeployRequest req, String kubeconfig, String repoIdOpt, 
+                                  String versionOpt, int timeoutSec, boolean wait, boolean atomic) {
+        final String namespace = req.getNamespace();
+        final String releaseName = req.getReleaseName();
+        Map<String, Object> values = req.getValues();
+        String chartReference = req.getChart();
+
+        LOG.info("Upsert Helm release: ns={}, name={}, chart={}, repoId={}, version={}",
+                namespace, releaseName, chartReference, repoIdOpt, versionOpt);
+
+        // Normalize chartRef if repoId is provided
+        if (repoIdOpt != null && !repoIdOpt.isBlank()) {
+            HelmRepoEntity repository = repositoryService.get(repoIdOpt);
+            if (repository == null) {
+                throw new IllegalArgumentException("Unknown repository: " + repoIdOpt);
+            }
+            if ("HTTP".equalsIgnoreCase(repository.getType())) {
+                repositoryService.ensureHttpRepo(repository.getId()); // ensures repo is in repositories.yaml (and login if needed)
+                if (!chartReference.contains("/")) {
+                    chartReference = repository.getName() + "/" + chartReference; // e.g. bitnami/trino
+                }
+            } else {
+                // OCI
+                repositoryService.ociLogin(repository.getId());
+                if (!chartReference.startsWith("oci://")) {
+                    String baseUrl = repository.getUrl();
+                    if (baseUrl.endsWith("/")) baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+                    chartReference = "oci://" + baseUrl + "/" + chartReference;
+                }
+            }
         }
-      }
-    }
 
-    // Decide path based on actual presence of the release
-    boolean exists = false;
-    try {
-      exists = helm.list(namespace, kubeconfig, true).stream()
-        .anyMatch(r -> release.equals(r.getName()));
-    } catch (Exception e) {
-      LOG.warn("Could not list releases to detect existence, will try install then upgrade fallback: {}", e.toString());
-    }
-
-    if (!exists) {
-      try {
-        LOG.info("Release doesn't exist → install: chartRef={}, ns={}, name={}", chartRef, namespace, release);
-        return helm.install(
-          chartRef, release, namespace,
-          paths.repositoriesConfig(), kubeconfig,
-          values, timeoutSec, /*createNs*/ true, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
-      } catch (IllegalStateException alreadyExists) {
-        // Helm sometimes races: if it says "already exists", we immediately upgrade
-        final String msg = alreadyExists.getMessage();
-        if (msg != null && msg.toLowerCase(Locale.ROOT).contains("already exists")) {
-          LOG.warn("Install reported 'already exists', switching to upgrade.");
-          return helm.upgrade(
-            chartRef, release, namespace,
-            paths.repositoriesConfig(), kubeconfig,
-            values, timeoutSec, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
+        // Decide path based on actual presence of the release
+        boolean releaseExists = false;
+        try {
+            releaseExists = helmClient.list(namespace, kubeconfig, true).stream()
+                    .anyMatch(r -> releaseName.equals(r.getName()));
+        } catch (Exception e) {
+            LOG.warn("Could not list releases to detect existence, will try install then upgrade fallback: {}", e.toString());
         }
-        throw alreadyExists;
-      }
-    } else {
-      LOG.info("Release exists → upgrade: chartRef={}, ns={}, name={}", chartRef, namespace, release);
-      return helm.install(
-          chartRef, release, namespace,
-          paths.repositoriesConfig(), kubeconfig,
-          values, timeoutSec, /*createNs*/ true, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
-    }
-  }
 
-  public HelmClient helm() { return this.helm; }
+        if (!releaseExists) {
+            try {
+                LOG.info("Release doesn't exist → install: chartRef={}, ns={}, name={}", chartReference, namespace, releaseName);
+                return helmClient.install(
+                        chartReference, releaseName, namespace,
+                        pathConfiguration.repositoriesConfig(), kubeconfig,
+                        values, timeoutSec, /*createNs*/ true, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
+            } catch (IllegalStateException alreadyExists) {
+                // Helm sometimes races: if it says "already exists", we immediately upgrade
+                final String errorMessage = alreadyExists.getMessage();
+                if (errorMessage != null && errorMessage.toLowerCase(Locale.ROOT).contains("already exists")) {
+                    LOG.warn("Install reported 'already exists', switching to upgrade.");
+                    return helmClient.upgrade(
+                            chartReference, releaseName, namespace,
+                            pathConfiguration.repositoriesConfig(), kubeconfig,
+                            values, timeoutSec, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
+                }
+                throw alreadyExists;
+            }
+        } else {
+            LOG.info("Release exists → upgrade: chartRef={}, ns={}, name={}", chartReference, namespace, releaseName);
+            return helmClient.install(
+                    chartReference, releaseName, namespace,
+                    pathConfiguration.repositoriesConfig(), kubeconfig,
+                    values, timeoutSec, /*createNs*/ true, /*wait*/ true, /*atomic*/ false, /*dryRun*/ false);
+        }
+    }
+
+    public HelmClient helm() { 
+        return this.helmClient; 
+    }
 }

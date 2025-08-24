@@ -3,7 +3,7 @@ import React from 'react';
 import { Row, Col, Typography, Card, List, Tag, Spin, Statistic, Timeline, Result } from 'antd';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTone, ClockCircleOutlined } from '@ant-design/icons';
-import { useClusterStatus } from '../context/ClusterStatusContext'; // CHEMIN D'IMPORTATION CORRIGÉ
+import { useClusterStatus } from '../context/ClusterStatusContext';
 import './Page.css';
 
 const { Title, Text, Paragraph } = Typography;
@@ -11,18 +11,19 @@ const { Title, Text, Paragraph } = Typography;
 const DashboardPage: React.FC = () => {
     const { status, stats, components, events, mainLoaderActive } = useClusterStatus();
     console.log('DEBUG: DashboardPage - Cluster status:', status);
-    // Si la connexion a échoué, on affiche un message à la place du contenu.
+    
+    // If the connection failed, display a message instead of content.
     if (status === 'error') {
         return (
             <Result
                 status="warning"
-                title="Données du tableau de bord non disponibles."
-                subTitle="Impossible de récupérer les informations du cluster en raison d'une erreur de connexion."
+                title="Dashboard data not available."
+                subTitle="Unable to retrieve cluster information due to a connection error."
             />
         );
     }
 
-    // Si les données sont en cours de chargement, on affiche un spinner.
+    // If data is being loaded, display a spinner.
     console.log('DEBUG: DashboardPage - Cluster stats:', stats);
     console.log('DEBUG: DashboardPage - Cluster components:', components);
     console.log('DEBUG: DashboardPage - Cluster events:', events);
@@ -32,9 +33,9 @@ const DashboardPage: React.FC = () => {
     }
     
     const helmChartData = [
-        { name: 'Déployés', value: stats.helm.deployed },
-        { name: 'En attente', value: stats.helm.pending },
-        { name: 'Échoués', value: stats.helm.failed },
+        { name: 'Deployed', value: stats.helm.deployed },
+        { name: 'Pending', value: stats.helm.pending },
+        { name: 'Failed', value: stats.helm.failed },
     ];
     const COLORS = ['#52c41a', '#faad14', '#ff4d4f'];
 
@@ -55,14 +56,14 @@ const DashboardPage: React.FC = () => {
     return (
         <div>
             <div className="page-header">
-                <Title level={2}>Tableau de Bord</Title>
+                <Title level={2}>Dashboard</Title>
                 <Paragraph type="secondary" style={{maxWidth: '600px', textAlign: 'left'}}>
-                    Vue d'ensemble de l'état du cluster, de la santé des composants du control plane et des déploiements applicatifs via Helm.
+                    Overview of cluster status, control plane component health, and application deployments via Helm.
                 </Paragraph>
             </div>
             <Row gutter={[24, 24]}>
                 <Col xs={24} lg={8}>
-                    <Card title="Santé des Déploiements Helm" style={{ height: '100%' }}>
+                    <Card title="Helm Deployment Health" style={{ height: '100%' }}>
                         <div style={{ height: 300, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
@@ -85,14 +86,14 @@ const DashboardPage: React.FC = () => {
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
-                        <Statistic title="Total des releases" value={stats.helm.total} style={{textAlign: 'center', marginTop: '16px'}}/>
+                        <Statistic title="Total releases" value={stats.helm.total} style={{textAlign: 'center', marginTop: '16px'}}/>
                     </Card>
                 </Col>
                 <Col xs={24} lg={8}>
-                     <Card title="État des Composants du Control Plane" style={{ height: '100%' }}>
+                     <Card title="Control Plane Component Status" style={{ height: '100%' }}>
                         <div style={{textAlign: 'center', marginBottom: '24px'}}>
                             <Statistic
-                                title="Composants sains"
+                                title="Healthy components"
                                 value={healthyComponents}
                                 suffix={`/ ${components.length}`}
                                 valueStyle={{ color: healthyComponents === components.length ? '#3f8600' : '#cf1322' }}
@@ -114,7 +115,7 @@ const DashboardPage: React.FC = () => {
                     </Card>
                 </Col>
                 <Col xs={24} lg={8}>
-                     <Card title="Flux d'Événements Récents" style={{ height: '100%' }}>
+                     <Card title="Recent Event Stream" style={{ height: '100%' }}>
                          <Timeline
                             mode="left"
                             items={events.map(event => ({

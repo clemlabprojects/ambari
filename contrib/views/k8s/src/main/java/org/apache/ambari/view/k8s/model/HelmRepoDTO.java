@@ -1,7 +1,10 @@
-package org.apache.ambari.view.k8s.api.dto;
+package org.apache.ambari.view.k8s.model;
 
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
+/**
+ * Data Transfer Object for Helm repository information
+ */
 public class HelmRepoDTO {
   public String id;
   public String type;       // HTTP | OCI

@@ -16,12 +16,10 @@ import org.apache.ambari.view.k8s.resources.HelmResource;
 import org.apache.ambari.view.k8s.resources.HelmRepoResource;
 import org.apache.ambari.view.k8s.resources.CommandResource;
 
-
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
@@ -32,6 +30,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
 
+/**
+ * Main REST service for the K8s view providing cluster operations and configuration management
+ */
 @Path("/")
 public class KubeService {
 
@@ -41,9 +42,7 @@ public class KubeService {
     private ViewContext viewContext;
 
     private KubernetesService kubernetesService;
-
     private ViewConfigurationService configService;
-
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private KubernetesService getKubernetesService() {
@@ -52,6 +51,7 @@ public class KubeService {
         }
         return this.kubernetesService;
     }
+    
     private ViewConfigurationService getConfigService() {
         if (configService == null) {
             this.configService = new ViewConfigurationService(this.viewContext);
@@ -65,28 +65,28 @@ public class KubeService {
     }
 
     /**
-     * Endpoint pour obtenir la liste des charts disponibles.
-     * Retourne directement la Map, qui sera sérialisée en JSON.
-     * @return Une map représentant les charts disponibles.
-     * @throws IOException si le fichier charts.json ne peut être lu.
+     * Endpoint to get the list of available charts.
+     * Returns the chart data directly as JSON.
+     * @return A map representing the available charts.
+     * @throws IOException if the charts.json file cannot be read.
      */
     @GET
     @Path("/charts/available")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getAvailableCharts() throws IOException {
-        getKubernetesService().loadAvailableCharts();
-        return Response.ok(getKubernetesService().loadAvailableCharts()).build();
+        String availableCharts = getKubernetesService().loadAvailableCharts();
+        return Response.ok(availableCharts).build();
     }
 
     /**
-     * Endpoint pour déclencher le déploiement d'un chart Helm.
-     * Gère le statut de la réponse via l'objet HttpServletResponse.
-     * @param fileInputStream Le flux d'entrée du fichier chart à déployer.
-     * @return Une map avec un message de succès ou d'erreur.
+     * Endpoint to trigger deployment of a Helm chart.
+     * Handles response status through the Response object.
+     * @param requestInputStream The input stream of the chart file to deploy.
+     * @return A map with success or error message.
      */
     @POST
     @Path("/charts/deploy")
-    @Produces(MediaType.APPLICATION_JSON) // Assure que la valeur de retour est écrite dans le corps de la réponse
+    @Produces(MediaType.APPLICATION_JSON)
     public Response deployChart(InputStream requestInputStream) throws IOException {
         try {
             // Manually deserialize the JSON input stream into our DTO
@@ -109,41 +109,42 @@ public class KubeService {
 
     @POST
     @Path("/cluster/config")
-    @Consumes(MediaType.APPLICATION_OCTET_STREAM) // On attend maintenant un flux de données brutes
+    @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     public Response uploadKubeconfig(InputStream fileInputStream) {
         // new AuthHelper(viewContext).checkConfigurationPermission();
         
         try {
-            ViewConfigurationService cfSvc = this.getConfigService();
+            ViewConfigurationService configurationService = this.getConfigService();
             LOG.info("/cluster/config: Received kubeconfig upload request.");
-            // On utilise un nom de fichier statique car il n'est plus fourni par la requête
-            File configFile = cfSvc.saveKubeconfigFile(fileInputStream, "kubeconfig.yaml");
+            // Use a static filename since it's no longer provided by the request
+            File configurationFile = configurationService.saveKubeconfigFile(fileInputStream, "kubeconfig.yaml");
 
-            LOG.info("Kubeconfig sauvegardé avec succès dans {}", configFile.getAbsolutePath());
-            return Response.ok(Collections.singletonMap("message", "Configuration sauvegardée.")).build();
+            LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
+            return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 
         } catch (IOException e) {
-            LOG.error("Erreur lors de la sauvegarde du fichier kubeconfig uploadé", e);
-            return Response.serverError().entity("Erreur lors de la sauvegarde du fichier.").build();
+            LOG.error("Error while saving uploaded kubeconfig file", e);
+            return Response.serverError().entity("Error while saving the file.").build();
         }
     }
 
     @GET
     @Path("/cluster/configured")
-    @Produces(MediaType.APPLICATION_JSON) // On attend maintenant un flux de données brutes
+    @Produces(MediaType.APPLICATION_JSON)
     public Response checkIsViewConfigured(InputStream fileInputStream) {
         // new AuthHelper(viewContext).checkConfigurationPermission();
-        ViewConfigurationService cfSvc = this.getConfigService();
-        boolean isConfigured = cfSvc.isConfigured();
-        LOG.info("/cluster/configured: Received request to check if the view is configured : {}", isConfigured);
+        ViewConfigurationService configurationService = this.getConfigService();
+        boolean isConfigured = configurationService.isConfigured();
+        LOG.info("/cluster/configured: Received request to check if the view is configured: {}", isConfigured);
         if (!isConfigured) {
             LOG.warn("View is not configured. Returning 'unconfigured' status.");
             return Response.status(Response.Status.PRECONDITION_FAILED).entity("UNCONFIGURED").build();
-        }else{
+        } else {
             LOG.info("View is configured. Returning 'OK' status.");
             return Response.ok(Collections.singletonMap("message", "CONFIGURED")).build();
         }
     }
+    
     @GET
     @Path("/cluster/stats")
     @Produces(MediaType.APPLICATION_JSON)
@@ -200,9 +201,9 @@ public class KubeService {
     }
 
     /**
-    * @see org.apache.ambari.view.k8s.resources.HelmRepoResource
-    * @return service
-    */
+     * @see org.apache.ambari.view.k8s.resources.HelmRepoResource
+     * @return service
+     */
     @Path("/helm/repos")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
@@ -212,12 +213,13 @@ public class KubeService {
 
     private Response handleError(Exception e) {
         if (e instanceof IllegalStateException) {
-            LOG.warn("Tentative d'accès à une ressource sans configuration: {}", e.getMessage());
+            LOG.warn("Attempt to access resource without configuration: {}", e.getMessage());
             return Response.status(Response.Status.PRECONDITION_FAILED).entity(e.getMessage()).build();
         }
-        LOG.error("Erreur inattendue de l'API Kubernetes", e);
+        LOG.error("Unexpected Kubernetes API error", e);
         return Response.serverError().entity(e.getMessage()).build();
     }
+    
     /** Sub-resource for /helm/* under /resources/api */
     @Path("/helm")
     public HelmResource helm() {

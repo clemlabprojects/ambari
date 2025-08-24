@@ -27,7 +27,7 @@ const ServiceSelect: React.FC<{ field: any }> = ({ field }) => {
   const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
   return (
     <Form.Item name={nameParts} label={field.label} help={field.help}>
-      <Select loading={isLoading} allowClear placeholder="Aucun service sélectionné">
+      <Select loading={isLoading} allowClear placeholder="No service selected">
         {services.map((s) => (
           <Option key={s.value} value={s.value}>
             {s.label}
@@ -39,19 +39,19 @@ const ServiceSelect: React.FC<{ field: any }> = ({ field }) => {
 };
 
 
-/** Demande à l’utilisateur s’il veut basculer vers le dépôt conseillé. */
+/** Ask the user if they want to switch to the recommended repository. */
 const confirmMismatch = (chart: string, currentRepo: string, suggestedRepo: string): Promise<boolean> =>
   new Promise((resolve) => {
     confirmModal({
-      title: 'Chart et dépôt incohérents',
+      title: 'Chart and repository inconsistent',
       content: (
         <span>
-          Le chart <b>{chart}</b> n’existe probablement pas dans le dépôt <b>{currentRepo}</b>.<br />
-          Voulez-vous utiliser le dépôt <b>{suggestedRepo}</b> ?
+          Chart <b>{chart}</b> probably does not exist in repository <b>{currentRepo}</b>.<br />
+          Do you want to use repository <b>{suggestedRepo}</b>?
         </span>
       ),
-      okText: `Basculer vers ${suggestedRepo}`,
-      cancelText: 'Annuler',
+      okText: `Switch to ${suggestedRepo}`,
+      cancelText: 'Cancel',
       onOk() { resolve(true); },
       onCancel() { resolve(false); },
     });
@@ -59,7 +59,7 @@ const confirmMismatch = (chart: string, currentRepo: string, suggestedRepo: stri
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();
-  const rules = [{ required: (field as any).required, message: `Le champ '${field.label}' est requis.` }];
+  const rules = [{ required: (field as any).required, message: `Field '${field.label}' is required.` }];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
   const nameParts = field.name.split('.');
@@ -148,7 +148,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [overrideChart, setOverrideChart] = useState(false);
 
   const [step, setStep]   = useState(0);      // 0,1,2
-  const [percent, setPct] = useState(0);      // barre de progression
+  const [percent, setPct] = useState(0);      // progress bar
   // compute default chart name from top-level service.chart
   const lockChart = mode === 'upgrade';
   const releaseChartRef = initialRelease?.chart || '';
@@ -186,7 +186,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     // reset progress every time we open
     setStep(0);
     setPct(0);
-    // En upgrade : pré-remplir nom + namespace d'emblée
+    // In upgrade: prefill name + namespace right away
     if (mode === 'upgrade' && initialRelease) {
       form.setFieldsValue({
         releaseName: initialRelease.name,
@@ -221,11 +221,11 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
          });
          if (match) deducedKey = match[0];
        }
-        // 1) Choisir la clé de service active
+        // 1) Choose active service key
         let svcKey = selectedServiceKey || deducedKey
         if (!svcKey) {
           if (mode === 'upgrade' && initialRelease?.chart) {
-            // essaie de retrouver le service par le nom du chart (sans préfixe repo/)
+            // try to find the service by chart name (without repo prefix)
             const wanted = initialRelease.chart.split('/').pop()?.toLowerCase();
             const match = Object.entries(services).find(([_, v]: any) =>
               (v.chart || '').split('/').pop()?.toLowerCase() === wanted
@@ -241,13 +241,13 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
         if (svcKey) {
           setSelectedServiceKey(svcKey);
 
-          // 2) Valeurs par défaut dynamiques du service
+          // 2) Dynamic default values for service
           const initialValues: any = {};
           if (services[svcKey]?.form) {
             setInitialValues(services[svcKey].form, initialValues);
           }
 
-          // 3) Appliquer au formulaire
+          // 3) Apply to form
           form.setFieldsValue({
             svcKey: svcKey, // <- IMPORTANT
             ...initialValues,
@@ -258,7 +258,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           });
         }
 
-        // 4) Pré-sélection dépôt : 'defaultRepo' si dispo, sinon premier
+        // 4) Repository preselection: 'defaultRepo' if available, otherwise first
         if (!form.getFieldValue('repoId') && reposList.length > 0) {
           const pref = services[svcKey!]?.defaultRepo;
           const repoId =
@@ -269,7 +269,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       } catch (e: any) {
         if (!cancelled) {
           console.error(e);
-          setError('Impossible de charger les services ou dépôts. Veuillez réessayer.');
+          setError('Unable to load services or repositories. Please try again.');
         }
       } finally {
         if (!cancelled) {
@@ -345,11 +345,11 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       const { svcKey, repoId, version, chartDirect, ...configValues } = values;
       const currentService = availableServices[svcKey ?? selectedServiceKey];
       if (!currentService) {
-        message.error('Veuillez choisir un service à installer.');
+        message.error('Please choose a service to install.');
         return;
       }
 
-      message.loading({ content: `Déploiement de ${currentService.label} en cours...`, key: 'deploy' });
+      message.loading({ content: `Deploying ${currentService.label} in progress...`, key: 'deploy' });
 
       // before showing confirm, guard on defaultRepo
       const defaultRepo = availableServices[svcKey]?.defaultRepo;
@@ -378,7 +378,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           const override = (form.getFieldValue('chartOverride') || '').trim();
           chartRef = overrideChart && override ? override : defaultChartName;
         }
-        if (!chartRef) throw new Error('Chart introuvable : vérifiez charts.json ou saisissez un override.');
+        if (!chartRef) throw new Error('Chart not found: check charts.json or enter an override.');
       } else {
         const direct = (chartDirect || '').trim();
         if (direct) chartRef = direct;
@@ -388,7 +388,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
         ) {
           chartRef = currentService.chart;
         } else {
-          throw new Error('Référence directe requise (oci://, URL .tgz, ou repo/chart).');
+          throw new Error('Direct reference required (oci://, URL .tgz, or repo/chart).');
         }
       }
 
@@ -416,16 +416,16 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       });
 
       if (final.state === 'SUCCEEDED') {
-        message.success({ content: 'Déploiement terminé', key: 'deploy', duration: 3 });
+        message.success({ content: 'Deployment completed', key: 'deploy', duration: 3 });
         onDeploy();
         onClose();
         form.resetFields();
       } else {
-        message.error(final.error || 'Échec du déploiement');
+        message.error(final.error || 'Deployment failed');
       }
     } catch (e:any) {
       console.error(e);
-      message.error(e?.message ?? 'Échec du déploiement');
+      message.error(e?.message ?? 'Deployment failed');
     } finally {
       setIsDeploying(false);
     }
@@ -436,30 +436,30 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const modeHelp: Record<'repo' | 'direct', React.ReactNode> = {
     repo: (
       <span>
-        Choisissez un <b>dépôt</b>, puis indiquez un <b>nom de chart sans “/”</b> (ex. <code>trino</code>).
-        Vous pouvez préciser une <b>version</b> si besoin.
+        Choose a <b>repository</b>, then specify a <b>chart name without "/"</b> (ex. <code>trino</code>).
+        You can specify a <b>version</b> if needed.
       </span>
     ),
     direct: (
       <span>
-        Fournissez une <b>référence complète</b> du chart : <code>repo/chart</code>, <code>oci://…</code> ou URL <code>.tgz</code>.
+        Provide a <b>complete reference</b> to the chart: <code>repo/chart</code>, <code>oci://…</code> or URL <code>.tgz</code>.
       </span>
     ),
   };
 
   const renderForm = () => {
     console.log("DEBUG: renderform: rendering form with mode", installMode, "and service", selectedServiceKey, "mode:", mode);
-    if (repoLoading) return <Spin tip="Chargement des dépôts..." />;
-    if (isLoading) return <div style={{ textAlign: 'center', padding: '40px 0' }}><Spin tip="Chargement des services..." /></div>;
-    if (error) return <Alert message="Erreur" description={error} type="error" showIcon />;
+    if (repoLoading) return <Spin tip="Loading repositories..." />;
+    if (isLoading) return <div style={{ textAlign: 'center', padding: '40px 0' }}><Spin tip="Loading services..." /></div>;
+    if (error) return <Alert message="Error" description={error} type="error" showIcon />;
     if (!availableServices || !selectedServiceKey) {
       return <div style={{ textAlign: 'center', padding: 40 }}>
-        <Spin tip="Préparation du formulaire..." />
+        <Spin tip="Preparing form..." />
       </div>;
     }
 
     const currentService = availableServices[selectedServiceKey];
-    const serviceLabel = mode === 'upgrade' ? 'Service installé' : 'Service à installer';
+    const serviceLabel = mode === 'upgrade' ? 'Installed service' : 'Service to install';
 
     return (
       <Form
@@ -475,7 +475,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           name="installMode"
           label={
             <>
-              Mode d'installation
+              Installation mode
               <Tooltip title={modeHelp[installMode]}>
                 <InfoCircleOutlined style={{ marginLeft: 8, color: 'rgba(0,0,0,.45)' }} />
               </Tooltip>
@@ -485,8 +485,8 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           rules={[{ required: true }]}
         >
           <Radio.Group onChange={(e) => setInstallMode(e.target.value)} disabled={lockChart}>
-            <Radio value="repo">Depuis un dépôt</Radio>
-            <Radio value="direct">Référence directe</Radio>
+            <Radio value="repo">From repository</Radio>
+            <Radio value="direct">Direct reference</Radio>
           </Radio.Group>
         </Form.Item>
 
@@ -494,10 +494,10 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           <>
               <Form.Item
                 name="repoId"
-                label="Dépôt"
-                rules={[{ required: true, message: 'Choisissez un dépôt' }]}
+                label="Repository"
+                rules={[{ required: true, message: 'Choose a repository' }]}
               >
-                <Select placeholder="Choisir un dépôt" loading={repoLoading}>
+                <Select placeholder="Choose a repository" loading={repoLoading}>
                   {repos.map((r) => (
                     <Option key={r.id} value={r.id}>
                       {r.name} ({r.id})
@@ -505,7 +505,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
                   ))}
                 </Select>
               </Form.Item>
-            <Form.Item label={lockChart ? "Chart de la release" : "Chart (par défaut)"}>
+            <Form.Item label={lockChart ? "Release chart" : "Chart (default)"}>
               <Space direction="vertical" style={{ width: '100%' }}>
               <Input value={defaultChartName} disabled />
               {!lockChart && (
@@ -519,7 +519,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
                     }
                   }}
                 >
-                  Modifier le chart
+                  Modify chart
                 </Checkbox>
               )}
               </Space>
@@ -529,10 +529,10 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
               <Form.Item
                 name="chartOverride"
                 label="Chart (override)"
-                tooltip="Nom simple du chart (sans préfixe repo/). Ex: trino, nginx"
+                tooltip="Simple chart name (without repo/ prefix). Ex: trino, nginx"
                 rules={[
-                  { required: true, message: 'Veuillez saisir un nom de chart.' },
-                  { pattern: /^[^/]+$/, message: 'Ne pas inclure de “/” (nom simple uniquement).' },
+                  { required: true, message: 'Please enter a chart name.' },
+                  { pattern: /^[^/]+$/, message: 'Do not include "/" (simple name only).' },
                 ]}
               >
                 <Input placeholder="ex: trino" />
@@ -543,18 +543,18 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
         {installMode === 'direct' && (
           <Form.Item name="chartDirect" label="Chart / URL / oci://" rules={[{ required: true }]}>
-            <Input placeholder="https://.../chart.tgz ou oci://repo/chart" />
+            <Input placeholder="https://.../chart.tgz or oci://repo/chart" />
           </Form.Item>
         )}
 
-        <Form.Item name="version" label="Version (option)">
+        <Form.Item name="version" label="Version (optional)">
           <Input placeholder="1.2.3" />
         </Form.Item>
 
         <Form.Item
           name="svcKey"
           label={serviceLabel}
-          rules={[{ required: true, message: 'Veuillez choisir un service' }]}
+          rules={[{ required: true, message: 'Please choose a service' }]}
         >
           <Select onChange={handleServiceChange} disabled={mode === 'upgrade'}>
             {Object.keys(availableServices).map((key) => (
@@ -568,8 +568,8 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
         ))}
         <Steps current={step} size="small" style={{ marginBottom: 16 }}>
           <Step title="Validation" />
-          <Step title="Sync dépôt" />
-          <Step title="Déploiement" />
+          <Step title="Repository sync" />
+          <Step title="Deployment" />
         </Steps>
         <Progress percent={percent} status={percent < 100 ? 'active' : 'success'} />
       </Form>
@@ -579,12 +579,12 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   return (
     <Modal
       title={mode === 'upgrade'
-      ? `Mettre à jour ${initialRelease?.name ?? ''}`
-      : 'Installer un Service via Helm'}
+      ? `Update ${initialRelease?.name ?? ''}`
+      : 'Install a Service via Helm'}
       open={visible}
       onCancel={onClose}
       width={700}
-      okText="Déployer"
+      okText="Deploy"
       okButtonProps={{ form: 'install_form', htmlType: 'submit', loading: isDeploying || isLoading }}
       maskClosable={false}
     >

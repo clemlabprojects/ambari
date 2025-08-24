@@ -17,15 +17,16 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   console.log('DEBUG: AppLayout - Cluster nodes in the stats variable:', stats);
   console.log('DEBUG: AppLayout - Cluster ready nodes:', stats?.nodes.ready);
   console.log('DEBUG: Cluster status:', status);
-  if ( status === 'loading') {
+  
+  if (status === 'loading') {
     return <div className="app-loading"><Spin size="large" /></div>;
   }
 
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">Dashboard</NavLink> },
-    { key: '/nodes', icon: <CloudServerOutlined />, label: <NavLink to="/nodes">Noeuds</NavLink> },
-    { key: '/helm', icon: <CodeSandboxOutlined />, label: <NavLink to="/helm">Charts Helm</NavLink> },
-    { key: '/repositories', icon: <CodeSandboxOutlined />, label: <NavLink to="/repositories">Dépôts Helm</NavLink> },
+    { key: '/nodes', icon: <CloudServerOutlined />, label: <NavLink to="/nodes">Nodes</NavLink> },
+    { key: '/helm', icon: <CodeSandboxOutlined />, label: <NavLink to="/helm">Helm Charts</NavLink> },
+    { key: '/repositories', icon: <CodeSandboxOutlined />, label: <NavLink to="/repositories">Helm Repositories</NavLink> },
   ];
 
   // if (permissions.canConfigure) {
@@ -54,8 +55,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
         <div className="header-right">
             {/* <Tag color="blue">{permissions.role}</Tag> */}
-            {status === 'connected' && <Tag color="green">CONNECTÉ</Tag>}
-            {status === 'error' && <Tag color="red">ERREUR DE CONNEXION</Tag>}
+            {status === 'connected' && <Tag color="green">CONNECTED</Tag>}
+            {status === 'error' && <Tag color="red">CONNECTION ERROR</Tag>}
         </div>
       </Header>
       <Content className="app-content">
@@ -68,7 +69,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                       <span className="stat-value">{stats.cpu.used.toFixed(1)} / {stats.cpu.total} Cores</span>
                   </div>
                   <div className="stat-item-enhanced">
-                      <span className="stat-label">Mémoire</span>
+                      <span className="stat-label">Memory</span>
                       <Progress percent={Math.round((stats.memory.used / stats.memory.total) * 100)} size="small" status="success" />
                       <span className="stat-value">{stats.memory.used.toFixed(1)} / {Math.round(stats.memory.total)} GiB</span>
                   </div>
@@ -78,9 +79,9 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                       <span className="stat-value">{stats.pods.used} / {stats.pods.total}</span>
                   </div>
                   <div className="stat-item-enhanced">
-                      <span className="stat-label">Nœuds</span>
+                      <span className="stat-label">Nodes</span>
                       <Progress percent={Math.round((Math.round(stats.nodes.used) / Math.round(stats.nodes.total)) * 100)} size="small" status={(stats.nodes.used == stats.nodes.total) ? 'success' : 'exception'} />
-                      <span className="stat-value">{stats.nodes.used} / {stats.nodes.total} Prêts</span>
+                      <span className="stat-value">{stats.nodes.used} / {stats.nodes.total} Ready</span>
                   </div>
               </Space>
           </div>
@@ -88,18 +89,18 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         {status === 'error' && (
             <Alert
-                message="Impossible de se connecter au cluster Kubernetes"
-                description={error || "Une erreur inconnue est survenue."}
+                message="Unable to connect to Kubernetes cluster"
+                description={error || "An unknown error occurred."}
                 type="error"
                 showIcon
                 action={
                     <Space>
                         <Button size="small" type="ghost" onClick={fetchData}>
-                            Réessayer
+                            Retry
                         </Button>
                         <NavLink to="/configuration">
                             <Button size="small" type="primary">
-                                Reconfigurer
+                                Reconfigure
                             </Button>
                         </NavLink>
                     </Space>

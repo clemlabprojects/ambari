@@ -1,45 +1,78 @@
 package org.apache.ambari.view.k8s.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
+/**
+ * Represents a Kubernetes cluster node with basic information
+ */
 public class ClusterNode {
-    private String id;
-    private String name;
-    private String status;
-    private List<String> roles;
-    private double cpuUsage;
-    private double memoryUsage;
+    
+    @JsonProperty("id")
+    private String nodeId;
+    
+    @JsonProperty("name")
+    private String nodeName;
+    
+    @JsonProperty("status")
+    private String nodeStatus;
+    
+    @JsonProperty("roles")
+    private List<String> nodeRoles;
+    
+    @JsonProperty("cpuUsage")
+    private double cpuUsagePercent;
+    
+    @JsonProperty("memoryUsage")
+    private double memoryUsagePercent;
 
-    public ClusterNode(String id, String name, String status, List<String> roles, double cpuUsage, double memoryUsage) {
-        this.id = id;
-        this.name = name;
-        this.status = status;
-        this.roles = roles;
-        this.cpuUsage = cpuUsage;
-        this.memoryUsage = memoryUsage;
+    // Default constructor for JSON deserialization
+    public ClusterNode() {
     }
 
-    public String getId() {
-        return id;
+    public ClusterNode(String nodeId, String nodeName, String nodeStatus, 
+                      List<String> nodeRoles, double cpuUsagePercent, double memoryUsagePercent) {
+        this.nodeId = nodeId;
+        this.nodeName = nodeName;
+        this.nodeStatus = nodeStatus;
+        this.nodeRoles = nodeRoles;
+        this.cpuUsagePercent = cpuUsagePercent;
+        this.memoryUsagePercent = memoryUsagePercent;
     }
 
-    public String getName() {
-        return name;
+    public String getNodeId() {
+        return nodeId;
     }
 
-    public String getStatus() {
-        return status;
+    public String getNodeName() {
+        return nodeName;
     }
 
-    public List<String> getRoles() {
-        return roles;
+    public String getNodeStatus() {
+        return nodeStatus;
     }
 
-    public double getCpuUsage() {
-        return cpuUsage;
+    public List<String> getNodeRoles() {
+        return nodeRoles;
     }
 
-    public double getMemoryUsage() {
-        return memoryUsage;
+    public double getCpuUsagePercent() {
+        return cpuUsagePercent;
+    }
+
+    public double getMemoryUsagePercent() {
+        return memoryUsagePercent;
+    }
+    
+    @Override
+    public String toString() {
+        return "ClusterNode{" +
+                "nodeId='" + nodeId + '\'' +
+                ", nodeName='" + nodeName + '\'' +
+                ", nodeStatus='" + nodeStatus + '\'' +
+                ", nodeRoles=" + nodeRoles +
+                ", cpuUsagePercent=" + cpuUsagePercent +
+                ", memoryUsagePercent=" + memoryUsagePercent +
+                '}';
     }
 }

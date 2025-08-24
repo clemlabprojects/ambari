@@ -23,25 +23,26 @@ const HelmReleasesPage: React.FC = () => {
     const { status, helmReleases, refresh } = useClusterStatus();
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [upgradeTarget, setUpgradeTarget] = useState<any | null>(null);
-    const [svcDefs, setSvcDefs] = useState<AvailableServices>({});
+    const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
 
     useEffect(() => {
-        getAvailableServices().then(setSvcDefs).catch(() => {});
+        getAvailableServices().then(setServiceDefinitions).catch(() => {});
     }, []);
+    
     // This function will be called by the modal on successful deployment
     const handleDeploymentSuccess = () => {
       // refreshClusterStatus(); // Uncomment this to trigger a real data refresh
       console.log("Refreshing cluster status...");
     };
 
-    const renderServiceCell = (r: HelmRelease) => {
-        const key = r.serviceKey;
-        const label = key && svcDefs[key]?.label ? svcDefs[key].label : (key || '—');
+    const renderServiceCell = (releaseRecord: HelmRelease) => {
+        const serviceKey = releaseRecord.serviceKey;
+        const serviceLabel = serviceKey && serviceDefinitions[serviceKey]?.label ? serviceDefinitions[serviceKey].label : (serviceKey || '—');
 
         return (
             <Space size={6}>
-            <span>{label}</span>
-            {r.managedByUi ? (
+            <span>{serviceLabel}</span>
+            {releaseRecord.managedByUi ? (
                 <Tooltip title="Déployé via cette UI">
                 <Tag color="blue">UI</Tag>
                 </Tooltip>
@@ -104,18 +105,18 @@ const HelmReleasesPage: React.FC = () => {
         { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
         { title: 'Chart', dataIndex: 'chart', key: 'chart' },
         { title: 'Version', dataIndex: 'version', key: 'version' },
-        { title: 'Service', key: 'service', render: (_: any, r: HelmRelease) => renderServiceCell(r) },
+        { title: 'Service', key: 'service', render: (_: any, releaseRecord: HelmRelease) => renderServiceCell(releaseRecord) },
         { title: 'État', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
         {
         title: 'Actions',
         key: 'actions',
         render: (_: any, record: any) => {
-            const items = buildMenuItems(record);
+            const menuItems = buildMenuItems(record);
             return (
             <PermissionGuard requires="canWrite">
                 <Dropdown
                 menu={{
-                    items,
+                    items: menuItems,
                     onClick: ({ key }) => {
                     if (key === 'update') {
                         // TODO: open upgrade modal for `record`
@@ -142,18 +143,18 @@ const HelmReleasesPage: React.FC = () => {
                     <Search placeholder="Rechercher un release..." style={{ width: 250 }} />
                     <PermissionGuard requires="canWrite">
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpgradeTarget(null); setIsModalVisible(true); }}>
-                            Installer un Service
+                            Setup a Service
                         </Button>
                     </PermissionGuard>
                     <Button icon={<ReloadOutlined />} onClick={refresh}>
-                        Rafraîchir
+                        Refresh
                     </Button>
                 </Space>
             </div>
             <Table
               columns={columns}
               dataSource={helmReleases}
-              rowKey={(r:any) => `${r.namespace}/${r.name}`}   // clé stable
+              rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}   // clé stable
               loading={status === 'loading'}
             />
 
