@@ -276,7 +276,7 @@ def wait_for_server_start(pidFile, scmStatus):
   for i in range(1, SERVER_START_RETRIES):
     pids = looking_for_pid(SERVER_SEARCH_PATTERN, SERVER_START_TIMEOUT)
     pid = save_main_pid_ex(pids, pidFile, locate_all_file_paths('sh', '/bin') +
-                           locate_all_file_paths('bash', '/bin') +
+                           locate_all_file_paths('bash', '/bin') + locate_all_file_paths('su', '/bin') +
                            locate_all_file_paths('dash', '/bin'), IS_FOREGROUND)
     if pid:
       break
