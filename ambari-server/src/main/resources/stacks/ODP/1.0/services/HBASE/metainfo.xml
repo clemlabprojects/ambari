@@ -33,7 +33,7 @@
           <category>MASTER</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
-          <timelineAppid>HBASE</timelineAppid>
+          <timelineAppid>hbase</timelineAppid>
           <dependencies>
             <dependency>
               <name>HDFS/HDFS_CLIENT</name>
@@ -81,7 +81,7 @@
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <decommissionAllowed>true</decommissionAllowed>
-          <timelineAppid>HBASE</timelineAppid>
+          <timelineAppid>hbase</timelineAppid>
           <commandScript>
             <script>scripts/hbase_regionserver.py</script>
             <scriptType>PYTHON</scriptType>
