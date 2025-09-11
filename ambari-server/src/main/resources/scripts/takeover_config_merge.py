@@ -95,8 +95,7 @@ class YamlParser(Parser): # Used Yaml parser to read data into a map
 class PropertiesParser(Parser): # Used ConfigParser parser to read data into a map
   def read_data_to_map(self, path):
     configurations = {}
-    try :
-      #Adding dummy section to properties file content for use ConfigParser
+    try:
       properties_file_content = io.StringIO()
       properties_file_content.write('[dummysection]\n')
       properties_file_content.write(open(path).read())
@@ -104,7 +103,11 @@ class PropertiesParser(Parser): # Used ConfigParser parser to read data into a m
 
       cp = configparser.ConfigParser()
       cp.optionxform = str
-      cp.readfp(properties_file_content)
+
+      if sys.version_info >= (3, 12):
+        cp.read_string(properties_file_content.getvalue())
+      else:
+        cp.readfp(properties_file_content)
 
       for section in cp._sections:
         for name, value in cp._sections[section].items():

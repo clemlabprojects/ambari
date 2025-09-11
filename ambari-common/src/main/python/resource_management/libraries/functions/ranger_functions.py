@@ -369,7 +369,7 @@ class Rangeradmin:
     :return Returns response code for successful user creation else None
     """
     flag_ambari_admin_present = False
-    match = re.match('[a-zA-Z0-9_\S]+$', ambari_admin_password)
+    match = re.match(r'[a-zA-Z0-9_\S]+$', ambari_admin_password)
     if match is None:
       raise Fail('Invalid password given for Ranger Admin user for Ambari')
     try:

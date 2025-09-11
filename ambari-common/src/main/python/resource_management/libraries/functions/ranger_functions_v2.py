@@ -321,7 +321,7 @@ class RangeradminV2:
     :return: Returns user credentials if user exist otherwise rerutns credentials of  created user.
     """
     flag_ambari_admin_present = False
-    match = re.match('[a-zA-Z0-9_\S]+$', ambari_admin_password)
+    match = re.match(r'[a-zA-Z0-9_\S]+$', ambari_admin_password)
     if match is None:
       raise Fail('Invalid password given for Ranger Admin user for Ambari')
     try:
@@ -393,7 +393,7 @@ class RangeradminV2:
     :return: response code.
     """
     flag_rangerlookup_present = False
-    match = re.match('[a-zA-Z0-9_\S]+$', ranger_lookup_password)
+    match = re.match(r'[a-zA-Z0-9_\S]+$', ranger_lookup_password)
     if match is None:
       raise Fail('Invalid password given for Ranger rangerlookup user')
     try:

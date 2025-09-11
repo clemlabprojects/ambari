@@ -514,7 +514,10 @@ class Script(object):
     from resource_management.libraries.functions.default import default
 
     package_delimiter = '-' if OSCheck.is_ubuntu_family() else '_'
-    package_regex = name.replace(STACK_VERSION_PLACEHOLDER, f'(\d|{package_delimiter})+') + "$"
+
+    package_regex = (
+      name.replace(STACK_VERSION_PLACEHOLDER, fr"(\d|{package_delimiter})+") + "$"
+    )
     repo = default('/repositoryFile', None)
     name_with_version = None
 

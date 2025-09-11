@@ -21,6 +21,7 @@ limitations under the License.
 import logging
 import configparser
 import io
+import sys
 from ambari_agent import hostname
 import ambari_simplejson as json
 import os
@@ -106,7 +107,13 @@ class AmbariConfig:
   def __init__(self):
     global content
     self.config = configparser.RawConfigParser()
-    self.config.readfp(io.StringIO(content))
+    
+    # Use read_string for Python 3.12+ and readfp for older versions
+    if sys.version_info >= (3, 12):
+      self.config.read_string(content)
+    else:
+      self.config.readfp(io.StringIO(content))
+      
     self._cluster_cache_dir = os.path.join(self.cache_dir, FileCache.CLUSTER_CACHE_DIRECTORY)
     self._alerts_cachedir = os.path.join(self.cache_dir, FileCache.ALERTS_CACHE_DIRECTORY)
     self._stacks_dir = os.path.join(self.cache_dir, FileCache.STACKS_CACHE_DIRECTORY)

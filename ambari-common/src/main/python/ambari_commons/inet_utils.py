@@ -271,7 +271,7 @@ def get_host_from_url(uri):
     return None
 
     # RFC3986, Appendix B
-  parts = re.findall('^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?', uri)
+  parts = re.findall(r'^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?', uri)
 
   # index of parts
   # scheme    = 1

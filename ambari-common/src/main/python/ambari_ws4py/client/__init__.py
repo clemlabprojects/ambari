@@ -204,6 +204,49 @@ class WebSocketBaseClient(WebSocket):
             self.client_terminated = True
             self._write(self.stream.close(code=code, reason=reason).single(mask=True))
 
+    def wrap_tls(self, sock, host, ssl_params):
+        """
+        Minimal TLS wrapper for Python 3.6+.
+
+        Rules:
+        - If ca_certs/cafile is present: verify server (CERT_REQUIRED).
+        - If missing: disable verify (CEambRT_NONE) and hostname checking.
+        - If cert_reqs provided in ssl_params, it overrides the above.
+        - If certfile/keyfile/password provided, load client certs.
+        """
+        # Accept both names (your snippet mixes styles)
+        cafile = ssl_params.get("ca_certs") or ssl_params.get("cafile")
+        certfile = ssl_params.get("certfile") or ssl_params.get("cert_file")
+        keyfile  = ssl_params.get("keyfile")  or ssl_params.get("key_file")
+        password = ssl_params.get("password")
+
+        # Decide verification mode (simple logic)
+        if "cert_reqs" in ssl_params:
+            verify_mode = ssl_params["cert_reqs"]
+        else:
+            verify_mode = ssl.CERT_REQUIRED if cafile else ssl.CERT_NONE
+
+        # Build a context with defaults, optionally using the CA file
+        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=cafile)
+
+        # Hostname check only makes sense when verifying
+        ctx.check_hostname = (verify_mode == ssl.CERT_REQUIRED)
+        ctx.verify_mode = verify_mode
+
+        # Optional: custom ciphers (ignored if not provided)
+        if "ciphers" in ssl_params:
+            ctx.set_ciphers(ssl_params["ciphers"])
+
+        # Client authentication (mutual TLS) if provided
+        if certfile:
+            if not keyfile:
+                keyfile = certfile
+            ctx.load_cert_chain(certfile=certfile, keyfile=keyfile, password=password)
+
+        # SNI only when we have a hostname and are checking hostnames
+        server_hostname = host if ctx.check_hostname else None
+        return ctx.wrap_socket(sock, server_hostname=server_hostname)
+
     def connect(self):
         """
         Connects this websocket and starts the upgrade handshake
@@ -211,7 +254,7 @@ class WebSocketBaseClient(WebSocket):
         """
         if self.scheme == "wss":
             # default port is now 443; upgrade self.sender to send ssl
-            self.sock = ssl.wrap_socket(self.sock, **self.ssl_options)
+            self.sock = self.wrap_tls(self.sock, self.host, self.ssl_options)
             self._is_secure = True
 
         self.sock.settimeout(10.0)

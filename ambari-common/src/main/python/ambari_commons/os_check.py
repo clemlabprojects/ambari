@@ -96,12 +96,12 @@ def advanced_check(distribution):
     with open(OS_RELEASE_FILE, "rb") as fp:
       file_content = fp.read()
   
-    search_groups = re.search('NAME="(.+)"', file_content)
+    search_groups = re.search(r'NAME="(.+)"', file_content)
     name = search_groups.group(1) if search_groups else ''
 
     if "amazon" in name.lower():
       distribution[0] = "amazonlinux"
-      search_groups = re.search('VERSION_ID="(\d+)"', file_content)
+      search_groups = re.search(r'VERSION_ID="(\d+)"', file_content)
       
       if search_groups:
         distribution[1] = search_groups.group(1)
@@ -214,7 +214,7 @@ class OSCheck:
 
     if full_os_and_major_version in OSConst.OS_TYPE_ALIASES:
       alias = OSConst.OS_TYPE_ALIASES[full_os_and_major_version]
-      re_groups = re.search('(\D+)(\d+)$', alias).groups()
+      re_groups = re.search(r'(\D+)(\d+)$', alias).groups()
       os_type = re_groups[0]
       os_major_version = re_groups[1]
       
