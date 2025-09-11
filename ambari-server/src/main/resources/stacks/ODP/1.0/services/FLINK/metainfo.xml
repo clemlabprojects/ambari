@@ -213,7 +213,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>ubuntu22</osFamily>
+          <osFamily>ubuntu22,ubuntu24</osFamily>
           <packages>
             <package>
               <name>flink-${stack_version}</name>
