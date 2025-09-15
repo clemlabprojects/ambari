@@ -19,61 +19,111 @@ limitations under the License.
 Ambari Agent
 
 """
-
-import os
-import sys
-import tempfile
+#!/usr/bin/env python3
+import os, sys, shlex, tempfile, subprocess, pwd
 from resource_management.core import shell
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed
 
 def get_user_call_output(command, user, quiet=False, is_checked_call=True, **call_kwargs):
-  """
-  This function eliminates only output of command inside the su, ignoring the su ouput itself.
-  This is useful since some users have motd messages setup by default on su -l. 
-  
-  @return: code, stdout, stderr
-  """
-  command_string = shell.string_cmd_from_args_list(command) if isinstance(command, (list, tuple)) else command
-  out_files = []
-  
-  try:
-    out_files.append(tempfile.NamedTemporaryFile())
-    out_files.append(tempfile.NamedTemporaryFile())
-    
-    # other user should be able to write to it
-    for f in out_files:
-      os.chmod(f.name, 0o666)
-    
-    command_string += " 1>" + out_files[0].name
-    command_string += " 2>" + out_files[1].name
-    
-    code, _ = shell.call(shell.as_user(command_string, user), quiet=quiet, **call_kwargs)
-    
-    files_output = []
-    for f in out_files:
-      files_output.append(f.read().decode("utf-8").strip('\n'))
-      
-    if code:
-      all_output = files_output[1] + '\n' + files_output[0]
-      err_msg = Logger.filter_text(("Execution of '%s' returned %d. %s") % (command_string, code, all_output))
-      
-      if is_checked_call:
-        raise ExecutionFailed(err_msg, code, files_output[0], files_output[1])
-      else:
-        Logger.warning(err_msg)
+    """
+    Run `command` as `user`, capturing stdout/stderr into temp files (no shell redirection).
+    Returns (code, stdout_text, stderr_text).
+    """
+    # ---- normalize command to argv ----
+    argv = command if isinstance(command, (list, tuple)) else shlex.split(command)
 
-    result = code, files_output[0], files_output[1]
-    
-    caller_filename = sys._getframe(1).f_code.co_filename
-    is_internal_call = shell.NOT_LOGGED_FOLDER in caller_filename
-    if quiet == False or (quiet == None and not is_internal_call):
-      log_msg = f"{get_user_call_output.__name__} returned {result}"
-      Logger.info(log_msg)
+    # ---- temp files for output ----
+    fout = tempfile.NamedTemporaryFile(mode="ab", delete=False)
+    ferr = tempfile.NamedTemporaryFile(mode="ab", delete=False)
 
-    return result
-  finally:
-    for f in out_files:
-      f.close()
-      
-  
+    try:
+        # Modes aren't strictly needed now (we write via already-open FDs), but fine to keep.
+        os.chmod(fout.name, 0o666)
+        os.chmod(ferr.name, 0o666)
+
+        # ---- privilege drop setup ----
+        pw = pwd.getpwnam(user)
+        uid, gid, name = pw.pw_uid, pw.pw_gid, pw.pw_name
+
+        def _drop_privs():
+            # Minimal, order matters; do NOT log here.
+            os.setgid(gid)
+            # populate supplementary groups for that user
+            try:
+                os.initgroups(name, gid)
+            except Exception:
+                # On some platforms, initgroups may fail if NSS is odd; fall back to clearing groups
+                try:
+                    os.setgroups([])
+                except Exception:
+                    pass
+            os.setuid(uid)
+            # optional: set a sane umask
+            os.umask(0o22)
+
+        # If we aren't root, we cannot setuid/setgid; fall back to sudo/runuser
+        if os.geteuid() != 0:
+            # Prefer sudo if present; you can also use runuser -u <user> -- <cmd>
+            argv = ["sudo", "-n", "-u", name, "--"] + argv
+            preexec = None
+        else:
+            preexec = _drop_privs
+
+        # ---- spawn ----
+        p = subprocess.Popen(
+            argv,
+            stdout=fout,
+            stderr=ferr,
+            preexec_fn=preexec,
+            # close_fds=True is default on POSIX; good hygiene when handing FDs explicitly
+        )
+        code = p.wait()
+
+        # ---- read outputs ----
+        fout.flush(); os.fsync(fout.fileno())
+        ferr.flush(); os.fsync(ferr.fileno())
+
+        # Close writers before reading to avoid races/position issues
+        fout.close(); ferr.close()
+
+        with open(fout.name, "rb") as rfout, open(ferr.name, "rb") as rferr:
+            out = rfout.read().decode("utf-8", errors="replace").rstrip("\n")
+            err = rferr.read().decode("utf-8", errors="replace").rstrip("\n")
+
+        # ---- error handling & logging ----
+        if code:
+            all_output = f"{err}\n{out}".strip()
+            err_msg = Logger.filter_text(f"Execution of {argv!r} returned {code}. {all_output}")
+            if is_checked_call:
+                raise ExecutionFailed(err_msg, code, out, err)
+            else:
+                Logger.warning(err_msg)
+
+        result = (code, out, err)
+
+        caller_filename = sys._getframe(1).f_code.co_filename
+        is_internal_call = shell.NOT_LOGGED_FOLDER in caller_filename
+        if quiet is False or (quiet is None and not is_internal_call):
+            Logger.info(f"{get_user_call_output.__name__} returned {result}")
+
+        return result
+
+    finally:
+        # If still open, close; then remove temp files
+        try:
+            fout.close()
+        except Exception:
+            pass
+        try:
+            ferr.close()
+        except Exception:
+            pass
+        try:
+            os.remove(fout.name)
+        except Exception:
+            pass
+        try:
+            os.remove(ferr.name)
+        except Exception:
+            pass

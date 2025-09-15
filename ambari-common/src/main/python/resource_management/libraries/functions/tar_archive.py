@@ -22,26 +22,36 @@ import os
 import tarfile
 import tempfile
 from contextlib import closing
+import subprocess
 
 from ambari_commons import os_utils
 from resource_management.core.resources.system import Execute
 
 def archive_dir(output_filename, input_dir, follow_links=False):
-  """
-  Creates an archive of the specified directory.
-  :param output_filename: the name of the archive to create, including path
-  :param input_dir: the directory to include
-  :param follow_links: if True, symlinks are followed and the files/directories they point to will be included in the archive
-  :return:  None
-  """
+    """
+    Creates a gzip tar archive of input_dir at output_filename.
 
-  options = '-zchf' if follow_links else '-zcf'
+    Writes through our own file descriptor to avoid sticky-dir + O_CREAT/O_TRUNC issues.
+    """
+    # Build tar command that writes to stdout ("-")
+    # -c create, -z gzip, -f - (stdout), optional -h to follow symlinks
+    tar_cmd = ['tar']
+    if follow_links:
+        tar_cmd += ['-h']
+    tar_cmd += ['-czf', '-', '-C', input_dir, '.']
 
-  Execute(('tar', options, output_filename, '-C', input_dir, '.'),
-    sudo = True,
-    tries = 3,
-    try_sleep = 1,
-  )
+    # IMPORTANT: open the destination file here (agent user), then give it to Execute as stdout
+    # If output path already exists and you don't own it, you'll still get a PermissionError here —
+    # pick a different name/path in that case.
+    with open(output_filename, 'wb', buffering=0) as out_fp:
+        Execute(
+            tuple(tar_cmd),
+            sudo=True,                 # still run tar with sudo to read any protected input files
+            tries=3,
+            try_sleep=1,
+            stdout=out_fp.fileno(),    # use our open FD as child's stdout
+            stderr=subprocess.PIPE,    # optional: capture tar's stderr if you want logging
+        )
 
 
 def archive_directory_dereference(archive, directory):
