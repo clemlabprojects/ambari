@@ -214,7 +214,7 @@ def f(args):
     self.safeChecker = ASTChecker([BlacklistRule()], use_blacklist=True)
 
     if 'value' in metric_info:
-      realcode = re.sub('(\{(\d+)\})', 'args[\g<2>][k]', metric_info['value'])
+      realcode = re.sub(r'(\{(\d+)\})', r'args[\g<2>][k]', metric_info['value'])
       if not self.safeChecker.is_safe_expression(realcode):
         logger.exception(f"AmsMetric: Value expression {realcode} is not safe,blocked by checker")
         raise Exception(f"AmsMetric: Value expression {realcode} is not safe")

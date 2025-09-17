@@ -291,7 +291,7 @@ def f(args):
     self.safeChecker = ASTChecker([BlacklistRule()], use_blacklist=True)
 
     if 'value' in jmx_info:
-      realcode = re.sub('(\{(\d+)\})', 'args[\g<2>]', jmx_info['value'])
+      realcode = re.sub(r'(\{(\d+)\})', r'args[\g<2>]', jmx_info['value'])
       if not self.safeChecker.is_safe_expression(realcode):
         logger.exception(f"The expression {realcode} is not safe,blocked by checker")
         raise Exception(f"The expression {realcode} is not safe")

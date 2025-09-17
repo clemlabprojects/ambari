@@ -28,7 +28,7 @@ import configparser
 
 HADOOP_ROOT_DIR = "/usr/hdp"
 HADOOP_PERM_REMOVE_LIST = ["current"]
-HADOOP_ITEMDIR_REGEX = "(\d\.){3}\d-\d{4}"
+HADOOP_ITEMDIR_REGEX = r"(\d\.){3}\d-\d{4}"
 logger = logging.getLogger(__name__)
 
 class HostCheckReportFileHandler:

@@ -458,7 +458,7 @@ class FacterLinux(Facter):
 
   def return_ifnames_from_ip_link(self, ip_link_output):
     list = []
-    prog = re.compile("^\d")
+    prog = re.compile(r"^\d")
     for line in ip_link_output.splitlines():
       if prog.match(line):
         list.append(line.split()[1].rstrip(":"))
@@ -522,7 +522,7 @@ class FacterLinux(Facter):
   # Return uptime seconds
   def getUptimeSeconds(self):
     try:
-      return int(self.data_return_first("\d+", self.DATA_UPTIME_OUTPUT))
+      return int(self.data_return_first(r"\d+", self.DATA_UPTIME_OUTPUT))
     except ValueError:
       log.warn("Can't get an uptime value from {0}".format(self.DATA_UPTIME_OUTPUT))
       return 0
@@ -531,7 +531,7 @@ class FacterLinux(Facter):
   def getMemoryFree(self):
     #:memoryfree_mb => "MemFree",
     try:
-      return int(self.data_return_first("MemFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(r"MemFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get free memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -539,7 +539,7 @@ class FacterLinux(Facter):
   # Return memorytotal
   def getMemoryTotal(self):
     try:
-      return int(self.data_return_first("MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(r"MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get total memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -548,7 +548,7 @@ class FacterLinux(Facter):
   def getSwapFree(self):
     #:swapfree_mb   => "SwapFree"
     try:
-      return int(self.data_return_first("SwapFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(r"SwapFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get free swap memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -557,7 +557,7 @@ class FacterLinux(Facter):
   def getSwapSize(self):
     #:swapsize_mb   => "SwapTotal",
     try:
-      return int(self.data_return_first("SwapTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(r"SwapTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get total swap memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -566,7 +566,7 @@ class FacterLinux(Facter):
   def getMemorySize(self):
     #:memorysize_mb => "MemTotal"
     try:
-      return int(self.data_return_first("MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(r"MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0

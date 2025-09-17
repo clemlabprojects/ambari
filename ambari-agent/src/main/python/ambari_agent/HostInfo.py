@@ -266,7 +266,7 @@ class HostInfoLinux(HostInfo):
       logger.exception("Checking java processes failed")
 
   def getTransparentHugePage(self):
-    thp_regex = "\[(.+)\]"
+    thp_regex = r"\[(.+)\]"
     file_name = None
     if OSCheck.is_ubuntu_family():
       file_name = self.THP_FILE_UBUNTU
@@ -381,7 +381,7 @@ class HostInfoLinux(HostInfo):
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class HostInfoWindows(HostInfo):
   SERVICE_STATUS_CMD = 'If ((Get-Service | Where-Object {{$_.Name -eq \'{0}\'}}).Status -eq \'Running\') {{echo "Running"; $host.SetShouldExit(0)}} Else {{echo "Stopped"; $host.SetShouldExit(1)}}'
-  GET_USERS_CMD = '$accounts=(Get-WmiObject -Class Win32_UserAccount -Namespace "root\cimv2" -Filter "name = \'{0}\' and Disabled=\'False\'" -ErrorAction Stop); foreach ($acc in $accounts) {{Write-Host ($acc.Domain + "\\" + $acc.Name)}}'
+  GET_USERS_CMD = r'$accounts=(Get-WmiObject -Class Win32_UserAccount -Namespace "root\cimv2" -Filter "name = \'{0}\' and Disabled=\'False\'" -ErrorAction Stop); foreach ($acc in $accounts) {{Write-Host ($acc.Domain + "\\" + $acc.Name)}}'
   GET_JAVA_PROC_CMD = 'foreach ($process in (gwmi Win32_Process -Filter "name = \'java.exe\'")){{echo $process.ProcessId;echo $process.CommandLine; echo $process.GetOwner().User}}'
   DEFAULT_LIVE_SERVICES = [
     ("W32Time",)

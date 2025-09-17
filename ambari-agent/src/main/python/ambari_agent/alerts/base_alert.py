@@ -215,7 +215,7 @@ class BaseAlert(object):
     # parse {{foo-bar/baz}}/whatever/{{foobar-site/blah}}
     # into
     # ['foo-bar/baz', 'foobar-site/blah']
-    placeholder_keys = re.findall("{{(\S+?)}}", key)
+    placeholder_keys = re.findall(r"{{(\S+?)}}", key)
 
     # if none found, then return the original
     if placeholder_keys is None or len(placeholder_keys) == 0:
