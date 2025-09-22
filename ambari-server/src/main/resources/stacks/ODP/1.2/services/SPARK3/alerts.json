@@ -64,7 +64,7 @@
         "scope": "ANY",
         "source": {
           "type": "SCRIPT",
-          "path": "ODP/1.0/services/SPARK3/package/scripts/alerts/alert_spark3_thrift_port.py",
+          "path": "ODP/1.2/services/SPARK3/package/scripts/alerts/alert_spark3_thrift_port.py",
           "parameters": [
             {
               "name": "check.command.timeout",

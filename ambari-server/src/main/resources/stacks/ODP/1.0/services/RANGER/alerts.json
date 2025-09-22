@@ -40,7 +40,7 @@
         "scope": "ANY",
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/RANGER/package/alerts/alert_ranger_admin_passwd_check.py",
+          "path": "ODP/1.0/services/RANGER/package/alerts/alert_ranger_admin_passwd_check.py",
           "parameters": []
         }
       }

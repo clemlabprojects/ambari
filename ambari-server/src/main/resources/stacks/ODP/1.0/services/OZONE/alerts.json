@@ -352,7 +352,7 @@
         "enabled": true,
         "source": {
           "type": "SCRIPT",
-          "path": "HDP/3.0/services/HDFS/package/alerts/alert_datanode_unmounted_data_dir.py"
+          "path": "ODP/1.0/services/HDFS/package/alerts/alert_datanode_unmounted_data_dir.py"
         }
       },
       {
