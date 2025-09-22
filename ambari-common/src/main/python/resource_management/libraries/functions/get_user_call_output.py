@@ -24,7 +24,36 @@ import os, sys, shlex, tempfile, subprocess, pwd
 from resource_management.core import shell
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed
+from functools import reduce
 
+def quote_bash_args(command):
+  if not command:
+    return "''"
+  
+  if not isinstance(command, str):
+    raise Fail(f"Command should be a list of strings, found '{str(command)}' in command list elements")
+  
+  valid = set(string.ascii_letters + string.digits + '@%_-+=:,./')
+  for char in command:
+    if char not in valid:
+      return "'" + command.replace("'", "'\"'\"'") + "'"
+  return command
+
+def _add_current_path_to_env(env):
+  result = {} if not env else env
+  
+  if not 'PATH' in result:
+    result['PATH'] = os.environ['PATH']
+    
+  # don't append current env if already there
+  if not set(os.environ['PATH'].split(os.pathsep)).issubset(result['PATH'].split(os.pathsep)):
+    result['PATH'] = os.pathsep.join([os.environ['PATH'], result['PATH']])
+  
+  return result
+  
+def _get_environment_str(env):
+  return reduce(lambda str,x: f'{str} {x}={quote_bash_args(env[x])}', env, '')
+  
 def get_user_call_output(command, user, quiet=False, is_checked_call=True, **call_kwargs):
     """
     Run `command` as `user`, capturing stdout/stderr into temp files (no shell redirection).
@@ -70,11 +99,14 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
         else:
             preexec = _drop_privs
 
+        env = _add_current_path_to_env(call_kwargs.get('env', None))
+ 
         # ---- spawn ----
         p = subprocess.Popen(
             argv,
             stdout=fout,
             stderr=ferr,
+            env=env,
             preexec_fn=preexec,
             # close_fds=True is default on POSIX; good hygiene when handing FDs explicitly
         )

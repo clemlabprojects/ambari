@@ -82,9 +82,23 @@ class FirewallChecks(object):
 
   def run_command(self):
     try:
+      
       retcode, out, err = shell.call(self.get_command(), stdout = subprocess.PIPE, stderr = subprocess.PIPE,
-                                     timeout = 5, quiet = True, universal_newlines=True)
+                                     timeout = 5, quiet = True)
       self.returncode = retcode
+
+      # shell.call may return bytes for stdout/stderr; decode to string for consistent handling
+      if isinstance(out, bytes):
+        try:
+          out = out.decode('utf-8')
+        except Exception:
+          out = out.decode('utf-8', errors='replace')
+      if isinstance(err, bytes):
+        try:
+          err = err.decode('utf-8')
+        except Exception:
+          err = err.decode('utf-8', errors='replace')
+
       self.stdoutdata = out
       self.stderrdata = err
     except Exception as ex:
