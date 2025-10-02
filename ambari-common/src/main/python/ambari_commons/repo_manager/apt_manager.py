@@ -54,8 +54,8 @@ class AptManagerProperties(GenericManagerProperties):
   repo_definition_location = "/etc/apt/sources.list.d"
 
   install_cmd = {
-    True: [repo_manager_bin, '-o', "Dpkg::Options::=--force-confdef", '--allow-unauthenticated', '--assume-yes', 'install'],
-    False: [repo_manager_bin, '-q', '-o', "Dpkg::Options::=--force-confdef", '--allow-unauthenticated', '--assume-yes', 'install']
+    True: [repo_manager_bin, '-o', "DPkg::Lock::Timeout=300", "-o", "Dpkg::Options::=--force-confdef", '--allow-unauthenticated', '--assume-yes', 'install'],
+    False: [repo_manager_bin, '-q', '-o', "DPkg::Lock::Timeout=300", "-o", "Dpkg::Options::=--force-confdef", '--allow-unauthenticated', '--assume-yes', 'install']
   }
 
   remove_cmd = {
