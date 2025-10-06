@@ -4,7 +4,14 @@
   "configuration": {
     "protocol":
     {
-      "type":"HTTP_ONLY"
+      "type":"https",
+      "checks":[
+        {
+          "property":"spark.ssl.enabled",
+          "desired":"true",
+          "site": "spark3-defaults"
+        }
+      ]
     },
 
     "links": [
@@ -17,7 +24,7 @@
         "port":{
           "http_property": "spark.history.ui.port",
           "http_default_port": "18082",
-          "https_property": "spark.history.ui.port",
+          "https_property": "spark.ssl.historyServer.port",
           "https_default_port": "18082",
           "regex": "^(\\d+)$",
           "site": "spark3-defaults"
