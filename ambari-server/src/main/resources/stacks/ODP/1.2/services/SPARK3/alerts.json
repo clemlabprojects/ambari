@@ -9,20 +9,25 @@
         "interval": 1,
         "scope": "ANY",
         "source": {
-          "type": "PORT",
-          "uri": "{{spark3-defaults/spark.history.ui.port}}",
-          "default_port": 18081,
+          "type": "WEB",
+          "uri": {
+              "http": "{{spark3-defaults/spark.yarn.historyServer.address}}",
+              "https": "{{spark3-defaults/spark.yarn.historyServer.address}}",
+              "kerberos_keytab": "{{cluster-env/smokeuser_keytab}}",
+              "kerberos_principal": "{{cluster-env/smokeuser_principal_name}}",
+              "https_property": "{{spark3-defaults/spark.ssl.enabled}}",
+              "https_property_value": "true",
+              "connection_timeout": 5.0
+            },
           "reporting": {
             "ok": {
-              "text": "TCP OK - {0:.3f}s response on port {1}"
+              "text": "HTTP {0} response in {2:.3f}s"
             },
             "warning": {
-              "text": "TCP OK - {0:.3f}s response on port {1}",
-              "value": 1.5
+              "text": "HTTP {0} response from {1} in {2:.3f}s ({3})"
             },
             "critical": {
-              "text": "Connection failed: {0} to {1}:{2}",
-              "value": 5
+              "text": "Connection failed to {1} ({3})"
             }
           }
         }
