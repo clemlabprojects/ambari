@@ -251,14 +251,28 @@ class AptManager(GenericManager):
     from resource_management.core import sudo
 
     apt_sources_list_tmp_dir = None
+    try:
+      exists = None
+      if name:
+        try:
+          exists = self._check_existence(name)
+        except Exception as ex:
+          Logger.error(f"Error while checking package existence for '{name}': {ex}")
+          exists = None
 
+      Logger.info(f"context.is_upgrade={getattr(context, 'is_upgrade', None)}, context.use_repos={getattr(context, 'use_repos', None)}, self._check_existence(name)={exists}")
+    except Exception as e:
+      # Defensive: ensure no exception here breaks installation flow
+      Logger.error(f"Unexpected error while logging context/package existence: {e}")
     if not name:
       raise ValueError("Installation command was executed with no package name")
-    elif context.is_upgrade or context.use_repos or not self._check_existence(name):
-      cmd = self.properties.install_cmd[context.log_output]
+    
+    # reuse the previously computed 'exists' value to avoid calling _check_existence() twice
+    elif getattr(context, 'is_upgrade', False) or getattr(context, 'use_repos', None) or not exists:
+      cmd = self.properties.install_cmd[getattr(context, 'log_output', False)]
       copied_sources_files = []
       is_tmp_dir_created = False
-      if context.use_repos:
+      if getattr(context, 'use_repos', None):
         if 'base' in context.use_repos:
           use_repos = set([v for k, v in context.use_repos.items() if k != 'base'])
         else:
@@ -344,6 +358,8 @@ class AptManager(GenericManager):
     apt-get in inconsistant state (locked, used, having invalid repo). Once packages are installed
     we should not rely on that.
     """
-
+    Logger.info(f"Checking existence of package {name}")
+    Logger.info(f"Check command: {self.properties.check_cmd % name}")
     r = shell.subprocess_executor(self.properties.check_cmd % name)
+    Logger.info(f"Check command returned code {r.code}, output: {r.out}, error: {r.error}")
     return not bool(r.code)

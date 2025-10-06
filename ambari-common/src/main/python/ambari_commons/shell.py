@@ -442,7 +442,11 @@ def subprocess_executor(command, timeout=__TIMEOUT_SECONDS, strategy=ReaderStrat
 
   with process_executor(command, timeout, _error_handler, strategy, env=env) as output:
     lines = [line.decode() if isinstance(line, bytes) else line for line in output]
-
+  _logger.info(f"Command '{command}' finished with exit code {r.code}")
+  _logger.info(f"Command '{command}' produced output:\n{r.out}")
+  _logger.info(f"Command '{command}' produced error output:\n{r.error}")
+  _logger.info(f"Command '{command}' produced lines count: {len(lines)}")
+  _logger.info(f"Command '{command}' produced lines:\n{os.linesep.join(lines)}")
   r.out = os.linesep.join(lines)
   return r
 
