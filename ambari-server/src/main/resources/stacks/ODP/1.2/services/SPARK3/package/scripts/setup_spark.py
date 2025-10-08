@@ -115,13 +115,20 @@ def setup_spark(env, type, upgrade_type = None, action = None):
   )
 
   #create log4j.properties in etc/conf dir
-  File(os.path.join(params.spark_conf, 'log4j.properties'),
-       owner=params.spark_user,
-       group=params.spark_group,
-       content=params.spark_log4j_properties,
-       mode=0o644,
-  )
-
+  if params.spark3_log4j_enabled:
+    File(os.path.join(params.spark_conf, 'log4j.properties'),
+        owner=params.spark_user,
+        group=params.spark_group,
+        content=params.spark_log4j_properties,
+        mode=0o644,
+    )
+  if params.spark3_log4j2_enabled:
+    File(os.path.join(params.spark_conf, 'log4j2.properties'),
+        owner=params.spark_user,
+        group=params.spark_group,
+        content=params.spark_log4j2_properties,
+        mode=0o644,
+    )
   #create metrics.properties in etc/conf dir
   File(os.path.join(params.spark_conf, 'metrics.properties'),
        owner=params.spark_user,

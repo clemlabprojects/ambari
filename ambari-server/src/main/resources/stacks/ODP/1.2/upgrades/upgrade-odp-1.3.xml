@@ -873,21 +873,45 @@
 
     <service name="SPARK3">
       <component name="SPARK3_JOBHISTORYSERVER">
+        <pre-upgrade>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+          </task>
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
       </component>
       <component name="SPARK3_THRIFTSERVER">
+        <pre-upgrade>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+          </task>
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
       </component>
       <component name="SPARK3_LIVY2_SERVER">
+        <pre-upgrade>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+          </task>
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
       </component>
       <component name="SPARK3_CLIENT">
+        <pre-upgrade>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+          </task>
+        </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>

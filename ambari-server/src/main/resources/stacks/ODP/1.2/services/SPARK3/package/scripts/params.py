@@ -141,7 +141,15 @@ if ui_ssl_enabled:
 
 
 spark_env_sh = config['configurations']['spark3-env']['content']
-spark_log4j_properties = config['configurations']['spark3-log4j-properties']['content']
+# add in condition as starting with ODP 1.3 log4j becomes log4j2
+spark3_log4j_enabled = False
+if 'spark3-log4j-properties' in config['configurations']:
+  spark3_log4j_enabled = True
+  spark_log4j_properties = config['configurations']['spark3-log4j-properties']['content']
+spark3_log4j2_enabled = False
+if 'spark3-log4j2-properties' in config['configurations']:
+  spark3_log4j2_enabled = True
+  spark_log4j2_properties = config['configurations']['spark3-log4j2-properties']['content']
 spark_metrics_properties = config['configurations']['spark3-metrics-properties']['content']
 
 hive_server_host = default("/clusterHostInfo/hive_server_hosts", [])

@@ -358,6 +358,16 @@
           <summary>Update Ozone Env Configuration for JDK 11/17 Runtime</summary>
         </task>
       </execute-stage>
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Migrates Spark3 from Log4j to Log4j2 Properties">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+        </task>
+      </execute-stage>
+      <execute-stage service="SPARK3" component="SPARK3_JOBHISTORYSERVER" title="Migrates Spark3 from Log4j to Log4j2 Properties">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.Spark3Log4j2PropertyConfig">
+          <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
+        </task>
+      </execute-stage>
       <!-- KAFKA -->
       <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>
