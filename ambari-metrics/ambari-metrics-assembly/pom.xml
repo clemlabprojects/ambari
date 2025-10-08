@@ -1187,6 +1187,10 @@
                     <require>gcc</require>
                     <require>${python.rhel8.devel}</require>
                   </requires>
+                  <postinstallScriptlet>
+                    <scriptFile>${monitor.dir}/src/main/package/rpm/postinstall.sh</scriptFile>
+                    <fileEncoding>utf-8</fileEncoding>
+                  </postinstallScriptlet>
                   <preremoveScriptlet>
                     <scriptFile>${monitor.dir}/src/main/package/rpm/preremove.sh</scriptFile>
                     <fileEncoding>utf-8</fileEncoding>
