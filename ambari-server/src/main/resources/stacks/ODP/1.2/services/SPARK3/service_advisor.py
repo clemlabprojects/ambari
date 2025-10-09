@@ -131,8 +131,7 @@ class Spark3ServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender = Spark3Recommender()
     recommender.recommendSpark3ConfigurationsFromHDP25(configurations, clusterData, services, hosts)
     recommender.recommendSPARK3ConfigurationsFromHDP26(configurations, clusterData, services, hosts)
-
-
+    recommender.recommendSPARK3ConfigurationsFromODP12(configurations, clusterData, services, hosts)
 
   def getServiceConfigurationsValidationItems(self, configurations, recommendedDefaults, services, hosts):
     """
@@ -225,6 +224,37 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
 
     self.__addZeppelinToLivy2SuperUsers(configurations, services)
 
+  def recommendSPARK3ConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
+    """
+    :type configurations dict
+    :type clusterData dict
+    :type services dict
+    :type hosts dict
+    """
+    spark3JobHistoryServerHosts = self.getHostWithComponent("SPARK3", "SPARK3_JOBHISTORYSERVER", services, hosts)
+    putSpark3DefaultsProperty = self.putProperty(configurations, "spark3-defaults", services)
+    spark_jhs_port = '18082'
+    spark_jhs_port_ssl = '18482'
+    protocol = 'http://'
+    if 'spark3-defaults' in services["configurations"] and (spark3JobHistoryServerHosts is not None):
+      if 'spark.ssl.enabled' in services["configurations"]['spark3-defaults']['properties']:
+        spark_ssl_enabled = services["configurations"]['spark3-defaults']['properties']['spark.ssl.enabled']
+        if spark_ssl_enabled.lower() == 'true' and len(spark3JobHistoryServerHosts) > 0:
+          protocol = 'https://'
+          if 'spark.ssl.historyServer.port' in services["configurations"]['spark3-defaults']['properties']:
+            spark_jhs_port_ssl = services["configurations"]['spark3-defaults']['properties']['spark.ssl.historyServer.port']
+          else:
+            putSpark3DefaultsProperty('spark.ssl.historyServer.port', spark_jhs_port_ssl)
+          
+          # set spark.yarn.historyServer.address to use https and ssl port
+          putSpark3DefaultsProperty('spark.yarn.historyServer.address', spark3JobHistoryServerHosts['Hosts']['host_name'] + ':' + spark_jhs_port_ssl)
+        else:
+          if 'spark.history.ui.port' in services["configurations"]['spark3-defaults']['properties']:
+            spark_jhs_port = services["configurations"]['spark3-defaults']['properties']['spark.history.ui.port']
+          else:
+            putSpark3DefaultsProperty('spark.history.ui.port', spark_jhs_port)
+
+          putSpark3DefaultsProperty('spark.yarn.historyServer.address', spark3JobHistoryServerHosts['Hosts']['host_name'] + ':' + spark_jhs_port)
 
   def __addZeppelinToLivy2SuperUsers(self, configurations, services):
     """
