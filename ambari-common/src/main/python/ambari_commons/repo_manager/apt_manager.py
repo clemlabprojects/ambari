@@ -362,4 +362,4 @@ class AptManager(GenericManager):
     Logger.info(f"Check command: {self.properties.check_cmd % name}")
     r = shell.subprocess_executor(self.properties.check_cmd % name)
     Logger.info(f"Check command returned code {r.code}, output: {r.out}, error: {r.error}")
-    return not bool(r.code)
+    return not bool(r.code) and name in r.out.splitlines()
