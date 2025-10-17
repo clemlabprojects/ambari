@@ -9,7 +9,7 @@ import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutline
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
-import ServiceInstallationModal from '../components/ServiceInstallationModal';
+import ServiceInstallationModal from '../components/ServiceInstallationModal/index.tsx';
 
 import { uninstallHelm } from '../api/client';
 
@@ -43,7 +43,7 @@ const HelmReleasesPage: React.FC = () => {
             <Space size={6}>
             <span>{serviceLabel}</span>
             {releaseRecord.managedByUi ? (
-                <Tooltip title="Déployé via cette UI">
+                <Tooltip title="Deployed via this UI">
                 <Tag color="blue">UI</Tag>
                 </Tooltip>
             ) : null}
@@ -52,7 +52,7 @@ const HelmReleasesPage: React.FC = () => {
     };
 
     if (status === 'error') {
-        return <Result status="warning" title="Données des releases Helm non disponibles." subTitle="Impossible de récupérer les informations du cluster." />;
+        return <Result status="warning" title="Helm releases data not available." subTitle="Unable to retrieve cluster information." />;
     }
 
     if (!helmReleases) {
@@ -64,7 +64,7 @@ const HelmReleasesPage: React.FC = () => {
     // {
     //     key: 'update',
     //     icon: <SyncOutlined />,
-    //     label: 'Mettre à jour',
+    //     label: 'Update',
     //     onClick: () => {
     //       setUpgradeTarget(record);      // keep selected release
     //       setIsModalVisible(true);       // open modal in upgrade mode
@@ -77,22 +77,22 @@ const HelmReleasesPage: React.FC = () => {
         key: 'uninstall',
         icon: <DeleteOutlined />,
         danger: true,
-        label: 'Désinstaller',
+        label: 'Uninstall',
         onClick: () => {
           Modal.confirm({
-            title: `Désinstaller ${record.name} ?`,
-            content: `Cette action supprimera la release dans le namespace ${record.namespace}.`,
-            okText: 'Désinstaller',
+            title: `Uninstall ${record.name}?`,
+            content: `This action will remove the release in namespace ${record.namespace}.`,
+            okText: 'Uninstall',
             okButtonProps: { danger: true },
-            cancelText: 'Annuler',
+            cancelText: 'Cancel',
             onOk: async () => {
               try {
                 await uninstallHelm(record.name, record.namespace);
-                message.success(`Release ${record.name} désinstallée avec succès.`);
+                message.success(`Release ${record.name} uninstalled successfully.`);
                 await refresh()
                 handleDeploymentSuccess(); // refresh
               } catch (e: any) {
-                message.error(e?.message || 'Erreur lors de la désinstallation');
+                message.error(e?.message || 'Error during uninstallation');
               }
             }
           });
@@ -101,12 +101,12 @@ const HelmReleasesPage: React.FC = () => {
     ]);
 
     const columns = [
-        { title: 'Nom', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
+        { title: 'Name', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
         { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
         { title: 'Chart', dataIndex: 'chart', key: 'chart' },
         { title: 'Version', dataIndex: 'version', key: 'version' },
         { title: 'Service', key: 'service', render: (_: any, releaseRecord: HelmRelease) => renderServiceCell(releaseRecord) },
-        { title: 'État', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
+        { title: 'Status', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
         {
         title: 'Actions',
         key: 'actions',
@@ -138,12 +138,12 @@ const HelmReleasesPage: React.FC = () => {
     return (
         <div>
             <div className="page-header">
-                <Title level={2}>Charts Helm</Title>
+                <Title level={2}>Helm Charts</Title>
                 <Space>
-                    <Search placeholder="Rechercher un release..." style={{ width: 250 }} />
+                    <Search placeholder="Search for a release..." style={{ width: 250 }} />
                     <PermissionGuard requires="canWrite">
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpgradeTarget(null); setIsModalVisible(true); }}>
-                            Setup a Service
+                            Install Service
                         </Button>
                     </PermissionGuard>
                     <Button icon={<ReloadOutlined />} onClick={refresh}>
@@ -154,7 +154,7 @@ const HelmReleasesPage: React.FC = () => {
             <Table
               columns={columns}
               dataSource={helmReleases}
-              rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}   // clé stable
+              rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}   // stable key
               loading={status === 'loading'}
             />
 

@@ -48,8 +48,9 @@ class HelmServiceTest {
     when(helm.list("apps", "KC", true)).thenReturn(List.of());
 
     Release rel = mock(Release.class);
+
     when(helm.install(
-        anyString(), anyString(), anyString(),
+        anyString(), anyString(),anyBoolean(), anyString(), anyString(),
         any(Path.class), anyString(),
         ArgumentMatchers.<Map<String,Object>>any(),
         anyInt(), anyBoolean(), anyBoolean(), anyBoolean()
@@ -61,7 +62,9 @@ class HelmServiceTest {
     // then
     assertSame(rel, out);
     verify(helm).install(
-        contains("prometheus"),           // chartRef (peut être prefixé plus tard)
+        contains("prometheus"),
+        anyString(),
+        anyBoolean(),// chartRef (peut être prefixé plus tard)
         eq("prom"),                       // release
         eq("apps"),                       // ns
         any(Path.class),                  // repositories.yaml
@@ -71,7 +74,7 @@ class HelmServiceTest {
         anyBoolean(), anyBoolean(), anyBoolean()    // createNamespace, wait, atomic
     );
     verify(helm, never()).upgrade(
-        anyString(), anyString(), anyString(),
+        anyString(), anyString(), anyBoolean(), anyString(), anyString(),
         any(Path.class), anyString(),
         ArgumentMatchers.<Map<String,Object>>any(),
         anyInt(), anyBoolean(), anyBoolean()
@@ -93,7 +96,7 @@ class HelmServiceTest {
 
     Release rel = mock(Release.class);
     when(helm.upgrade(
-        anyString(), anyString(), anyString(),
+        anyString(), anyString(), anyBoolean(), anyString(), anyString(),
         any(Path.class), anyString(),
         ArgumentMatchers.<Map<String,Object>>any(), // null accepté
         anyInt(), anyBoolean(), anyBoolean()
@@ -105,7 +108,8 @@ class HelmServiceTest {
     // then
     assertSame(rel, out);
     verify(helm).upgrade(
-        contains("prometheus"),           // chartRef
+        contains("prometheus"),
+            anyString(), anyBoolean(),// chartRef
         eq("prom"),
         eq("apps"),
         any(Path.class),
@@ -115,7 +119,7 @@ class HelmServiceTest {
         anyBoolean(), anyBoolean()                  // wait, atomic
     );
     verify(helm, never()).install(
-        anyString(), anyString(), anyString(),
+        anyString(), anyString(), anyBoolean(),anyString(),anyString(),
         any(Path.class), anyString(),
         ArgumentMatchers.<Map<String,Object>>any(),
         anyInt(), anyBoolean(), anyBoolean(), anyBoolean()
@@ -142,7 +146,7 @@ class HelmServiceTest {
 
     Release rel = mock(Release.class);
     when(helm.install(
-        anyString(), anyString(), anyString(),
+        anyString(), anyString(), anyBoolean(),anyString(), anyString(),
         any(Path.class), anyString(),
         ArgumentMatchers.<Map<String,Object>>any(),
         anyInt(), anyBoolean(), anyBoolean(), anyBoolean()
@@ -154,14 +158,16 @@ class HelmServiceTest {
     // then
     assertNotNull(out);
     verify(helm).install(
-        argThat(ref -> ref.contains("prometheus-community/")), // chartRef doit être prefixé
-        eq("prom"),
-        eq("apps"),
-        any(Path.class),
-        eq("KC"),
-        ArgumentMatchers.<Map<String,Object>>any(), // values (peut être null)
-        anyInt(),
-        anyBoolean(), anyBoolean(), anyBoolean()
+            argThat(ref -> ref.contains("prometheus-community/")), // chartRef must be prefixed
+            isNull(),                                              // chartVersion (none passed)
+            eq(false),                                             // isOci (HTTP repo)
+            eq("prom"),                                            // release
+            eq("apps"),                                            // namespace
+            any(Path.class),                                       // repositories.yaml
+            eq("KC"),                                              // kubeconfig
+            ArgumentMatchers.<Map<String,Object>>any(),            // values (may be null)
+            anyInt(),                                              // timeout
+            anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean() // createNs, wait, atomic, dryRun
     );
   }
 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+echo "Installed clemlab-kerberos-keytab-webhook."
+echo "Image: $(cat /usr/lib/clemlab-kerberos-keytab-webhook/IMAGE.txt 2>/dev/null || true)"
+exit 0

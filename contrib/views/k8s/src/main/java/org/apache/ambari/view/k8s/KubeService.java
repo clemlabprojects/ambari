@@ -16,6 +16,7 @@ import org.apache.ambari.view.k8s.resources.HelmResource;
 import org.apache.ambari.view.k8s.resources.HelmRepoResource;
 import org.apache.ambari.view.k8s.resources.CommandResource;
 
+import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.slf4j.Logger;
@@ -59,6 +60,7 @@ public class KubeService {
         return this.configService;
     }
 
+
     @VisibleForTesting
     void setKubernetesService(KubernetesService kubernetesService) {
         this.kubernetesService = kubernetesService;
@@ -78,27 +80,6 @@ public class KubeService {
         return Response.ok(availableCharts).build();
     }
 
-    /**
-     * Endpoint to trigger deployment of a Helm chart.
-     * Handles response status through the Response object.
-     * @param requestInputStream The input stream of the chart file to deploy.
-     * @return A map with success or error message.
-     */
-    @POST
-    @Path("/charts/deploy")
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response deployChart(InputStream requestInputStream) throws IOException {
-        try {
-            // Manually deserialize the JSON input stream into our DTO
-            HelmDeployRequest deployRequest = objectMapper.readValue(requestInputStream, HelmDeployRequest.class);
-            kubernetesService.deployHelmChart(deployRequest);
-            return Response.ok(Collections.singletonMap("message", "Deployment for '" + deployRequest.getReleaseName() + "' initiated successfully.")).build();
-        } catch (Exception e) {
-            e.printStackTrace(); // Log the error
-            return Response.serverError().entity(Collections.singletonMap("message", "Error during deployment: " + e.getMessage())).build();
-        }
-    }
-
     @GET
     @Path("/users/me/permissions")
     @Produces(MediaType.APPLICATION_JSON)
@@ -115,11 +96,26 @@ public class KubeService {
         
         try {
             ViewConfigurationService configurationService = this.getConfigService();
+
             LOG.info("/cluster/config: Received kubeconfig upload request.");
             // Use a static filename since it's no longer provided by the request
             File configurationFile = configurationService.saveKubeconfigFile(fileInputStream, "kubeconfig.yaml");
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
+            LOG.info("Configuring Apache Ambari View Backend CA bundle");
+            final String webhookName = "kerberos-keytab-mutating-webhook"; // must match your Helm values prefix
+
+
+            try {
+                WebHookBootstrap.prepareWebhookPrereqs(this.viewContext, this.getKubernetesService(), webhookName);
+                // We NOT install the chart here. This only prepares secrets + namespace + caBundle.
+                // Later, when we deploy the webhook chart, collect all ambari.properties overrides
+                // under k8s.view.webhooks.<webhookName>.* and pass them straight to Helm.
+            } catch (Exception ex) {
+                // Decide your policy: either fail fast or keep the View up and show an actionable error.
+                // Failing fast is often better so the admin knows to fix TLS prerequisites.
+                throw new IllegalStateException("Failed preparing webhook prerequisites", ex);
+            }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 
         } catch (IOException e) {
@@ -161,7 +157,8 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getNodes() {
         try {
-            return Response.ok(getKubernetesService().getNodes()).build();
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return Response.ok(mapper.writeValueAsString(getKubernetesService().getNodes())).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -183,7 +180,8 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getClusterEvents() {
         try {
-            return Response.ok(getKubernetesService().getClusterEvents()).build();
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents())).build();
         } catch (Exception e) {
             return handleError(e);
         }

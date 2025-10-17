@@ -50,7 +50,7 @@ public class HelmClientDefault implements HelmClient {
 
     @Override
     public List<Release> list(String namespace, String kubeconfigContents, boolean deployedOnly) {
-        LOG.info("Listing releases in namespace: '{}', kubeconfigContents: '{}'", namespace, kubeconfigContents);
+        LOG.info("Listing releases in namespace: '{}'", namespace);
         var command = Helm.list()
             .withNamespace(namespace)
             .withKubeConfigContents(kubeconfigContents);
@@ -65,7 +65,7 @@ public class HelmClientDefault implements HelmClient {
     }
 
     @Override
-    public Release install(String chartRef, String releaseName, String namespace,
+    public Release install(String chartRef, String chartVersion, boolean isOci, String releaseName, String namespace,
                           Path repositoriesConfig, String kubeconfigContents,
                           Map<String, Object> values,
                           int timeoutSeconds, boolean createNamespace, boolean wait, boolean atomic, boolean dryRun) {
@@ -97,10 +97,11 @@ public class HelmClientDefault implements HelmClient {
     }
 
     @Override
-    public Release upgrade(String chartRef, String releaseName, String namespace,
-                          Path repositoriesConfig, String kubeconfigContents,
-                          Map<String, Object> values,
-                          int timeoutSeconds, boolean wait, boolean atomic, boolean dryRun) {
+    public Release upgrade(String chartRef, String chartVersion, boolean isOci, String releaseName, String namespace,
+                           Path repositoriesConfig, String kubeconfigContents,
+                           Map<String, Object> values,
+                           int timeoutSeconds, boolean wait, boolean atomic, boolean dryRun)
+     {
         Path valuesFile = writeValues(values);
         try {
             UpgradeCommand upgradeCommand = Helm.upgrade(chartRef)

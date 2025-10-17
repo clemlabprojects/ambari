@@ -1,6 +1,6 @@
 // ui/src/context/PermissionsContext.tsx
 import React, { createContext, useState, useEffect } from 'react';
-import { UserPermissions, UserRole } from '../types';
+import type { UserPermissions, UserRole } from '../types';
 import { getMockPermissions } from '../api/mock';
 
 interface PermissionsContextType {

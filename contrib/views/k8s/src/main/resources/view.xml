@@ -29,7 +29,7 @@
         <description>Le répertoire sur le serveur Ambari où stocker les fichiers de configuration de la vue.</description>
         <label>Répertoire de Travail</label>
         <required>false</required>
-        <default-value>/var/lib/ambari-server/resources/views/work/k8s-view</default-value>
+        <default-value>/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.1}</default-value>
     </parameter>
     <persistence>
         <!-- Fully qualified name of your @Entity class -->
@@ -44,6 +44,10 @@
         <entity>
           <class>org.apache.ambari.view.k8s.store.CommandStatusEntity</class>
           <id-property>id</id-property>
+        </entity>
+        <entity>
+            <class>org.apache.ambari.view.k8s.store.CommandEntity</class>
+            <id-property>id</id-property>
         </entity>
         <!-- If more entities are added later, list them here as well -->
         <!-- <entity class="org.apache.ambari.view.k8s.store.OtherEntity"/> -->

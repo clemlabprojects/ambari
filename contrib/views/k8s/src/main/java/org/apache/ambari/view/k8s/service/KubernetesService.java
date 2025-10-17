@@ -3,23 +3,16 @@ package org.apache.ambari.view.k8s.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-import com.marcnuri.helm.Helm;
-import com.marcnuri.helm.InstallCommand;
-import com.marcnuri.helm.Release;
-import com.marcnuri.helm.UninstallCommand;
-import com.marcnuri.helm.DryRun;
+import io.fabric8.kubernetes.api.model.*;
+import io.fabric8.kubernetes.client.dsl.base.PatchContext;
+import io.fabric8.kubernetes.client.utils.Serialization;
 
-import io.fabric8.kubernetes.api.model.ComponentCondition;
-import io.fabric8.kubernetes.api.model.Event;
-import io.fabric8.kubernetes.api.model.NamespaceBuilder;
-import io.fabric8.kubernetes.api.model.Node;
-import io.fabric8.kubernetes.api.model.NodeList;
-import io.fabric8.kubernetes.api.model.PodList;
-import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 
 import io.fabric8.openshift.client.OpenShiftClient;
 
@@ -30,6 +23,7 @@ import io.fabric8.kubernetes.client.utils.Serialization;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.*;
 
+import org.apache.ambari.view.k8s.model.ComponentStatus;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
@@ -48,14 +42,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.util.Comparator;
 
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
@@ -74,9 +66,6 @@ import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.Objects;
 
 /**
  * Service containing the real business logic to interact with the Kubernetes API.
@@ -88,10 +77,17 @@ public class KubernetesService {
     private final KubernetesClient client;
     private final boolean isConfigured;
     private ViewContext viewContext;
+    private WebHookConfigurationService webHookConfigurationService;
 
     private final HelmRepositoryService repositoryService;
     private final HelmClient helmClient;
     private final HelmService helmService;
+
+    private MountManager mountManager;
+
+    private ViewConfigurationService configurationService;
+
+    public static final String WEBHOOK_ENABLED_LABEL_KEY = "security.clemlab.com/webhooks-enabled";
 
     public KubernetesService(KubernetesClient client, boolean isConfigured) {
         this.viewContext = null; // Default constructor for testing
@@ -100,6 +96,7 @@ public class KubernetesService {
         this.helmClient = new HelmClientDefault();
         this.helmService = null; // testing
         this.repositoryService = null;
+        this.configurationService = null;
     }
 
     public KubernetesService(ViewContext viewContext, KubernetesClient client, boolean isConfigured) {
@@ -109,6 +106,7 @@ public class KubernetesService {
         this.helmClient = new HelmClientDefault();
         this.helmService = null; // testing
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
+        this.configurationService = new ViewConfigurationService(viewContext);
     }
 
     public KubernetesService(ViewContext ctx, KubernetesClient k8s, HelmClient helmClient, boolean isConfigured) {
@@ -122,7 +120,7 @@ public class KubernetesService {
     }
 
     public KubernetesService(ViewContext viewContext) {
-        ViewConfigurationService configurationService = new ViewConfigurationService(viewContext);
+        this.configurationService = new ViewConfigurationService(viewContext);
         String kubeconfigPath = configurationService.getKubeconfigPath();
         this.viewContext = viewContext;
         this.helmClient = new HelmClientDefault();
@@ -151,7 +149,7 @@ public class KubernetesService {
                     LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
                     Config baseConfiguration = Config.fromKubeconfig(kubeconfigContent);
                     ConfigBuilder configurationBuilder = new ConfigBuilder(baseConfiguration);
-                    LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n" + kubeconfigContent);
+                    LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n");
 
                     LOG.info("Overriding view properties from ambari.properties into system properties for Kubernetes client.");
                     loadK8sPropsAsSystemProperties(viewContext);
@@ -162,7 +160,6 @@ public class KubernetesService {
                     Config finalConfiguration = configurationBuilder.build();
 
                     if (certificateAuthorityData != null && !certificateAuthorityData.isEmpty()) {
-                        LOG.info("Found 'certificate-authority-data' in kubeconfig. Applying it to the client configuration.");
                         LOG.info("Found 'certificate-authority-data' in kubeconfig. Adding it to the JVM's default SSL context.");
 
                         // Get the default JVM TrustManager
@@ -417,87 +414,6 @@ public class KubernetesService {
         }
     }
 
-    /**
-     * Deploys a Helm chart by generating a values.yaml file, running 'helm template',
-     * and applying the resulting manifest with the Fabric8 client.
-     *
-     * @param request The deployment request containing all necessary information.
-     * @throws IOException if there is an issue with file operations.
-     * @throws InterruptedException if the 'helm' process is interrupted.
-     */
-    public void deployHelmChart(HelmDeployRequest request) {
-        File temporaryValuesFile = null;
-        File temporaryChartFile = null;
-        try {
-            // Create temporary values.yaml file
-            ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
-            temporaryValuesFile = Files.createTempFile(request.getReleaseName() + "-", ".yaml").toFile();
-            Map<String, Object> chartValues = request.getValues();
-            if (chartValues != null && !chartValues.isEmpty()) {
-                yamlMapper.writeValue(temporaryValuesFile, chartValues);
-            }
-
-            // Chart resolution
-            String chartArgument = request.getChart();   // can be repo/chart, URL .tgz, classpath:...
-            Path chartPath = null;
-
-            if (chartArgument.startsWith("classpath:")) {
-                String resourcePath = chartArgument.substring("classpath:".length());
-                try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
-                    if (inputStream == null) throw new IllegalArgumentException("Chart not found in classpath: " + resourcePath);
-                    temporaryChartFile = Files.createTempFile("chart-", ".tgz").toFile();
-                    try (OutputStream outputStream = new FileOutputStream(temporaryChartFile)) { 
-                        inputStream.transferTo(outputStream); 
-                    }
-                }
-                chartPath = temporaryChartFile.toPath();
-                chartArgument = chartPath.toString();
-            } else if (chartArgument.endsWith(".tgz") || chartArgument.endsWith(".tar.gz") ||
-                      chartArgument.startsWith("/") || chartArgument.startsWith("./")) {
-                chartPath = Paths.get(chartArgument);
-            }
-
-            // Check/register HTTP repository
-            String repositoryPrefix = chartArgument.contains("/") ? chartArgument.substring(0, chartArgument.indexOf('/')) : null;
-            if (repositoryPrefix != null && repositoryService != null) {
-                try {
-                    repositoryService.ensureHttpRepo(repositoryPrefix);   // will be a no-op if already present
-                } catch (Exception ex) {
-                    LOG.warn("Repository {} not found or inaccessible: {}", repositoryPrefix, ex.getMessage());
-                }
-            }
-
-            // Helm call via HelmClient
-            PathConfig pathConfiguration = new PathConfig(viewContext);
-            Release helmRelease = helmClient.install(
-                chartArgument,
-                request.getReleaseName(),
-                request.getNamespace(),
-                pathConfiguration.repositoriesConfig(),       // Path to repositories.yaml
-                null,                 // provide real kubeconfig contents
-                chartValues,
-                900,
-                true,   // createNamespace (often yes)
-                true,   // wait
-                false,  // atomic (set true if you want auto rollback)
-                false   // dryRun
-            );
-
-            LOG.info("Helm deployed: name={} ns={}", helmRelease.getName(), helmRelease.getNamespace());
-
-        } catch (Exception e) {
-            LOG.error("Helm deployment failed for release {}", request.getReleaseName(), e);
-            throw new RuntimeException(e);
-        } finally {
-            try {
-                if (temporaryValuesFile != null) Files.deleteIfExists(temporaryValuesFile.toPath());
-                if (temporaryChartFile != null) Files.deleteIfExists(temporaryChartFile.toPath());
-            } catch (IOException ioe) {
-                LOG.warn("Unable to clean up temporary values/chart files", ioe);
-            }
-        }
-    }
-
     private boolean isOpenShift(KubernetesClient client) {
         // Attempts to list a resource that only exists on OpenShift.
         // If the request does not throw a 404 exception, it is an OpenShift cluster.
@@ -508,6 +424,7 @@ public class KubernetesService {
      * Ensure a namespace exists; creates it if missing.
      */
     public void createNamespace(String namespace) {
+
         Objects.requireNonNull(namespace, "namespace");
         try {
             client.namespaces()
@@ -519,6 +436,104 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Ensure a TARGET namespace exists and is labeled for webhook admission:
+     *   security.clemlab.com/webhooks-enabled = "true"
+     * Use this for namespaces where Trino/Spark/etc. pods will run.
+     */
+    public void ensureWebhookEnabledNamespace(String namespace) {
+        ensureNamespaceLabel(namespace, WEBHOOK_ENABLED_LABEL_KEY, "true");
+    }
+
+    // ---------- internals ----------
+
+    private void ensureNamespaceLabel(String namespace, String key, String value) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(value, "value");
+
+        try {
+            Namespace targetNamespace = client.namespaces().withName(namespace).get();
+            if (targetNamespace == null) {
+                Namespace toCreate = new NamespaceBuilder()
+                        .withNewMetadata()
+                            .withName(namespace)
+                            .addToLabels(key, value)
+                        .endMetadata()
+                        .build();
+                client.namespaces().resource(toCreate).create();
+                LOG.info("Created namespace '{}' with label {}={}", namespace, key, value);
+                return;
+            }
+
+            Map<String,String> merged = new LinkedHashMap<>();
+            if (targetNamespace.getMetadata().getLabels() != null) merged.putAll(targetNamespace.getMetadata().getLabels());
+            String cur = merged.get(key);
+            if (Objects.equals(cur, value)) {
+                LOG.info("Namespace '{}' already labeled {}={}", namespace, key, value);
+                return;
+            }
+
+            merged.put(key, value);
+            applyNamespaceLabelsWithRetry(namespace, merged, 1);
+            LOG.info("Updated namespace '{}' label {}={} (was: {})", namespace, key, value, cur);
+
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Failed to label namespace: " + namespace, e);
+        }
+    }
+
+
+    /**
+     * Applies the specified labels to a Kubernetes namespace, creating the namespace if it does not exist.
+     * If a conflict occurs during label application (HTTP 409), the operation is retried up to {@code maxRetry} times.
+     *
+     * <p>
+     * This method ensures that the given namespace is annotated with the provided labels.
+     * If the namespace does not exist, it is created with the labels.
+     * If the namespace exists, its labels are updated.
+     * In case of concurrent modifications, the method retries the update to handle conflicts.
+     * </p>
+     *
+     * @param namespace the name of the Kubernetes namespace to label
+     * @param labels a map of label key-value pairs to apply to the namespace
+     * @param maxRetry the maximum number of retry attempts in case of conflict errors
+     * @throws KubernetesClientException if the operation fails and cannot be retried
+     */
+    private void applyNamespaceLabelsWithRetry(String namespace, Map<String,String> labels, int maxRetry) {
+        int attempt = 0;
+        while (true) {
+            attempt++;
+            Namespace cur = client.namespaces().withName(namespace).get();
+            if (cur == null) {
+                Namespace toCreate = new NamespaceBuilder()
+                        .withNewMetadata()
+                            .withName(namespace)
+                            .addToLabels(labels)
+                        .endMetadata()
+                        .build();
+                client.namespaces().resource(toCreate).create();
+                return;
+            }
+            Namespace patched = new NamespaceBuilder(cur)
+                    .editOrNewMetadata()
+                        .addToLabels(labels)
+                    .endMetadata()
+                    .build();
+            try {
+                client.namespaces().resource(patched).lockResourceVersion().replace();
+                return;
+            } catch (KubernetesClientException kce) {
+                if (kce.getCode() == 409 && attempt <= maxRetry) {
+                    LOG.warn("Conflict updating labels for namespace '{}', retrying ({}/{})",
+                            namespace, attempt, maxRetry);
+                    try { Thread.sleep(200L); } catch (InterruptedException ignored) {}
+                    continue;
+                }
+                throw kce;
+            }
+        }
+    }
     /**
      * Delete a namespace (best effort). Returns true if the request was accepted.
      */
@@ -553,7 +568,357 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Check if a CRD does exists in the kubernetes cluster
+     */
+    public boolean crdExists(String crdName) {
+        Objects.requireNonNull(crdName, "crdName");
+        checkConfiguration();
+        try {
+            return client.apiextensions()
+                    .v1()
+                    .customResourceDefinitions()
+                    .withName(crdName)
+                    .get() != null;
+        } catch (KubernetesClientException e) {
+            LOG.error("Erreur lors de la vérification du CRD {}: {}", crdName, e.getMessage());
+            throw e;
+        }
+    }
+    public void applyYaml(Path yamlPath, String releaseName, String releaseNamespace) {
+        LOG.info("Applying YAML manifest from file: {}, for Helm release {}/{}", yamlPath, releaseNamespace, releaseName);
+        Objects.requireNonNull(yamlPath, "yamlPath");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(releaseNamespace, "releaseNamespace");
+        checkConfiguration();
+
+        try (InputStream is = Files.newInputStream(yamlPath)) {
+            List<HasMetadata> items = client.load(is).items();
+
+            for (HasMetadata item : items) {
+                if ("CustomResourceDefinition".equals(item.getKind())) {
+                    // Desired ownership for this release
+                    final String desiredName = releaseName;
+                    final String desiredNs   = releaseNamespace;
+
+                    // Always put desired ownership into the in-memory object (for create path)
+                    ensureHelmOwnership(item, desiredName, desiredNs);
+
+                    final String crdName = item.getMetadata() != null ? item.getMetadata().getName() : null;
+                    if (crdName == null || crdName.isBlank()) {
+                        LOG.warn("CRD without metadata.name in {}, skipping.", yamlPath);
+                        continue;
+                    }
+
+                    var crdClient = client.apiextensions().v1().customResourceDefinitions().withName(crdName);
+                    var existing = crdClient.get();
+                    if (existing != null) {
+                        // Compare current ownership
+                        var lm = existing.getMetadata();
+                        String curManagedBy = lm != null && lm.getLabels() != null ? lm.getLabels().get("app.kubernetes.io/managed-by") : null;
+                        String curRelName   = lm != null && lm.getAnnotations() != null ? lm.getAnnotations().get("meta.helm.sh/release-name") : null;
+                        String curRelNs     = lm != null && lm.getAnnotations() != null ? lm.getAnnotations().get("meta.helm.sh/release-namespace") : null;
+
+                        boolean needsPatch =
+                            !"Helm".equals(curManagedBy) ||
+                            !Objects.equals(desiredName, curRelName) ||
+                            !Objects.equals(desiredNs, curRelNs);
+
+                        if (needsPatch) {
+                            LOG.info("Adopting CRD '{}' for Helm release {}/{} (was managed-by='{}', release-name='{}', release-namespace='{}')",
+                                    crdName, desiredNs, desiredName, curManagedBy, curRelName, curRelNs);
+
+                            crdClient.edit(c -> new CustomResourceDefinitionBuilder(c)
+                                .editMetadata()
+                                    .addToLabels("app.kubernetes.io/managed-by", "Helm")
+                                    .addToAnnotations("meta.helm.sh/release-name", desiredName)
+                                    .addToAnnotations("meta.helm.sh/release-namespace", desiredNs)
+                                .endMetadata()
+                                .build());
+
+                            LOG.info("Adopted CRD '{}' → managed-by=Helm, release-name={}, release-namespace={}",
+                                    crdName, desiredName, desiredNs);
+                        } else {
+                            LOG.debug("CRD '{}' already owned by {}/{}; no patch needed.", crdName, desiredNs, desiredName);
+                        }
+
+                        // IMPORTANT: don't createOrReplace() again for CRDs; we only adjusted metadata.
+                        continue;
+                    }
+
+                    // Not present → create with ownership already set on the object
+                    client.resource(item).create();
+                    LOG.info("Created CRD '{}' with Helm ownership {}/{}", crdName, desiredNs, desiredName);
+                    continue;
+                }
+
+                // Non-CRDs: apply normally
+                client.resource(item).createOrReplace();
+            }
+
+            LOG.info("Manifest have been applied successfully from {}", yamlPath);
+
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Echec d'application du YAML " + yamlPath + " : " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new RuntimeException("Lecture YAML impossible : " + yamlPath, e);
+        }
+    }
+
+    public void applyClasspathYamlTemplate(String resourcePathOnClasspath,
+                                           String releaseName,
+                                           String targetNamespace,
+                                           Map<String, String> variables) {
+        Objects.requireNonNull(resourcePathOnClasspath, "resourcePathOnClasspath");
+        Objects.requireNonNull(targetNamespace, "targetNamespace");
+        checkConfiguration();
+
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePathOnClasspath)) {
+            if (is == null) {
+                throw new IllegalArgumentException("Template not found on classpath: " + resourcePathOnClasspath);
+            }
+            String raw = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+
+            // simple token replacement: {{KEY}}
+            if (variables != null) {
+                for (Map.Entry<String,String> e : variables.entrySet()) {
+                    String token = "{{" + e.getKey() + "}}";
+                    raw = raw.replace(token, e.getValue() == null ? "" : e.getValue());
+                }
+            }
+
+            // load and apply
+            try (InputStream rendered = new java.io.ByteArrayInputStream(raw.getBytes(StandardCharsets.UTF_8))) {
+                List<HasMetadata> items = client.load(rendered).items();
+                for (HasMetadata item : items) {
+                    // force target namespace for namespaced objects
+                    if (item.getMetadata() != null) {
+                        if (item.getMetadata().getNamespace() == null || item.getMetadata().getNamespace().isBlank()) {
+                            item.getMetadata().setNamespace(targetNamespace);
+                        }
+                    }
+                    client.resource(item).inNamespace(targetNamespace).createOrReplace();
+                }
+            }
+
+            LOG.info("Applied template '{}' into namespace '{}'", resourcePathOnClasspath, targetNamespace);
+
+        } catch (Exception ex) {
+            throw new RuntimeException("Failed to apply template " + resourcePathOnClasspath + ": " + ex.getMessage(), ex);
+        }
+    }
+
+    private static void ensureHelmOwnership(HasMetadata r, String releaseName, String releaseNamespace) {
+        ObjectMeta md = r.getMetadata();
+        if (md == null) {
+            md = new ObjectMeta();
+            r.setMetadata(md);
+        }
+        if (md.getLabels() == null) md.setLabels(new HashMap<>());
+        if (md.getAnnotations() == null) md.setAnnotations(new HashMap<>());
+        md.getLabels().put("app.kubernetes.io/managed-by", "Helm");
+        md.getAnnotations().put("meta.helm.sh/release-name", releaseName);
+        md.getAnnotations().put("meta.helm.sh/release-namespace", releaseNamespace);
+    }
+
+    /** Surcharge pratique si tu passes un String. */
+    public void applyYaml(String yamlPath, String releaseName, String releaseNamespace) {
+        applyYaml(java.nio.file.Paths.get(Objects.requireNonNull(yamlPath, "yamlPath")), releaseName, releaseNamespace);
+    }
+
     public KubernetesClient getClient() { 
         return client; 
+    }
+
+    public ViewConfigurationService getConfigurationService(){
+        return this.configurationService;
+    }
+
+    public void ensureImagePullSecretWithUsernameAndPassword(String repoId,
+                                              String namespace,
+                                              String secretName,
+                                              String userName,
+                                              String password,
+                                              String registryServer,
+                                              List<String> serviceAccountsToPatch) {
+        Objects.requireNonNull(repoId, "repoId");
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(userName, "userName");
+        Objects.requireNonNull(password, "password");
+        Objects.requireNonNull(registryServer, "registryServer");
+        if (serviceAccountsToPatch == null) serviceAccountsToPatch = List.of();
+
+
+        final String dockerConfigJson = dockerConfigJson(registryServer, userName, password);
+
+        // 1) Create or update the pull secret (type: kubernetes.io/dockerconfigjson)
+        Secret desired = new SecretBuilder()
+                .withMetadata(new ObjectMetaBuilder()
+                        .withName(secretName)
+                        .withNamespace(namespace)
+                        .addToAnnotations("managed-by", "ambari-k8s-view")
+                        .addToAnnotations("managed-at", Instant.now().toString())
+                        .build())
+                .withType("kubernetes.io/dockerconfigjson")
+                .addToData(".dockerconfigjson",
+                        Base64.getEncoder().encodeToString(dockerConfigJson.getBytes(StandardCharsets.UTF_8)))
+                .build();
+
+        Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+        if (existing == null) {
+            client.secrets().inNamespace(namespace).resource(desired).create();
+            LOG.info("Created imagePullSecret '{}' in namespace '{}'", secretName, namespace);
+        } else {
+            // Replace to refresh creds atomically
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated imagePullSecret '{}' in namespace '{}'", secretName, namespace);
+        }
+
+        // 2) Patch ServiceAccounts to include the secret in imagePullSecrets
+        try {
+            var existingSas = client.serviceAccounts().inNamespace(namespace).list().getItems().stream()
+                    .map(sa -> sa.getMetadata() != null ? sa.getMetadata().getName() : null)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+
+            serviceAccountsToPatch = serviceAccountsToPatch.stream()
+                    .filter(existingSas::contains)
+                    .collect(Collectors.toList());
+
+            if (serviceAccountsToPatch.isEmpty()) {
+                LOG.info("No matching ServiceAccounts found in namespace '{}'; skipping patch step.", namespace);
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to list ServiceAccounts in namespace '{}': {}. Skipping patch step.", namespace, e.getMessage());
+            serviceAccountsToPatch = List.of();
+        }
+        for (String saName : serviceAccountsToPatch) {
+            if (saName == null || saName.isBlank()) continue;
+            client.serviceAccounts().inNamespace(namespace).withName(saName).edit(sa -> {
+                if (sa == null) return null;
+                if (sa.getImagePullSecrets() == null) sa.setImagePullSecrets(new ArrayList<>());
+                final String sn = secretName;
+                boolean present = sa.getImagePullSecrets().stream()
+                        .anyMatch(r -> r != null && sn.equals(r.getName()));
+                if (!present) {
+                    sa.getImagePullSecrets().add(new LocalObjectReferenceBuilder().withName(sn).build());
+                    LOG.info("Patched ServiceAccount '{}/{}' to use imagePullSecret '{}'", namespace, saName, sn);
+                } else {
+                    LOG.debug("ServiceAccount '{}/{}' already references imagePullSecret '{}'", namespace, saName, sn);
+                }
+                return sa;
+            });
+        }
+    }
+
+    /** Build dockerconfigjson content for kubernetes.io/dockerconfigjson secrets. */
+    private static String dockerConfigJson(String server, String username, String password) {
+        String auth = Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
+        // Minimal format
+        return "{ \"auths\": { \"" + server + "\": { " +
+                "\"username\":\"" + esc(username) + "\"," +
+                "\"password\":\"" + esc(password) + "\"," +
+                "\"auth\":\"" + auth + "\"" +
+                "} } }";
+    }
+    private static String esc(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    public void createMounts(String namespace, String releaseName, Map<String,Object> mounts){
+        if(mountManager == null) {
+            this.mountManager = new MountManager(this.client);
+            mountManager.ensureMounts(namespace, releaseName, mounts);
+        }
+
+    }
+
+    /**
+     * Create or update an Opaque Secret with a single binary entry.
+     * Data will be base64-encoded as required by Kubernetes.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace,
+                                           String secretName,
+                                           String dataKey,
+                                           byte[] data) {
+        createOrUpdateOpaqueSecret(namespace, secretName, dataKey, data, null, null, Boolean.TRUE);
+    }
+
+    /**
+     * Create or update an Opaque Secret (fully customizable).
+     * If an existing Secret is immutable, we delete & recreate it atomically.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace,
+                                           String secretName,
+                                           String dataKey,
+                                           byte[] data,
+                                           Map<String, String> labels,
+                                           Map<String, String> annotations,
+                                           Boolean immutable) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(dataKey, "dataKey");
+        Objects.requireNonNull(data, "data");
+        checkConfiguration();
+
+        try {
+            // Build desired secret
+            Map<String, String> dataMap = new LinkedHashMap<>();
+            dataMap.put(dataKey, Base64.getEncoder().encodeToString(data));
+
+            ObjectMeta meta = new ObjectMetaBuilder()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToAnnotations("managed-by", "ambari-k8s-view")
+                    .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                    .build();
+
+            if (labels != null && !labels.isEmpty()) {
+                if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+                meta.getLabels().putAll(labels);
+            }
+            if (annotations != null && !annotations.isEmpty()) {
+                if (meta.getAnnotations() == null) meta.setAnnotations(new HashMap<>());
+                meta.getAnnotations().putAll(annotations);
+            }
+
+            Secret desired = new SecretBuilder()
+                    .withMetadata(meta)
+                    .withType("Opaque")
+                    .withData(dataMap)
+                    .withImmutable(immutable) // null = unset; TRUE = immutable; FALSE = mutable
+                    .build();
+
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+
+            if (existing == null) {
+                client.secrets().inNamespace(namespace).resource(desired).create();
+                LOG.info("Created Opaque Secret '{}/{}'", namespace, secretName);
+                return;
+            }
+
+            // If immutable and content changed → must delete & recreate
+            boolean existingImmutable = Boolean.TRUE.equals(existing.getImmutable());
+            boolean sameData = Objects.equals(
+                    existing.getData() != null ? existing.getData().get(dataKey) : null,
+                    desired.getData().get(dataKey)
+            );
+
+            if (existingImmutable && !sameData) {
+                LOG.info("Secret '{}/{}' is immutable and data changed → delete & recreate", namespace, secretName);
+                client.secrets().inNamespace(namespace).withName(secretName).delete();
+                client.secrets().inNamespace(namespace).resource(desired).create();
+                LOG.info("Recreated immutable Opaque Secret '{}/{}'", namespace, secretName);
+                return;
+            }
+
+            // Otherwise: createOrReplace (handles metadata updates & mutable data changes)
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated Opaque Secret '{}/{}'", namespace, secretName);
+
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
     }
 }

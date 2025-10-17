@@ -1,0 +1,5 @@
+{
+  "app": { "title": "Kubernetes Console" },
+  "actions": { "install": "Install", "upgrade": "Upgrade", "uninstall": "Uninstall" }
+}
+

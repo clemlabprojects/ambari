@@ -42,17 +42,17 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     setStatus('loading');
     setError(null);
     try {
-      const isViewConfiguredWithConfig = await isViewConfigured();
-      console.log('DEBUG: View configured:', isViewConfiguredWithConfig);
-      setViewConfigured(isViewConfiguredWithConfig);
-      if (isViewConfiguredWithConfig) { fetchData(); }
-      return isViewConfiguredWithConfig;
+      const isConfigured = await isViewConfigured();
+      console.log('DEBUG: View configured:', isConfigured);
+      setViewConfigured(isConfigured);
+      // IMPORTANT: do NOT fetch here. Let the caller decide.
+      return isConfigured;
     } catch (e: any) {
       setStatus('error');
       setError(e.message);
       return false;
     }
-  }
+  };
 
   const fetchData = React.useCallback(async () => {
     console.log('DEBUG: Fetching cluster data...');
@@ -67,55 +67,55 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
         getNodes(),
         getHelmReleases(),
       ]);
-      
-      console.log('DEBUG: Cluster stats fetched:', statsData);
-      console.log('DEBUG: Cluster components fetched:', componentsData);
-      console.log('DEBUG: Cluster events fetched:', eventsData);
-      console.log('DEBUG: Cluster nodes fetched:', nodesData);
-      console.log('DEBUG: Helm releases fetched:', helmReleasesData);
       setStats(statsData);
       setComponents(componentsData);
       setEvents(eventsData);
       setNodes(nodesData);
       setHelmReleases(helmReleasesData);
       setStatus('connected');
-      setMainLoaderActive(false);
     } catch (e: any) {
-      setMainLoaderActive(false);
       if (e.message === 'unconfigured') {
         setStatus('unconfigured');
       } else {
         setStatus('error');
         setError(e.message);
       }
+    } finally {
+      setMainLoaderActive(false);
     }
   }, []);
 
-  // Explicit alias to use everywhere (after uninstall / deploy, etc.)
   const refresh = React.useCallback(async () => {
+    console.log('API CALL: DEBUG: Refreshing cluster data...');
     await fetchData();
   }, [fetchData]);
 
+
   useEffect(() => {
-    if (viewConfigured){
-      refresh();
-    }else {
+    // Guard against StrictMode double-invoke in development
+    const didRun = (window as any).__clusterStatusInitRan ?? false;
+    if (process.env.NODE_ENV !== 'production' && didRun) return;
+    (window as any).__clusterStatusInitRan = true;
+
+    const init = async () => {
+      if (viewConfigured) {
+        await refresh(); // call once
+        return;
+      }
+
       console.log('DEBUG: First Effect, Checking if view is configured...');
-      checkViewIsConfigured().then((configured) => {
-        if (configured) {
-          console.log('DEBUG: View is configured, fetching data...');
-          fetchData();
-          refresh()
-        } else {
-          setStatus('unconfigured');
-        }
-      }).catch((e: any) => {
-        setStatus('error');
-        setError(e.message);
-      });
-    }
-    
-  }, []);
+      const configured = await checkViewIsConfigured();
+      if (configured) {
+        console.log('DEBUG: View is configured, fetching data...');
+        await refresh(); // call once
+      } else {
+        setStatus('unconfigured');
+      }
+    };
+
+    void init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // keep empty on purpose
 
   return (
     <ClusterStatusContext.Provider value={{

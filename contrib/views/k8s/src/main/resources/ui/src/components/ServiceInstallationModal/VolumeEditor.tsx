@@ -1,0 +1,88 @@
+import React, { useEffect } from 'react';
+import { Card, Form, Input, Select, Alert } from 'antd';
+import type { MountSpec } from '../../types/MountSpec';
+
+const { Option } = Select;
+
+const VolumeEditor: React.FC<{ specs: MountSpec[] }> = ({ specs }) => {
+  const form = Form.useFormInstance();
+
+  // Initialize mount defaults once (on service switch)
+  useEffect(() => {
+    const initial: any = {};
+    for (const s of specs) {
+      initial[s.key] = {
+        type: s.defaults.type,
+        mountPath: s.defaultMountPath,
+        size: s.defaults.size || '10Gi',
+        storageClass: s.defaults.storageClass || '',
+        accessModes: s.defaults.accessModes || ['ReadWriteOnce'],
+      };
+    }
+    form.setFieldsValue({ mounts: initial });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specs?.map(s => s.key).join(',')]);
+
+  return (
+    <Card title="Storage / Mounts" size="small" style={{ marginBottom: 16 }}>
+      {specs.map(s => (
+        <div key={s.key} style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>{s.label}</div>
+
+          <Form.Item name={['mounts', s.key, 'type']} label="Type" initialValue={s.defaults.type}>
+            <Select style={{ maxWidth: 240 }}>
+              {s.supportedTypes.map(t => (
+                <Option key={t} value={t}>
+                  {t}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name={['mounts', s.key, 'mountPath']}
+            label="Mount path"
+            initialValue={s.defaultMountPath}
+            rules={[{ required: true, message: 'Mount path is required' }]}
+          >
+            <Input style={{ maxWidth: 400 }} />
+          </Form.Item>
+
+          {/* PVC-only fields */}
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue }) =>
+              getFieldValue(['mounts', s.key, 'type']) === 'pvc' ? (
+                <>
+                  <Form.Item name={['mounts', s.key, 'size']} label="Size" initialValue={s.defaults.size}>
+                    <Input placeholder="e.g. 20Gi" style={{ maxWidth: 240 }} />
+                  </Form.Item>
+                  <Form.Item name={['mounts', s.key, 'storageClass']} label="StorageClass">
+                    <Input placeholder="(default)" style={{ maxWidth: 240 }} />
+                  </Form.Item>
+                  <Form.Item name={['mounts', s.key, 'accessModes']} label="Access modes" initialValue={s.defaults.accessModes}>
+                    <Select mode="multiple" style={{ maxWidth: 400 }}>
+                      <Option value="ReadWriteOnce">ReadWriteOnce</Option>
+                      <Option value="ReadOnlyMany">ReadOnlyMany</Option>
+                      <Option value="ReadWriteMany">ReadWriteMany</Option>
+                    </Select>
+                  </Form.Item>
+                </>
+              ) : null
+            }
+          </Form.Item>
+
+          {/* S3 placeholder */}
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue }) =>
+              getFieldValue(['mounts', s.key, 'type']) === 's3' ? (
+                <Alert type="info" message="S3-backed PV is not implemented yet in this UI. Choose emptyDir or PVC for now." showIcon />
+              ) : null
+            }
+          </Form.Item>
+        </div>
+      ))}
+    </Card>
+  );
+};
+
+export default VolumeEditor;
