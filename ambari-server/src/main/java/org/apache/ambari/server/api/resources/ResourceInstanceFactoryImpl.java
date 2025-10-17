@@ -101,6 +101,9 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
 
     //todo: consider ResourceDependencyManager : Map<Resource.Type, ResourceDefinition>
     switch (type.getInternalType()) {
+      case ADHOC_KEYTAB:
+        resourceDefinition = new AdhocKeytabResourceDefinition();
+        break;
       case Cluster:
         resourceDefinition = new ClusterResourceDefinition();
         break;
@@ -438,7 +441,6 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
       case KerberosDescriptor:
         resourceDefinition = new SimpleResourceDefinition(Resource.Type.KerberosDescriptor, "kerberos_descriptor", "kerberos_descriptors");
         break;
-
       case Credential:
         resourceDefinition = new CredentialResourceDefinition();
         break;

@@ -545,6 +545,7 @@ class ActionScheduler implements Runnable {
         LOG.debug("==> Adding {} tasks to queue...", commandsToUpdate.size());
         for (ExecutionCommand cmd : commandsToUpdate) {
           // Do not queue up server actions; however if we encounter one, wake up the ServerActionExecutor
+          LOG.debug("Role of command is {}", cmd.getRole());
           if (Role.AMBARI_SERVER_ACTION.name().equals(cmd.getRole())) {
             serverActionExecutor.awake();
           } else {

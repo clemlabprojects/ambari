@@ -18,7 +18,6 @@
 
 package org.apache.ambari.server.controller.spi;
 
-
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -163,7 +162,9 @@ public interface Resource {
     ClusterKerberosDescriptor,
     LoggingQuery,
     RemoteCluster,
-    Auth;
+    Auth,
+    ADHOC_KEYTAB;
+
 
     /**
      * Get the {@link Type} that corresponds to this InternalType.
@@ -202,6 +203,7 @@ public interface Resource {
     public static final Type Service = InternalType.Service.getType();
     public static final Type Setting = InternalType.Setting.getType();
     public static final Type Host = InternalType.Host.getType();
+    public static final Type ADHOC_KEYTAB = InternalType.ADHOC_KEYTAB.getType();
     public static final Type Component = InternalType.Component.getType();
     public static final Type HostComponent = InternalType.HostComponent.getType();
     public static final Type Configuration = InternalType.Configuration.getType();
