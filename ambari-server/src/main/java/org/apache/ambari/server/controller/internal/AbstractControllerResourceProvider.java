@@ -131,6 +131,8 @@ public abstract class AbstractControllerResourceProvider extends AbstractAuthori
                                                      AmbariManagementController managementController) {
 
     switch (type.getInternalType()) {
+      case ADHOC_KEYTAB:
+        return new AdhocKeytabResourceProvider(managementController);
       case Cluster:
         return new ClusterResourceProvider(managementController);
       case Service:

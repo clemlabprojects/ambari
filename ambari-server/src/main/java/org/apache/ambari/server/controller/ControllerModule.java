@@ -62,6 +62,7 @@ import org.apache.ambari.server.cleanup.ClasspathScannerUtils;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.configuration.Configuration.ConnectionPoolType;
 import org.apache.ambari.server.configuration.Configuration.DatabaseType;
+import org.apache.ambari.server.controller.internal.AdhocKeytabResourceProvider;
 import org.apache.ambari.server.controller.internal.AlertTargetResourceProvider;
 import org.apache.ambari.server.controller.internal.AuthResourceProvider;
 import org.apache.ambari.server.controller.internal.ClusterStackVersionResourceProvider;
@@ -84,6 +85,7 @@ import org.apache.ambari.server.controller.logging.LoggingRequestHelperFactoryIm
 import org.apache.ambari.server.controller.metrics.MetricPropertyProviderFactory;
 import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheEntryFactory;
 import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheProvider;
+import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceProvider;
 import org.apache.ambari.server.controller.utilities.KerberosChecker;
 import org.apache.ambari.server.events.AmbariEvent;
@@ -412,9 +414,15 @@ public class ControllerModule extends AbstractModule {
     registerUpgradeChecks(null);
     bind(HookService.class).to(UserHookService.class);
 
+    bind(ResourceProvider.class)
+            .annotatedWith(Names.named(Resource.Type.ADHOC_KEYTAB.name()))
+            .to(AdhocKeytabResourceProvider.class);
+
     InternalAuthenticationInterceptor ambariAuthenticationInterceptor = new InternalAuthenticationInterceptor();
     requestInjection(ambariAuthenticationInterceptor);
     bindInterceptor(any(), annotatedWith(RunWithInternalSecurityContext.class), ambariAuthenticationInterceptor);
+
+
   }
 
   // ----- helper methods ----------------------------------------------------

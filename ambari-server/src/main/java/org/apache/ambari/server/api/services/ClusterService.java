@@ -865,6 +865,17 @@ public class ClusterService extends BaseService {
     return AmbariServer.getController().getLoggingService(clusterName);
   }
 
+  /**
+   * Adhoc Keytab Generation which can be used by external ambari views for creating
+   * princ/keytabs without the passing by installing components
+   */
+
+  @Path("{clusterName}/adhoc_keytab")
+  public AdhocKeytabService getAdhocKeytab(@Context javax.ws.rs.core.Request request,
+                                           @PathParam("clusterName") String clusterName) {
+    return new AdhocKeytabService(clusterName);
+  }
+
   // ----- helper methods ----------------------------------------------------
 
   /**
