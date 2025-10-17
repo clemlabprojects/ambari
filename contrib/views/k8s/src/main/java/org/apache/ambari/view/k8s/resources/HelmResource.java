@@ -77,15 +77,6 @@ public class HelmResource {
         return releaseList;
     }
 
-    // Old implementation - returning Release directly does not work with Ambari's JSON serializer
-    // @POST
-    // @Path("/deploy")
-    // public Release deploy(HelmDeployRequest req,
-    //                       @QueryParam("repoId") String repoId,
-    //                       @QueryParam("version") String version) {
-    //   return new HelmService(viewContext).deployOrUpgrade(req, getKubeconfigContents(), repoId, version);
-    // }
-
     @POST
     @Path("/deploy")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -105,9 +96,9 @@ public class HelmResource {
             
             HelmService helmService = new HelmService(viewContext);
             Release deployedRelease = helmService.deployOrUpgrade(
-                deployRequest, kubeContext, repositoryId, chartVersion, 
-                timeoutSeconds, waitForCompletion, atomicUpgrade);
-
+                deployRequest, kubeContext, repositoryId, chartVersion
+              );
+            LOG.info("Deployed release: {} in namespace: {} with id:{}", deployedRelease.getName(), deployedRelease.getNamespace());
             return Response.ok(buildReleaseDto(deployedRelease)).build();
         } catch (Exception e) {
             LOG.error("Deployment failed", e);

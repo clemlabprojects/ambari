@@ -11,7 +11,7 @@ const NodesPage: React.FC = () => {
     const { status, nodes } = useClusterStatus();
 
     if (status === 'error') {
-        return <Result status="warning" title="Données des nœuds non disponibles." subTitle="Impossible de récupérer les informations du cluster." />;
+        return <Result status="warning" title="Node data not available." subTitle="Unable to retrieve cluster information." />;
     }
 
     if (!nodes) {
@@ -19,17 +19,17 @@ const NodesPage: React.FC = () => {
     }
 
     const columns = [
-        { title: 'Nom', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
-        { title: 'État', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
-        { title: 'Rôles', dataIndex: 'roles', key: 'roles', render: (roles: string[]) => roles.map(role => <Tag key={role}>{role}</Tag>) },
+        { title: 'Name', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
+        { title: 'Status', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
+        { title: 'Roles', dataIndex: 'roles', key: 'roles', render: (roles: string[]) => roles.map(role => <Tag key={role}>{role}</Tag>) },
         { title: 'CPU', dataIndex: 'cpuUsage', key: 'cpuUsage', render: (usage: number) => <Progress percent={usage * 100} /> },
-        { title: 'Mémoire', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={usage * 100} status="success" /> },
+        { title: 'Memory', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={usage * 100} status="success" /> },
     ];
-
+    console.log("TOTO",     nodes)
     return (
         <div>
             <div className="page-header">
-                <Title level={2}>Noeuds du Cluster</Title>
+                <Title level={2}>Cluster Nodes</Title>
             </div>
             <Table columns={columns} dataSource={nodes} rowKey="id" loading={status === 'loading'} />
         </div>

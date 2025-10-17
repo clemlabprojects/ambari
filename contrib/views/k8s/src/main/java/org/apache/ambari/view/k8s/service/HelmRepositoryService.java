@@ -128,11 +128,17 @@ public class HelmRepositoryService {
         if (!"OCI".equalsIgnoreCase(entity.getType())) {
             throw new IllegalArgumentException("Repository " + repoId + " is not OCI");
         }
-        String password = readPlainSecret(entity.getSecretRef());
-        helmClient.ociLogin(entity.getUrl(), entity.getUsername(), password, pathConfig.registryConfig());
-        entity.setAuthInvalid(false);
-        entity.setUpdatedAt(Instant.now().toString());
-        repositoryDao.update(entity);
+        if (!(entity.getAuthMode() != null && entity.getAuthMode().equalsIgnoreCase("anonymous"))) {
+            LOG.info("Performing OCI login for repository id: {}", repoId);
+            String password = readPlainSecret(entity.getSecretRef());
+            LOG.info("Logging in to OCI registry at URL: {}", entity.getUrl());
+            LOG.info("Using username: {}", entity.getUsername() != null ? entity.getUsername() : "(none)");
+            LOG.info("Using password: {}", password != null ? password : "(none)");
+            helmClient.ociLogin(entity.getUrl(), entity.getUsername(), password, pathConfig.registryConfig());
+            entity.setAuthInvalid(false);
+            entity.setUpdatedAt(Instant.now().toString());
+            repositoryDao.update(entity);
+        }
     }
 
     public void loginOrSync(String repoId) {
@@ -160,7 +166,7 @@ public class HelmRepositoryService {
         }
     }
 
-    private HelmRepoEntity mustGet(String id) {
+    public HelmRepoEntity mustGet(String id) {
         HelmRepoEntity entity = repositoryDao.findById(id);
         if (entity == null) throw new IllegalArgumentException("Unknown repository: " + id);
         return entity;
@@ -168,5 +174,9 @@ public class HelmRepositoryService {
 
     public PathConfig paths() { 
         return pathConfig; 
+    }
+
+    public static boolean isAnonymous(HelmRepoEntity e) {
+        return e.getAuthMode() != null && e.getAuthMode().equalsIgnoreCase("anonymous");
     }
 }

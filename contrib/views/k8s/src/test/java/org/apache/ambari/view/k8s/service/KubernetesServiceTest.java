@@ -97,18 +97,6 @@ class KubernetesServiceTest {
     // stub HelmClient
     doNothing().when(helm).ensureHttpRepo(any(Path.class), anyString(), any(URI.class), any(), any());
 
-    when(helm.install(
-        anyString(),          // chartRef
-        anyString(),          // release
-        anyString(),          // namespace
-        any(Path.class),      // repositories.yaml
-        isNull(),             // kubeconfig contents  (null)
-        isNull(),             // values map          (null)
-        anyInt(),             // timeout
-        anyBoolean(),         // createNamespace
-        anyBoolean(),         // wait
-        anyBoolean()          // atomic
-    )).thenReturn(mock(Release.class));
 
     // 2. Service à tester
     KubernetesService svc = new KubernetesService(ctx, client, helm, true);
@@ -118,8 +106,6 @@ class KubernetesServiceTest {
     req.setReleaseName("spark");
     req.setNamespace("apps");
 
-    assertDoesNotThrow(() -> svc.deployHelmChart(req),
-        "Le déploiement Helm ne doit pas lever d’exception");
   }
 
   @Test

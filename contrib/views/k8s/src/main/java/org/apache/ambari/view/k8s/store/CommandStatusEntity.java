@@ -24,16 +24,7 @@ public class CommandStatusEntity {
   private Integer attempt;         // nb de tentatives
 
   @Column(length = 32, nullable = false)
-  private String type;             // enum name
-
-  @Column(length = 32, nullable = false)
   private String state;            // enum name
-
-  @Column
-  private Integer percent;
-
-  @Column
-  private Integer step;
 
   @Column(length = 512)
   private String message;
@@ -48,9 +39,6 @@ public class CommandStatusEntity {
   private String error;
 
   @Lob
-  private String requestJson;
-
-  @Lob
   private String resultJson;
 
   // getters / setters
@@ -62,14 +50,8 @@ public class CommandStatusEntity {
   public void setWorkerId(String workerId) { this.workerId = workerId; }
   public Integer getAttempt() { return attempt; }
   public void setAttempt(Integer attempt) { this.attempt = attempt; }
-  public String getType() { return type; }
-  public void setType(String type) { this.type = type; }
   public String getState() { return state; }
   public void setState(String state) { this.state = state; }
-  public Integer getPercent() { return percent; }
-  public void setPercent(Integer percent) { this.percent = percent; }
-  public Integer getStep() { return step; }
-  public void setStep(Integer step) { this.step = step; }
   public String getMessage() { return message; }
   public void setMessage(String message) { this.message = message; }
   public String getCreatedAt() { return createdAt; }
@@ -78,8 +60,6 @@ public class CommandStatusEntity {
   public void setUpdatedAt(String updatedAt) { this.updatedAt = updatedAt; }
   public String getError() { return error; }
   public void setError(String error) { this.error = error; }
-  public String getRequestJson() { return requestJson; }
-  public void setRequestJson(String requestJson) { this.requestJson = requestJson; }
   public String getResultJson() { return resultJson; }
   public void setResultJson(String resultJson) { this.resultJson = resultJson; }
 }

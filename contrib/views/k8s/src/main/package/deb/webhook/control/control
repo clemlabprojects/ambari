@@ -1,0 +1,7 @@
+Package: clemlab-kerberos-keytab-webhook
+Version: 1.0-1
+Section: admin
+Priority: optional
+Architecture: all
+Maintainer: Clemlab <contact@clemlab.com>
+Description: Clemlab Kerberos Keytab Mutating Webhook manifests and metadata

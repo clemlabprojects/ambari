@@ -22,21 +22,52 @@
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <ui.directory>${basedir}/src/main/resources/ui</ui.directory>
-
+        <ambari.grafana.arch>arm64</ambari.grafana.arch>
         <fabric8.k8s-client.version>6.12.1</fabric8.k8s-client.version>
         <jersey.version>2.25.1</jersey.version>
         <junit.jupiter.version>5.8.2</junit.jupiter.version>
         <junit.version>4.13.2</junit.version>
         <mockito.version>4.5.1</mockito.version>
-        <okhttp.version>4.12.0</okhttp.version> <!-- Version compatible avec Fabric8 -->
-        
-        <!-- Versions pour le build Frontend -->
+        <okhttp.version>4.12.0</okhttp.version>
+
+        <!-- Frontend build -->
         <node.version>v22.12.0</node.version>
         <yarn.version>v1.22.22</yarn.version>
+
+        <!-- === Webhook packaging additions === -->
+
+        <!-- Docker image coordinates -->
+        <docker.image.registry>registry.clemlab.com</docker.image.registry>
+        <docker.image.repo>clemlabprojects</docker.image.repo>
+        <docker.image.name>kerberos-keytab-mutating-webhook</docker.image.name>
+        <docker.image.arch>arm64</docker.image.arch>
+        <docker.image.tag>1.0.0.1-${docker.image.arch}</docker.image.tag>
+        <docker.platforms>linux/${docker.image.arch}</docker.platforms>
+
+        <!-- push is skipped by default; enable with -Ddocker.push=true (profile below) -->
+        <docker.skip.push>false</docker.skip.push>
+
+        <!-- set platforms at the command line; e.g. -Ddocker.platforms=linux/amd64,linux/arm64 -->
+        <docker.platforms></docker.platforms>
+
+        <!-- Paths inside this module -->
+        <webhook.go.dir>${project.basedir}/src/main/go/webhooks/kerberos-keytab-mutating-webhook</webhook.go.dir>
+        <webhook.k8s.dir>${project.basedir}/src/main/resources/webhooks/kerberos-keytab-mutating-webhook/k8s</webhook.k8s.dir>
+
+        <!-- Where we stage files before packaging -->
+        <staged.dir>${project.build.directory}/webhook-package</staged.dir>
+
+        <!-- Installed path inside RPM/DEB -->
+        <webhook.package.name>clemlab-kerberos-keytab-webhook</webhook.package.name>
+        <webhook.mapping.path>/usr/lib/${webhook.package.name}</webhook.mapping.path>
+
+        <!-- Package metadata -->
+        <package-version>${project.version}</package-version>
+        <package-release>1</package-release>
     </properties>
 
     <dependencies>
-        <!-- Ambari -->
+        <!-- (unchanged) -->
         <dependency>
             <groupId>org.apache.ambari</groupId>
             <artifactId>ambari-views</artifactId>
@@ -73,7 +104,6 @@
             </exclusions>
         </dependency>
 
-        <!-- Client Kubernetes -->
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>kubernetes-client</artifactId>
@@ -100,7 +130,6 @@
             <artifactId>spring-core</artifactId>
             <version>5.3.31</version>
         </dependency>
-        <!-- Client Helm -->
         <dependency>
             <groupId>com.marcnuri.helm-java</groupId>
             <artifactId>helm-java</artifactId>
@@ -111,13 +140,18 @@
             <artifactId>linux-${ambari.grafana.arch}</artifactId>
             <version>0.0.15</version>
         </dependency>
+
         <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-inline</artifactId>
-            <version>5.2.0</version>
-            <scope>test</scope>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.78.1</version>
         </dependency>
-        <!-- JAX-RS & Injection (fournis par Ambari) -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.78.1</version>
+        </dependency>
+
         <dependency>
             <groupId>javax.ws.rs</groupId>
             <artifactId>javax.ws.rs-api</artifactId>
@@ -130,16 +164,13 @@
             <version>1</version>
             <scope>provided</scope>
         </dependency>
-        <!-- JPA API pour les entités DataStore des Views -->
         <dependency>
-        <groupId>javax.persistence</groupId>
-        <artifactId>javax.persistence-api</artifactId>
-        <version>2.2</version>
-        <scope>provided</scope>
+            <groupId>javax.persistence</groupId>
+            <artifactId>javax.persistence-api</artifactId>
+            <version>2.2</version>
+            <scope>provided</scope>
         </dependency>
 
-
-        <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -152,14 +183,13 @@
             <version>2.0.13</version>
             <scope>test</scope>
         </dependency>
-        <!-- Pour l'upload de fichier -->
+
         <dependency>
             <groupId>org.glassfish.jersey.media</groupId>
             <artifactId>jersey-media-multipart</artifactId>
             <version>${jersey.version}</version>
         </dependency>
 
-        <!-- Dépendances de Test -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
@@ -214,18 +244,17 @@
             <version>1.21.3</version>
             <scope>test</scope>
         </dependency>
-        <!-- recommandé pour l’intégration JUnit 5 -->
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>1.21.3</version>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
-    
+
     <build>
         <plugins>
+            <!-- (your existing plugins kept as-is) -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-clean-plugin</artifactId>
@@ -255,7 +284,6 @@
                     <target>${java.version}</target>
                 </configuration>
             </plugin>
-        
 
             <plugin>
                 <groupId>com.github.eirslett</groupId>
@@ -266,8 +294,6 @@
                     <nodeVersion>${node.version}</nodeVersion>
                     <yarnVersion>${yarn.version}</yarnVersion>
                     <npmInheritsProxyConfigFromMaven>false</npmInheritsProxyConfigFromMaven>
-                    <!-- setting npm_config_tmp environment variable is a workaround for 
-                        https://github.com/Medium/phantomjs/issues/673 -->
                     <environmentVariables>
                         <npm_config_tmp>/tmp/npm_config_tmp</npm_config_tmp>
                     </environmentVariables>
@@ -302,70 +328,26 @@
                     </execution>
                 </executions>
             </plugin>
+
             <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-failsafe-plugin</artifactId>
-            <version>3.2.5</version>
-            <executions>
-                <execution>
-                <goals>
-                    <goal>integration-test</goal><goal>verify</goal>
-                </goals>
-                <configuration>
-                    <includes>
-                    <include>**/*IT.java</include>
-                    </includes>
-                </configuration>
-                </execution>
-            </executions>
-            </plugin>
-            <!-- <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.2.4</version>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
                 <executions>
                     <execution>
-                        <phase>package</phase>
                         <goals>
-                            <goal>shade</goal>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <relocations>
-                                <relocation>
-                                    <pattern>io.fabric8</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.io.fabric8</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>okhttp3</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.okhttp3</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>okio</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.okio</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>com.fasterxml.jackson</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.com.fasterxml.jackson</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>org.glassfish.jersey</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.org.glassfish.jersey</shadedPattern>
-                                </relocation>
-                            </relocations>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
+                            <includes>
+                                <include>**/*IT.java</include>
+                            </includes>
                         </configuration>
                     </execution>
                 </executions>
-            </plugin> -->
+            </plugin>
+
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
                 <executions>
@@ -399,173 +381,339 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
+
+            <!-- ===================== -->
+            <!--  WEBHOOK: build image -->
+            <!-- ===================== -->
+            <plugin>
+                <groupId>io.fabric8</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <version>0.45.0</version>
+                <configuration>
+                    <images>
+                        <image>
+                            <name>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</name>
+                            <registry>${docker.image.registry}</registry>
+                            <build>
+                                <dockerFile>${webhook.go.dir}/Dockerfile</dockerFile>
+                                <contextDir>${webhook.go.dir}</contextDir>
+                                <buildx>
+                                    <platforms>
+                                        <platform>${docker.platforms}</platform>
+                                    </platforms>
+                                </buildx>
+                                <tags>
+                                    <tag>${docker.image.tag}</tag>
+                                </tags>
+                            </build>
+                        </image>
+                    </images>
+                </configuration>
                 <executions>
                     <execution>
+                        <id>build-webhook-image</id>
                         <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
+                        <goals><goal>build</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>push-webhook-image</id>
+                        <phase>deploy</phase>
+                        <goals><goal>push</goal></goals>
                         <configuration>
-                            <relocations>
-                                <relocation>
-                                    <pattern>io.fabric8</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.io.fabric8</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>okhttp3</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.okhttp3</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>okio</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.okio</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>com.fasterxml.jackson</pattern>
-                                    <shadedPattern>org.apache.ambari.view.k8s.shaded.com.fasterxml.jackson</shadedPattern>
-                                </relocation>
-                            </relocations>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
+                            <skipPush>${docker.skip.push}</skipPush>
                         </configuration>
                     </execution>
                 </executions>
-            </plugin> -->
+            </plugin>
+
+            <!-- =========================== -->
+            <!--  WEBHOOK: stage files (YAML) -->
+            <!-- =========================== -->
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>stage-webhook-k8s-resources</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${staged.dir}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${webhook.k8s.dir}</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- ===================================== -->
+            <!--  WEBHOOK: write refs + export image   -->
+            <!-- ===================================== -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <!-- keep your existing 'write-webhook-image-ref' execution -->
+                    <execution>
+                        <id>save-webhook-image-tar</id>
+                        <phase>package</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>bash</executable>
+                            <environmentVariables>
+                                <IMAGE>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</IMAGE>
+                                <OUT_DIR>${staged.dir}/images</OUT_DIR>
+                                <IMAGE_NAME>${docker.image.name}</IMAGE_NAME>
+                                <IMAGE_TAG>${docker.image.tag}</IMAGE_TAG>
+                            </environmentVariables>
+                            <arguments>
+                                <argument>-euo</argument><argument>pipefail</argument>
+                                <argument>-c</argument>
+                                <argument>
+                                    <![CDATA[
+mkdir -p "${OUT_DIR}"
+# Ensure the image exists locally (built in 'package' phase)
+docker image inspect "${IMAGE}" > /dev/null
+
+# Save ONE tar.gz for this arch (tag already includes -<arch>)
+ARCHIVE="${IMAGE_NAME}-${IMAGE_TAG}.tar.gz"
+docker image save "${IMAGE}" | gzip -c > "${OUT_DIR}/${ARCHIVE}"
+(cd "${OUT_DIR}" && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
+
+# Tiny helper to load this exact tar
+cat > "${OUT_DIR}/load.sh" <<'EOS'
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TAR="$(ls -1 "${BASE}"/*.tar.gz | head -n1 || true)"
+[[ -n "${TAR}" ]] || { echo "No image tar in ${BASE}" >&2; exit 1; }
+echo "Loading ${TAR}"
+docker load -i "${TAR}"
+EOS
+chmod +x "${OUT_DIR}/load.sh"
+]]>
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+
+            <!-- ============== -->
+            <!--  RPM packaging -->
+            <!-- ============== -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>rpm-maven-plugin</artifactId>
+                <version>2.1.5</version>
+                <executions>
+                    <execution>
+                        <id>rpm-webhook</id>
+                        <phase>package</phase>
+                        <goals><goal>rpm</goal></goals>
+                        <configuration>
+                            <name>${webhook.package.name}</name>
+                            <group>Development</group>
+                            <license>Apache-2.0</license>
+                            <autoRequires>false</autoRequires>
+                            <needarch>noarch</needarch>
+                            <targetOS>linux</targetOS>
+                            <version>${package-version}</version>
+                            <release>${package-release}</release>
+                            <mappings>
+                                <mapping>
+                                    <directory>${webhook.mapping.path}</directory>
+                                    <filemode>0644</filemode>
+                                    <sources>
+                                        <source>
+                                            <location>${staged.dir}</location>
+                                        </source>
+                                    </sources>
+                                </mapping>
+                            </mappings>
+                            <postinstallScriptlet>
+                                <scriptFile>${project.basedir}/src/main/package/rpm/webhook/postinstall.sh</scriptFile>
+                                <fileEncoding>utf-8</fileEncoding>
+                            </postinstallScriptlet>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- ============= -->
+            <!--  DEB packaging -->
+            <!-- ============= -->
             <plugin>
                 <groupId>org.vafer</groupId>
                 <artifactId>jdeb</artifactId>
+                <version>1.11</version>
                 <executions>
                     <execution>
-                      <phase>none</phase>
-                        <goals>
-                        <goal>jdeb</goal>
-                      </goals>
+                        <id>deb-webhook</id>
+                        <phase>package</phase>
+                        <goals><goal>jdeb</goal></goals>
+                        <configuration>
+                            <controlDir>${project.basedir}/src/main/package/deb/webhook</controlDir>
+                            <deb>${project.basedir}/target/${webhook.package.name}_${package-version}-${package-release}.deb</deb>
+                            <dataSet>
+                                <data>
+                                    <src>${staged.dir}</src>
+                                    <type>directory</type>
+                                    <mapper>
+                                        <type>perm</type>
+                                        <user>root</user>
+                                        <group>root</group>
+                                        <prefix>${webhook.mapping.path}</prefix>
+                                    </mapper>
+                                </data>
+                            </dataSet>
+                        </configuration>
                     </execution>
                 </executions>
+                <!-- keep default skip; we’ll enable via profile -->
                 <configuration>
                     <skip>true</skip>
-                    <submodules>false</submodules>
                 </configuration>
             </plugin>
         </plugins>
 
         <resources>
-            <!-- Copie du view.xml -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>charts.json</include>
+                </includes>
+            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
                 <includes>
-                    <include>charts.json</include>
+                    <include>keda-2.17.2-crds.yaml</include>
+                    <include>kube-prometheus-stack-77.5.0-crds.yaml</include>
                     <include>view.xml</include>
                     <include>view.log4j.properties</include>
+                    <include>webhooks</include>
                 </includes>
             </resource>
-            <!-- Copie de l'UI compilée -->
             <resource>
                 <directory>src/main/resources/ui/dist</directory>
                 <filtering>false</filtering>
             </resource>
-            <!-- Copie des dépendances Java -->
             <resource>
                 <targetPath>WEB-INF/lib</targetPath>
                 <filtering>false</filtering>
                 <directory>target/lib</directory>
             </resource>
         </resources>
-    <pluginManagement>
-      <plugins>
-        <!--This plugin's configuration is used to store Eclipse m2e settings only. It has no influence on the Maven build itself.-->
-        <plugin>
-          <groupId>org.eclipse.m2e</groupId>
-          <artifactId>lifecycle-mapping</artifactId>
-          <version>1.0.0</version>
-          <configuration>
-            <lifecycleMappingMetadata>
-              <pluginExecutions>
-                <pluginExecution>
-                  <pluginExecutionFilter>
-                    <groupId>
-                      org.codehaus.mojo
-                    </groupId>
-                    <artifactId>
-                      exec-maven-plugin
-                    </artifactId>
-                    <versionRange>
-                      [1.2.1,)
-                    </versionRange>
-                    <goals>
-                      <goal>exec</goal>
-                    </goals>
-                  </pluginExecutionFilter>
-                  <action>
-                    <ignore></ignore>
-                  </action>
-                </pluginExecution>
-                <pluginExecution>
-                  <pluginExecutionFilter>
-                    <groupId>
-                      com.github.eirslett
-                    </groupId>
-                    <artifactId>
-                      frontend-maven-plugin
-                    </artifactId>
-                    <versionRange>
-                      [0.0.14,)
-                    </versionRange>
-                    <goals>
-                      <goal>
-                        install-node-and-npm
-                      </goal>
-                      <goal>npm</goal>
-                    </goals>
-                  </pluginExecutionFilter>
-                  <action>
-                    <ignore></ignore>
-                  </action>
-                </pluginExecution>
-              </pluginExecutions>
-            </lifecycleMappingMetadata>
-          </configuration>
-        </plugin>
-      </plugins>
-    </pluginManagement>
+
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.eclipse.m2e</groupId>
+                    <artifactId>lifecycle-mapping</artifactId>
+                    <version>1.0.0</version>
+                    <configuration>
+                        <lifecycleMappingMetadata>
+                            <pluginExecutions>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.codehaus.mojo</groupId>
+                                        <artifactId>exec-maven-plugin</artifactId>
+                                        <versionRange>[1.2.1,)</versionRange>
+                                        <goals><goal>exec</goal></goals>
+                                    </pluginExecutionFilter>
+                                    <action><ignore/></action>
+                                </pluginExecution>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>com.github.eirslett</groupId>
+                                        <artifactId>frontend-maven-plugin</artifactId>
+                                        <versionRange>[0.0.14,)</versionRange>
+                                        <goals>
+                                            <goal>install-node-and-npm</goal>
+                                            <goal>npm</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action><ignore/></action>
+                                </pluginExecution>
+                            </pluginExecutions>
+                        </lifecycleMappingMetadata>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
+
     <profiles>
         <profile>
-        <id>integration</id>
-        <activation><activeByDefault>false</activeByDefault></activation>
-        <build>
-            <plugins>
-            <plugin>
-                <artifactId>maven-failsafe-plugin</artifactId>
-                <configuration>
-                <groups>livecluster</groups>
-                </configuration>
-            </plugin>
-            </plugins>
-        </build>
+            <id>integration</id>
+            <activation><activeByDefault>false</activeByDefault></activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <groups>livecluster</groups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
+
         <profile>
             <id>linux</id>
             <activation>
-                <os>
-                <family>unix</family>
-                </os>
+                <os><family>unix</family></os>
             </activation>
             <properties>
                 <node.executable>node</node.executable>
                 <skip.nodegyp.chmod>false</skip.nodegyp.chmod>
+            </properties>
+        </profile>
+
+        <!-- Enable DEB build when -Dbuild-deb=true -->
+        <profile>
+            <id>deb</id>
+            <activation>
+                <property><name>build-deb</name></property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.vafer</groupId>
+                        <artifactId>jdeb</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Enable RPM build when -Prpm -->
+        <profile>
+            <id>rpm</id>
+            <activation><activeByDefault>false</activeByDefault></activation>
+        </profile>
+
+        <!-- Map -Ddocker.push=true to enabling push at deploy -->
+        <profile>
+            <id>push</id>
+            <activation>
+                <property>
+                    <name>docker.push</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <docker.skip.push>false</docker.skip.push>
             </properties>
         </profile>
     </profiles>

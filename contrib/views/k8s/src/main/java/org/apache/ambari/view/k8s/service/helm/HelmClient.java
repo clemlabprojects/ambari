@@ -19,32 +19,32 @@ public interface HelmClient {
     List<Release> list(String namespace, String kubeconfigContents, boolean deployedOnly);
 
     // Primary install method with full parameter set
-    Release install(String chartRef, String releaseName, String namespace,
+    Release install(String chartRef, String chartVersion, boolean isOci,String releaseName, String namespace,
                    Path repositoriesConfig, String kubeconfigContents,
                    Map<String, Object> values,
                    int timeoutSec, boolean createNamespace, boolean wait, boolean atomic, boolean dryRun);
 
     // Convenience install method for backward compatibility
-    default Release install(String chartRef, String releaseName, String namespace,
+    default Release install(String chartRef, String chartVersion, boolean isOci,String releaseName, String namespace,
                            Path repositoriesConfig, String kubeconfigContents,
                            Map<String, Object> values,
                            int timeoutSec, boolean createNamespace, boolean wait, boolean atomic) {
-        return install(chartRef, releaseName, namespace, repositoriesConfig, kubeconfigContents,
+        return install(chartRef,chartVersion,isOci, releaseName, namespace, repositoriesConfig, kubeconfigContents,
                       values, timeoutSec, createNamespace, wait, atomic, false);
     }
 
     // Primary upgrade method with full parameter set
-    Release upgrade(String chartRef, String releaseName, String namespace,
+    Release upgrade(String chartRef, String chartVersion, boolean isOci, String releaseName, String namespace,
                    Path repositoriesConfig, String kubeconfigContents,
                    Map<String, Object> values,
                    int timeoutSec, boolean wait, boolean atomic, boolean dryRun);
 
     // Convenience upgrade method for backward compatibility
-    default Release upgrade(String chartRef, String releaseName, String namespace,
+    default Release upgrade(String chartRef, String chartVersion, boolean isOci, String releaseName, String namespace,
                            Path repositoriesConfig, String kubeconfigContents,
                            Map<String, Object> values,
                            int timeoutSec, boolean wait, boolean atomic) {
-        return upgrade(chartRef, releaseName, namespace, repositoriesConfig, kubeconfigContents,
+        return upgrade(chartRef, chartVersion, isOci, releaseName, namespace, repositoriesConfig, kubeconfigContents,
                       values, timeoutSec, wait, atomic, false);
     }
 

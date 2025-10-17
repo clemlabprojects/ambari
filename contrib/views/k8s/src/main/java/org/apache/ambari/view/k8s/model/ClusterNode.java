@@ -1,11 +1,17 @@
 package org.apache.ambari.view.k8s.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import java.util.List;
 
 /**
  * Represents a Kubernetes cluster node with basic information
  */
+@JsonAutoDetect(
+    fieldVisibility = JsonAutoDetect.Visibility.ANY,
+    getterVisibility = JsonAutoDetect.Visibility.NONE,
+    isGetterVisibility = JsonAutoDetect.Visibility.NONE
+)
 public class ClusterNode {
     
     @JsonProperty("id")
@@ -40,29 +46,24 @@ public class ClusterNode {
         this.memoryUsagePercent = memoryUsagePercent;
     }
 
-    public String getNodeId() {
-        return nodeId;
-    }
 
-    public String getNodeName() {
-        return nodeName;
-    }
+    @JsonProperty("id")
+    public String getNodeId() { return nodeId; }
 
-    public String getNodeStatus() {
-        return nodeStatus;
-    }
+    @JsonProperty("name")
+    public String getNodeName() { return nodeName; }
 
-    public List<String> getNodeRoles() {
-        return nodeRoles;
-    }
+    @JsonProperty("status")
+    public String getNodeStatus() { return nodeStatus; }
 
-    public double getCpuUsagePercent() {
-        return cpuUsagePercent;
-    }
+    @JsonProperty("roles")
+    public List<String> getNodeRoles() { return nodeRoles; }
 
-    public double getMemoryUsagePercent() {
-        return memoryUsagePercent;
-    }
+    @JsonProperty("cpuUsage")
+    public double getCpuUsagePercent() { return cpuUsagePercent; }
+
+    @JsonProperty("memoryUsage")
+    public double getMemoryUsagePercent() { return memoryUsagePercent; }
     
     @Override
     public String toString() {

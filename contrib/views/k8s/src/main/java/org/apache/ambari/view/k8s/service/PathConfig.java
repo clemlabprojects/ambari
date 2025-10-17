@@ -15,7 +15,7 @@ public class PathConfig {
     private final Path registryConfig;
 
     public PathConfig(ViewContext ctx) {
-        String workingDirectory = getProperty(ctx, "k8s.view.working.dir", "/var/lib/ambari/views/work/k8s-view");
+        String workingDirectory = getProperty(ctx, "k8s.view.working.dir", "/var/lib/ambari/views/work/K8S-VIEW{1.0.0.1}");
         String repositoriesPath = getProperty(ctx, "k8s.view.helm.repositoriesConfig", "");
         String registryPath = getProperty(ctx, "k8s.view.helm.registryConfig", "");
 

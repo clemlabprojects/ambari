@@ -1,7 +1,7 @@
 // ui/src/api/mock.ts
-import { UserPermissions, UserRole, HelmRelease, ClusterNode, ClusterStats, ClusterEvent, ComponentStatus } from '../types';
-// ... (getMockPermissions, getMockHelmReleases, getMockNodes, getMockClusterStats restent les mêmes) ...
+import type { UserPermissions, HelmRelease, ClusterNode, ClusterStats, ClusterEvent, ComponentStatus } from '../types';
 import type { HelmRepo } from '../types';
+type UserRole = "ADMIN" | "OPERATOR" | "VIEWER";
 export const getMockPermissions = (role: UserRole): UserPermissions => {
   switch (role) {
     case 'ADMIN':
@@ -14,58 +14,72 @@ export const getMockPermissions = (role: UserRole): UserPermissions => {
   }
 };
 
-export const getMockHelmReleases = (): HelmRelease[] => ([
-  { id: 'trino-prod', name: 'trino-prod', namespace: 'data-lake', chart: 'trino', version: '0.9.0', status: 'deployed' },
-  { id: 'prometheus-stack', name: 'prometheus-stack', namespace: 'monitoring', chart: 'kube-prometheus-stack', version: '45.2.1', status: 'deployed' },
-  { id: 'cert-manager', name: 'cert-manager', namespace: 'kube-system', chart: 'cert-manager', version: 'v1.9.1', status: 'pending_upgrade' },
+export const getMockHelmReleases = (): HelmRelease[] => {
+  console.log("API CALL: Fetching mock Helm releases...");
+  return [
+    { id: 'trino-prod', name: 'trino-prod', namespace: 'data-lake', chart: 'trino', version: '0.9.0', status: 'deployed' },
+    { id: 'prometheus-stack', name: 'prometheus-stack', namespace: 'monitoring', chart: 'kube-prometheus-stack', version: '45.2.1', status: 'deployed' },
+    { id: 'cert-manager', name: 'cert-manager', namespace: 'kube-system', chart: 'cert-manager', version: 'v1.9.1', status: 'pending_upgrade' },
   { id: 'old-service', name: 'old-service', namespace: 'default', chart: 'legacy-app', version: '1.0.0', status: 'failed' },
   { id: 'grafana', name: 'grafana', namespace: 'monitoring', chart: 'grafana', version: '6.58.4', status: 'uninstalling' },
   { id: 'argo-cd', name: 'argo-cd', namespace: 'cicd', chart: 'argo-cd', version: '5.51.6', status: 'deployed' },
   { id: 'elastic-operator', name: 'elastic-operator', namespace: 'logging', chart: 'eck-operator', version: '2.11.0', status: 'deployed' },
   { id: 'kafka-cluster', name: 'kafka-cluster', namespace: 'messaging', chart: 'strimzi-kafka-operator', version: '0.38.0', status: 'failed' },
-]);
+]};
 
-export const getMockNodes = (): ClusterNode[] => ([
+export const getMockNodes = (): ClusterNode[] => {
+  console.log("API CALL: Fetching mock cluster nodes...");
+  return [
     { id: 'worker-01', name: 'worker-01.example.com', status: 'Ready', roles: ['worker'], cpuUsage: 0.7, memoryUsage: 0.65 },
     { id: 'worker-02', name: 'worker-02.example.com', status: 'Ready', roles: ['worker'], cpuUsage: 0.5, memoryUsage: 0.40 },
     { id: 'worker-03', name: 'worker-03.example.com', status: 'Ready', roles: ['worker', 'storage'], cpuUsage: 0.8, memoryUsage: 0.75 },
     { id: 'master-01', name: 'master-01.example.com', status: 'Ready', roles: ['master', 'control-plane'], cpuUsage: 0.2, memoryUsage: 0.30 },
     { id: 'master-02', name: 'master-02.example.com', status: 'NotReady', roles: ['master', 'control-plane'], cpuUsage: 0.0, memoryUsage: 0.0 },
     { id: 'gpu-node-1', name: 'gpu-node-1.k8s.local', status: 'SchedulingDisabled', roles: ['worker', 'gpu'], cpuUsage: 0.9, memoryUsage: 0.8 },
-]);
+]};
 
-export const getMockClusterStats = (): ClusterStats => ({
-    cpu: { used: 9.8, total: 32 },
-    memory: { used: 45.2, total: 128 },
-    pods: { used: 157, total: 400 },
-    nodes: { used: 1, total: 2 },
-    helm: { deployed: 4, pending: 1, failed: 2, total: 8 },
-});
+export const getMockClusterStats = (): ClusterStats => {
+  console.log("API CALL: Fetching mock cluster stats...");
+  return{
+      cpu: { used: 9.8, total: 32 },
+      memory: { used: 45.2, total: 128 },
+      pods: { used: 157, total: 400 },
+      nodes: { used: 1, total: 2 },
+      helm: { deployed: 4, pending: 1, failed: 2, total: 8 }
+  }
+};
 
 
 // NOUVELLES DONNÉES DE SIMULATION
-export const getMockComponentStatuses = (): ComponentStatus[] => ([
-    { name: 'API Server', status: 'Healthy' },
-    { name: 'Controller Manager', status: 'Healthy' },
-    { name: 'Scheduler', status: 'Healthy' },
-    { name: 'etcd-0', status: 'Healthy' },
-    { name: 'etcd-1', status: 'Unhealthy' },
-]);
+export const getMockComponentStatuses = (): ComponentStatus[] => {
+  console.log("API CALL: Fetching mock component statuses...");
+  return [
+      { name: 'API Server', status: 'Healthy' },
+      { name: 'Controller Manager', status: 'Healthy' },
+      { name: 'Scheduler', status: 'Healthy' },
+      { name: 'etcd-0', status: 'Healthy' },
+      { name: 'etcd-1', status: 'Unhealthy' },
+  ]
+  };
 
-export const getMockClusterEvents = (): ClusterEvent[] => ([
+export const getMockClusterEvents = (): ClusterEvent[] => {
+  console.log("API CALL: Fetching mock cluster events...");
+  return [
     { id: 'evt1', type: 'Alert', message: 'Pod "trino-worker-3" in CrashLoopBackOff', timestamp: 'il y a 2 min' },
     { id: 'evt2', type: 'Warning', message: 'Node "worker-02" memory usage is over 85%', timestamp: 'il y a 15 min' },
     { id: 'evt3', type: 'Info', message: 'Helm release "grafana" was upgraded to 6.58.5', timestamp: 'il y a 1h' },
     { id: 'evt4', type: 'Alert', message: 'PersistentVolume "pvc-data-trino-0" is unbound', timestamp: 'il y a 3h' },
-]);
+  ]
+  };
 
-export const getAvailableServices = (): string[] => (
-    ['trino', 'prometheus', 'grafana', 'cert-manager', 'argo-cd']
-);
+export const getAvailableServices = (): string[] => {
+  console.log("API CALL: Fetching available services...");
+  return ['trino', 'prometheus', 'grafana', 'cert-manager', 'argo-cd'];
+};
 
 export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: number }): Promise<HelmRepo[]> {
   const { signal, delayMs = 400 } = init ?? {};
-
+  console.log("API CALL: Fetching mock Helm repositories...");
   // simple sleep with abort support
   const sleep = (ms: number) =>
     new Promise<void>((resolve, reject) => {
@@ -127,90 +141,384 @@ export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: 
   ];
 }
 
-export const getChartsJSON = (): any => (
-    {
-      "trino": {
-        "label": "Trino",
-        "chart": "trinodb/trino",
-        "form": [
-          { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
-          { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "default" },
-          {
-            "name": "networkAccess",
-            "label": "Accès Réseau (Exposition du service Trino)",
-            "type": "group",
-            "fields": [
-              {
-                "name": "service.enabled",
-                "label": "Activer l'accès interne (ClusterIP)",
-                "type": "boolean",
-                "defaultValue": true,
-                "disabled": true,
-                "help": "Un service interne est toujours créé pour la communication dans le cluster."
-              },
-              {
-                "name": "nodePort.enabled",
-                "label": "Activer l'accès externe (NodePort)",
-                "type": "boolean",
-                "defaultValue": false,
-                "help": "Crée un second service de type NodePort pour l'accès depuis l'extérieur du cluster (ex: Hue)."
-              },
-              {
-                "name": "nodePort.port",
-                "label": "Port du Nœud (Optionnel)",
-                "type": "number",
-                "help": "Laisser vide pour un port aléatoire (recommandé). Doit être entre 30000-32767.",
-                "condition": { "field": "nodePort.enabled", "value": true }
+export const getChartsJSON = (): any => {
+  console.log("API CALL: Fetching mock charts JSON...");
+  return {
+  "clemlab-trino": {
+    "label": "Trino",
+    "chart": "trinodb/trino",
+    "pattern": "trino-.*",
+    "secretName": "registry-credentials",
+    "version": "1.41.0",
+
+    "dependencies": {
+      "keda": {
+        "secretName": "regcred",
+        "chart": "keda",
+        "chartVersion": "2.17.2",
+        "imageTag": "2.17.2.1.3.1.0-1-arm64",
+        "imageRepository": "clemlabprojects",
+        "namespace": "keda",
+        "crds": ["scaledobjects.keda.sh"],
+        "images": [
+          "keda:keda",
+          "metricsApiServer:keda-metrics-apiserver",
+          "webhooks:keda-admission-webhooks"
+        ],
+        "serviceAccounts": [
+          "keda-operator",
+          "keda-admission-webhooks",
+          "keda-operator-metrics-apiserver"
+        ]
+      },
+      "kube-prometheus-stack": {
+        "chart": "kube-prometheus-stack",
+        "chartVersion": "77.5.0",
+        "namespace": "monitoring",
+        "imageRepository": "clemlabprojects",
+        "crds": ["servicemonitors.monitoring.coreos.com"]
+      }
+    },
+    "mutating-webhooks": {
+      "name": "kerberos-keytab-mutating-webhook",
+      "version": "v1.0",
+      "enabled": true
+    },
+    "mounts": [
+      {
+        "key": "data",
+        "label": "Trino data directory",
+        "defaultMountPath": "/data",
+        "supportedTypes": ["emptyDir", "pvc"],
+        "defaults": {
+          "type": "emptyDir",
+          "size": "10Gi",
+          "storageClass": "",
+          "accessModes": ["ReadWriteOnce"]
+        }
+      }
+    ],
+
+    "variables": [
+      { "name": "namespace", "from": { "type": "form", "field": "namespace" } },
+      { "name": "releaseName", "from": { "type": "form", "field": "releaseName" } },
+
+      { "name": "monitoring.namespace", "from": { "type": "form", "field": "monitoring.namespace" } },
+      { "name": "monitoring.release", "from": { "type": "form", "field": "monitoring.release" } },
+
+      { "name": "nameOverride", "from": { "type": "form", "field": "nameOverride" } },
+      { "name": "trino.fullname", "template": "${releaseName}-${nameOverride}" },
+      { "name": "workerPodPrefix", "template": "${releaseName}-${nameOverride}-worker-" },
+
+      { "name": "prometheus.serverAddress", "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090" },
+
+      { "name": "keda.requiredWorkers.window", "from": { "type": "form", "field": "requiredWorkers.window" } },
+      { "name": "keda.requiredWorkers.threshold", "from": { "type": "form", "field": "requiredWorkers.threshold" } },
+
+      { "name": "keda.queuedQueries.threshold", "from": { "type": "form", "field": "queuedQueries.threshold" } },
+      { "name": "keda.queuedQueries.activation", "from": { "type": "form", "field": "queuedQueries.activation" } },
+
+      { "name": "keda.runningQueries.threshold", "from": { "type": "form", "field": "runningQueries.threshold" } },
+      { "name": "keda.runningQueries.activation", "from": { "type": "form", "field": "runningQueries.activation" } },
+
+      { "name": "keda.heap.threshold", "from": { "type": "form", "field": "heap.threshold" } },
+      { "name": "keda.heap.activation", "from": { "type": "form", "field": "heap.activation" } },
+
+      { "name": "jmx.port", "from": { "type": "form", "field": "jmx.port" } },
+      { "name": "jmx.configPath", "from": { "type": "form", "field": "jmx.configPath" } },
+      { "name": "jmx.jarPath", "from": { "type": "form", "field": "jmx.jarPath" } },
+      { "name" : "kerberos.enabled", "template": "enabled"}
+    ],
+
+    "bindings": [
+      {
+        "role": "coordinator",
+        "field": "coordinator.config.nodeProperties.node\\.data-dir",
+        "mountKey": "data",
+        "suffix": "/trino",
+        "targets": [
+          { "path": "server.node.dataDir", "from": { "type": "mountPath", "mountKey": "data", "suffix": "/trino" } },
+          { "path": "coordinator.additionalVolumes[]", "kind": "volume", "mountKey": "data" },
+          { "path": "coordinator.additionalVolumeMounts[]", "kind": "mount", "mountKey": "data" }
+        ]
+      },
+      {
+        "role": "worker",
+        "field": "worker.config.nodeProperties.node\\.data-dir",
+        "mountKey": "data",
+        "suffix": "/trino",
+        "targets": [
+          { "path": "worker.additionalVolumes[]", "kind": "volume", "mountKey": "data" },
+          { "path": "worker.additionalVolumeMounts[]", "kind": "mount", "mountKey": "data" },
+          { "path": "worker.labels",
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "ambari.clemlab.com/keytab-injection": "${kerberos.enabled}"
               }
-            ]
-          },
-          {
-            "name": "coordinatorResources",
-            "label": "Ressources du Coordinateur",
-            "type": "group",
-            "fields": [
-              { "name": "coordinator.resources.requests.cpu", "label": "CPU Demandé", "type": "string", "defaultValue": "1" },
-              { "name": "coordinator.resources.requests.memory", "label": "Mémoire Demandée", "type": "string", "defaultValue": "4Gi" },
-              { "name": "coordinator.resources.limits.cpu", "label": "CPU Limite", "type": "string", "defaultValue": "2" },
-              { "name": "coordinator.resources.limits.memory", "label": "Mémoire Limite", "type": "string", "defaultValue": "8Gi" }
-            ]
-          },
-          {
-            "name": "workerResources",
-            "label": "Ressources des Workers",
-            "type": "group",
-            "fields": [
-              { "name": "worker.replicas", "label": "Nombre de Workers", "type": "number", "defaultValue": 3 },
-              { "name": "worker.resources.requests.cpu", "label": "CPU Demandé / Worker", "type": "string", "defaultValue": "1" },
-              { "name": "worker.resources.requests.memory", "label": "Mémoire Demandée / Worker", "type": "string", "defaultValue": "4Gi" },
-              { "name": "worker.resources.limits.cpu", "label": "CPU Limite / Worker", "type": "string", "defaultValue": "2" },
-              { "name": "worker.resources.limits.memory", "label": "Mémoire Limite / Worker", "type": "string", "defaultValue": "8Gi" }
-            ]
-          },
-          {
-            "name": "hadoopIntegration",
-            "label": "Intégration Hadoop",
-            "type": "group",
-            "fields": [
-              {
-                "name": "additionalCatalogs.hive.config.hive\\.metastore\\.uri",
-                "label": "Service Hive Metastore",
-                "type": "service-select",
-                "serviceType": "HIVE_METASTORE",
-                "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
-              }
-            ]
+            }
           }
         ]
       },
-      "prometheus": {
-        "label": "Prometheus",
-        "chart": "prometheus-community/prometheus",
-        "form": [
-          { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
-          { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "monitoring" },
-          { "name": "alertmanager.enabled", "label": "Activer Alertmanager", "type": "boolean", "defaultValue": true },
-          { "name": "server.retention", "label": "Rétention des données", "type": "string", "defaultValue": "14d", "help": "Exemples : 14d, 2w, 1y" }
+
+      {
+        "name": "fsGroup",
+        "targets": [
+          { "path": "podSecurityContext", "op": "merge", "value": { "fsGroup": 1000, "fsGroupChangePolicy": "OnRootMismatch" } }
+        ]
+      },
+
+      {
+        "name": "keda-enable",
+        "targets": [
+          { "path": "server.keda.enabled", "op": "set", "value": true },
+          { "path": "server.keda.minReplicaCount", "op": "set", "value": 1 },
+          { "path": "server.keda.maxReplicaCount", "op": "set", "value": 10 },
+          { "path": "server.keda.pollingInterval", "op": "set", "value": 15 },
+          { "path": "server.keda.cooldownPeriod", "op": "set", "value": 300 }
+        ]
+      },
+
+      {
+        "name": "service-monitor-enable",
+        "targets": [
+          { "path": "serviceMonitor.enabled", "op": "set", "value": true },
+          { "path": "serviceMonitor.apiVersion", "op": "set", "value": "monitoring.coreos.com/v1" },
+          { "path": "serviceMonitor.labels.release", "op": "set", "from": { "type": "var", "name": "monitoring.release" } },
+
+          { "path": "serviceMonitor.coordinator.enabled", "op": "set", "value": true },
+          { "path": "serviceMonitor.coordinator.endpoints[]", "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "port": "jmx",
+                "path": "/metrics",
+                "interval": "${serviceMonitor.interval}"
+              }
+            }
+          },
+          { "path": "serviceMonitor.worker.enabled", "op": "set", "value": true },
+
+          { "path": "serviceMonitor.worker.endpoints[]", "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "port": "jmx",
+                "path": "/metrics",
+                "interval": "${serviceMonitor.interval}"
+              }
+            }
+          }
+        ]
+      },
+
+      {
+        "name": "javaagent-enable",
+        "targets": [
+          { "path": "coordinator.additionalJVMConfig[]",      "op": "set", "from": { "type": "template", "template": "-javaagent:${jmx.jarPath}=${jmx.port}:${jmx.configPath}" } },
+          { "path": "worker.additionalJVMConfig[]",           "op": "set", "from": { "type": "template", "template": "-javaagent:${jmx.jarPath}=${jmx.port}:${jmx.configPath}" } },
+          { "path": "coordinator.additionalExposedPorts.jmx.servicePort", "op": "set", "from": { "type": "template", "template": "${jmx.port}" } },
+          { "path": "coordinator.additionalExposedPorts.jmx.name", "op": "set", "from": { "type": "template", "template": "jmx-exporter" } },
+          { "path": "coordinator.additionalExposedPorts.jmx.protocol", "op": "set", "from": { "type": "template", "template": "TCP" } },
+          { "path": "coordinator.additionalExposedPorts.jmx.port", "op": "set", "from": { "type": "template", "template": "${jmx.port}" } },
+          { "path": "worker.additionalExposedPorts.jmx.servicePort", "op": "set", "from": { "type": "template", "template": "${jmx.port}" } },
+          { "path": "worker.additionalExposedPorts.jmx.name", "op": "set", "from": { "type": "template", "template": "jmx-exporter" } },
+          { "path": "worker.additionalExposedPorts.jmx.protocol", "op": "set", "from": { "type": "template", "template": "TCP" } },
+          { "path": "worker.additionalExposedPorts.jmx.port", "op": "set", "from": { "type": "template", "template": "${jmx.port}" } },
+          { "path": "jmx.enabled", "op": "set", "from": { "type": "template", "template": "true" } },
+          { "path": "jmx.registryPort", "op": "set", "from": { "type": "template", "template": "9080" } },
+          { "path": "jmx.serverPort", "op": "set", "from": { "type": "template", "template": "9081" } }
+        ]
+      },
+
+      {
+        "name": "keda-triggers",
+        "targets": [
+          {
+            "path": "server.keda.triggers[]",
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "type": "prometheus",
+                "metricType": "Value",
+                "metadata": {
+                  "serverAddress": "${prometheus.serverAddress}",
+                  "metricName": "trino_required_workers",
+                  "threshold": "${keda.requiredWorkers.threshold}",
+                  "query": "sum by (service) (avg_over_time(trino_execution_ClusterSizeMonitor_RequiredWorkers{service=\"${trino.fullname}\"}[${keda.requiredWorkers.window}]))"
+                }
+              }
+            }
+          },
+          {
+            "path": "server.keda.triggers[]",
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "type": "prometheus",
+                "metricType": "Value",
+                "metadata": {
+                  "serverAddress": "${prometheus.serverAddress}",
+                  "metricName": "trino_queued_queries",
+                  "threshold": "${keda.queuedQueries.threshold}",
+                  "activationThreshold": "${keda.queuedQueries.activation}",
+                  "query": "sum(trino_execution_QueryManager_QueuedQueries{namespace=\"${namespace}\"})"
+                }
+              }
+            }
+          },
+          {
+            "path": "server.keda.triggers[]",
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "type": "prometheus",
+                "metricType": "Value",
+                "metadata": {
+                  "serverAddress": "${prometheus.serverAddress}",
+                  "metricName": "trino_running_queries",
+                  "threshold": "${keda.runningQueries.threshold}",
+                  "activationThreshold": "${keda.runningQueries.activation}",
+                  "query": "sum(trino_execution_QueryManager_RunningQueries{namespace=\"${namespace}\"})"
+                }
+              }
+            }
+          },
+          {
+            "path": "server.keda.triggers[]",
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "type": "prometheus",
+                "metricType": "Value",
+                "metadata": {
+                  "serverAddress": "${prometheus.serverAddress}",
+                  "metricName": "trino_heap_percent",
+                  "threshold": "${keda.heap.threshold}",
+                  "activationThreshold": "${keda.heap.activation}",
+                  "query": "((sum(java_lang_Memory_HeapMemoryUsage_used{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"}) / sum(java_lang_Memory_HeapMemoryUsage_max{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"})) * 100)"
+                }
+              }
+            }
+          }
         ]
       }
-    })
+    ],
+
+    "form": [
+      { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "default" },
+      { "name": "nameOverride", "label": "Nom logique (nameOverride)", "type": "string", "defaultValue": "clemlab-trino", "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)" },
+
+      {
+        "name": "monitoringGeneric",
+        "label": "Monitoring",
+        "type": "group",
+        "fields": [
+          { "name": "monitoring.namespace", "label": "Monitoring namespace", "type": "string", "defaultValue": "monitoring" },
+          { "name": "monitoring.release", "label": "Monitoring release (Helm)", "type": "string", "defaultValue": "kube-prometheus-stack", "help": "Utilisé pour construire l'URL du Prometheus interne." },
+          { "name": "serviceMonitor.enabled", "label": "Expose ServiceMonitor", "type": "boolean", "defaultValue": true },
+          { "name": "serviceMonitor.interval", "label": "Scrape interval", "type": "string", "defaultValue": "30s" },
+          { "name": "serviceMonitor.labels.release", "label": "Prometheus selector label value", "type": "string", "defaultValue": "${monitoring.release}" }
+        ]
+      },
+
+      {
+        "name": "networkAccess",
+        "label": "Accès Réseau (Service Trino)",
+        "type": "group",
+        "fields": [
+          { "name": "service.enabled", "label": "Activer l'accès interne (ClusterIP)", "type": "boolean", "defaultValue": true, "disabled": true },
+          { "name": "nodePort.enabled", "label": "Activer l'accès externe (NodePort)", "type": "boolean", "defaultValue": false },
+          { "name": "nodePort.port", "label": "Port du Nœud (Optionnel)", "type": "number", "condition": { "field": "nodePort.enabled", "value": true } }
+        ]
+      },
+
+      {
+        "name": "coordinatorResources",
+        "label": "Ressources du Coordinateur",
+        "type": "group",
+        "fields": [
+          { "name": "coordinator.resources.requests.cpu", "label": "CPU Demandé", "type": "string", "defaultValue": "1" },
+          { "name": "coordinator.resources.requests.memory", "label": "Mémoire Demandée", "type": "string", "defaultValue": "4Gi" },
+          { "name": "coordinator.resources.limits.cpu", "label": "CPU Limite", "type": "string", "defaultValue": "2" },
+          { "name": "coordinator.resources.limits.memory", "label": "Mémoire Limite", "type": "string", "defaultValue": "8Gi" },
+          { "name": "coordinator.config.nodeProperties.node\\.data-dir", "label": "Répertoire de données (Coordinateur)", "type": "string", "defaultValue": "/data/trino" }
+        ]
+      },
+
+      {
+        "name": "workerResources",
+        "label": "Ressources des Workers",
+        "type": "group",
+        "fields": [
+          { "name": "worker.replicas", "label": "Nombre de Workers", "type": "number", "defaultValue": 3 },
+          { "name": "worker.resources.requests.cpu", "label": "CPU Demandé / Worker", "type": "string", "defaultValue": "1" },
+          { "name": "worker.resources.requests.memory", "label": "Mémoire Demandée / Worker", "type": "string", "defaultValue": "4Gi" },
+          { "name": "worker.resources.limits.cpu", "label": "CPU Limite / Worker", "type": "string", "defaultValue": "2" },
+          { "name": "worker.resources.limits.memory", "label": "Mémoire Limite / Worker", "type": "string", "defaultValue": "8Gi" },
+          { "name": "worker.config.nodeProperties.node\\.data-dir", "label": "Répertoire de données (Worker)", "type": "string", "defaultValue": "/data/trino" }
+        ]
+      },
+
+      {
+        "name": "autoscaling",
+        "label": "Autoscaling (KEDA)",
+        "type": "group",
+        "fields": [
+          { "name": "requiredWorkers.window", "label": "Fenêtre (required workers)", "type": "string", "defaultValue": "30s" },
+          { "name": "requiredWorkers.threshold", "label": "Seuil (required workers)", "type": "string", "defaultValue": "1" },
+          { "name": "queuedQueries.threshold", "label": "Seuil (queued queries)", "type": "string", "defaultValue": "5" },
+          { "name": "queuedQueries.activation", "label": "Activation (queued queries)", "type": "string", "defaultValue": "1" },
+          { "name": "runningQueries.threshold", "label": "Seuil (running queries)", "type": "string", "defaultValue": "10" },
+          { "name": "runningQueries.activation", "label": "Activation (running queries)", "type": "string", "defaultValue": "1" },
+          { "name": "heap.threshold", "label": "Seuil (%) Heap", "type": "string", "defaultValue": "70" },
+          { "name": "heap.activation", "label": "Activation (%) Heap", "type": "string", "defaultValue": "40" }
+        ]
+      },
+
+      {
+        "name": "jmxAgent",
+        "label": "JMX Exporter (Java Agent)",
+        "type": "group",
+        "fields": [
+          { "name": "jmx.port", "label": "Port /metrics", "type": "string", "defaultValue": "5556" },
+          { "name": "jmx.configPath", "label": "Chemin config YAML", "type": "string", "defaultValue": "/opt/java_metrics/config.yaml" },
+          { "name": "jmx.jarPath", "label": "Chemin jar javaagent", "type": "string", "defaultValue": "/usr/lib/trino/lib/jmx_prometheus_javaagent.jar" }
+        ]
+      },
+
+      {
+        "name": "hadoopIntegration",
+        "label": "Intégration Hadoop",
+        "type": "group",
+        "fields": [
+          {
+            "name": "additionalCatalogs.hive.config.hive\\.metastore\\.uri",
+            "label": "Service Hive Metastore",
+            "type": "service-select",
+            "serviceType": "HIVE_METASTORE",
+            "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
+          }
+        ]
+      }
+    ]
+  },
+
+  "prometheus": {
+    "label": "Prometheus",
+    "chart": "prometheus-community/prometheus",
+    "form": [
+      { "name": "releaseName", "label": "Nom du Release", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "monitoring" },
+      { "name": "alertmanager.enabled", "label": "Activer Alertmanager", "type": "boolean", "defaultValue": true },
+      { "name": "server.retention", "label": "Rétention des données", "type": "string", "defaultValue": "14d", "help": "Exemples : 14d, 2w, 1y" }
+    ]
+  }
+}
+};
