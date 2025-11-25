@@ -208,9 +208,15 @@ def prepareOzoneLayout(dirs):
     to_create = [dirs]
   for scm_path in to_create:
     Logger.info(format("Creating dir {scm_path}"))
-    os.makedirs(scm_path, exist_ok=True)
-    os.chmod(scm_path, 0o754)
-    os.chown(scm_path, uid, gid)  # Change ownership
+    Execute(('mkdir', '-p', scm_path),
+        sudo=True
+        )
+    Execute(('chmod', '-R', '0754', scm_path),
+        sudo=True
+        )
+    Execute(('chown', format('{uid}:{gid}'), scm_path),
+        sudo=True
+        )
 
 
 ## formatting Ozone Manager server directories

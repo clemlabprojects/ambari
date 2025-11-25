@@ -1083,6 +1083,12 @@
             # to keep OZONE_IDENT_STRING untouched, then uncomment this line.
             # export OZONE_SECURE_IDENT_PRESERVE="true"
 
+            ### JDK 9+ specific options
+            {% if java_version > 8 %}
+            OZONE_S3G_OPTS="$OZONE_S3G_OPTS --add-opens=java.base/java.lang=ALL-UNNAMED -Dcom.sun.xml.bind.v2.bytecode.ClassTailor.noOptimize=true -Djersey.config.server.wadl.disableWadl=true "
+            OZONE_RECON_OPTS="$OZONE_RECON_OPTS --add-opens=java.base/java.lang=ALL-UNNAMED "
+            {% endif %}
+
             ###
             # Ozone Manager specific parameters
             ###
@@ -1126,7 +1132,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_S3G_OPTS="$OZONE_S3G_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
 
             {% if security_enabled %}
             {% if role == 'ozone-manager' %}
@@ -1142,7 +1148,7 @@
             export OZONE_RECON_OPTS="$OZONE_RECON_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_recon_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             {% endif %}
             {% if role == 'ozone-s3g' %}
-            export OZONE_S3_GATEWAY_OPTS="$OZONE_S3_GATEWAY_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
+            export OZONE_S3G_OPTS="$OZONE_S3G_OPTS -Djava.security.auth.login.config={{ozone_conf_dir}}/ozone_gateway_jaas.conf -Djavax.security.auth.useSubjectCredsOnly=false"
             {% endif %}
             {% endif %}
 
