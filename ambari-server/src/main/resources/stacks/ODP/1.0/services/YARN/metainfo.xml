@@ -30,7 +30,7 @@
           <name>TIMELINE_READER</name>
           <displayName>Timeline Service V2.0 Reader</displayName>
           <category>MASTER</category>
-          <cardinality>1+</cardinality>
+          <cardinality>0+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <reassignAllowed>true</reassignAllowed>
           <auto-deploy>
