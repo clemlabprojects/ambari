@@ -290,16 +290,22 @@ class TezRecommender(service_advisor.ServiceAdvisor):
     pass
 
     # TEZ JVM options
+    defaultjvmParams = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "
     jvmGCParams = "-XX:+UseParallelGC"
     if "ambari-server-properties" in services and "java.home" in services["ambari-server-properties"]:
       # JDK8 needs different parameters
       jdkMajorVersion = self.__getJdkMajorVersion(services["ambari-server-properties"]["java.home"])
       if jdkMajorVersion and len(jdkMajorVersion) > 1 and int(jdkMajorVersion[0]) > 0 and int(jdkMajorVersion[1]) > 7:
         jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
+        if int(jdkMajorVersion[0]) >= 11:
+          # JDK11+ needs additional params
+          jvmGCParams += " -XX:+ExplicitGCInvokesConcurrent"
+          defaultjvmParams = "-Xlog:gc*,gc+heap*=info,gc+age=trace -XX:+UseNUMA "
       # Note: Same calculation is done in 2.6/stack_advisor::recommendTezConfigurations() for 'tez.task.launch.cmd-opts',
     # and along with it, are appended heap dump opts. If something changes here, make sure to change it in 2.6 stack.
-    putTezProperty('tez.am.launch.cmd-opts', "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA " + jvmGCParams)
-    putTezProperty('tez.task.launch.cmd-opts', "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA " + jvmGCParams)
+    
+    putTezProperty('tez.am.launch.cmd-opts', defaultjvmParams + jvmGCParams)
+    putTezProperty('tez.task.launch.cmd-opts', defaultjvmParams + jvmGCParams)
 
 
   def recommendTezConfigurationsFromHDP26(self, configurations, clusterData, services, hosts):
@@ -310,9 +316,15 @@ class TezRecommender(service_advisor.ServiceAdvisor):
     if "ambari-server-properties" in services and "java.home" in services["ambari-server-properties"]:
       # JDK8 needs different parameters
       jdkMajorVersion = self.__getJdkMajorVersion(services["ambari-server-properties"]["java.home"])
+      tez_jvm_opts = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "
       if jdkMajorVersion and len(jdkMajorVersion) > 1 and int(jdkMajorVersion[0]) > 0 and int(jdkMajorVersion[1]) > 7:
         jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
-    tez_jvm_opts = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "
+        if int(jdkMajorVersion[0]) >= 11:
+          # JDK11+ needs additional params
+          jvmGCParams += " -XX:+ExplicitGCInvokesConcurrent"
+          tez_jvm_opts = "-Xlog:gc*,gc+heap*=info,gc+age=trace -XX:+UseNUMA --add-opens=java.base/java.lang=ALL-UNNAMED "
+
+    
     # Append 'jvmGCParams' and 'Heap Dump related option' (({{heap_dump_opts}}) Expanded while writing the
     # configurations at start/restart time).
     tez_jvm_updated_opts = tez_jvm_opts + jvmGCParams + "{{heap_dump_opts}}"
@@ -335,6 +347,11 @@ class TezRecommender(service_advisor.ServiceAdvisor):
     # TEZ JVM options
     jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
     tez_jvm_opts = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "
+    jdkMajorVersion = self.__getJdkMajorVersion(services["ambari-server-properties"]["java.home"])
+    if jdkMajorVersion and len(jdkMajorVersion) > 1 and int(jdkMajorVersion[0]) > 0 and int(jdkMajorVersion[1]) >= 11:
+      # JDK11+ needs additional params
+      jvmGCParams += " -XX:+ExplicitGCInvokesConcurrent"
+      tez_jvm_opts = "-Xlog:gc*,gc+heap*=info,gc+age=trace -XX:+UseNUMA --add-opens=java.base/java.lang=ALL-UNNAMED"
     # Append 'jvmGCParams' and 'Heap Dump related option' (({{heap_dump_opts}}) Expanded while writing the
     # configurations at start/restart time).
     tez_jvm_updated_opts = tez_jvm_opts + jvmGCParams + "{{heap_dump_opts}}"
