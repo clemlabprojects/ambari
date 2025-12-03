@@ -253,8 +253,8 @@ App.QueueAdapter = DS.Adapter.extend({
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
       _ajax(uri,'GET').then(function(data) {
-        var parsedData = JSON.parse(data), labels;
-
+        var parsedData = (typeof data === 'string') ? JSON.parse(data) : data,
+          labels;
         if (parsedData !== null) {
           store.set('isNodeLabelsConfiguredByRM', true);
         } else {

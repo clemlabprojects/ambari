@@ -106,7 +106,7 @@ function _fetchTagged(adapter, store, type, sinceToken) {
 }
 
 function _fillRmQueueStateIntoQueues(data, store) {
-  var parsed = JSON.parse(data),
+  var parsed = (typeof data === 'string') ? JSON.parse(data) : data,
   queuesNeedRefresh = store.get('queuesNeedRefresh'),
   rootQInfo = parsed['scheduler']['schedulerInfo'];
   var queueStates = _getRmQueueStates(rootQInfo, 'root', []);
