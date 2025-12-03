@@ -172,7 +172,7 @@ class HiveServerInteractive(Script):
           except urllib.error.HTTPError as e:
             if e.code < 400:
               running = True
-          except socket.error, e:
+          except socket.error as e:
             # If we get connection reset error there is a live HS2 on other side.
             if e.errno == 104:
               running = True
@@ -299,8 +299,8 @@ class HiveServerInteractive(Script):
       llap_java_args = InlineTemplate(params.llap_app_java_opts).get_content()
       cmd += format(" --args \" {llap_java_args}\"")
       # Append metaspace size to args.
-      if params.java_version > 7 and params.llap_daemon_container_size > 4096:
-        if params.llap_daemon_container_size <= 32768:
+      if int(params.java_version) > 7 and int(params.llap_daemon_container_size) > 4096:
+        if int(params.llap_daemon_container_size) <= 32768:
           metaspaceSize = "256m"
         else:
           metaspaceSize = "1024m"
