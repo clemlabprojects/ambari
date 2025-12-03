@@ -18,6 +18,7 @@
 package org.apache.ambari.server.upgrade;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -28,6 +29,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -330,13 +332,40 @@ public class SchemaUpgradeHelper {
     try (Connection connection = DriverManager.getConnection(connectionURL, username, password)) {
       connection.setAutoCommit(true);
       for (String tableName : rcaTableNames) {
-        String query = "DELETE FROM " + tableName;
-        try (Statement statement = connection.createStatement()) {
-          statement.execute(query);
+        try {
+          if (!tableExists(connection, tableName)) {
+            LOG.debug("Skipping RCA cleanup, table {} not found", tableName);
+            continue;
+          }
+
+          String query = "DELETE FROM " + tableName;
+          try (Statement statement = connection.createStatement()) {
+            statement.execute(query);
+          }
         } catch (Exception e) {
-          LOG.warn("Error while executing query: " + query, e);
+          LOG.warn("Error while executing query on RCA table " + tableName, e);
         }
       }
+    }
+  }
+
+  /**
+   * Checks if the given table exists in the provided connection. Some JDBC drivers
+   * return table names in lower case, so we try the original and lower-case forms.
+   */
+  private boolean tableExists(Connection connection, String tableName) throws SQLException {
+    DatabaseMetaData metaData = connection.getMetaData();
+
+    if (tableExists(metaData, tableName)) {
+      return true;
+    }
+
+    return tableExists(metaData, tableName.toLowerCase(Locale.US));
+  }
+
+  private boolean tableExists(DatabaseMetaData metaData, String tableName) throws SQLException {
+    try (ResultSet resultSet = metaData.getTables(null, null, tableName, new String[]{"TABLE"})) {
+      return resultSet.next();
     }
   }
 
