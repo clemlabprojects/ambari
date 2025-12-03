@@ -20,17 +20,17 @@ set -e
 AMBARI_PASSHPHRASE="DEV"
 
 # Set JVM arguments for Ambari
-AMBARI_JVM_ARGS="--add-opens java.base/java.lang=ALL-UNNAMED "
-AMBARI_JVM_ARGS+="--add-opens java.base/java.util.regex=ALL-UNNAMED "
-AMBARI_JVM_ARGS+="--add-opens java.base/java.util=ALL-UNNAMED "
-AMBARI_JVM_ARGS+="--add-opens java.base/java.lang.reflect=ALL-UNNAMED "
-AMBARI_JVM_ARGS+="-Xms512m -Xmx2048m "
-AMBARI_JVM_ARGS+="-Djava.security.auth.login.config=$ROOT/etc/ambari-server/conf/krb5JAASLogin.conf "
-AMBARI_JVM_ARGS+="-Djava.security.krb5.conf=/etc/krb5.conf "
-AMBARI_JVM_ARGS+="-Djavax.security.auth.useSubjectCredsOnly=false "
-AMBARI_JVM_ARGS+="-Dcom.sun.jndi.ldap.connect.pool.protocol=\"plain ssl\" "
-AMBARI_JVM_ARGS+="-Dcom.sun.jndi.ldap.connect.pool.maxsize=20 "
-AMBARI_JVM_ARGS+="-Dcom.sun.jndi.ldap.connect.pool.timeout=300000"
+AMBARI_JVM_ARGS="--add-opens java.base/java.lang=ALL-UNNAMED"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS --add-opens java.base/java.util.regex=ALL-UNNAMED"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS --add-opens java.base/java.util=ALL-UNNAMED"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS --add-opens java.base/java.lang.reflect=ALL-UNNAMED"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Xms512m -Xmx2048m"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Djava.security.auth.login.config=$ROOT/etc/ambari-server/conf/krb5JAASLogin.conf"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Djava.security.krb5.conf=/etc/krb5.conf"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Djavax.security.auth.useSubjectCredsOnly=false"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Dcom.sun.jndi.ldap.connect.pool.protocol=\"plain ssl\""
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Dcom.sun.jndi.ldap.connect.pool.maxsize=20"
+AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS -Dcom.sun.jndi.ldap.connect.pool.timeout=300000"
 export AMBARI_JVM_ARGS
 
 # Update PATH to include Ambari server directory
