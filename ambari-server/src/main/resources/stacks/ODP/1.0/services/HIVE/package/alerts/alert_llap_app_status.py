@@ -154,7 +154,7 @@ def execute(configurations={}, parameters={}, host_name=None):
 
 
     start_time = time.time()
-    llap_status_cmd = STACK_ROOT_DEFAULT + format("/current/hive-server2/bin/hive --service llapstatus --name {llap_app_name} --findAppTimeout {LLAP_APP_STATUS_CMD_TIMEOUT}")
+    llap_status_cmd = STACK_ROOT_DEFAULT + format("/current/hive-server2/bin/hive --config {params.hive_server_interactive_conf_dir} --service llapstatus --name {llap_app_name} --findAppTimeout {LLAP_APP_STATUS_CMD_TIMEOUT}")
 
     code, output, error = shell.checked_call(llap_status_cmd, user=hive_user, stderr=subprocess.PIPE,
                                              timeout=check_command_timeout,

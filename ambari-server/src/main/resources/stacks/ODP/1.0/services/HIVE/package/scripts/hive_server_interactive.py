@@ -260,7 +260,7 @@ class HiveServerInteractive(Script):
 
       unique_name = "llap-yarn-service_%s" % datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
 
-      cmd = format("{stack_root}/current/hive-server2/bin/hive --service llap --startImmediately --size {params.llap_daemon_container_size}m --name {params.llap_app_name} "
+      cmd = format("{stack_root}/current/hive-server2/bin/hive --config {params.hive_server_interactive_conf_dir} --service llap --startImmediately --size {params.llap_daemon_container_size}m --name {params.llap_app_name} "
                    "--cache {params.hive_llap_io_mem_size}m --xmx {params.llap_heap_size}m --loglevel {params.llap_log_level} --auxhbase=false "
                    "--output {LLAP_PACKAGE_CREATION_PATH}/{unique_name}")
 
@@ -401,7 +401,7 @@ class HiveServerInteractive(Script):
       # -t : Exit watch mode if the desired state is not attained until the specified timeout (Default: 300sec)
       #
       #            example : llapstatus -w -r 0.8 -i 2 -t 150
-      llap_status_cmd = format("{stack_root}/current/hive-server2/bin/hive --service llapstatus -w -r {percent_desired_instances_to_be_up} -i {refresh_rate} -t {total_timeout}")
+      llap_status_cmd = format("{stack_root}/current/hive-server2/bin/hive --config {params.hive_server_interactive_conf_dir} --service llapstatus -w -r {percent_desired_instances_to_be_up} -i {refresh_rate} -t {total_timeout}")
       Logger.info("\n\n\n\n\n");
       Logger.info("LLAP status command : {0}".format(llap_status_cmd))
       code, output, error = shell.checked_call(llap_status_cmd,
@@ -497,8 +497,9 @@ class HiveServerInteractive(Script):
 
       try:
         return self._verify_llap_app_status(llap_app_info, llap_app_name, return_immediately_if_stopped, curr_time)
+      
       except Exception as e:
-        Logger.info(e.message)
+        Logger.info(str(e))
         return False
 
     def get_log_folder(self):
