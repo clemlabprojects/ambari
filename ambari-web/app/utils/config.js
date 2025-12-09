@@ -651,6 +651,10 @@ App.config = Em.Object.create({
         };
       default:
         return function (value, name) {
+          var tezOptsFields = ['tez_am_base_java_opts', 'tez_am_extra_java_opts', 'tez_task_base_java_opts', 'tez_task_extra_java_opts'];
+          if (tezOptsFields.contains(name) && validator.isNotTrimmed(value)) {
+            return Em.I18n.t('errorMessage.config.spaces.trim');
+          }
           if (['javax.jdo.option.ConnectionURL', 'oozie.service.JPAService.jdbc.url'].contains(name)
             && !validator.isConfigValueLink(value) && validator.isConfigValueLink(value)) {
             return Em.I18n.t('errorMessage.config.spaces.trim');

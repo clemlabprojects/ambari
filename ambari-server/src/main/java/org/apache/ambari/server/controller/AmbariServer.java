@@ -112,6 +112,7 @@ import org.apache.ambari.server.security.unsecured.rest.CertificateSign;
 import org.apache.ambari.server.security.unsecured.rest.ConnectionInfo;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.KerberosKeytabController;
 import org.apache.ambari.server.stack.UpdateActiveRepoVersionOnStartup;
+import org.apache.ambari.server.stack.TezJdkConfigurationSync;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.topology.AmbariContext;
 import org.apache.ambari.server.topology.BlueprintFactory;
@@ -1072,6 +1073,11 @@ public class AmbariServer {
 
       server = injector.getInstance(AmbariServer.class);
       injector.getInstance(UpdateActiveRepoVersionOnStartup.class).process();
+      try {
+        injector.getInstance(TezJdkConfigurationSync.class).process();
+      } catch (Exception ex) {
+        LOG.warn("Failed to synchronize Tez JVM options after JDK change: {}", ex.getMessage(), ex);
+      }
       CertificateManager certMan = injector.getInstance(CertificateManager.class);
       certMan.initRootCert();
       KerberosChecker.checkJaasConfiguration();

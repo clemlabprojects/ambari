@@ -788,6 +788,16 @@
       </component>
     </service>
 
+    <service name="TEZ">
+      <component name="TEZ_CLIENT">
+        <pre-upgrade>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig">
+            <summary>Update Tez JVM configuration to base/extra properties</summary>
+          </task>
+        </pre-upgrade>
+      </component>
+    </service>
+
     <service name="SQOOP">
       <component name="SQOOP">
         <upgrade>

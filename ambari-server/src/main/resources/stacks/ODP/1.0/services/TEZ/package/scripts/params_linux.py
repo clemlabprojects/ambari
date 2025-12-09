@@ -115,5 +115,30 @@ HdfsResource = functools.partial(
 
 tez_site_config = dict(config['configurations']['tez-site'])
 
+# Compose Tez AM/task launch opts from tez-env base/extra when explicit tez-site values are empty.
+tez_am_base_java_opts = default('/configurations/tez-env/tez_am_base_java_opts', "").strip()
+tez_am_extra_java_opts = default('/configurations/tez-env/tez_am_extra_java_opts', "").strip()
+tez_task_base_java_opts = default('/configurations/tez-env/tez_task_base_java_opts', "").strip()
+tez_task_extra_java_opts = default('/configurations/tez-env/tez_task_extra_java_opts', "").strip()
+
+tez_am_launch_cmd_opts = default('/configurations/tez-site/tez.am.launch.cmd-opts', "")
+tez_task_launch_cmd_opts = default('/configurations/tez-site/tez.task.launch.cmd-opts', "")
+
+def _compose_opts(base_opts, extra_opts):
+  parts = []
+  if base_opts:
+    parts.append(base_opts.strip())
+  if extra_opts:
+    parts.append(extra_opts.strip())
+  return (" ".join(parts)).strip()
+
+if not tez_am_launch_cmd_opts or not str(tez_am_launch_cmd_opts).strip():
+  tez_am_launch_cmd_opts = _compose_opts(tez_am_base_java_opts, tez_am_extra_java_opts)
+
+if not tez_task_launch_cmd_opts or not str(tez_task_launch_cmd_opts).strip():
+  tez_task_launch_cmd_opts = _compose_opts(tez_task_base_java_opts, tez_task_extra_java_opts)
+
+tez_site_config['tez.am.launch.cmd-opts'] = tez_am_launch_cmd_opts
+tez_site_config['tez.task.launch.cmd-opts'] = tez_task_launch_cmd_opts
 
 

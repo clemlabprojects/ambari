@@ -27,6 +27,89 @@ import fnmatch
 import subprocess
 
 
+# Default Tez AM JVM options for different Java major versions
+TEZ_AM_DEFAULT_OPTS_JDK8 = (
+    "-XX:+PrintGCDetails "
+    "-verbose:gc "
+    "-XX:+PrintGCTimeStamps "
+    "-XX:+UseNUMA "
+    "-XX:+UseG1GC"
+)
+
+TEZ_AM_DEFAULT_OPTS_JDK9_PLUS = (
+    "-Xlog:gc*,gc+heap*=info,gc+age=trace "
+    "-XX:+UseNUMA "
+    "--add-opens=java.base/java.lang=ALL-UNNAMED "
+    "--add-opens=java.base/java.net=ALL-UNNAMED "
+    "--add-opens=java.base/java.nio=ALL-UNNAMED "
+    "--add-opens=java.base/java.util=ALL-UNNAMED "
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED "
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
+)
+
+
+def _parse_java_major(version_str):
+  """
+  Parse java -version string into a major version int.
+
+  Examples of version_str:
+    - "1.8.0_382"
+    - "8"
+    - "11.0.23"
+    - "17"
+  """
+  v = version_str.strip().strip('"').strip()
+  if v.startswith("1."):
+    # Old style: 1.8.x → 8
+    parts = v.split(".")
+    return int(parts[1])
+  # New style: 11.0.23 → 11, 17 → 17
+  return int(v.split(".")[0])
+
+
+def get_tez_am_opts(java_version_str, heap_dump_opts=""):
+  """
+  Return the default Tez AM JVM options string for the given Java version.
+
+  :param java_version_str: e.g. "1.8.0_382", "8", "11.0.23", "17"
+  :param heap_dump_opts:   extra string like '{{heap_dump_opts}}' or '-XX:+HeapDumpOnOutOfMemoryError ...'
+  """
+  major = _parse_java_major(java_version_str)
+
+  if major < 9:
+    base = TEZ_AM_DEFAULT_OPTS_JDK8
+  else:
+    base = TEZ_AM_DEFAULT_OPTS_JDK9_PLUS
+
+  heap_dump_opts = (heap_dump_opts or "").strip()
+  if heap_dump_opts:
+    return f"{base} {heap_dump_opts}".strip()
+  return base
+
+
+def _get_java_version_from_services(services):
+  server_properties = services.get("ambari-server-properties")
+  if not server_properties or not isinstance(server_properties, dict):
+    return None
+
+  if "java.version" in server_properties:
+    return server_properties["java.version"]
+
+  java_home = server_properties.get("java.home")
+  if not java_home:
+    return None
+
+  try:
+    java_version_output = subprocess.check_output([java_home + "/bin/java", "-version"], stderr=subprocess.STDOUT)
+    match = re.search(r'version \"([^\"]+)\"', java_version_output.decode())
+    if match:
+      return match.group(1)
+  except Exception:
+    pass
+
+  return None
+
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STACKS_DIR = os.path.join(SCRIPT_DIR, '../../../../../stacks/')
 PARENT_FILE = os.path.join(STACKS_DIR, 'service_advisor.py')
@@ -131,6 +214,7 @@ class TezServiceAdvisor(service_advisor.ServiceAdvisor):
     recommender.recommendTezConfigurationsFromHDP26(configurations, clusterData, services, hosts)
     recommender.recommendTezConfigurationsFromHDP30(configurations, clusterData, services, hosts)
     recommender.recommendTezConfigurationsFromODP12(configurations, clusterData, services, hosts)
+    recommender.recommendTezConfigurationsFromODP13(configurations, clusterData, services, hosts)
 
 
 
@@ -360,6 +444,33 @@ class TezRecommender(service_advisor.ServiceAdvisor):
     self.logger.info("Updated 'tez-site' config 'tez.task.launch.cmd-opts' and 'tez.am.launch.cmd-opts' as "
                 ": {0}".format(tez_jvm_updated_opts))
 
+  def recommendTezConfigurationsFromODP13(self, configurations, clusterData, services, hosts):
+    putTezProperty = self.putProperty(configurations, "tez-site")
+
+    java_version_str = _get_java_version_from_services(services) or "8"
+    base_opts = get_tez_am_opts(java_version_str, "")
+    default_extra_opts = "{{heap_dump_opts}}"
+
+    putTezEnvProperty = self.putProperty(configurations, "tez-env", services)
+    putTezProperty = self.putProperty(configurations, "tez-site")
+
+    try:
+      putTezEnvProperty('tez_am_base_java_opts', base_opts)
+      putTezEnvProperty('tez_task_base_java_opts', base_opts)
+      putTezEnvProperty('tez_am_extra_java_opts', default_extra_opts)
+      putTezEnvProperty('tez_task_extra_java_opts', default_extra_opts)
+    except Exception:
+      fallback = get_tez_am_opts("8", "")
+      putTezEnvProperty('tez_am_base_java_opts', fallback)
+      putTezEnvProperty('tez_task_base_java_opts', fallback)
+      putTezEnvProperty('tez_am_extra_java_opts', default_extra_opts)
+      putTezEnvProperty('tez_task_extra_java_opts', default_extra_opts)
+
+    # Keep tez-site opts empty to allow composition from tez-env base/extra values
+    putTezProperty('tez.am.launch.cmd-opts', "")
+    putTezProperty('tez.task.launch.cmd-opts', "")
+    self.logger.info("Updated Tez JVM base/extra options in 'tez-env' for java version: {0}".format(java_version_str))
+
 
   def __getJdkMajorVersion(self, javaHome):
     jdkVersion = subprocess.check_output([javaHome + "/bin/java", "-version"], stderr=subprocess.STDOUT)
@@ -418,6 +529,3 @@ class TezValidator(service_advisor.ServiceAdvisor):
                                   "{0} should be less than YARN max allocation size ({1})".format(prop_name2, yarnMaxAllocationSize))})
 
     return self.toConfigurationValidationProblems(validationItems, "tez-site")
-
-
-

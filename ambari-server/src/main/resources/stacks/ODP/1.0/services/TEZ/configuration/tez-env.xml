@@ -85,6 +85,34 @@ export JAVA_HOME={{java64_home}}
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>tez_am_base_java_opts</name>
+    <display-name>Tez AM Base Java Opts</display-name>
+    <value></value>
+    <description>Base Java options for Tez AppMaster. Ambari recommends JDK-aware defaults and composes tez.am.launch.cmd-opts from base + extra when tez-site is empty.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>tez_am_extra_java_opts</name>
+    <display-name>Tez AM Extra Java Opts</display-name>
+    <value>{{heap_dump_opts}}</value>
+    <description>Additional Java options for Tez AppMaster appended after the base options. Leave empty for none.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>tez_task_base_java_opts</name>
+    <display-name>Tez Task Base Java Opts</display-name>
+    <value></value>
+    <description>Base Java options for Tez tasks. Ambari recommends JDK-aware defaults and composes tez.task.launch.cmd-opts from base + extra when tez-site is empty.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>tez_task_extra_java_opts</name>
+    <display-name>Tez Task Extra Java Opts</display-name>
+    <value>{{heap_dump_opts}}</value>
+    <description>Additional Java options for Tez tasks appended after the base options. Leave empty for none.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>heap_dump_location</name>
     <value>/tmp</value>
     <description>Location for heap dump file</description>

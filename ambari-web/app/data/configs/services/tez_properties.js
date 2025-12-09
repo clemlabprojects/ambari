@@ -37,6 +37,18 @@ module.exports = [
   },
   {
     "category": "General",
+    "filename": "tez-env.xml",
+    "name": "tez_am_base_java_opts",
+    "serviceName": "TEZ"
+  },
+  {
+    "category": "General",
+    "filename": "tez-env.xml",
+    "name": "tez_am_extra_java_opts",
+    "serviceName": "TEZ"
+  },
+  {
+    "category": "General",
     "filename": "tez-site.xml",
     "name": "tez.am.launch.env",
     "serviceName": "TEZ"
@@ -51,6 +63,18 @@ module.exports = [
     "category": "General",
     "filename": "tez-site.xml",
     "name": "tez.task.launch.cmd-opts",
+    "serviceName": "TEZ"
+  },
+  {
+    "category": "General",
+    "filename": "tez-env.xml",
+    "name": "tez_task_base_java_opts",
+    "serviceName": "TEZ"
+  },
+  {
+    "category": "General",
+    "filename": "tez-env.xml",
+    "name": "tez_task_extra_java_opts",
     "serviceName": "TEZ"
   },
   {
