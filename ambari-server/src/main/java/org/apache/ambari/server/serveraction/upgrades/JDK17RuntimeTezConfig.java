@@ -31,7 +31,6 @@ import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.Host;
-import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.UpgradeContext;
 import org.slf4j.Logger;

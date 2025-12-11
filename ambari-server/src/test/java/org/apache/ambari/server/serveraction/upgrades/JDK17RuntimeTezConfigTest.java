@@ -24,7 +24,6 @@ import static org.junit.Assert.assertTrue;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.ambari.server.stack.TezJdkConfigurationSync;
 import org.junit.Test;
 
 public class JDK17RuntimeTezConfigTest {

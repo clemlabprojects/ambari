@@ -18,7 +18,6 @@
 
 package org.apache.ambari.server.stack;
 
-import static org.apache.ambari.server.stack.TezJdkConfigurationSync.HEAP_DUMP_PLACEHOLDER;
 import static org.apache.ambari.server.stack.TezJdkConfigurationSync.TEZ_AM_BASE_OPTS;
 import static org.apache.ambari.server.stack.TezJdkConfigurationSync.TEZ_ENV;
 import static org.apache.ambari.server.stack.TezJdkConfigurationSync.TEZ_TASK_BASE_OPTS;
