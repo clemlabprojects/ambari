@@ -321,7 +321,7 @@ class RangeradminV2:
     :return: Returns user credentials if user exist otherwise rerutns credentials of  created user.
     """
     flag_ambari_admin_present = False
-    match = re.match('[a-zA-Z0-9_\S]+$', ambari_admin_password)
+    match = re.match(r'[a-zA-Z0-9_\S]+$', ambari_admin_password)
     if match is None:
       raise Fail('Invalid password given for Ranger Admin user for Ambari')
     try:
@@ -393,7 +393,7 @@ class RangeradminV2:
     :return: response code.
     """
     flag_rangerlookup_present = False
-    match = re.match('[a-zA-Z0-9_\S]+$', ranger_lookup_password)
+    match = re.match(r'[a-zA-Z0-9_\S]+$', ranger_lookup_password)
     if match is None:
       raise Fail('Invalid password given for Ranger rangerlookup user')
     try:
@@ -509,7 +509,7 @@ class RangeradminV2:
           request.add_header("Authorization", "Basic {0}".format(base_64_string))
           result = openurl(request, timeout=20)
           response_code = result.getcode()
-          if response_code == 201:
+          if response_code == 201 or response_code == 204:
             Logger.info(format('{policy_user} user creation successful.'))
             return response_code
           else:
@@ -595,7 +595,7 @@ class RangeradminV2:
       raise Fail('Error in call for getting Ranger service:\n {0}'.format(err))
 
   @safe_retry(times=5, sleep_time=1, backoff_factor=1.5, err_class=Fail, return_on_fail=None)
-  def create_repository_curl(self, component_user, component_user_keytab, component_user_principal, name, data, policy_user, is_keyadmin = False):
+  def create_repository_curl(self, component_user, component_user_keytab, component_user_principal, name, data, policy_user, is_keyadmin=False):
     """
     :param component_user: service user for which call is to be made
     :param component_user_keytab: keytab of service user
@@ -610,8 +610,19 @@ class RangeradminV2:
         search_repo_url = '{0}?suser=keyadmin'.format(search_repo_url)
       header = 'Content-Type: application/json'
       method = 'POST'
-      response,error_message,time_in_millis = self.call_curl_request(component_user,component_user_keytab,component_user_principal,search_repo_url,False,method,data.decode('utf-8'),header)
-
+      # In Python 3, ensure data is str for decoding
+      if isinstance(data, bytes):
+          data = data.decode('utf-8')
+      response, error_message, time_in_millis = self.call_curl_request(
+        component_user,
+        component_user_keytab,
+        component_user_principal,
+        search_repo_url,
+        False,
+        method,
+        data,
+        header
+      )
       if response and len(response) > 0:
         response_json = json.loads(response)
         if 'name' in response_json and response_json['name'].lower() == name.lower():
