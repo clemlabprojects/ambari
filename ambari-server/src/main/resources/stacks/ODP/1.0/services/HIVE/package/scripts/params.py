@@ -160,6 +160,7 @@ if check_stack_feature(StackFeature.HIVE_SERVER_INTERACTIVE, version_for_stack_f
 hive_interactive_bin = format('{stack_root}/current/{hive_server2_hive_component}/bin')
 hive_interactive_lib = format('{stack_root}/current/{hive_server2_hive_component}/lib')
 
+hive_apps_whs_dir = config['configurations']['hive-site']["hive.metastore.warehouse.dir"]
 # Heap dump related
 heap_dump_enabled = default('/configurations/hive-env/enable_heap_dump', None)
 heap_dump_opts = ""  # Empty if 'heap_dump_enabled' is False.
