@@ -197,7 +197,7 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
             if authNameChanged:
               name.text = newAuthName
               import xml.etree.ElementTree as ET
-              putKnoxTopologyContent('content', ET.tostring(root))
+              putKnoxTopologyContent('content', ET.tostring(root).decode('utf-8'))
 
             if authorizationProviderExists:
               break
