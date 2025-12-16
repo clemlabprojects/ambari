@@ -223,8 +223,8 @@ public class ViewConfigurationService {
         String workingDirectoryPath = viewContext.getProperties().get("k8s.view.working.dir");
 
         if (workingDirectoryPath == null || workingDirectoryPath.trim().isEmpty()) {
-            workingDirectoryPath = "/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.1}";
-            LOG.warn("Working directory property 'k8s.view.working.dir' is not set. Using default: {}", workingDirectoryPath);
+            workingDirectoryPath = defaultWorkDir();
+            LOG.warn("Working directory property 'k8s.view.working.dir' is not set. Using default for this view version: {}", workingDirectoryPath);
         } else {
             LOG.info("Using configured working directory: {}", workingDirectoryPath);
         }
@@ -237,13 +237,21 @@ public class ViewConfigurationService {
         String resourcePath = viewContext.getProperties().get("k8s.view.resource.path");
 
         if (resourcePath == null || resourcePath.trim().isEmpty()) {
-            resourcePath = "/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.1}";
-            LOG.warn("View resource path property 'k8s.view.resource.path' is not set. Using default: {}", resourcePath);
+            resourcePath = defaultWorkDir();
+            LOG.warn("View resource path property 'k8s.view.resource.path' is not set. Using default for this view version: {}", resourcePath);
         } else {
             LOG.info("Using configured view resource path: {}", resourcePath);
         }
 
         return resourcePath;
+    }
+
+    /**
+     * Build the default work/resource directory based on the current view version.
+     */
+    private String defaultWorkDir() {
+        String version = viewContext.getViewDefinition() != null ? viewContext.getViewDefinition().getVersion() : "1.0.0.5";
+        return "/var/lib/ambari-server/resources/views/work/K8S-VIEW{" + version + "}";
     }
 
     // helper methods in order to cache values.yml file
@@ -391,6 +399,5 @@ public class ViewConfigurationService {
         LOG.trace("Path is inside cache directory");
     }
 }
-
 
 

@@ -7,21 +7,34 @@ const { Option } = Select;
 const VolumeEditor: React.FC<{ specs: MountSpec[] }> = ({ specs }) => {
   const form = Form.useFormInstance();
 
-  // Initialize mount defaults once (on service switch)
+  // Initialize mount defaults ONLY if they are missing
   useEffect(() => {
-    const initial: any = {};
+    const currentMounts = form.getFieldValue('mounts') || {};
+    const updates: any = {};
+    let hasUpdates = false;
+
     for (const s of specs) {
-      initial[s.key] = {
-        type: s.defaults.type,
-        mountPath: s.defaultMountPath,
-        size: s.defaults.size || '10Gi',
-        storageClass: s.defaults.storageClass || '',
-        accessModes: s.defaults.accessModes || ['ReadWriteOnce'],
-      };
+      // Only set default if this specific mount key is missing
+      if (!currentMounts[s.key]) {
+        updates[s.key] = {
+          type: s.defaults.type,
+          mountPath: s.defaultMountPath,
+          size: s.defaults.size || '10Gi',
+          storageClass: s.defaults.storageClass || '',
+          accessModes: s.defaults.accessModes || ['ReadWriteOnce'],
+        };
+        hasUpdates = true;
+      }
     }
-    form.setFieldsValue({ mounts: initial });
+
+    if (hasUpdates) {
+      // Merge new defaults into existing mounts
+      form.setFieldsValue({ 
+        mounts: { ...currentMounts, ...updates } 
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [specs?.map(s => s.key).join(',')]);
+  }, [JSON.stringify(specs.map(s => s.key))]); // Safer dependency check
 
   return (
     <Card title="Storage / Mounts" size="small" style={{ marginBottom: 16 }}>

@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import javax.ws.rs.POST;
-import javax.ws.rs.Path;
+//import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 
 import javax.ws.rs.core.Context;
@@ -23,8 +23,6 @@ import org.apache.ambari.server.controller.spi.Resource;
  * No custom-action XML is used; the action is referenced by CLASS name.
  */
 
-
-@Path("/clusters/{clusterName}/adhoc_keytab")
 public class AdhocKeytabService extends BaseService {
     private final String clusterName;
 

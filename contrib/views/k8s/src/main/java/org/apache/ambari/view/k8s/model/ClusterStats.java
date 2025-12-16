@@ -22,6 +22,9 @@ public class ClusterStats {
     @JsonProperty("helm")
     private HelmStat helm;
 
+    @JsonProperty("source")
+    private String source; // metrics source identifier (prometheus, metrics-server, unknown)
+
     // Default constructor for JSON deserialization
     public ClusterStats() {
     }
@@ -32,6 +35,10 @@ public class ClusterStats {
         this.pods = pods;
         this.nodes = nodes;
         this.helm = helm;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
     }
 
     public static class ResourceStat {
@@ -88,4 +95,5 @@ public class ClusterStats {
     public ResourceStat getPods() { return pods; }
     public ResourceStat getNodes() { return nodes; }
     public HelmStat getHelm() { return helm; }
+    public String getSource() { return source; }
 }

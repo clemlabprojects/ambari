@@ -7,25 +7,27 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
+import org.apache.ambari.view.k8s.resources.*;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
+import org.apache.ambari.view.k8s.service.StackDefinitionService;
+import org.apache.ambari.view.k8s.service.GlobalConfigService;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
-import org.apache.ambari.view.k8s.resources.HelmResource;
-import org.apache.ambari.view.k8s.resources.HelmRepoResource;
-import org.apache.ambari.view.k8s.resources.CommandResource;
-
+import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
+
+import java.util.Map;
+import java.util.Map;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
+import javax.ws.rs.core.*;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -45,10 +47,13 @@ public class KubeService {
     private KubernetesService kubernetesService;
     private ViewConfigurationService configService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private AmbariAliasResolver ambariAliasResolver;
+    private StackDefinitionService stackDefinitionService;
+    private GlobalConfigService globalConfigService = new GlobalConfigService();
 
     private KubernetesService getKubernetesService() {
         if (kubernetesService == null) {
-            this.kubernetesService = new KubernetesService(viewContext);
+            this.kubernetesService = KubernetesService.get(viewContext);
         }
         return this.kubernetesService;
     }
@@ -59,6 +64,15 @@ public class KubeService {
         }
         return this.configService;
     }
+
+    private AmbariAliasResolver getAmbariAliasResolver(){
+        if (ambariAliasResolver == null){
+            this.ambariAliasResolver = new AmbariAliasResolver(this.viewContext);
+        }
+        return this.ambariAliasResolver;
+    };
+
+
 
 
     @VisibleForTesting
@@ -80,6 +94,39 @@ public class KubeService {
         return Response.ok(availableCharts).build();
     }
 
+    /**
+     * Alias endpoint to list stack services discovered in KDPS/services.
+     * Kept at /services for UI compatibility.
+     */
+    @GET
+    @Path("/services")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listStackServices() {
+        return Response.ok(getStackDefinitionService().listServiceDefinitions()).build();
+    }
+
+    @GET
+    @Path("/services/{name}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getStackService(@PathParam("name") String name) {
+        try {
+            return Response.ok(getStackDefinitionService().getServiceDefinition(name)).build();
+        } catch (Exception e) {
+            return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
+        }
+    }
+
+    @GET
+    @Path("/services/{name}/configurations")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getStackServiceConfigs(@PathParam("name") String name) {
+        try {
+            return Response.ok(getStackDefinitionService().getServiceConfigurations(name)).build();
+        } catch (Exception e) {
+            return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
+        }
+    }
+
     @GET
     @Path("/users/me/permissions")
     @Produces(MediaType.APPLICATION_JSON)
@@ -91,7 +138,8 @@ public class KubeService {
     @POST
     @Path("/cluster/config")
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
-    public Response uploadKubeconfig(InputStream fileInputStream) {
+    public Response uploadKubeconfig(@Context HttpHeaders headers,
+                                     @Context UriInfo ui, InputStream fileInputStream) {
         // new AuthHelper(viewContext).checkConfigurationPermission();
         
         try {
@@ -103,11 +151,18 @@ public class KubeService {
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
-            final String webhookName = "kerberos-keytab-mutating-webhook"; // must match your Helm values prefix
-
+            final String webhookName = "keytab-webhook"; // must match your Helm values prefix
 
             try {
-                WebHookBootstrap.prepareWebhookPrereqs(this.viewContext, this.getKubernetesService(), webhookName);
+                // Reinitialize K8s client now that kubeconfig is saved
+                this.getKubernetesService().reloadClientIfConfigured();
+                WebHookBootstrap.prepareWebhookPrereqs(
+                        this.viewContext,
+                        this.getKubernetesService(),
+                        webhookName,
+                        headers.getRequestHeaders(),
+                        ui.getBaseUri()
+                );
                 // We NOT install the chart here. This only prepares secrets + namespace + caBundle.
                 // Later, when we deploy the webhook chart, collect all ambari.properties overrides
                 // under k8s.view.webhooks.<webhookName>.* and pass them straight to Helm.
@@ -144,9 +199,9 @@ public class KubeService {
     @GET
     @Path("/cluster/stats")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getClusterStats() {
+    public Response getClusterStats(@QueryParam("forceRefresh") @DefaultValue("false") boolean forceRefresh) {
         try {
-            return Response.ok(getKubernetesService().getClusterStats()).build();
+            return Response.ok(getKubernetesService().getClusterStats(forceRefresh)).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -155,10 +210,14 @@ public class KubeService {
     @GET
     @Path("/nodes")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getNodes() {
+    public Response getNodes(@QueryParam("limit") @DefaultValue("200") int limit,
+                             @QueryParam("offset") @DefaultValue("0") int offset) {
         try {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            return Response.ok(mapper.writeValueAsString(getKubernetesService().getNodes())).build();
+            var ks = getKubernetesService();
+            var nodes = ks.getNodes(limit, offset);
+            int total = ks.countNodes();
+            return Response.ok(mapper.writeValueAsString(Map.of("items", nodes, "total", total))).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -199,6 +258,14 @@ public class KubeService {
     }
 
     /**
+     * Workloads sub-resource: namespaces/pods/services/logs.
+     */
+    @Path("/workloads")
+    public WorkloadsResource getWorkloads() {
+        return new WorkloadsResource(viewContext);
+    }
+
+    /**
      * @see org.apache.ambari.view.k8s.resources.HelmRepoResource
      * @return service
      */
@@ -227,6 +294,41 @@ public class KubeService {
 
     @Path("commands")
     public CommandResource commands() {
-        return new CommandResource(viewContext);
+        return new CommandResource(viewContext, this.getAmbariAliasResolver());
+    }
+
+
+    /**
+     * Sub-resource for Service Discovery
+     * URL: /api/v1/.../resources/api/discovery
+     */
+    @Path("/discovery")
+    public DiscoveryResource discovery() {
+        // Pass dependencies
+        return new DiscoveryResource(viewContext, getKubernetesService());
+    }
+
+    /**
+     * Sub-resource for Configuration Management
+     * URL: /api/v1/.../resources/api/configurations
+     */
+    @Path("/configurations")
+    public ConfigurationResource configuration() {
+        // Pass dependencies
+        return new ConfigurationResource(viewContext, getKubernetesService());
+    }
+
+    @GET
+    @Path("/globals/configurations")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listGlobalConfigs() {
+        return Response.ok(globalConfigService.listGlobalConfigs()).build();
+    }
+
+    private StackDefinitionService getStackDefinitionService() {
+        if (stackDefinitionService == null) {
+            stackDefinitionService = new StackDefinitionService(viewContext);
+        }
+        return stackDefinitionService;
     }
 }

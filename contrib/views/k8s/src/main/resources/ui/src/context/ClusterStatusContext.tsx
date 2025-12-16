@@ -1,7 +1,7 @@
 // ui/src/context/ClusterStatusContext.tsx
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import type { ServiceDefinition, ClusterStats, ComponentStatus, ClusterEvent, ClusterNode, HelmRelease } from '../types';
-import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getAvailableServices } from '../api/client';
+import type { ServiceDefinition, ClusterStats, ComponentStatus, ClusterEvent, ClusterNode, HelmReleasePage } from '../types';
+import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getAvailableServices, getMonitoringDiscovery } from '../api/client';
 
 type Status = 'loading' | 'connected' | 'unconfigured' | 'error' | 'configuring';
 
@@ -10,7 +10,7 @@ interface ClusterStatusContextType {
   stats: ClusterStats | null;
   components: ComponentStatus[] | null;
   nodes: ClusterNode[] | null; // Addition
-  helmReleases: HelmRelease[] | null; // Addition
+  helmReleases: HelmReleasePage | null; // Addition
   events: ClusterEvent[] | null;
   error: string | null;
   mainLoaderActive?: boolean; // Optional loader status
@@ -18,6 +18,7 @@ interface ClusterStatusContextType {
   refresh: () => Promise<void>;
   setClusterStatus: (status: Status) => void; // Optional setter for status
   checkViewIsConfigured?: () => boolean; // Optional method to check if the cluster is configured
+  monitoringState?: { state?: string; message?: string };
 }
 
 const ClusterStatusContext = createContext<ClusterStatusContextType | undefined>(undefined);
@@ -30,9 +31,10 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
   const [components, setComponents] = useState<ComponentStatus[] | null>(null);
   const [events, setEvents] = useState<ClusterEvent[] | null>(null);
   const [nodes, setNodes] = useState<ClusterNode[] | null>(null);
-  const [helmReleases, setHelmReleases] = useState<HelmRelease[] | null>(null);
+  const [helmReleases, setHelmReleases] = useState<HelmReleasePage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mainLoaderActive, setMainLoaderActive] = useState<boolean>(true);
+  const [monitoringState, setMonitoringState] = useState<{ state?: string; message?: string }>({});
 
   const setClusterStatus = (newStatus: Status) => {
     setStatus(newStatus);
@@ -54,25 +56,49 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const fetchData = React.useCallback(async () => {
+  const fetchData = React.useCallback(async (forceRefresh = false) => {
     console.log('DEBUG: Fetching cluster data...');
     setStatus('loading');
     setMainLoaderActive(true);
     setError(null);
     try {
-      const [statsData, componentsData, eventsData, nodesData, helmReleasesData] = await Promise.all([
-        getClusterStats(),
+      // Kick off stats but don't block the rest of the UI
+      getClusterStats(forceRefresh)
+        .then(setStats)
+        .catch((e: any) => {
+          if (e?.message === 'unconfigured') {
+            setStatus('unconfigured');
+          } else {
+            console.warn('Stats fetch failed', e);
+          }
+        });
+
+      const results = await Promise.allSettled([
         getComponentStatuses(),
         getClusterEvents(),
         getNodes(),
         getHelmReleases(),
       ]);
-      setStats(statsData);
-      setComponents(componentsData);
-      setEvents(eventsData);
-      setNodes(nodesData);
-      setHelmReleases(helmReleasesData);
-      setStatus('connected');
+
+      const [componentsRes, eventsRes, nodesRes, helmRes] = results;
+      if (componentsRes.status === 'fulfilled') setComponents(componentsRes.value);
+      if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
+      if (nodesRes.status === 'fulfilled') {
+        const nodesData = nodesRes.value as any;
+        setNodes(nodesData?.items || nodesData || null);
+      }
+      if (helmRes.status === 'fulfilled') setHelmReleases(helmRes.value);
+
+      // Consider connected if any core call succeeded and we are not marked unconfigured/error
+      setStatus((prev) => (prev === 'unconfigured' || prev === 'error') ? prev : 'connected');
+
+      // Update monitoring bootstrap state
+      try {
+        const disc = await getMonitoringDiscovery();
+        setMonitoringState({ state: (disc as any)?.state, message: (disc as any)?.message });
+      } catch (e:any) {
+        // ignore; keep previous state
+      }
     } catch (e: any) {
       if (e.message === 'unconfigured') {
         setStatus('unconfigured');
@@ -87,7 +113,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refresh = React.useCallback(async () => {
     console.log('API CALL: DEBUG: Refreshing cluster data...');
-    await fetchData();
+    await fetchData(true);
   }, [fetchData]);
 
 
@@ -127,6 +153,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       nodes,
       helmReleases,
       error,
+      monitoringState,
       fetchData,
       refresh,
       setClusterStatus }}>

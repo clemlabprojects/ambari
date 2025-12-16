@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.inject.Inject;
+
 /**
  * Server action to (idempotently) create/rotate a single principal and return its keytab (base64)
  * via structured out. Intended for ad-hoc principals requested by external systems (e.g. webhook).
@@ -48,6 +49,16 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
     @Override
     public CommandReport execute(java.util.concurrent.ConcurrentMap<String, Object> requestSharedDataContext) throws AmbariException {
         final Map<String, String> params = getCommandParameters();
+
+        if (params != null) {
+            LOG.info("GenerateAdhocKeytabServerAction called with params: principal='{}', default_realm='{}', kdc_type='{}'",
+                    params.get("principal"),
+                    params.get("default_realm"),
+                    params.get("kdc_type"));
+        } else {
+            LOG.info("GenerateAdhocKeytabServerAction called with null params");
+        }
+
         final String principal = (params == null) ? null : params.get("principal");
 
         if (StringUtils.isBlank(principal)) {
@@ -58,10 +69,11 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
         }
 
         final String defaultRealm = getDefaultRealm(params);
-        final KDCType kdcType = getKDCType(params);
+        KDCType kdcType = getKDCType(params);
 
         actionLog.writeStdOut(String.format("Generating keytab for principal '%s' (kdcType=%s, realm=%s)...",
                 principal, kdcType, defaultRealm));
+        LOG.info("Generating keytab for principal '{}' (kdcType={}, realm={})", principal, kdcType, defaultRealm);
 
         KerberosOperationHandler handler = null;
         File tmpKeytab = null;
@@ -69,35 +81,86 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
         try {
             // Cluster context + admin credential
             String clusterName = getClusterName();
+            LOG.info("Determined cluster name for GenerateAdhocKeytabServerAction: '{}'", clusterName);
+
             PrincipalKeyCredential adminCred = kerberosHelper.getKDCAdministratorCredentials(clusterName);
+            LOG.info("Obtained KDC administrator credentials for cluster '{}'", clusterName);
 
             // Kerberos env (kerberos-env) from cluster
             Map<String, String> kerberosEnv = getConfigurationProperties("kerberos-env");
+            LOG.debug("kerberos-env properties keys: {}", kerberosEnv != null ? kerberosEnv.keySet() : "null");
+
+            if (kdcType == KDCType.NONE) {
+                kdcType = KDCType.translate(kerberosEnv.get(this.kerberosHelper.KDC_TYPE));
+                LOG.info("KDC type resolved from kerberos-env to '{}'", kdcType);
+            }
 
             // Pick handler
             handler = kerberosOperationHandlerFactory.getKerberosOperationHandler(kdcType);
+            LOG.info("Using KerberosOperationHandler implementation '{}' for kdcType={}", handler.getClass().getName(), kdcType);
+
             handler.open(adminCred, defaultRealm, kerberosEnv);
+            LOG.info("KerberosOperationHandler opened for realm '{}' and kdcType={}", defaultRealm, kdcType);
+
+            // Special handling for KDCs that need host objects (e.g., FreeIPA)
+            String hostFromPrincipal = null;
+            int slash = principal.indexOf('/');
+            int at    = principal.indexOf('@');
+            if (slash > 0 && at > slash + 1) {
+                hostFromPrincipal = principal.substring(slash + 1, at).trim();
+            }
+
+            if (hostFromPrincipal != null && !hostFromPrincipal.isEmpty()) {
+                try {
+                    LOG.info("Ensuring host object exists for '{}'", hostFromPrincipal);
+                    // No-op for MIT/AD; IPA will ensure/create the host object.
+                    handler.ensureHostExists(hostFromPrincipal);
+                    String msg = "Ensured host object exists for '" + hostFromPrincipal + "' (if required by KDC).";
+                    actionLog.writeStdOut(msg);
+                    LOG.info(msg);
+                } catch (Exception e) {
+                    String err = "Failed ensuring host '" + hostFromPrincipal + "': " + e.getMessage();
+                    actionLog.writeStdErr(err);
+                    LOG.error(err, e);
+                    throw e;
+                }
+            } else {
+                LOG.info("No host component parsed from principal '{}'; skipping ensureHostExists", principal);
+            }
 
             // Ensure principal exists (create or rotate)
-            boolean exists = handler.principalExists(principal, true);
+            boolean isService = principal.contains("/"); // service principals have a slash
+            boolean exists = handler.principalExists(principal, isService);
+            LOG.info("Principal '{}' existence check: exists={}, isService={}", principal, exists, isService);
+
             String password = generateSecurePassword(32);
             Integer kvno;
 
             if (!exists) {
                 actionLog.writeStdOut("Principal does not exist; creating...");
-                kvno = handler.createPrincipal(principal, password, true);
+                LOG.info("Principal '{}' does not exist; creating new principal", principal);
+                kvno = handler.createPrincipal(principal, password, isService);
             } else {
                 actionLog.writeStdOut("Principal exists; rotating password...");
-                kvno = handler.setPrincipalPassword(principal, password, true);
+                LOG.info("Principal '{}' exists; rotating password", principal);
+                kvno = handler.setPrincipalPassword(principal, password, isService);
             }
+
+            LOG.info("Principal '{}' processed with kvno={} (created={})", principal, kvno, !exists);
 
             // Generate keytab (write to temp file, then base64 it for structured out)
             tmpKeytab = File.createTempFile("adhoc_", ".keytab");
+            LOG.info("Temporary keytab file created at '{}'", tmpKeytab.getAbsolutePath());
+
             // Using protected helpers from KerberosOperationHandler (same package access)
             handler.createKeytabFile(principal, password, kvno, tmpKeytab);
+            LOG.info("Keytab file written for principal '{}' (size={} bytes)",
+                    principal, tmpKeytab.length());
 
             byte[] keytabBytes = Files.readAllBytes(tmpKeytab.toPath());
             String keytabB64 = Base64.encodeBase64String(keytabBytes);
+            LOG.debug("Keytab for principal '{}' encoded to base64 (length={} chars)",
+                    principal, keytabB64 != null ? keytabB64.length() : 0);
 
             // Structured out payload
             Map<String, Object> out = new HashMap<>();
@@ -111,6 +174,8 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
                     principal, kvno, !exists);
 
             actionLog.writeStdOut(stdout);
+            LOG.info(stdout);
+
             return createCommandReport(0, HostRoleStatus.COMPLETED, structuredOut, stdout, actionLog.getStdErr());
 
         } catch (Exception e) {
@@ -120,10 +185,20 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
             return createCommandReport(0, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
         } finally {
             if (handler != null) {
-                try { handler.close(); } catch (Exception ignore) { /* no-op */ }
+                try {
+                    handler.close();
+                    LOG.info("KerberosOperationHandler closed");
+                } catch (Exception ignore) {
+                    LOG.warn("Error closing KerberosOperationHandler: {}", ignore.getMessage());
+                }
             }
             if (tmpKeytab != null) {
-                try { Files.deleteIfExists(tmpKeytab.toPath()); } catch (Exception ignore) { /* no-op */ }
+                try {
+                    Files.deleteIfExists(tmpKeytab.toPath());
+                    LOG.info("Temporary keytab file '{}' deleted", tmpKeytab.getAbsolutePath());
+                } catch (Exception ignore) {
+                    LOG.warn("Failed to delete temp keytab file '{}': {}", tmpKeytab.getAbsolutePath(), ignore.getMessage());
+                }
             }
         }
     }

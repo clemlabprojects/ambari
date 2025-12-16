@@ -1,0 +1,21 @@
+{
+  "name": "security-env",
+  "description": "Cluster-wide security toggles shared by services",
+  "properties": [
+    {
+      "name": "TLS_ENABLED",
+      "displayName": "Enable TLS",
+      "description": "Enable TLS-aware configuration for managed services",
+      "type": "boolean",
+      "value": true
+    },
+    {
+      "name": "CA_CERT",
+      "displayName": "CA certificate",
+      "description": "PEM-encoded CA certificate to trust cluster endpoints",
+      "type": "content",
+      "language": "pem",
+      "value": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+    }
+  ]
+}

@@ -1,6 +1,13 @@
 /* ui/src/index.css */
-body {
+html, body, #root {
   margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden; /* prevent outer scrolling; inner app handles it */
+}
+
+body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -8,4 +15,3 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #f0f2f5;
 }
-

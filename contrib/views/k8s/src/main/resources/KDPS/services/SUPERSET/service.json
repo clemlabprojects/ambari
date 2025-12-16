@@ -1,0 +1,293 @@
+{
+    "label": "Superset",
+    "chart": "apache/superset",
+    "pattern": "superset-.*",
+    "secretName": "registry-credentials",
+    "version": "0.12.14",
+    "dependencies": {
+      "kerberos-keytab-mutating-webhook": {
+        "fullnameOverride": "keytab-webhook",
+        "secretName": "regcred",
+        "chart": "kerberos-keytab-mutating-webhook",
+        "chartVersion": "0.1.0",
+        "imageTag": "1.0.0.1",
+        "imageRepository": "registry.clemlab.com/clemlabprojects",
+        "namespace": "ambari-mutating-webhooks",
+        "imageGlobalRegistryProperty": "global.imageRegistry",
+        "crds": [],
+        "dynamicValues": [
+          "AMBARI_KERBEROS_REALM:backend.krbRealm"
+        ],
+        "isWebhook": true,
+        "serviceAccounts": [
+          "kerberos-keytab-mutating-webhook"
+        ]
+      }
+    },
+    "dynamicValues": [
+      "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
+    ],
+    "endpoints": [
+      {
+        "id": "ui",
+        "label": "Superset UI",
+        "type": "template",
+        "template": "http://{{host}}:{{port}}/",
+        "properties": {
+          "host": {
+            "source": "template",
+            "type": "string",
+            "template": "{{releaseName}}-superset.{{namespace}}.svc.cluster.local"
+          },
+          "port": {
+            "source": "helm",
+            "type": "integer",
+            "path": "service.port"
+          }
+        }
+      }
+    ],
+    "mounts": [],
+    "variables": [
+      { "name": "supersetSecret", "from": { "type": "form", "field": "superset.secretKey" } },
+      { "name": "supersetOpenStreetMapServerUrl", "from": { "type": "form", "field": "superset.openstreetmapServerUrl" } },
+      { "name": "ingressEnabled", "from": { "type": "form", "field": "ingress.enabled" } },
+      { "name": "ingressClassName", "from": { "type": "form", "field": "ingress.className" } },
+      { "name": "ingressPath", "from": { "type": "form", "field": "ingress.path" } },
+      { "name": "ingressHost", "from": { "type": "form", "field": "ingress.host" } },
+      { "name": "ingressTLSSecret", "from": { "type": "form", "field": "ingress.tlsSecret" } },
+      { "name": "ingressTLSHost", "from": { "type": "form", "field": "ingress.tlsHost" } },
+      { "name": "adminUsers", "from": { "type": "form", "field": "security.adminUsers" } },
+      { "name": "adminGroups", "from": { "type": "form", "field": "security.adminGroups" } }
+    ],
+    "bindings": [
+      {
+        "name": "superset-db-connection",
+        "skipIfVarEmpty": "trinoHost",
+        "targets": [
+          {
+            "path": "extraEnv.TRINO_URL",
+            "value": "trino://${trinoHost}"
+          }
+        ]
+      },
+      {
+        "name": "ingress-setup",
+        "targets": [
+          { "path": "ingress.hosts[]", "op": "set",
+            "from": {
+              "type": "template",
+              "template": "${ingressHost}"
+            }
+          },
+          { "path": "ingress.pathType", "op": "set",
+            "from": {
+              "type": "template",
+              "template": "ImplementationSpecific"
+            }
+          },
+          { "path": "ingress.tls[]",
+            "skipIfVarEmpty": "ingressTLSSecret",
+            "op": "set", "from":
+          { "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecret}",
+              "hosts": [ { "host": "${ingressTLSHost}"} ]
+            }
+          }
+          }
+        ]
+      },
+      {
+        "name": "trust-proxy-headers",
+        "targets": [
+          {
+            "path": "additionalConfigProperties[]",
+            "value": "http-server.process-forwarded=true"
+          }
+        ]
+      },
+      {
+        "name": "superset-secret-key",
+        "skipIfVarEmpty": "supersetSecret",
+        "targets": [
+          { "path": "extraEnv.SECRET_KEY", "from": { "type": "var", "name": "supersetSecret" } },
+          { "path": "configOverrides.secret", "from": { "type": "template", "template": "SECRET_KEY = '${supersetSecret}'" } }
+        ]
+      },
+      {
+        "name": "superset-openstreetmap-server-url",
+        "skipIfVarEmpty": "supersetOpenStreetMapServerUrl",
+        "targets": [
+          { "path": "extraEnv.OPENSTREETMAP_SERVER_URL", "from": { "type": "var", "name": "supersetOpenStreetMapServerUrl" } },
+        ]
+      },
+      {
+        "name": "mount-managed-config",
+        "skipIfVarEmpty": "authConfig",
+        "targets": [
+          {
+            "path": "extraVolumes[]",
+            "value": {
+              "name": "managed-config-vol",
+              "secret": { "secretName": "${authConfig}" }
+            }
+          },
+          {
+            "path": "extraVolumeMounts[]",
+            "value": {
+              "name": "managed-config-vol",
+              "mountPath": "/app/pythonpath/superset_config_custom.py",
+              "subPath": "superset_config.py",
+              "readOnly": true
+            }
+          },
+          {
+            "path": "configOverrides.load_custom",
+            "value": "from superset_config_custom import *"
+          }
+        ]
+      },
+      {
+        "name": "admin-role-mapping",
+        "targets": [
+          {
+            "path": "global.security.adminUsers",
+            "skipIfVarEmpty": "adminUsers",
+            "from": { "type": "var", "name": "adminUsers" }
+          },
+          {
+            "path": "global.security.adminGroups",
+            "skipIfVarEmpty": "adminGroups",
+            "from": { "type": "var", "name": "adminGroups" }
+          }
+        ]
+      }
+    ],
+    "form": [
+      { "name": "releaseName", "label": "release name", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "dashboarding" },
+      {
+        "name": "trinoConnection",
+        "label": "Connect to Trino",
+        "type": "k8s-discovery",
+        "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
+        "help": "Select a running Trino instance to auto-connect."
+      },
+      {
+        "name": "authConfig",
+        "label": "Authentication Profile",
+        "type": "k8s-discovery",
+        "lookupLabel": "ambari.clemlab.com/managed-config=true,ambari.clemlab.com/config-type=superset-python",
+        "help": "Select a managed Python configuration for OAuth/OpenID."
+      },
+      {
+        "name": "ingressConfig",
+        "label": "Exposition HTTP(S) / Ingress",
+        "type": "group",
+        "fields": [
+          {
+            "name": "ingress.enabled",
+            "label": "Activer l'Ingress",
+            "type": "boolean",
+            "defaultValue": false,
+            "help": "Active la création d'un objet Ingress pour exposer Trino via un hostname."
+          },
+          {
+            "name": "ingress.ingressClassName",
+            "label": "Classe d'Ingress",
+            "required": true,
+            "type": "string",
+            "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contrôleur par défaut.",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.host",
+            "label": "Host (DNS) externe",
+            "type": "string",
+            "required": true,
+            "excludeFromValues": true,
+            "help": "Nom DNS public (ex: superset.example.com).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.path",
+            "label": "Chemin HTTP",
+            "type": "string",
+            "defaultValue": "/",
+            "help": "Chemin de base pour l'Ingress (souvent '/').",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsSecret",
+            "label": "Secret TLS (optionnel)",
+            "type": "string",
+            "help": "Nom du Secret contenant le certificat TLS. Laisser vide pour HTTP uniquement.",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsHost",
+            "label": "Host TLS",
+            "type": "string",
+            "help": "Host associé à ce certificat TLS (en général le même que l'host Ingress).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          }
+        ]
+      },
+      {
+        "name": "superset",
+        "label": "Superset",
+        "type": "group",
+        "fields": [
+          {
+            "name": "superset.secretKey",
+            "label": "SECRET_KEY",
+            "type": "password",
+            "required": true,
+            "help": "Superset SECRET_KEY used for session and CSRF signing."
+          },
+          {
+            "name": "superset.openstreetmapServerUrl",
+            "label": "OpenStreetMap Server URL",
+            "type": "string",
+            "required": true,
+            "help": "URL of the OpenStreetMap server used by Superset."
+          }
+        ]
+      },
+      {
+        "name": "adminConfig",
+        "label": "Administrative users/groups",
+        "type": "group",
+        "fields": [
+          {
+            "name": "security.adminUsers",
+            "label": "Admin users (comma-separated)",
+            "type": "string",
+            "help": "Optional list of Superset usernames that should be granted the Admin role."
+          },
+          {
+            "name": "security.adminGroups",
+            "label": "Admin groups (comma-separated)",
+            "type": "string",
+            "help": "Optional list of IdP groups to map to the Admin role (e.g., LDAP/OIDC groups)."
+          }
+        ]
+      }
+    ]
+}

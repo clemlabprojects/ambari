@@ -612,4 +612,9 @@ public class ADKerberosOperationHandler extends KerberosOperationHandler {
 
     return dn;
   }
+
+  @Override
+  public void ensureHostExists(String hostname) throws KerberosOperationException {
+      return; // nothing to do
+  }
 }

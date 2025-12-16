@@ -104,6 +104,9 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
       case ADHOC_KEYTAB:
         resourceDefinition = new AdhocKeytabResourceDefinition();
         break;
+      case RANGER_PLUGIN_REPOSITORY:
+        resourceDefinition = new RangerPluginResourceDefinition();
+        break;
       case Cluster:
         resourceDefinition = new ClusterResourceDefinition();
         break;

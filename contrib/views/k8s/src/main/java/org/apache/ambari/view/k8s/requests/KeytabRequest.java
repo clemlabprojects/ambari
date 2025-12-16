@@ -9,6 +9,9 @@ public class KeytabRequest {
     private String secretName;       // optional; default "keytab-<pod>"
     private String keyNameInSecret;  // optional; default "service.keytab"
 
+    // Optional: correlation to a parent command (e.g., Helm deploy root)
+    private String parentCommandId;
+
     public void validate() {
         Objects.requireNonNull(principal, "principal");
         Objects.requireNonNull(namespace, "namespace");
@@ -37,4 +40,7 @@ public class KeytabRequest {
 
     public String getKeyNameInSecret() { return keyNameInSecret; }
     public void setKeyNameInSecret(String keyNameInSecret) { this.keyNameInSecret = keyNameInSecret; }
+
+    public String getParentCommandId() { return parentCommandId; }
+    public void setParentCommandId(String parentCommandId) { this.parentCommandId = parentCommandId; }
 }

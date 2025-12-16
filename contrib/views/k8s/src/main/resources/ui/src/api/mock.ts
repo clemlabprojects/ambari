@@ -1,5 +1,5 @@
 // ui/src/api/mock.ts
-import type { UserPermissions, HelmRelease, ClusterNode, ClusterStats, ClusterEvent, ComponentStatus } from '../types';
+import type { UserPermissions, HelmRelease, ClusterNode, ClusterStats, ClusterEvent, ComponentStatus, HelmReleasePage } from '../types';
 import type { HelmRepo } from '../types';
 type UserRole = "ADMIN" | "OPERATOR" | "VIEWER";
 export const getMockPermissions = (role: UserRole): UserPermissions => {
@@ -14,9 +14,9 @@ export const getMockPermissions = (role: UserRole): UserPermissions => {
   }
 };
 
-export const getMockHelmReleases = (): HelmRelease[] => {
+export const getMockHelmReleases = (): HelmReleasePage => {
   console.log("API CALL: Fetching mock Helm releases...");
-  return [
+  const items: HelmRelease[] = [
     { id: 'trino-prod', name: 'trino-prod', namespace: 'data-lake', chart: 'trino', version: '0.9.0', status: 'deployed' },
     { id: 'prometheus-stack', name: 'prometheus-stack', namespace: 'monitoring', chart: 'kube-prometheus-stack', version: '45.2.1', status: 'deployed' },
     { id: 'cert-manager', name: 'cert-manager', namespace: 'kube-system', chart: 'cert-manager', version: 'v1.9.1', status: 'pending_upgrade' },
@@ -25,7 +25,9 @@ export const getMockHelmReleases = (): HelmRelease[] => {
   { id: 'argo-cd', name: 'argo-cd', namespace: 'cicd', chart: 'argo-cd', version: '5.51.6', status: 'deployed' },
   { id: 'elastic-operator', name: 'elastic-operator', namespace: 'logging', chart: 'eck-operator', version: '2.11.0', status: 'deployed' },
   { id: 'kafka-cluster', name: 'kafka-cluster', namespace: 'messaging', chart: 'strimzi-kafka-operator', version: '0.38.0', status: 'failed' },
-]};
+  ];
+  return { items, total: items.length };
+};
 
 export const getMockNodes = (): ClusterNode[] => {
   console.log("API CALL: Fetching mock cluster nodes...");
@@ -72,10 +74,123 @@ export const getMockClusterEvents = (): ClusterEvent[] => {
   ]
   };
 
-export const getAvailableServices = (): string[] => {
-  console.log("API CALL: Fetching available services...");
-  return ['trino', 'prometheus', 'grafana', 'cert-manager', 'argo-cd'];
+export const getAvailableServices = (): Record<string, any> => {
+  console.log("API CALL: Fetching available services (mock KDPS)...");
+  return {
+    SUPERSET: {
+      name: 'SUPERSET',
+      label: 'Superset',
+      chart: 'apache/superset',
+      description: 'Apache Superset analytics',
+      form: [
+        { name: 'releaseName', label: 'Release', type: 'string', required: true },
+        { name: 'namespace', label: 'Namespace', type: 'string', required: true },
+        { name: 'ingress.enabled', label: 'Enable ingress', type: 'boolean', defaultValue: false },
+      ],
+    },
+  };
 };
+
+export const getStackServiceMock = (name: string) => {
+  const all = getAvailableServices();
+  return all[name.toUpperCase()] || all[name] || {
+    name,
+    label: name,
+    chart: 'example/chart',
+    description: 'Mock chart',
+    form: [],
+  };
+};
+
+export const getStackConfigsMock = (name: string) => {
+  if (name.toUpperCase() === 'SUPERSET') {
+    return [
+      {
+        name: 'superset-env',
+        description: 'Environment vars',
+        properties: [
+          { name: 'SUPERSET_ADMIN_PASSWORD', displayName: 'Admin Password', type: 'password', value: 'admin', required: true },
+          { name: 'ROW_LIMIT', displayName: 'Row Limit', type: 'int', value: 5000 },
+        ],
+      },
+      {
+        name: 'superset-files',
+        description: 'Custom config files',
+        properties: [
+          { name: 'superset_config.py', displayName: 'superset_config.py', type: 'content', language: 'python', value: '# mock content' },
+        ],
+      },
+    ];
+  }
+  return [];
+};
+
+export const getMockSecurityConfig = () => {
+  return {
+    defaultProfile: 'default',
+    profiles: {
+      default: {
+        mode: 'none',
+        ldap: {
+          url: 'ldap://ldap.example.com:389',
+          bindDn: 'cn=readonly,dc=example,dc=com',
+          bindPassword: 'changeme',
+          userDnTemplate: 'uid={0},ou=users,dc=example,dc=com',
+          baseDn: 'dc=example,dc=com',
+          groupSearchBase: 'ou=groups,dc=example,dc=com',
+          groupSearchFilter: '(member=uid={0},ou=users,dc=example,dc=com)',
+          referral: 'follow',
+          startTls: false,
+          adUrl: 'ldap://ad.example.com:389',
+          adBaseDn: 'dc=example,dc=com',
+          adBindDn: 'cn=administrator,dc=example,dc=com',
+          adBindPassword: 'changeme',
+          adUserSearchFilter: '(sAMAccountName={0})',
+          adDomain: 'EXAMPLE.COM',
+        },
+        oidc: {
+          issuerUrl: 'https://idp.example.com',
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          scopes: 'openid profile email',
+          redirectUri: 'https://superset.example.com/oidc/callback',
+          userClaim: 'preferred_username',
+          groupsClaim: 'groups',
+          skipTlsVerify: false,
+          caSecret: 'idp-ca-secret',
+        },
+        tls: {
+          truststoreSecret: 'global-truststore',
+          truststorePasswordKey: 'truststore.password',
+          truststoreKey: 'truststore.jks',
+        },
+        extraProperties: {
+          'global.security.auth.ldap.customProperty': 'demo',
+        },
+      },
+      oidcProfile: {
+        mode: 'oidc',
+        oidc: {
+          issuerUrl: 'https://idp2.example.com',
+          clientId: 'oidc-client-2',
+          clientSecret: 'secret-2',
+          scopes: 'openid email profile',
+          redirectUri: 'https://app.example.com/callback',
+          userClaim: 'email',
+          groupsClaim: 'roles',
+          skipTlsVerify: true,
+          caSecret: 'idp2-ca',
+        },
+      },
+    },
+  };
+};
+
+export const getMockSecuritySchema = () => ({
+  name: 'GLOBAL_SECURITY',
+  label: 'Global Security',
+  sections: [],
+});
 
 export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: number }): Promise<HelmRepo[]> {
   const { signal, delayMs = 400 } = init ?? {};
@@ -103,8 +218,6 @@ export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: 
       url: 'https://charts.bitnami.com/bitnami',
       authMode: 'anonymous',
       authInvalid: false,
-      createdAt: '2025-08-01T12:00:00Z',
-      updatedAt: '2025-08-01T12:00:00Z',
     },
     {
       id: 'my-http',
@@ -114,8 +227,6 @@ export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: 
       authMode: 'basic',
       username: 'ci',
       authInvalid: false,
-      createdAt: '2025-08-02T08:00:00Z',
-      updatedAt: '2025-08-02T08:10:00Z',
     },
     {
       id: 'ghcr',
@@ -124,8 +235,6 @@ export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: 
       url: 'ghcr.io/stefanprodan/charts',
       authMode: 'anonymous',
       authInvalid: false,
-      createdAt: '2025-07-30T09:00:00Z',
-      updatedAt: '2025-07-30T09:00:00Z',
     },
     {
       id: 'ecr',
@@ -135,8 +244,6 @@ export async function getMockHelmRepos(init?: { signal?: AbortSignal; delayMs?: 
       authMode: 'token',
       username: 'AWS',
       authInvalid: true, // simulate an expired/invalid login
-      createdAt: '2025-08-02T10:00:00Z',
-      updatedAt: '2025-08-02T10:05:00Z',
     },
   ];
 }
@@ -150,21 +257,138 @@ export const getChartsJSON = (): any => {
     "pattern": "trino-.*",
     "secretName": "registry-credentials",
     "version": "1.41.0",
+    "dynamicValues": [
+      "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
+    ],
+    "requiredConfigMaps": [{
+      "cm_name": "trino-hadoop-conf",
+      "cm_type": "config-map",
+      "helm_values_property": "hadoopConf.configMapName",
+      "config_properties": [
+        "core-site",
+        "hdfs-site"
+      ]
+    }],
+    "ranger": {
+      "ranger-plugin-settings":{
+        "type": "ranger-plugin-settings",
+        "repository_name_property": "ranger.serviceName",
+        "service_type": "trino",
+        "extraConfigs": [
+          {
+            "property": "jdbc.driverClassName",
+            "type": "string",
+            "value": "io.trino.jdbc.TrinoDriver"
+          },
+          {
+            "property": "jdbc.url",
+            "type": "template",
+            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+            "properties": {
+              "host": {
+                "source": "template",
+                "type": "string",
+                "template": "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc.cluster.local"
+              },
+              "port": {
+                "source": "helm",
+                "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}server.config.https.port{% endif %}" ,
+                "type": "integer"
+              },
+              "ssl": {
+                "source": "helm",
+                "path": "server.config.https.enabled",
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "ranger-trino-security": {
+        "service_type": "trino",
+        "superusers": "trino, lbakalian",
+        "krb5_princ_srv": "trino-coordinator",
+        "krb5_keytab_path": "/etc/security/keytabs/service.keytab",
+        "ranger_policymgr_file": "/etc/trino/ranger/ranger-policymgr-ssl-trino.xml",
+        "helm_values_ranger_policymgr_file": "ranger.policymgrssl_path",
+        "type": "ranger-security",
+        "cm_name": "ranger-trino-security",
+        "cm_type": "config-map",
+        "helm_values_property": "ranger.securityConfigMapName",
+        "plugin_username": "trino_ranger_plugin_user",
+        "ranger_policycache_dir": "/opt/trino/data/ranger-trino-plugin/cache",
+        "ranger_policycache_dir_helm_property": "/opt/trino/data/ranger-trino-plugin/cache"
 
+      },
+      "ranger-trino-audit": {
+        "service_type": "trino",
+        "krb5_princ_srv": "trino-coordinator",
+        "type": "ranger-audit",
+        "cm_name": "ranger-trino-audit",
+        "cm_type": "config-map",
+        "helm_values_property": "ranger.auditConfigMapName"
+      },
+      "ranger-policymgr-ssl": {
+        "service_type": "trino",
+        "type": "ranger-policymgr-ssl",
+        "cm_name": "ranger-policymgr-ssl",
+        "cm_type": "config-map",
+        "helm_values_property": "ranger.policymgrSslConfigMapName",
+        "ranger_plugin_credential_provider_path": "/etc/trino/ranger/cred",
+        "ranger_plugin_credential_provider_path_helm_prop": "ranger.cred.providerPath",
+        "ranger_plugin_credential_provider_file": "cred.jceks",
+        "ranger_plugin_credential_provider_file_helm_prop": "ranger.cred.providerFile",
+        "ranger_plugin_credential_provider_secretName": "ranger-trino-plugin-credential-provider",
+        "ranger_plugin_credential_provider_secretName_helm_prop": "ranger.cred.secretName"
+      },
+      "ranger-admin-truststore": {
+        "service_type": "trino",
+        "type": "ranger-admin-truststore",
+        "cm_name": "ranger-admin-truststore",
+        "cm_type": "secret",
+        "helm_values_property": "ranger.admin.ssl.truststore.secretName",
+        "truststore_password_secret_name": "ranger-admin-ts-pass",
+        "truststore_password_helm_values_property": "ranger.admin.ssl.truststore.password",
+        "truststore_file_key": "truststore.jks",
+        "truststore_file_key_helm_values_property": "ranger.admin.ssl.truststore.fileKey",
+        "truststore_password_secret_key_value": "password",
+        "truststore_password_secret_key_name": "ranger.admin.ssl.truststore.passwordKey"
+      },
+      "ranger-admin-tls-client": {
+        "service_type": "trino",
+        "type": "ranger-admin-tls-client",
+        "cm_name": "ranger-admin-tls-client",
+        "cm_type": "secret",
+        "helm_values_property": "ranger.admin.ssl.mtls.secretName"
+      }
+    },
     "dependencies": {
+      "kerberos-keytab-mutating-webhook": {
+        "fullnameOverride": "keytab-webhook",
+        "secretName": "regcred",
+        "chart": "kerberos-keytab-mutating-webhook",
+        "chartVersion": "0.1.0",
+        "imageTag": "1.0.0.1",
+        "imageRepository": "registry.clemlab.com/clemlabprojects",
+        "namespace": "ambari-mutating-webhooks",
+        "imageGlobalRegistryProperty": "global.imageRegistry",
+        "crds": [],
+        "dynamicValues": [
+          "AMBARI_KERBEROS_REALM:backend.krbRealm"],
+        "isWebhook": true,
+        "serviceAccounts": [
+          "kerberos-keytab-mutating-webhook"
+        ]
+      },
       "keda": {
         "secretName": "regcred",
         "chart": "keda",
-        "chartVersion": "2.17.2",
-        "imageTag": "2.17.2.1.3.1.0-1-arm64",
-        "imageRepository": "clemlabprojects",
+        "chartVersion": "2.18.0",
+        "imageTag": "2.18.0",
+        "imageRepository": "registry.clemlab.com/clemlabprojects",
+        "imageGlobalRegistryProperty": "global.image.registry",
         "namespace": "keda",
         "crds": ["scaledobjects.keda.sh"],
-        "images": [
-          "keda:keda",
-          "metricsApiServer:keda-metrics-apiserver",
-          "webhooks:keda-admission-webhooks"
-        ],
         "serviceAccounts": [
           "keda-operator",
           "keda-admission-webhooks",
@@ -172,23 +396,45 @@ export const getChartsJSON = (): any => {
         ]
       },
       "kube-prometheus-stack": {
+        "secretName": "regcred",
         "chart": "kube-prometheus-stack",
-        "chartVersion": "77.5.0",
-        "namespace": "monitoring",
-        "imageRepository": "clemlabprojects",
-        "crds": ["servicemonitors.monitoring.coreos.com"]
+        "chartVersion": "78.3.2",
+        "crds": ["servicemonitors.monitoring.coreos.com"],
+        "imageGlobalRegistryProperty": "global.imageRegistry",
+        "imageRepository": "registry.clemlab.com/clemlabprojects",
+        "namespace": "monitoring"
       }
     },
-    "mutating-webhooks": {
-      "name": "kerberos-keytab-mutating-webhook",
-      "version": "v1.0",
-      "enabled": true
-    },
+    "endpoints": [
+      {
+        "id": "trino-ui",
+        "label": "Trino UI",
+        "description": "Web UI for Trino coordinator",
+        "urlTemplate": "{{scheme}}://{{host}}:{{port}}",
+        "properties": {
+          "host": {
+            "source": "template",
+            "type": "string",
+            "template": "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc.cluster.local"
+          },
+          "port": {
+            "source": "helm",
+            "type": "integer",
+            "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}service.port{% endif %}"
+          },
+          "scheme": {
+            "source": "helmCondition",
+            "type": "string",
+            "path": "{% if server.config.https.enabled %}https{% else %}http{% endif %}"
+          }
+        }
+      }
+    ],
     "mounts": [
       {
         "key": "data",
         "label": "Trino data directory",
-        "defaultMountPath": "/data",
+        "defaultMountPath": "/opt/trino/data",
         "supportedTypes": ["emptyDir", "pvc"],
         "defaults": {
           "type": "emptyDir",
@@ -227,7 +473,20 @@ export const getChartsJSON = (): any => {
       { "name": "jmx.port", "from": { "type": "form", "field": "jmx.port" } },
       { "name": "jmx.configPath", "from": { "type": "form", "field": "jmx.configPath" } },
       { "name": "jmx.jarPath", "from": { "type": "form", "field": "jmx.jarPath" } },
-      { "name" : "kerberos.enabled", "template": "enabled"}
+      { "name" : "kerberos.enabled", "template": "enabled"},
+      { "name": "ingressEnabled", "from": { "type": "form", "field": "ingress.enabled" } },
+      { "name": "ingressClassName", "from": { "type": "form", "field": "ingress.className" } },
+      { "name": "ingressPath", "from": { "type": "form", "field": "ingress.path" } },
+      { "name": "ingressHost", "from": { "type": "form", "field": "ingress.host" } },
+      { "name": "ingressTLSSecret", "from": { "type": "form", "field": "ingress.tlsSecret" } },
+      { "name": "ingressTLSHost", "from": { "type": "form", "field": "ingress.tlsHost" } },
+      { 
+        "name": "hiveMetastoreUri", 
+        "from": { 
+          "type": "form", 
+          "field": "ui_hive_metastore_uri"
+        } 
+      }
     ],
 
     "bindings": [
@@ -407,6 +666,54 @@ export const getChartsJSON = (): any => {
             }
           }
         ]
+      },
+      {
+        "name": "ingress-setup",
+        "targets": [
+          { "path": "ingress.hosts[]", "op": "set",
+            "from": {
+              "type": "template",
+              "template": {
+                "host": "${ingressHost}",
+                "paths": [
+                  { "path": "${ingressPath}", "pathType": "ImplementationSpecific"}
+                ]
+              }
+            }
+          },
+          { "path": "ingress.tls[]",
+            "skipIfVarEmpty": "ingressTLSSecret",
+            "op": "set", "from":
+          { "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecret}",
+              "hosts": [ { "host": "${ingressTLSHost}"} ]
+            }
+          }
+          }
+        ]
+      },
+      {
+          "name": "trust-proxy-headers",
+          "targets": [
+            {
+              "path": "additionalConfigProperties[]",
+              "value": "http-server.process-forwarded=true"
+            }
+          ]
+      },
+      {
+        "name": "hive-catalog",
+        "targets": [
+          {
+            "path": "additionalCatalogs.hive", 
+            "op": "set",
+            "from": {
+              "type": "template",
+              "template": "connector.name=hive\nhive.metastore.uri=${hiveMetastoreUri}\nhive.security=allow-all\n"
+            }
+          }
+        ]
       }
     ],
 
@@ -415,6 +722,15 @@ export const getChartsJSON = (): any => {
       { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "default" },
       { "name": "nameOverride", "label": "Nom logique (nameOverride)", "type": "string", "defaultValue": "clemlab-trino", "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)" },
 
+      {
+        "name": "acls",
+        "label": "Contrôle d'accès (Service Trino)",
+        "type": "group",
+        "fields": [
+          { "name": "accessControl.type", "label": "Enable Access Control", "type": "select", "options": [ { "label": "Disabled", "value": "{}" }, { "label": "Ranger", "value": "ranger" } ], "defaultValue": "ranger", "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès." },
+          { "name": "nodePort.port", "label": "Port du Nœud (Optionnel)", "type": "number", "condition": { "field": "nodePort.enabled", "value": true } }
+        ]
+      },
       {
         "name": "monitoringGeneric",
         "label": "Monitoring",
@@ -439,6 +755,71 @@ export const getChartsJSON = (): any => {
         ]
       },
 
+      {
+        "name": "ingressConfig",
+        "label": "Exposition HTTP(S) / Ingress",
+        "type": "group",
+        "fields": [
+          {
+            "name": "ingress.enabled",
+            "label": "Activer l'Ingress",
+            "type": "boolean",
+            "defaultValue": false,
+            "help": "Active la création d'un objet Ingress pour exposer Trino via un hostname."
+          },
+          {
+            "name": "ingress.className",
+            "label": "Classe d'Ingress",
+            "required": true,
+            "type": "string",
+            "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contrôleur par défaut."
+          },
+          {
+            "name": "ingress.host",
+            "label": "Host (DNS) externe",
+            "type": "string",
+            "required": true,
+            "excludeFromValues": true,
+            "help": "Nom DNS public (ex: trino.example.com).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.path",
+            "label": "Chemin HTTP",
+            "type": "string",
+            "defaultValue": "/",
+            "excludeFromValues": true,
+            "help": "Chemin de base pour l'Ingress (souvent '/').",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsSecret",
+            "label": "Secret TLS (optionnel)",
+            "type": "string",
+            "help": "Nom du Secret contenant le certificat TLS. Laisser vide pour HTTP uniquement.",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsHost",
+            "label": "Host TLS",
+            "type": "string",
+            "help": "Host associé à ce certificat TLS (en général le même que l'host Ingress).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          }
+        ]
+      },
       {
         "name": "coordinatorResources",
         "label": "Ressources du Coordinateur",
@@ -499,10 +880,11 @@ export const getChartsJSON = (): any => {
         "type": "group",
         "fields": [
           {
-            "name": "additionalCatalogs.hive.config.hive\\.metastore\\.uri",
+            "name": "ui_hive_metastore_uri",
             "label": "Service Hive Metastore",
             "type": "service-select",
             "serviceType": "HIVE_METASTORE",
+            "excludeFromValues": true, 
             "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
           }
         ]
@@ -519,6 +901,209 @@ export const getChartsJSON = (): any => {
       { "name": "alertmanager.enabled", "label": "Activer Alertmanager", "type": "boolean", "defaultValue": true },
       { "name": "server.retention", "label": "Rétention des données", "type": "string", "defaultValue": "14d", "help": "Exemples : 14d, 2w, 1y" }
     ]
+  },
+  "superset": {
+    "label": "Superset",
+    "chart": "apache/superset",
+    "pattern": "superset-.*",
+    "secretName": "registry-credentials",
+    "version": "0.12.13",
+    "dependencies": {},
+    "endpoints": [
+      {
+        "id": "ui",
+        "label": "Superset UI",
+        "type": "template",
+        "template": "http://{{host}}:{{port}}/",
+        "properties": {
+          "host": {
+            "source": "template",
+            "type": "string",
+            "template": "{{releaseName}}-superset.{{namespace}}.svc.cluster.local"
+          },
+          "port": {
+            "source": "helm",
+            "type": "integer",
+            "path": "service.port"
+          }
+        }
+      }
+    ],
+    "mounts": [],
+    "variables": [
+      { "name": "ingressEnabled", "from": { "type": "form", "field": "ingress.enabled" } },
+      { "name": "ingressClassName", "from": { "type": "form", "field": "ingress.className" } },
+      { "name": "ingressPath", "from": { "type": "form", "field": "ingress.path" } },
+      { "name": "ingressHost", "from": { "type": "form", "field": "ingress.host" } },
+      { "name": "ingressTLSSecret", "from": { "type": "form", "field": "ingress.tlsSecret" } },
+      { "name": "ingressTLSHost", "from": { "type": "form", "field": "ingress.tlsHost" } }
+    ],
+    "bindings": [
+    {
+      "name": "superset-db-connection",
+      "skipIfVarEmpty": "trinoHost",
+      "targets": [
+        {
+          "path": "extraEnv.TRINO_URL",
+          "value": "trino://${trinoHost}"
+        }
+      ]
+    },
+      {
+        "name": "ingress-setup",
+        "targets": [
+          { "path": "ingress.hosts[]", "op": "set",
+            "from": {
+              "type": "template",
+              "template": "${ingressHost}"
+            }
+          },
+          { "path": "ingress.pathType", "op": "set",
+            "from": {
+              "type": "template",
+              "template": "ImplementationSpecific"
+            }
+          },
+          { "path": "ingress.tls[]",
+            "skipIfVarEmpty": "ingressTLSSecret",
+            "op": "set", "from":
+          { "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecret}",
+              "hosts": [ { "host": "${ingressTLSHost}"} ]
+            }
+          }
+          }
+        ]
+      },
+      {
+          "name": "trust-proxy-headers",
+          "targets": [
+            {
+              "path": "additionalConfigProperties[]",
+              "value": "http-server.process-forwarded=true"
+            }
+          ]
+      },
+      {
+        "name": "mount-managed-config",
+        "skipIfVarEmpty": "authConfig",
+        "targets": [
+          {
+            "path": "extraVolumes[]",
+            "value": {
+              "name": "managed-config-vol",
+              "secret": { "secretName": "${authConfig}" }
+            }
+          },
+          {
+            "path": "extraVolumeMounts[]",
+            "value": {
+              "name": "managed-config-vol",
+              // Since we don't know the exact filename key here easily without dynamic lookup,
+              // we can mount the whole secret to a folder, OR assume standard naming.
+              // Best practice: The UI page enforces 'superset_config.py' as filename for this type.
+              "mountPath": "/app/pythonpath/superset_config_custom.py",
+              "subPath": "superset_config.py",
+              "readOnly": true
+            }
+          },
+          // Superset specific: Tell it to load this file
+          {
+            "path": "configOverrides.load_custom",
+            "value": "from superset_config_custom import *"
+          }
+          ]
+      }
+  ],
+    "form": [
+      { "name": "releaseName", "label": "release name", "type": "string", "required": true },
+      { "name": "namespace", "label": "Namespace Kubernetes", "type": "string", "required": true, "defaultValue": "dashboarding" },
+      {
+        "name": "trinoConnection",
+        "label": "Connect to Trino",
+        "type": "k8s-discovery",
+        "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
+        "help": "Select a running Trino instance to auto-connect."
+      },
+      {
+        "name": "authConfig",
+        "label": "Authentication Profile",
+        "type": "k8s-discovery",
+        // This 'lookupLabel' must match what we set in ConfigurationResource.java
+        // We filter for type=superset-python so users don't pick a Trino config by mistake
+        "lookupLabel": "ambari.clemlab.com/managed-config=true,ambari.clemlab.com/config-type=superset-python",
+        "help": "Select a managed Python configuration for OAuth/OpenID."
+      },
+      {
+        "name": "ingressConfig",
+        "label": "Exposition HTTP(S) / Ingress",
+        "type": "group",
+        "fields": [
+          {
+            "name": "ingress.enabled",
+            "label": "Activer l'Ingress",
+            "type": "boolean",
+            "defaultValue": false,
+            "help": "Active la création d'un objet Ingress pour exposer Trino via un hostname."
+          },
+          {
+            "name": "ingress.ingressClassName",
+            "label": "Classe d'Ingress",
+            "required": true,
+            "type": "string",
+            "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contrôleur par défaut.",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.host",
+            "label": "Host (DNS) externe",
+            "type": "string",
+            "required": true,
+            "excludeFromValues": true,
+            "help": "Nom DNS public (ex: trino.example.com).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.path",
+            "label": "Chemin HTTP",
+            "type": "string",
+            "defaultValue": "/",
+            "help": "Chemin de base pour l'Ingress (souvent '/').",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsSecret",
+            "label": "Secret TLS (optionnel)",
+            "type": "string",
+            "help": "Nom du Secret contenant le certificat TLS. Laisser vide pour HTTP uniquement.",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          },
+          {
+            "name": "ingress.tlsHost",
+            "label": "Host TLS",
+            "type": "string",
+            "help": "Host associé à ce certificat TLS (en général le même que l'host Ingress).",
+            "condition": {
+              "field": "ingress.enabled",
+              "value": true
+            }
+          }
+        ]
+      }
+    ]
   }
-}
+};
 };

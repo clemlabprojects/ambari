@@ -1,0 +1,21 @@
+{
+  "name": "superset-env",
+  "description": "Environment variables and basic settings",
+  "properties": [
+    {
+      "name": "SUPERSET_ADMIN_PASSWORD",
+      "displayName": "Admin Password",
+      "value": "admin",
+      "description": "Initial password for the admin account",
+      "type": "password", 
+      "required": true
+    },
+    {
+      "name": "ROW_LIMIT",
+      "displayName": "Row Limit",
+      "value": 5000,
+      "description": "Default row limit for SQL Lab",
+      "type": "int"
+    }
+  ]
+}

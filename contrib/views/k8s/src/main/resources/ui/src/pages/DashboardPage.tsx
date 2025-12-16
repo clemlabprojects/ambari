@@ -1,15 +1,16 @@
 // ui/src/pages/DashboardPage.tsx
 import React from 'react';
-import { Row, Col, Typography, Card, List, Tag, Spin, Statistic, Timeline, Result } from 'antd';
+import { Row, Col, Typography, Card, List, Tag, Spin, Statistic, Timeline, Result, Space, Alert, Button, message } from 'antd';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { installMonitoring, getMonitoringDiscovery } from '../api/client';
 import './Page.css';
 
 const { Title, Text, Paragraph } = Typography;
 
 const DashboardPage: React.FC = () => {
-    const { status, stats, components, events, mainLoaderActive } = useClusterStatus();
+    const { status, stats, components, events, monitoringState, refresh } = useClusterStatus();
     console.log('DEBUG: DashboardPage - Cluster status:', status);
     
     // If the connection failed, display a message instead of content.
@@ -23,20 +24,18 @@ const DashboardPage: React.FC = () => {
         );
     }
 
-    // If data is being loaded, display a spinner.
     console.log('DEBUG: DashboardPage - Cluster stats:', stats);
     console.log('DEBUG: DashboardPage - Cluster components:', components);
     console.log('DEBUG: DashboardPage - Cluster events:', events);
-    console.log('DEBUG: DashboardPage - Main loader active:', mainLoaderActive);
-    if (mainLoaderActive){
-        return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
-    }
+
+    const safeComponents = Array.isArray(components) ? components : [];
+    const safeEvents = Array.isArray(events) ? events : [];
     
-    const helmChartData = [
+    const helmChartData = stats ? [
         { name: 'Deployed', value: stats.helm.deployed },
         { name: 'Pending', value: stats.helm.pending },
         { name: 'Failed', value: stats.helm.failed },
-    ];
+    ] : [];
     const COLORS = ['#52c41a', '#faad14', '#ff4d4f'];
 
     const getEventTimelineItem = (event: (typeof events)[0]) => {
@@ -51,32 +50,86 @@ const DashboardPage: React.FC = () => {
         }
     };
 
-    const healthyComponents = components.filter(c => c.status === 'Healthy').length;
+    const healthyComponents = safeComponents.filter(c => c.status === 'Healthy').length;
 
     return (
-        <div>
-            <div className="page-header">
-                <Title level={2}>Dashboard</Title>
-                <Paragraph type="secondary" style={{maxWidth: '600px', textAlign: 'left'}}>
-                    Overview of cluster status, control plane component health, and application deployments via Helm.
-                </Paragraph>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className="page-header" style={{ alignItems: 'flex-start' }}>
+                <div>
+                  <Title level={2} style={{ marginBottom: 4 }}>Dashboard</Title>
+                  <Paragraph type="secondary" style={{maxWidth: '900px', textAlign: 'left', marginBottom: 0}}>
+                      Overview of cluster status, control plane component health, and application deployments via Helm.
+                  </Paragraph>
+                </div>
             </div>
+            {monitoringState?.state && (
+              <Alert
+                banner
+                style={{ marginTop: 0 }}
+                message={
+                  <Space>
+                    <span>Monitoring bootstrap</span>
+                    <Tag color={monitoringState.state === 'COMPLETED' ? 'green' : monitoringState.state === 'FAILED' ? 'red' : 'blue'}>
+                      {monitoringState.state}
+                    </Tag>
+                  </Space>
+                }
+                description={monitoringState.message}
+                type={monitoringState.state === 'FAILED' ? 'error' : 'info'}
+                showIcon
+                action={
+                  <Space>
+                    <Button
+                      size="small"
+                      onClick={async () => {
+                        try {
+                          await installMonitoring();
+                          message.success('Monitoring bootstrap requested');
+                          await getMonitoringDiscovery().catch(() => {});
+                          await refresh();
+                        } catch (e:any) {
+                          message.error(e?.message || 'Bootstrap failed');
+                        }
+                      }}
+                    >
+                      Retry bootstrap
+                    </Button>
+                    <Button size="small" onClick={() => refresh(true)}>Refresh status</Button>
+                  </Space>
+                }
+              />
+            )}
             <Row gutter={[24, 24]}>
                 <Col xs={24} lg={8}>
-                    <Card title="Helm Deployment Health" style={{ height: '100%' }}>
+                    <Card title="Helm Deployment Health" style={{ height: '100%' }} bodyStyle={{ minHeight: 420 }}>
+                        {(!stats) ? (
+                          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                        ) : (
+                        <>
                         <div style={{ height: 300, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
-                                    <Pie data={helmChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} labelLine={false} label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
-                                        const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+                                    <Pie
+                                      data={helmChartData}
+                                      dataKey="value"
+                                      nameKey="name"
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius={50}
+                                      outerRadius={90}
+                                      paddingAngle={4}
+                                      labelLine={false}
+                                      label={({ cx, cy, midAngle, innerRadius, outerRadius, percent, value }) => {
+                                        const radius = innerRadius + (outerRadius - innerRadius) * 0.65;
                                         const x = cx + radius * Math.cos(-midAngle * (Math.PI / 180));
                                         const y = cy + radius * Math.sin(-midAngle * (Math.PI / 180));
                                         return (
-                                            <text x={x} y={y} fill="white" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
-                                                {`${(percent * 100).toFixed(0)}%`}
-                                            </text>
+                                          <text x={x} y={y} fill="#000" fontSize={12} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
+                                            {`${Math.round(percent * 100)}% (${value})`}
+                                          </text>
                                         );
-                                    }}>
+                                      }}
+                                    >
                                         {helmChartData.map((entry, index) => (
                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                         ))}
@@ -86,49 +139,74 @@ const DashboardPage: React.FC = () => {
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
-                        <Statistic title="Total releases" value={stats.helm.total} style={{textAlign: 'center', marginTop: '16px'}}/>
+                        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 12 }}>
+                            {helmChartData.map((item, idx) => (
+                              <Space key={item.name} direction="vertical" align="center" size={2}>
+                                <Tag color={COLORS[idx]}>{item.name}</Tag>
+                                <Text strong>{item.value}</Text>
+                              </Space>
+                            ))}
+                        </div>
+                        <div style={{ textAlign: 'center', marginTop: 8 }}>
+                          <Tag color="geekblue">
+                            Metrics source: {stats?.source || 'unknown'}
+                          </Tag>
+                        </div>
+                        <Statistic title="Total releases" value={stats.helm.total} style={{textAlign: 'center', marginTop: '12px'}}/>
+                        </>
+                        )}
                     </Card>
                 </Col>
                 <Col xs={24} lg={8}>
                      <Card title="Control Plane Component Status" style={{ height: '100%' }}>
-                        <div style={{textAlign: 'center', marginBottom: '24px'}}>
-                            <Statistic
-                                title="Healthy components"
-                                value={healthyComponents}
-                                suffix={`/ ${components.length}`}
-                                valueStyle={{ color: healthyComponents === components.length ? '#3f8600' : '#cf1322' }}
+                        {safeComponents.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                        ) : (
+                          <>
+                            <div style={{textAlign: 'center', marginBottom: '5px'}}>
+                                <Statistic
+                                    title="Healthy components"
+                                    value={healthyComponents}
+                                    suffix={`/ ${safeComponents.length}`}
+                                    valueStyle={{ color: healthyComponents === safeComponents.length ? '#3f8600' : '#cf1322' }}
+                                />
+                            </div>
+                            <List
+                                size="small"
+                                dataSource={safeComponents}
+                                renderItem={(item) => (
+                                    <List.Item>
+                                        <List.Item.Meta
+                                            avatar={item.status === 'Healthy' ? <CheckCircleTwoTone twoToneColor="#52c41a" /> : <CloseCircleTwoTone twoToneColor="#ff4d4f" />}
+                                            title={<Text>{item.name}</Text>}
+                                        />
+                                        <Tag color={item.status === 'Healthy' ? 'green' : 'red'}>{item.status}</Tag>
+                                    </List.Item>
+                                )}
                             />
-                        </div>
-                        <List
-                            size="small"
-                            dataSource={components}
-                            renderItem={(item) => (
-                                <List.Item>
-                                    <List.Item.Meta
-                                        avatar={item.status === 'Healthy' ? <CheckCircleTwoTone twoToneColor="#52c41a" /> : <CloseCircleTwoTone twoToneColor="#ff4d4f" />}
-                                        title={<Text>{item.name}</Text>}
-                                    />
-                                    <Tag color={item.status === 'Healthy' ? 'green' : 'red'}>{item.status}</Tag>
-                                </List.Item>
-                            )}
-                        />
+                          </>
+                        )}
                     </Card>
                 </Col>
                 <Col xs={24} lg={8}>
                      <Card title="Recent Event Stream" style={{ height: '100%' }}>
-                         <Timeline
-                            mode="left"
-                            items={events.map(event => ({
-                                ...getEventTimelineItem(event),
-                                children: (
-                                    <>
-                                        <Text strong>{event.message}</Text>
-                                        <br />
-                                        <Text type="secondary" style={{fontSize: '12px'}}><ClockCircleOutlined /> {event.timestamp}</Text>
-                                    </>
-                                )
-                            }))}
-                         />
+                         {safeEvents.length === 0 ? (
+                           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                         ) : (
+                           <Timeline
+                              mode="left"
+                              items={safeEvents.map(event => ({
+                                  ...getEventTimelineItem(event),
+                                  children: (
+                                      <>
+                                          <Text strong>{event.message}</Text>
+                                          <br />
+                                          <Text type="secondary" style={{fontSize: '12px'}}><ClockCircleOutlined /> {event.timestamp}</Text>
+                                      </>
+                                  )
+                              }))}
+                           />
+                         )}
                     </Card>
                 </Col>
             </Row>

@@ -394,4 +394,13 @@ public class MITKerberosOperationHandler extends KDCKerberosOperationHandler {
       throw new KerberosOperationException(message);
     }
   }
+
+
+  /**
+    * No need to ensure host exists in MIT KDC
+   */
+  @Override
+  public void ensureHostExists(String hostname) throws KerberosOperationException {
+      return; // nothing to do
+  }
 }

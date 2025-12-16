@@ -1,0 +1,53 @@
+{
+  "name": "GLOBAL_SECURITY",
+  "label": "Global Security",
+  "description": "Declarative schema for global security profiles (auth + truststore). Each property is defined once with its Helm path so admins can extend without recompiling.",
+  "properties": [
+    {
+      "name": "mode",
+      "displayName": "Authentication Mode",
+      "description": "Select the authentication mechanism applied to supported charts.",
+      "type": "select",
+      "default": "none",
+      "options": [
+        { "label": "None", "value": "none" },
+        { "label": "LDAP", "value": "ldap" },
+        { "label": "Active Directory", "value": "ad" },
+        { "label": "OIDC", "value": "oidc" }
+      ],
+      "helmPath": "global.security.auth.mode",
+      "modes": ["none", "ldap", "ad", "oidc"]
+    },
+
+    { "name": "ldap.url", "displayName": "Directory URL", "description": "LDAP server URL", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.url" },
+    { "name": "ldap.bindDn", "displayName": "Bind DN", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.bindDn" },
+    { "name": "ldap.bindPassword", "displayName": "Bind Password", "type": "password", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.bindPassword" },
+    { "name": "ldap.userDnTemplate", "displayName": "User DN Template", "description": "e.g. uid={0},ou=users,dc=example,dc=com", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.userDnTemplate" },
+    { "name": "ldap.userSearchFilter", "displayName": "User Search Filter", "description": "e.g. (uid={0})", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.userSearchFilter" },
+    { "name": "ldap.baseDn", "displayName": "Base DN", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.baseDn" },
+    { "name": "ldap.groupSearchBase", "displayName": "Group Search Base", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchBase" },
+    { "name": "ldap.groupSearchFilter", "displayName": "Group Search Filter", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchFilter" },
+    { "name": "ldap.referral", "displayName": "Referral Handling", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.referral" },
+    { "name": "ldap.startTls", "displayName": "StartTLS", "type": "boolean", "default": false, "modes": ["ldap"], "helmPath": "global.security.auth.ldap.startTls" },
+    { "name": "ldap.adUrl", "displayName": "AD URL", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.url" },
+    { "name": "ldap.adBaseDn", "displayName": "AD Base DN", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.baseDn" },
+    { "name": "ldap.adBindDn", "displayName": "AD Bind DN", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.bindDn" },
+    { "name": "ldap.adBindPassword", "displayName": "AD Bind Password", "type": "password", "modes": ["ad"], "helmPath": "global.security.auth.ad.bindPassword" },
+    { "name": "ldap.adUserSearchFilter", "displayName": "AD User Search Filter", "description": "e.g. (sAMAccountName={0})", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.userSearchFilter" },
+    { "name": "ldap.adDomain", "displayName": "AD Domain", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.domain" },
+
+    { "name": "oidc.issuerUrl", "displayName": "Issuer URL", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.issuerUrl" },
+    { "name": "oidc.clientId", "displayName": "Client ID", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientId" },
+    { "name": "oidc.clientSecret", "displayName": "Client Secret", "type": "password", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientSecret" },
+    { "name": "oidc.scopes", "displayName": "Scopes", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.scopes" },
+    { "name": "oidc.redirectUri", "displayName": "Redirect URI", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.redirectUri" },
+    { "name": "oidc.userClaim", "displayName": "User Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.userClaim" },
+    { "name": "oidc.groupsClaim", "displayName": "Groups Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.groupsClaim" },
+    { "name": "oidc.skipTlsVerify", "displayName": "Skip TLS Verify", "type": "boolean", "default": false, "modes": ["oidc"], "helmPath": "global.security.auth.oidc.skipTlsVerify" },
+    { "name": "oidc.caSecret", "displayName": "CA Secret", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.caSecret" },
+
+    { "name": "tls.truststoreSecret", "displayName": "Truststore Secret", "type": "string", "modes": ["tls", "ldap", "ad", "oidc", "none"], "helmPath": "global.security.tls.truststore.truststoreSecret" },
+    { "name": "tls.truststoreKey", "displayName": "Truststore Key", "type": "string", "modes": ["tls", "ldap", "ad", "oidc", "none"], "helmPath": "global.security.tls.truststore.truststoreKey" },
+    { "name": "tls.truststorePasswordKey", "displayName": "Truststore Password Key", "type": "string", "modes": ["tls", "ldap", "ad", "oidc", "none"], "helmPath": "global.security.tls.truststore.truststorePasswordKey" }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "global-env",
+  "description": "Shared global settings used by multiple charts",
+  "properties": [
+    {
+      "name": "GLOBAL_DOMAIN",
+      "displayName": "Base DNS domain",
+      "description": "DNS suffix for internal service hostnames (e.g. cluster.local)",
+      "type": "string",
+      "value": "cluster.local"
+    },
+    {
+      "name": "GLOBAL_IMAGE_REGISTRY",
+      "displayName": "Image registry",
+      "description": "Default container registry for charts",
+      "type": "string",
+      "value": "registry.clemlab.com"
+    },
+    {
+      "name": "GLOBAL_LOG_LEVEL",
+      "displayName": "Default log level",
+      "description": "Baseline log level propagated to services",
+      "type": "string",
+      "value": "INFO"
+    }
+  ]
+}

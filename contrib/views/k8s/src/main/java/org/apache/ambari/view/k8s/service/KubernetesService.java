@@ -3,16 +3,38 @@ package org.apache.ambari.view.k8s.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-import io.fabric8.kubernetes.api.model.*;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import io.fabric8.kubernetes.api.model.ConfigMap;
+import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
+import io.fabric8.kubernetes.api.model.Event;
+import io.fabric8.kubernetes.api.model.EventList;
+import io.fabric8.kubernetes.api.model.HasMetadata;
+import io.fabric8.kubernetes.api.model.LocalObjectReferenceBuilder;
+import io.fabric8.kubernetes.api.model.Namespace;
+import io.fabric8.kubernetes.api.model.NamespaceBuilder;
+import io.fabric8.kubernetes.api.model.NamespaceList;
+import io.fabric8.kubernetes.api.model.Node;
+import io.fabric8.kubernetes.api.model.NodeAddress;
+import io.fabric8.kubernetes.api.model.NodeList;
+import io.fabric8.kubernetes.api.model.ObjectMeta;
+import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodList;
+import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.ServiceList;
+import io.fabric8.kubernetes.api.model.Status;
+import io.fabric8.kubernetes.api.model.WatchEvent;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
+import io.fabric8.kubernetes.api.model.ComponentCondition;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.client.dsl.base.PatchContext;
-import io.fabric8.kubernetes.client.utils.Serialization;
-
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
-
-import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 
 import io.fabric8.openshift.client.OpenShiftClient;
 
@@ -21,9 +43,14 @@ import io.fabric8.kubernetes.client.okhttp.OkHttpClientFactory;
 import io.fabric8.kubernetes.client.utils.Serialization;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.dto.RenderConfigSpec;
 import org.apache.ambari.view.k8s.model.*;
-
-import org.apache.ambari.view.k8s.model.ComponentStatus;
+import org.apache.ambari.view.k8s.model.kube.KubeNamespace;
+import org.apache.ambari.view.k8s.model.kube.KubePod;
+import org.apache.ambari.view.k8s.model.kube.KubePodContainerStatus;
+import org.apache.ambari.view.k8s.model.kube.KubeServiceDTO;
+import org.apache.ambari.view.k8s.model.kube.KubeEventDTO;
+import org.apache.ambari.view.k8s.dto.RenderConfigType;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
@@ -32,18 +59,25 @@ import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import org.springframework.util.FileCopyUtils;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import java.time.Instant;
@@ -54,34 +88,40 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.zip.GZIPInputStream;
+
+import static java.util.Base64.getDecoder;
+import static java.util.Base64.getEncoder;
 
 /**
  * Service containing the real business logic to interact with the Kubernetes API.
+ * Thread-safe for concurrent read operations; client is immutable after construction.
  */
 public class KubernetesService {
-    
+
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesService.class);
+    // Singleton cache per view instance to avoid reinitializing K8s client repeatedly
+    private static final java.util.concurrent.ConcurrentMap<String, KubernetesService> INSTANCES = new java.util.concurrent.ConcurrentHashMap<>();
     
-    private final KubernetesClient client;
-    private final boolean isConfigured;
+    private KubernetesClient client;
+    private boolean isConfigured;
     private ViewContext viewContext;
     private WebHookConfigurationService webHookConfigurationService;
 
     private final HelmRepositoryService repositoryService;
-    private final HelmClient helmClient;
     private final HelmService helmService;
+    private final HelmClient helmClient;
+    private final AtomicBoolean monitoringBootstrapScheduled = new AtomicBoolean(false);
+    private final AtomicReference<String> metricsSource = new AtomicReference<>("unknown");
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private MountManager mountManager;
 
@@ -89,13 +129,54 @@ public class KubernetesService {
 
     public static final String WEBHOOK_ENABLED_LABEL_KEY = "security.clemlab.com/webhooks-enabled";
 
+    // caching implementation
+    private final Cache<String, List<Map<String, String>>> serviceCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .maximumSize(100)
+            .build();
+    // Short-lived cache for expensive stats/metrics calls
+    private final Cache<String, ClusterStats> statsCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .maximumSize(4)
+            .build();
+    // Monitoring bootstrap defaults
+    private static final String DEFAULT_MONITORING_RELEASE = "kube-prometheus-stack";
+    private static final String DEFAULT_MONITORING_NAMESPACE = "monitoring";
+    private static final String DEFAULT_MONITORING_CHART = "kube-prometheus-stack";
+    private static final String DEFAULT_MONITORING_REPO_ID = "clemlab";
+    private static final String DEFAULT_MONITORING_REPO_NAME = "clemlab";
+    private static final String DEFAULT_MONITORING_REPO_URL = "registry.clemlab.com/clemlabprojects/charts";
+    private static final String DEFAULT_MONITORING_REPO_IMAGE_PROJECT = "clemlabprojects";
+    private static final String SETTINGS_KEY = "view.settings.json";
+    private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
+
+
+    private static final int MAX_METRICS_NODES = Integer.getInteger("k8s.view.metrics.sample.nodes", 200);
+    // Shared pool for short metrics calls to avoid blocking the main thread
+    private static final ExecutorService METRICS_POOL = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "k8s-metrics-pool");
+        t.setDaemon(true);
+        return t;
+    });
+    private static final ExecutorService BOOTSTRAP_POOL = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "k8s-monitoring-bootstrap");
+        t.setDaemon(true);
+        return t;
+    });
+
+    public static KubernetesService get(ViewContext ctx) {
+        KubernetesService svc = INSTANCES.computeIfAbsent(ctx.getInstanceName(), k -> new KubernetesService(ctx));
+        svc.scheduleMonitoringBootstrapAsync();
+        return svc;
+    }
+
     public KubernetesService(KubernetesClient client, boolean isConfigured) {
         this.viewContext = null; // Default constructor for testing
         this.client = client;
         this.isConfigured = isConfigured;
         this.helmClient = new HelmClientDefault();
-        this.helmService = null; // testing
-        this.repositoryService = null;
+        this.repositoryService = new HelmRepositoryService(null, helmClient);
+        this.helmService = new HelmService(null, helmClient);
         this.configurationService = null;
     }
 
@@ -104,8 +185,8 @@ public class KubernetesService {
         this.client = client;
         this.isConfigured = isConfigured;
         this.helmClient = new HelmClientDefault();
-        this.helmService = null; // testing
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
+        this.helmService = new HelmService(viewContext, helmClient);
         this.configurationService = new ViewConfigurationService(viewContext);
     }
 
@@ -115,8 +196,8 @@ public class KubernetesService {
         this.isConfigured = isConfigured;
         // Internal services with the same mocked HelmClient
         this.helmClient = helmClient;
-        this.helmService = new HelmService(ctx, helmClient);
         this.repositoryService = new HelmRepositoryService(ctx, helmClient);
+        this.helmService = new HelmService(ctx, helmClient);
     }
 
     public KubernetesService(ViewContext viewContext) {
@@ -225,12 +306,20 @@ public class KubernetesService {
         }
     }
 
-    public List<ClusterNode> getNodes() {
+    public List<ClusterNode> getNodes(int limit, int offset) {
         checkConfiguration();
         LOG.info("Fetching node list from Kubernetes API.");
-        return client.nodes().list().getItems().stream()
+        var items = client.nodes().list().getItems();
+        int from = Math.min(Math.max(offset, 0), items.size());
+        int to = Math.min(from + Math.max(limit, 1), items.size());
+        return items.subList(from, to).stream()
                 .map(this::toClusterNode)
                 .collect(Collectors.toList());
+    }
+
+    public int countNodes() {
+        checkConfiguration();
+        return client.nodes().list().getItems().size();
     }
 
     public List<ComponentStatus> getComponentStatuses() {
@@ -259,7 +348,11 @@ public class KubernetesService {
             .collect(Collectors.toList());
     }
 
-    public ClusterStats getClusterStats() {
+    public ClusterStats getClusterStats(boolean forceRefresh) {
+        ClusterStats cachedStats = statsCache.getIfPresent("clusterStats");
+        if (cachedStats != null && !forceRefresh) {
+            return cachedStats;
+        }
         checkConfiguration();
         LOG.info("Calculating cluster stats from Kubernetes API.");
 
@@ -291,32 +384,811 @@ public class KubernetesService {
         }
 
         // NOTE: Real-time usage stats require the Kubernetes Metrics Server.
-        // This implementation shows total capacity. A more advanced version would query the metrics API.
+        // Prefer Prometheus/Thanos when available, fallback to metrics-server.
         double usedMemoryTotal = 0;
-        for (Node node : nodeList.getItems()) {
-            try {
-                var nodeMetrics = client.top().nodes().metrics(node.getMetadata().getName());
-                if (nodeMetrics != null && nodeMetrics.getUsage() != null && nodeMetrics.getUsage().containsKey("memory")) {
-                    Quantity memoryQuantity = nodeMetrics.getUsage().get("memory");
-                    usedMemoryTotal += memoryQuantity.getNumericalAmount().doubleValue() / (1024 * 1024 * 1024); // GiB
+        double usedCpuTotal = 0;
+        AtomicBoolean metricsFound = new AtomicBoolean(false);
+        metricsSource.set("unknown");
+
+        // Attempt Prometheus first
+        try {
+            MonitoringSettings settings = loadMonitoringSettings();
+            if (settings.preferPrometheus) {
+                MonitoringInfo prom = discoverMonitoringPrometheus();
+                String promUrl = null;
+                if (isOpenShift(client)) {
+                    promUrl = viewContext.getAmbariProperty("openshift.thanos.url");
+                    if (promUrl == null || promUrl.isBlank()) {
+                        promUrl = "https://thanos-querier.openshift-monitoring.svc:9091";
+                    }
+                } else if (prom != null) {
+                    promUrl = prom.url();
                 }
-            } catch (Exception ex) {
-                LOG.warn("Could not fetch memory usage for node {}: {}", node.getMetadata().getName(), ex.getMessage());
+                if (promUrl != null && !promUrl.isBlank()) {
+                    double[] promMetrics = queryPrometheusClusterUsage(promUrl);
+                    if (promMetrics != null) {
+                        usedCpuTotal = promMetrics[0];
+                        usedMemoryTotal = promMetrics[1];
+                        metricsFound.set(true);
+                        metricsSource.set(isOpenShift(client) ? "openshift-thanos" : "prometheus");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Prometheus metrics fetch failed: {}", e.getMessage());
+        }
+
+        // Fallback to metrics-server if Prometheus was not available
+        List<CompletableFuture<double[]>> usageFutures = new ArrayList<>();
+        List<Node> sampledNodes = nodeList.getItems();
+        if (sampledNodes.size() > MAX_METRICS_NODES) {
+            sampledNodes = sampledNodes.subList(0, MAX_METRICS_NODES);
+            LOG.info("Sampling first {} nodes for metrics ({} total)", MAX_METRICS_NODES, nodeList.getItems().size());
+        }
+        if (!metricsFound.get()) {
+            for (Node node : sampledNodes) {
+                String nodeName = node.getMetadata().getName();
+                usageFutures.add(CompletableFuture.supplyAsync(() -> {
+                    double[] usage = new double[]{0.0, 0.0}; // [cpu cores, mem GiB]
+                    try {
+                        var nodeMetrics = client.top().nodes().metrics(nodeName);
+                        if (nodeMetrics != null && nodeMetrics.getUsage() != null) {
+                            metricsFound.set(true);
+                            if (nodeMetrics.getUsage().containsKey("cpu")) {
+                                Quantity cpuQty = nodeMetrics.getUsage().get("cpu");
+                                usage[0] = cpuQty.getNumericalAmount().doubleValue();
+                            }
+                            if (nodeMetrics.getUsage().containsKey("memory")) {
+                                Quantity memoryQuantity = nodeMetrics.getUsage().get("memory");
+                                usage[1] = memoryQuantity.getNumericalAmount().doubleValue() / (1024 * 1024 * 1024); // GiB
+                            }
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Could not fetch usage for node {}: {}", nodeName, ex.getMessage());
+                    }
+                    return usage;
+                }, METRICS_POOL));
+            }
+            for (CompletableFuture<double[]> f : usageFutures) {
+                try {
+                    double[] u = f.get(2, TimeUnit.SECONDS);
+                    usedCpuTotal += u[0];
+                    usedMemoryTotal += u[1];
+                } catch (TimeoutException te) {
+                    LOG.warn("Timeout fetching node metrics");
+                } catch (Exception ex) {
+                    LOG.warn("Could not fetch node usage: {}", ex.getMessage());
+                }
+            }
+            if (metricsFound.get()) {
+                metricsSource.set("metrics-server");
             }
         }
         
-        ClusterStats.ResourceStat cpuStatistics = new ClusterStats.ResourceStat(0, totalCpuCapacity); // Usage requires metrics
+        if (!metricsFound.get()) {
+            usedCpuTotal = -1;
+            usedMemoryTotal = -1;
+        }
+        
+        ClusterStats.ResourceStat cpuStatistics = new ClusterStats.ResourceStat(usedCpuTotal, totalCpuCapacity); // Usage requires metrics
         ClusterStats.ResourceStat memoryStatistics = new ClusterStats.ResourceStat(usedMemoryTotal, totalMemoryCapacity);
         ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podList.getItems().size());
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
         
-        // Helm stats would require Helm client logic, which is complex. Returning placeholder.
-        ClusterStats.HelmStat helmStatistics = new ClusterStats.HelmStat(0, 0, 0, 0);
+        // Helm stats (best-effort): list releases using the helm client. If it fails, keep zeros.
+        int deployed = 0, pending = 0, failed = 0, total = 0;
+        try {
+            String kubeconfigContent = getConfigurationService().getKubeconfigContents();
+            List<com.marcnuri.helm.Release> releases = new HelmService(this.viewContext).list(null, kubeconfigContent);
+            total = releases.size();
+            for (com.marcnuri.helm.Release r : releases) {
+                String st = "";
+                try {
+                    st = String.valueOf(r.getStatus()).toLowerCase(Locale.ROOT);
+                } catch (Exception ignore) { }
+                if (st.contains("fail")) {
+                    failed++;
+                } else if (st.contains("pending")) {
+                    pending++;
+                } else {
+                    deployed++;
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to compute Helm stats: {}", e.toString());
+        }
+        ClusterStats.HelmStat helmStatistics = new ClusterStats.HelmStat(deployed, pending, failed, total);
 
-        return new ClusterStats(cpuStatistics, memoryStatistics, podStatistics, nodeStatistics, helmStatistics);
+        ClusterStats result = new ClusterStats(cpuStatistics, memoryStatistics, podStatistics, nodeStatistics, helmStatistics);
+        result.setSource(metricsSource.get());
+        statsCache.put("clusterStats", result);
+        return result;
     }
 
-    // Helper methods to convert Fabric8 models to our DTOs
+    /**
+     * List namespaces with lightweight metadata.
+     */
+    public List<KubeNamespace> listNamespaces() {
+        checkConfiguration();
+        NamespaceList list = client.namespaces().list();
+        return list.getItems().stream().map(ns -> {
+            KubeNamespace dto = new KubeNamespace();
+            dto.name = ns.getMetadata() != null ? ns.getMetadata().getName() : null;
+            dto.labels = ns.getMetadata() != null && ns.getMetadata().getLabels() != null ? ns.getMetadata().getLabels() : Collections.emptyMap();
+            dto.createdAt = ns.getMetadata() != null ? ns.getMetadata().getCreationTimestamp() : null;
+            dto.status = ns.getStatus() != null ? ns.getStatus().getPhase() : null;
+            return dto;
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * List pods in a namespace with optional label selector.
+     */
+    public List<KubePod> listPods(String namespace, String labelSelector) {
+        checkConfiguration();
+        PodList list = (labelSelector == null || labelSelector.isBlank())
+                ? client.pods().inNamespace(namespace).list()
+                : client.pods().inNamespace(namespace).withLabelSelector(labelSelector).list();
+        return list.getItems().stream().map(this::toKubePod).collect(Collectors.toList());
+    }
+
+    /**
+     * List services in a namespace with optional label selector.
+     */
+    public List<KubeServiceDTO> listServices(String namespace, String labelSelector) {
+        checkConfiguration();
+        ServiceList list = (labelSelector == null || labelSelector.isBlank())
+                ? client.services().inNamespace(namespace).list()
+                : client.services().inNamespace(namespace).withLabelSelector(labelSelector).list();
+        return list.getItems().stream().map(svc -> {
+            KubeServiceDTO dto = new KubeServiceDTO();
+            dto.name = svc.getMetadata() != null ? svc.getMetadata().getName() : null;
+            dto.namespace = namespace;
+            dto.type = svc.getSpec() != null ? svc.getSpec().getType() : null;
+            dto.clusterIP = svc.getSpec() != null ? svc.getSpec().getClusterIP() : null;
+            dto.labels = svc.getMetadata() != null && svc.getMetadata().getLabels() != null ? svc.getMetadata().getLabels() : Collections.emptyMap();
+            Map<String, Integer> ports = new LinkedHashMap<>();
+            if (svc.getSpec() != null && svc.getSpec().getPorts() != null) {
+                svc.getSpec().getPorts().forEach(p -> ports.put(p.getName() != null ? p.getName() : p.getPort().toString(), p.getPort()));
+            }
+            dto.ports = ports;
+            return dto;
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * Tail logs from a pod (optionally container-specific).
+     */
+    public String tailPodLog(String namespace, String podName, String container, int tailLines) {
+        checkConfiguration();
+        try {
+            var podResource = client.pods().inNamespace(namespace).withName(podName);
+            if (container != null && !container.isBlank()) {
+                return podResource.inContainer(container).tailingLines(tailLines).getLog(true);
+            }
+            return podResource.tailingLines(tailLines).getLog(true);
+        } catch (Exception ex) {
+            LOG.warn("Failed to fetch logs for pod {} in ns {}: {}", podName, namespace, ex.toString());
+            throw ex;
+        }
+    }
+
+    /**
+     * Delete a pod (used for restart/cleanup).
+     */
+    public void deletePod(String namespace, String podName, Integer graceSeconds) {
+        checkConfiguration();
+        client.pods()
+            .inNamespace(namespace)
+            .withName(podName)
+            .withGracePeriod(graceSeconds != null ? graceSeconds : 0)
+            .delete();
+    }
+
+    /**
+     * Restart pod by deleting it and letting the controller recreate.
+     */
+    public void restartPod(String namespace, String podName) {
+        deletePod(namespace, podName, 0);
+    }
+
+    /**
+     * Describe pod (yaml string for UI).
+     */
+    public String describePod(String namespace, String podName) {
+        checkConfiguration();
+        Pod pod = client.pods().inNamespace(namespace).withName(podName).get();
+        if (pod == null) return "";
+        return Serialization.asYaml(pod);
+    }
+
+    /**
+     * Describe service (yaml string for UI).
+     */
+    public String describeService(String namespace, String name) {
+        checkConfiguration();
+        var svc = client.services().inNamespace(namespace).withName(name).get();
+        if (svc == null) return "";
+        return Serialization.asYaml(svc);
+    }
+
+    /**
+     * Events in a namespace (optionally filtered).
+     */
+    public List<KubeEventDTO> listEvents(String namespace, String labelSelector) {
+        checkConfiguration();
+        EventList evs = (labelSelector == null || labelSelector.isBlank())
+                ? client.v1().events().inNamespace(namespace).list()
+                : client.v1().events().inNamespace(namespace).withLabelSelector(labelSelector).list();
+        return evs.getItems().stream().map(this::toEventDTO).collect(Collectors.toList());
+    }
+
+    /**
+     * Events for a specific pod.
+     */
+    public List<KubeEventDTO> listPodEvents(String namespace, String podName) {
+        checkConfiguration();
+        EventList evs = client.v1().events()
+            .inNamespace(namespace)
+            .withField("involvedObject.name", podName)
+            .list();
+        return evs.getItems().stream().map(this::toEventDTO).collect(Collectors.toList());
+    }
+
+    private KubeEventDTO toEventDTO(Event ev) {
+        KubeEventDTO dto = new KubeEventDTO();
+        dto.reason = ev.getReason();
+        dto.message = ev.getMessage();
+        dto.type = ev.getType();
+        dto.lastTimestamp = ev.getLastTimestamp();
+        if (ev.getInvolvedObject() != null) {
+            dto.involvedKind = ev.getInvolvedObject().getKind();
+            dto.involvedName = ev.getInvolvedObject().getName();
+        }
+        return dto;
+    }
+
+    private KubePod toKubePod(Pod pod) {
+        KubePod dto = new KubePod();
+        dto.name = pod.getMetadata() != null ? pod.getMetadata().getName() : null;
+        dto.namespace = pod.getMetadata() != null ? pod.getMetadata().getNamespace() : null;
+        dto.podIP = pod.getStatus() != null ? pod.getStatus().getPodIP() : null;
+        dto.phase = pod.getStatus() != null ? pod.getStatus().getPhase() : null;
+        dto.nodeName = pod.getSpec() != null ? pod.getSpec().getNodeName() : null;
+        dto.labels = pod.getMetadata() != null && pod.getMetadata().getLabels() != null ? pod.getMetadata().getLabels() : Collections.emptyMap();
+        dto.startTime = pod.getStatus() != null ? pod.getStatus().getStartTime() : null;
+        List<KubePodContainerStatus> containers = new ArrayList<>();
+        if (pod.getStatus() != null && pod.getStatus().getContainerStatuses() != null) {
+            pod.getStatus().getContainerStatuses().forEach(cs -> {
+                KubePodContainerStatus st = new KubePodContainerStatus();
+                st.name = cs.getName();
+                st.ready = Boolean.TRUE.equals(cs.getReady());
+                st.restartCount = cs.getRestartCount() != null ? cs.getRestartCount() : 0;
+                if (cs.getState() != null) {
+                    if (cs.getState().getRunning() != null) st.state = "Running";
+                    else if (cs.getState().getWaiting() != null) st.state = "Waiting";
+                    else if (cs.getState().getTerminated() != null) st.state = "Terminated";
+                }
+                containers.add(st);
+            });
+        }
+        dto.containers = containers;
+        return dto;
+    }
+
+    /**
+     * Value class for discovered monitoring stack info.
+     */
+    public record MonitoringInfo(String namespace, String release, String url) {}
+    public static class MonitoringSettings {
+        public boolean autoBootstrap = true;
+        public boolean preferPrometheus = true;
+        public boolean skipOnOpenShift = false;
+        public String repoId;
+        public ThanosSettings thanos = new ThanosSettings();
+        public boolean preferOpenShiftMonitoring = true;
+        // Ingress/NodePort exposure for Prometheus/Thanos
+        public String prometheusHost;
+        public String prometheusIngressClass;
+        public Integer prometheusNodePort;
+        public String thanosHost;
+        public String thanosIngressClass;
+        public Integer thanosNodePort;
+    }
+
+    public static class ThanosSettings {
+        public boolean enabled = false;
+        public String bucket;
+        public String endpoint;
+        public String region;
+        public String accessKey;
+        public String secretKey;
+        public boolean insecure = false;
+    }
+
+    private MonitoringSettings loadMonitoringSettings() {
+        try {
+            String json = viewContext.getInstanceData(SETTINGS_KEY);
+            if (json != null && !json.isBlank()) {
+                // Some clients persisted {"monitoring": {...}}; unwrap if present
+                Map<String,Object> raw = objectMapper.readValue(json, Map.class);
+                Object candidate = raw.getOrDefault("monitoring", raw);
+                MonitoringSettings s = objectMapper.convertValue(candidate, MonitoringSettings.class);
+                if (s.prometheusIngressClass == null || s.prometheusIngressClass.isBlank()) {
+                    s.prometheusIngressClass = "nginx";
+                }
+                if (s.thanosIngressClass == null || s.thanosIngressClass.isBlank()) {
+                    s.thanosIngressClass = "nginx";
+                }
+                return s;
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to read monitoring settings, using defaults: {}", e.getMessage());
+        }
+        MonitoringSettings defaults = new MonitoringSettings();
+        defaults.prometheusIngressClass = "nginx";
+        defaults.thanosIngressClass = "nginx";
+        return defaults;
+    }
+
+    private void updateMonitoringBootstrapState(String state, String message) {
+        try {
+            viewContext.putInstanceData("monitoring.bootstrap.state", state);
+            if (message != null) {
+                viewContext.putInstanceData("monitoring.bootstrap.message", message);
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to persist monitoring bootstrap state {}: {}", state, e.getMessage());
+        }
+    }
+
+    /**
+     * Ensure a repo exists for monitoring bootstrap. If none are configured, create a default.
+     */
+    private void ensureMonitoringRepoPresent() {
+        Collection<HelmRepoEntity> repos = repositoryService.list();
+        if (repos != null && !repos.isEmpty()) {
+            return;
+        }
+        String repoId = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.id"))
+                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_ID);
+        String repoName = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.name"))
+                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_NAME);
+        String repoUrl = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.url"))
+                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_URL);
+        String imageProject = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.imageProject"))
+                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_IMAGE_PROJECT);
+        String username = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.username"))
+                .filter(s -> !s.isBlank()).orElse(null);
+        String password = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.password"))
+                .filter(s -> !s.isBlank()).orElse(null);
+
+        if (repoUrl == null || repoUrl.isBlank()) {
+            LOG.warn("Cannot create default monitoring repo: monitoring.defaultRepo.url is empty");
+            return;
+        }
+
+        try {
+        HelmRepoEntity entity = new HelmRepoEntity();
+        entity.setId(repoId);
+        entity.setName(repoName);
+        entity.setType("OCI");
+        entity.setUrl(repoUrl);
+        entity.setImageProject(imageProject);
+        entity.setAuthMode(username != null ? "basic" : "anonymous");
+        entity.setUsername(username);
+        if (username != null) {
+            LOG.info("Default monitoring repo will use basic auth for user {}", username);
+        }
+        repositoryService.save(entity, password);
+        LOG.info("Created default monitoring repository id={} url={}", repoId, repoUrl);
+    } catch (Exception e) {
+        LOG.warn("Failed to create default monitoring repository: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Schedule monitoring bootstrap asynchronously (run once per view instance).
+     */
+    private void scheduleMonitoringBootstrapAsync() {
+        if (!isConfigured) return;
+        if (!monitoringBootstrapScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        BOOTSTRAP_POOL.submit(() -> {
+            updateMonitoringBootstrapState("RUNNING", "Starting monitoring bootstrap");
+            try {
+                ensureMonitoringRepoPresent();
+                MonitoringInfo info = ensureMonitoringInstalled(null);
+                if (info != null) {
+                    updateMonitoringBootstrapState("COMPLETED",
+                            "Monitoring present: " + info.release() + " in " + info.namespace());
+                    LOG.info("Monitoring bootstrap completed: release={} namespace={}", info.release(), info.namespace());
+                } else {
+                    updateMonitoringBootstrapState("FAILED", "Monitoring stack not found and bootstrap skipped/failed");
+                }
+            } catch (Exception ex) {
+                LOG.warn("Monitoring bootstrap failed: {}", ex.toString());
+                updateMonitoringBootstrapState("FAILED", ex.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Discover monitoring stack (kube-prometheus-stack) by checking for a Prometheus service in the configured namespace.
+     * Returns namespace, release, and URL (ClusterIP service) if found.
+     */
+    public MonitoringInfo discoverMonitoringPrometheus() {
+        checkConfiguration();
+        String ns = viewContext.getAmbariProperty("monitoring.namespace");
+        if (ns == null || ns.isBlank()) ns = DEFAULT_MONITORING_NAMESPACE;
+        String release = viewContext.getAmbariProperty("monitoring.release");
+        if (release == null || release.isBlank()) release = DEFAULT_MONITORING_RELEASE;
+
+        // Explicit override: use a URL provided in Ambari properties (useful when Prometheus is exposed via ingress/NodePort)
+        String overrideUrl = viewContext.getAmbariProperty("monitoring.prometheus.url");
+        if (overrideUrl != null && !overrideUrl.isBlank()) {
+            LOG.info("Monitoring discovery: using overridden Prometheus URL {}", overrideUrl);
+            return new MonitoringInfo(ns, release, overrideUrl.trim());
+        }
+        // Persisted override set by the view itself (e.g., after bootstrap enabling ingress/NodePort)
+        try {
+            String persistedUrl = viewContext.getInstanceData("monitoring.prometheus.url");
+            if (persistedUrl != null && !persistedUrl.isBlank()) {
+                LOG.info("Monitoring discovery: using persisted Prometheus URL {}", persistedUrl);
+                return new MonitoringInfo(ns, release, persistedUrl.trim());
+            }
+        } catch (Exception e) {
+            LOG.warn("Monitoring discovery: failed to read persisted Prometheus URL: {}", e.getMessage());
+        }
+
+        String svcName = release + "-prometheus";
+        try {
+            var svc = client.services().inNamespace(ns).withName(svcName).get();
+            if (svc == null || svc.getSpec() == null) {
+                LOG.info("Monitoring discovery: service {} not found in namespace {}", svcName, ns);
+                return null;
+            }
+            Integer port = svc.getSpec().getPorts() != null && !svc.getSpec().getPorts().isEmpty()
+                    ? svc.getSpec().getPorts().get(0).getPort()
+                    : 9090;
+            String url = "http://" + svcName + "." + ns + ".svc:" + port;
+            LOG.info("Monitoring discovery: found {} in namespace {} (url={})", svcName, ns, url);
+            return new MonitoringInfo(ns, release, url);
+        } catch (Exception e) {
+            LOG.warn("Monitoring discovery failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private MonitoringInfo discoverOpenShiftMonitoring() {
+        if (!isOpenShift(client)) return null;
+        String url = viewContext.getAmbariProperty("openshift.thanos.url");
+        if (url == null || url.isBlank()) url = OPENSHIFT_THANOS_URL_DEFAULT;
+        return new MonitoringInfo("openshift-monitoring", "openshift-monitoring", url);
+    }
+
+    /**
+     * Ensure monitoring stack is installed; if not present, install using configured repo/chart.
+     * @param repoIdOverride optional repoId to use for installation
+     * @return discovered info after ensuring install.
+     */
+    public MonitoringInfo ensureMonitoringInstalled(String repoIdOverride) {
+        MonitoringSettings settings = loadMonitoringSettings();
+        MonitoringInfo info = discoverMonitoringPrometheus();
+        if (info != null) {
+            LOG.info("Monitoring stack already present: release={}, namespace={}, url={}", info.release(), info.namespace(), info.url());
+            return info;
+        }
+
+        String enabledProp = viewContext.getAmbariProperty("monitoring.enabled");
+        boolean enabled = enabledProp == null || Boolean.parseBoolean(enabledProp);
+        if (!enabled) {
+            LOG.info("Monitoring bootstrap disabled via monitoring.enabled=false");
+            return null;
+        }
+        if (!settings.autoBootstrap) {
+            LOG.info("Monitoring bootstrap skipped because autoBootstrap=false");
+            updateMonitoringBootstrapState("SKIPPED", "Auto-bootstrap disabled");
+            return null;
+        }
+        if (settings.preferOpenShiftMonitoring && isOpenShift(client)) {
+            LOG.info("OpenShift detected and preferOpenShiftMonitoring=true -> will not install private kube-prometheus-stack.");
+            MonitoringInfo osInfo = discoverOpenShiftMonitoring();
+            if (osInfo != null) {
+                return osInfo;
+            }
+        }
+
+        String ns = viewContext.getAmbariProperty("monitoring.namespace");
+        if (ns == null || ns.isBlank()) ns = DEFAULT_MONITORING_NAMESPACE;
+        String release = viewContext.getAmbariProperty("monitoring.release");
+        if (release == null || release.isBlank()) release = DEFAULT_MONITORING_RELEASE;
+        String repoId = repoIdOverride;
+        if (repoId == null || repoId.isBlank()) {
+            // Prefer persisted user choice if available
+            try {
+                String persistedRepoId = viewContext.getInstanceData("monitoring.repoId");
+                if (persistedRepoId != null && !persistedRepoId.isBlank()) {
+                    repoId = persistedRepoId;
+                }
+            } catch (Exception ex) {
+                LOG.warn("Could not read persisted monitoring repoId: {}", ex.toString());
+            }
+        }
+        if ((repoId == null || repoId.isBlank()) && settings.repoId != null && !settings.repoId.isBlank()) {
+            repoId = settings.repoId;
+        }
+        if (repoId == null || repoId.isBlank()) {
+            repoId = viewContext.getAmbariProperty("monitoring.repoId");
+        }
+        String chart = viewContext.getAmbariProperty("monitoring.chart");
+        if (chart == null || chart.isBlank()) chart = DEFAULT_MONITORING_CHART;
+        String version = viewContext.getAmbariProperty("monitoring.version");
+
+        if (repoId == null || repoId.isBlank()) {
+            // best-effort: use first available repo
+            repoId = repositoryService.firstRepoIdOrNull();
+            if (repoId == null) {
+                LOG.warn("Cannot bootstrap monitoring: monitoring.repoId is not set and no repos are configured.");
+                return null;
+            }
+        }
+
+        MonitoringExposure promExposure = null;
+        try {
+            if (isOpenShift(client)) {
+                String skipOnOcpProp = viewContext.getAmbariProperty("monitoring.skipOnOpenShift");
+                if (skipOnOcpProp != null && Boolean.parseBoolean(skipOnOcpProp)) {
+                    LOG.info("OpenShift detected; monitoring bootstrap skipped due to monitoring.skipOnOpenShift=true");
+                    updateMonitoringBootstrapState("SKIPPED", "Skipped on OpenShift (using built-in monitoring)");
+                    return discoverMonitoringPrometheus();
+                }
+            }
+
+            LOG.info("Bootstrapping monitoring stack: release={}, namespace={}, repoId={}, chart={}, version={}",
+                    release, ns, repoId, chart, version);
+            // Minimal overrides
+            Map<String, Object> overrides = new HashMap<>();
+            // Enable node-exporter and kube-state-metrics to get node/pod metrics
+            overrides.put("nodeExporter.enabled", true);
+            overrides.put("nodeExporter.hostNetwork", true);
+            overrides.put("prometheus-node-exporter.serviceMonitor.enabled", true);
+            overrides.put("kube-state-metrics.enabled", true);
+            overrides.put("kube-state-metrics.serviceMonitor.enabled", true);
+            overrides.put("kubelet.serviceMonitor.enabled", true);
+            overrides.put("kubelet.serviceMonitor.https", true);
+            overrides.put("kubelet.serviceMonitor.cAdvisor", true);
+            overrides.put("kubelet.serviceMonitor.resource", "https");
+            overrides.put("kubelet.enabled", true);
+            overrides.put("kubelet.serviceMonitor.interval", "30s");
+
+            // Expose Prometheus externally (ingress or NodePort) so Ambari can query it directly.
+            promExposure = buildPrometheusExposureOverrides(settings, ns, overrides);
+            if (settings.thanos != null && settings.thanos.enabled) {
+                overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.type", "S3");
+                if (settings.thanos.bucket != null) {
+                    overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.bucket", settings.thanos.bucket);
+                }
+                if (settings.thanos.endpoint != null) {
+                    overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.endpoint", settings.thanos.endpoint);
+                }
+                if (settings.thanos.region != null) {
+                    overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.region", settings.thanos.region);
+                }
+                if (settings.thanos.accessKey != null) {
+                    overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.access_key", settings.thanos.accessKey);
+                }
+                if (settings.thanos.secretKey != null) {
+                    overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.secret_key", settings.thanos.secretKey);
+                }
+                overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.insecure", settings.thanos.insecure);
+                applyThanosExposureOverrides(settings, ns, overrides);
+            }
+            // Keep service account defaults; users can override via view properties later.
+            // Install without waiting to avoid long blocks
+            helmService.deployOrUpgrade(
+                    chart,
+                    release,
+                    ns,
+                    overrides,
+                    Collections.emptyMap(),
+                    configurationService.getKubeconfigContents(),
+                    repoId,
+                    version,
+                    600,
+                    true,
+                    false,
+                    false
+            );
+        } catch (Exception e) {
+            LOG.warn("Failed to bootstrap monitoring stack: {}", e.toString());
+            return null;
+        }
+        try {
+            viewContext.putInstanceData("monitoring.repoId", repoId);
+            if (promExposure != null && promExposure.url() != null && !promExposure.url().isBlank()) {
+                viewContext.putInstanceData("monitoring.prometheus.url", promExposure.url());
+                LOG.info("Persisted Prometheus URL override for future discovery: {}", promExposure.url());
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to persist monitoring.repoId: {}", ex.toString());
+        }
+        return discoverMonitoringPrometheus();
+    }
+
+    /**
+     * Container for the Prometheus exposure decision (ingress or NodePort) and the resulting URL.
+     */
+    private record MonitoringExposure(String url) { }
+
+    /**
+     * Compute and apply ingress/NodePort overrides for Prometheus to ensure Ambari can reach it from outside the cluster.
+     * @param settings monitoring settings (may carry ingress/nodePort hints)
+     * @param namespace target namespace for monitoring
+     * @param overrides helm override map to mutate
+     * @return resolved exposure info (may be null if no usable URL could be built)
+     */
+    private MonitoringExposure buildPrometheusExposureOverrides(MonitoringSettings settings, String namespace, Map<String, Object> overrides) {
+        String desiredHost = settings.prometheusHost != null ? settings.prometheusHost : viewContext.getAmbariProperty("monitoring.prometheus.host");
+        String ingressClassName = settings.prometheusIngressClass != null ? settings.prometheusIngressClass : viewContext.getAmbariProperty("monitoring.ingress.class");
+        String desiredNodePortString = settings.prometheusNodePort != null ? String.valueOf(settings.prometheusNodePort) : viewContext.getAmbariProperty("monitoring.prometheus.nodePort");
+        Integer desiredNodePort = null;
+        if (desiredNodePortString != null && !desiredNodePortString.isBlank()) {
+            try {
+                desiredNodePort = Integer.parseInt(desiredNodePortString.trim());
+            } catch (NumberFormatException nfe) {
+                LOG.warn("Ignoring monitoring.prometheus.nodePort (not an integer): {}", desiredNodePortString);
+            }
+        }
+
+        String effectiveIngressClass = (ingressClassName != null && !ingressClassName.isBlank()) ? ingressClassName : "nginx";
+
+        if (desiredHost != null && !desiredHost.isBlank()) {
+            LOG.info("Configuring Prometheus ingress for host {}", desiredHost);
+            overrides.put("prometheus.ingress.enabled", true);
+            overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
+            Map<String, Object> hostEntry = new HashMap<>();
+            hostEntry.put("host", desiredHost);
+            Map<String, Object> pathEntry = new HashMap<>();
+            pathEntry.put("path", "/");
+            pathEntry.put("pathType", "Prefix");
+            List<Map<String, Object>> paths = new ArrayList<>();
+            paths.add(pathEntry);
+            hostEntry.put("paths", paths);
+            List<Map<String, Object>> hosts = new ArrayList<>();
+            hosts.add(hostEntry);
+            overrides.put("prometheus.ingress.hosts", hosts);
+
+            String externalUrl = desiredHost.startsWith("http") ? desiredHost : "http://" + desiredHost;
+            overrides.put("prometheus.prometheusSpec.externalUrl", externalUrl);
+            return new MonitoringExposure(externalUrl);
+        }
+
+        // Fallback: NodePort exposure. This is best-effort; requires a reachable node IP from Ambari.
+        LOG.info("Configuring Prometheus service as NodePort (no ingress host configured)");
+        overrides.put("prometheus.service.type", "NodePort");
+        overrides.put("prometheus.service.port", 9090);
+        if (desiredNodePort != null) {
+            overrides.put("prometheus.service.nodePort", desiredNodePort);
+        }
+        String nodeIp = findReachableNodeIp();
+        if (nodeIp != null && desiredNodePort != null) {
+            String externalUrl = "http://" + nodeIp + ":" + desiredNodePort;
+            overrides.put("prometheus.prometheusSpec.externalUrl", externalUrl);
+            LOG.info("Prometheus NodePort exposure will use {}", externalUrl);
+            return new MonitoringExposure(externalUrl);
+        }
+        // As a last resort, still create an ingress with the default class and no host to give operators something to bind later.
+        LOG.info("Enabling Prometheus ingress with default class {} (no host provided)", effectiveIngressClass);
+        overrides.put("prometheus.ingress.enabled", true);
+        overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
+        Map<String, Object> pathEntry = new HashMap<>();
+        pathEntry.put("path", "/");
+        pathEntry.put("pathType", "Prefix");
+        List<Map<String, Object>> paths = new ArrayList<>();
+        paths.add(pathEntry);
+        Map<String, Object> hostEntry = new HashMap<>();
+        hostEntry.put("paths", paths);
+        List<Map<String, Object>> hosts = new ArrayList<>();
+        hosts.add(hostEntry);
+        overrides.put("prometheus.ingress.hosts", hosts);
+        LOG.warn("Could not compute Prometheus NodePort URL (missing node IP or nodePort); ingress created with catch-all rule.");
+        return null;
+    }
+
+    /**
+     * Apply Thanos exposure (ingress or NodePort) when Thanos is enabled so external tools (and future view features)
+     * can reach the Thanos query API.
+     * @param namespace target namespace for monitoring
+     * @param overrides helm override map to mutate
+     */
+    private void applyThanosExposureOverrides(MonitoringSettings settings, String namespace, Map<String, Object> overrides) {
+        String desiredHost = settings.thanosHost != null ? settings.thanosHost : viewContext.getAmbariProperty("monitoring.thanos.host");
+        String ingressClassName = settings.thanosIngressClass != null ? settings.thanosIngressClass : viewContext.getAmbariProperty("monitoring.thanos.ingress.class");
+        String desiredNodePortString = settings.thanosNodePort != null ? String.valueOf(settings.thanosNodePort) : viewContext.getAmbariProperty("monitoring.thanos.nodePort");
+        Integer desiredNodePort = null;
+        if (desiredNodePortString != null && !desiredNodePortString.isBlank()) {
+            try {
+                desiredNodePort = Integer.parseInt(desiredNodePortString.trim());
+            } catch (NumberFormatException nfe) {
+                LOG.warn("Ignoring monitoring.thanos.nodePort (not an integer): {}", desiredNodePortString);
+            }
+        }
+
+        // Always ensure the Thanos discovery service exists when Thanos is enabled.
+        overrides.put("prometheus.thanosService.enabled", true);
+
+        String effectiveIngressClass = (ingressClassName != null && !ingressClassName.isBlank()) ? ingressClassName : "nginx";
+
+        if (desiredHost != null && !desiredHost.isBlank()) {
+            LOG.info("Configuring Thanos sidecar ingress for host {}", desiredHost);
+            overrides.put("prometheus.thanosIngress.enabled", true);
+            overrides.put("prometheus.thanosIngress.ingressClassName", effectiveIngressClass);
+            Map<String, Object> hostEntry = new HashMap<>();
+            hostEntry.put("host", desiredHost);
+            Map<String, Object> pathEntry = new HashMap<>();
+            pathEntry.put("path", "/");
+            pathEntry.put("pathType", "Prefix");
+            List<Map<String, Object>> paths = new ArrayList<>();
+            paths.add(pathEntry);
+            hostEntry.put("paths", paths);
+            List<Map<String, Object>> hosts = new ArrayList<>();
+            hosts.add(hostEntry);
+            overrides.put("prometheus.thanosIngress.hosts", hosts);
+        } else {
+            LOG.info("Configuring Thanos sidecar service as NodePort (no ingress host configured)");
+            overrides.put("prometheus.thanosService.type", "NodePort");
+            overrides.put("prometheus.thanosIngress.enabled", false);
+            if (desiredNodePort != null) {
+                overrides.put("prometheus.thanosService.nodePort", desiredNodePort);
+            }
+            // If no nodePort either, still expose an ingress with default class so operators can bind hosts later.
+            if (desiredNodePort == null) {
+                overrides.put("prometheus.thanosIngress.enabled", true);
+                overrides.put("prometheus.thanosIngress.ingressClassName", effectiveIngressClass);
+                Map<String, Object> pathEntry = new HashMap<>();
+                pathEntry.put("path", "/");
+                pathEntry.put("pathType", "Prefix");
+                List<Map<String, Object>> paths = new ArrayList<>();
+                paths.add(pathEntry);
+                Map<String, Object> hostEntry = new HashMap<>();
+                hostEntry.put("paths", paths);
+                List<Map<String, Object>> hosts = new ArrayList<>();
+                hosts.add(hostEntry);
+                overrides.put("prometheus.thanosIngress.hosts", hosts);
+            }
+        }
+    }
+
+    /**
+     * Find a node InternalIP that is most likely reachable from the Ambari host to build NodePort URLs.
+     * @return node IP as string or null if none found
+     */
+    private String findReachableNodeIp() {
+        try {
+            List<Node> nodes = client.nodes().list().getItems();
+            if (nodes == null || nodes.isEmpty()) {
+                LOG.warn("No Kubernetes nodes found while looking for a NodePort endpoint");
+                return null;
+            }
+            for (Node node : nodes) {
+                if (node.getStatus() == null || node.getStatus().getAddresses() == null) {
+                    continue;
+                }
+                for (NodeAddress address : node.getStatus().getAddresses()) {
+                    if ("InternalIP".equalsIgnoreCase(address.getType()) || "ExternalIP".equalsIgnoreCase(address.getType())) {
+                        return address.getAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to select a node IP for NodePort exposure: {}", e.getMessage());
+        }
+        return null;
+    }
+
+// Helper methods to convert Fabric8 models to our DTOs
 
     private ClusterNode toClusterNode(Node node) {
         String nodeStatus = "NotReady";
@@ -331,7 +1203,6 @@ public class KubernetesService {
                 .map(labelKey -> labelKey.substring(labelKey.indexOf("/") + 1))
                 .collect(Collectors.toList());
         
-        // Usage stats require metrics server, returning 0 for now.
         return new ClusterNode(node.getMetadata().getUid(), node.getMetadata().getName(), nodeStatus, nodeRoles, 0.0, 0.0);
     }
     
@@ -417,7 +1288,92 @@ public class KubernetesService {
     private boolean isOpenShift(KubernetesClient client) {
         // Attempts to list a resource that only exists on OpenShift.
         // If the request does not throw a 404 exception, it is an OpenShift cluster.
-        return client.isAdaptable(OpenShiftClient.class);
+        try {
+            return client.isAdaptable(OpenShiftClient.class);
+        } catch (Exception e) {
+            LOG.warn("OpenShift detection failed (likely vanilla k8s): {}", e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Query Prometheus (or Thanos) for cluster CPU/memory usage.
+     * @return double[]{cpuCoresUsed, memGiBUsed} or null on failure.
+     */
+    private double[] queryPrometheusClusterUsage(String promUrl) {
+        try {
+            var httpBuilder = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(5));
+            // If HTTPS, try to trust the cluster CA from kubeconfig
+            try {
+                if (promUrl.startsWith("https")) {
+                    String caData = client.getConfiguration().getCaCertData();
+                    if (caData != null && !caData.isBlank()) {
+                        SSLContext sslContext = buildSslContextFromCaData(caData);
+                        httpBuilder.sslContext(sslContext);
+                    }
+                }
+            } catch (Exception e) {
+                LOG.warn("Prometheus HTTPS trust setup failed: {}", e.getMessage());
+            }
+            java.net.http.HttpClient http = httpBuilder.build();
+            String cpuQuery = java.net.URLEncoder.encode("sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))", StandardCharsets.UTF_8);
+            String memQuery = java.net.URLEncoder.encode("sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)", StandardCharsets.UTF_8);
+            String cpuUrl = promUrl + "/api/v1/query?query=" + cpuQuery;
+            String memUrl = promUrl + "/api/v1/query?query=" + memQuery;
+
+            java.net.http.HttpRequest.Builder b1 = java.net.http.HttpRequest.newBuilder().GET().uri(java.net.URI.create(cpuUrl)).timeout(java.time.Duration.ofSeconds(8));
+            java.net.http.HttpRequest.Builder b2 = java.net.http.HttpRequest.newBuilder().GET().uri(java.net.URI.create(memUrl)).timeout(java.time.Duration.ofSeconds(8));
+            String token = client.getConfiguration().getOauthToken();
+            if (token != null && !token.isBlank()) {
+                b1.header("Authorization", "Bearer " + token);
+                b2.header("Authorization", "Bearer " + token);
+            }
+            var cpuResp = http.send(b1.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            var memResp = http.send(b2.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (cpuResp.statusCode() >= 300 || memResp.statusCode() >= 300) {
+                LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}",
+                        cpuResp.statusCode(), memResp.statusCode(), promUrl, cpuResp.body(), memResp.body());
+                return null;
+            }
+            double cpuUsed = parsePrometheusSingleValue(cpuResp.body());
+            double memUsedBytes = parsePrometheusSingleValue(memResp.body());
+            if (Double.isNaN(cpuUsed) || Double.isNaN(memUsedBytes)) return null;
+            double memUsedGiB = memUsedBytes / (1024 * 1024 * 1024.0);
+            return new double[]{cpuUsed, memUsedGiB};
+        } catch (Exception e) {
+            LOG.warn("Prometheus usage query failed for {}: {}", promUrl, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private double parsePrometheusSingleValue(String body) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(body);
+            var data = root.path("data").path("result");
+            if (data.isArray() && data.size() > 0) {
+                var valArr = data.get(0).path("value");
+                if (valArr.isArray() && valArr.size() > 1) {
+                    return valArr.get(1).asDouble(Double.NaN);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not parse Prometheus response: {}", e.getMessage());
+        }
+        return Double.NaN;
+    }
+    private SSLContext buildSslContextFromCaData(String caData) throws Exception {
+        byte[] decoded = Base64.getDecoder().decode(caData);
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        X509Certificate caCert = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(decoded));
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load(null, null);
+        ks.setCertificateEntry("ca", caCert);
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(ks);
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, tmf.getTrustManagers(), new java.security.SecureRandom());
+        return sslContext;
     }
 
     /**
@@ -433,6 +1389,43 @@ public class KubernetesService {
                     .build());
         } catch (KubernetesClientException e) {
             throw new RuntimeException("Failed to create namespace: " + namespace, e);
+        }
+    }
+
+    /**
+     * Reinitialize the Kubernetes client from the currently saved kubeconfig if it was previously unconfigured.
+     * @return true if the client was reinitialized.
+     */
+    public synchronized boolean reloadClientIfConfigured() {
+        try {
+            if (this.client != null && this.isConfigured) {
+                return true;
+            }
+            this.configurationService = new ViewConfigurationService(viewContext);
+            String kubeconfigPath = configurationService.getKubeconfigPath();
+            if (kubeconfigPath == null) {
+                LOG.warn("reloadClientIfConfigured: kubeconfig path is null");
+                return false;
+            }
+            File configFile = new File(kubeconfigPath);
+            if (!configFile.exists()) {
+                LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
+                return false;
+            }
+            EncryptionService encryptionService = new EncryptionService();
+            byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
+            byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
+            String kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+
+            Config finalConfiguration = Config.fromKubeconfig(kubeconfigContent);
+            loadK8sPropsAsSystemProperties(viewContext);
+            this.client = new DefaultKubernetesClient(finalConfiguration);
+            this.isConfigured = true;
+            LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
+            return true;
+        } catch (Exception e) {
+            LOG.warn("Failed to reinitialize Kubernetes client: {}", e.getMessage());
+            return false;
         }
     }
 
@@ -708,6 +1701,7 @@ public class KubernetesService {
         }
     }
 
+
     private static void ensureHelmOwnership(HasMetadata r, String releaseName, String releaseNamespace) {
         ObjectMeta md = r.getMetadata();
         if (md == null) {
@@ -726,8 +1720,40 @@ public class KubernetesService {
         applyYaml(java.nio.file.Paths.get(Objects.requireNonNull(yamlPath, "yamlPath")), releaseName, releaseNamespace);
     }
 
-    public KubernetesClient getClient() { 
-        return client; 
+    public KubernetesClient getClient() {
+        return client;
+    }
+
+    /**
+     * Best-effort relabel of ingress resources to ensure discovery works even if
+     * the chart didn't set app.kubernetes.io/instance. Idempotent.
+     */
+    public void ensureReleaseLabelsOnIngresses(String namespace, String releaseName) {
+        if (client == null) return;
+        try {
+            client.network().v1().ingresses()
+                    .inNamespace(namespace)
+                    .list()
+                    .getItems()
+                    .stream()
+                    .filter(ing -> ing.getMetadata() != null
+                            && ing.getMetadata().getName() != null
+                            && ing.getMetadata().getName().toLowerCase(Locale.ROOT).contains(releaseName.toLowerCase(Locale.ROOT)))
+                    .forEach(ing -> {
+                        if (ing.getMetadata().getLabels() == null) {
+                            ing.getMetadata().setLabels(new HashMap<>());
+                        }
+                        ing.getMetadata().getLabels().putIfAbsent("app.kubernetes.io/instance", releaseName);
+                        ing.getMetadata().getLabels().putIfAbsent("app", releaseName);
+                        client.network().v1().ingresses()
+                                .inNamespace(namespace)
+                                .withName(ing.getMetadata().getName())
+                                .patch(ing);
+                        LOG.info("Patched ingress {}/{} with instance label={}", namespace, ing.getMetadata().getName(), releaseName);
+                    });
+        } catch (Exception ex) {
+            LOG.warn("ensureReleaseLabelsOnIngresses failed for {}/{}: {}", namespace, releaseName, ex.toString());
+        }
     }
 
     public ViewConfigurationService getConfigurationService(){
@@ -919,6 +1945,722 @@ public class KubernetesService {
 
         } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
             throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * public methods for build config mapg or secret based on hadoop configs
+     */
+    /**
+     * Create or update a list of "rendered" configuration resources (ConfigMap(s) or Secret(s)),
+     * each capable of holding multiple files as entries.
+     *
+     * <p>Typical usage: create a Secret with multiple XML files (e.g., core-site.xml, hdfs-site.xml),
+     * or a ConfigMap with several plugin property files, and then mount them in your Helm chart pods.</p>
+     *
+     * @param namespace Kubernetes namespace where resources will be created.
+     * @param releaseName Optional Helm release name to stamp ownership metadata (set null to skip).
+     * @param specs List of resources to create or update.
+     */
+    public void ensureRenderedConfigs(String namespace, String releaseName, List<RenderConfigSpec> specs) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(specs, "specs");
+        checkConfiguration();
+
+        for (RenderConfigSpec spec : specs) {
+            createOrUpdateRenderedConfig(namespace, releaseName, spec);
+        }
+    }
+
+    /**
+     * Create or update a single "rendered" configuration resource (ConfigMap or Secret) with multiple files.
+     *
+     * @param namespace Kubernetes namespace where the resource will be created.
+     * @param releaseName Optional Helm release name to stamp ownership metadata (set null to skip).
+     * @param spec The resource specification.
+     */
+    public void createOrUpdateRenderedConfig(String namespace, String releaseName, RenderConfigSpec spec) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(spec, "spec");
+        checkConfiguration();
+
+        switch (spec.getResourceType()) {
+            case CONFIG_MAP -> upsertConfigMap(namespace, releaseName, spec);
+            case SECRET     -> upsertOpaqueSecret(namespace, releaseName, spec);
+            default -> throw new IllegalArgumentException("Unsupported resource type: " + spec.getResourceType());
+        }
+    }
+
+    /**
+     * kubernetes config map renderer
+     */
+    private void upsertConfigMap(String namespace, String releaseName, RenderConfigSpec spec) {
+        final String name = spec.getResourceName();
+        LOG.info("Upserting ConfigMap '{}/{}' with {} file(s)", namespace, name, spec.getFiles().size());
+
+        // Build metadata
+        ObjectMeta meta = new ObjectMetaBuilder()
+                .withName(name)
+                .withNamespace(namespace)
+                .addToAnnotations("managed-by", "ambari-k8s-view")
+                .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                .build();
+
+        if (!spec.getLabels().isEmpty()) {
+            if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+            meta.getLabels().putAll(spec.getLabels());
+        }
+        if (!spec.getAnnotations().isEmpty()) {
+            if (meta.getAnnotations() == null) meta.setAnnotations(new HashMap<>());
+            meta.getAnnotations().putAll(spec.getAnnotations());
+        }
+
+        // Data map: ConfigMap expects plain strings (not base64)
+        Map<String, String> data = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : spec.getFiles().entrySet()) {
+            String key = Objects.requireNonNull(e.getKey(), "file key");
+            String value = e.getValue() == null ? "" : e.getValue();
+            data.put(key, value);
+        }
+
+        ConfigMap desired = new ConfigMapBuilder()
+                .withMetadata(meta)
+                .withData(data)
+                .build();
+
+        // Optional immutable handling for ConfigMap if spec.getImmutable() != null
+        if (spec.getImmutable() != null) {
+            desired.setImmutable(spec.getImmutable());
+        }
+
+        // Stamp Helm ownership if requested
+        if (releaseName != null && !releaseName.isBlank()) {
+            ensureHelmOwnership(desired, releaseName, namespace);
+        }
+
+        ConfigMap existing = client.configMaps().inNamespace(namespace).withName(name).get();
+        if (existing == null) {
+            client.configMaps().inNamespace(namespace).resource(desired).create();
+            LOG.info("Created ConfigMap '{}/{}'", namespace, name);
+            return;
+        }
+
+        // If immutable and content changed → must delete & recreate
+        boolean existingImmutable = Boolean.TRUE.equals(existing.getImmutable());
+        boolean sameData = Objects.equals(existing.getData(), desired.getData());
+
+        if (existingImmutable && !sameData) {
+            LOG.info("ConfigMap '{}/{}' is immutable and data changed → delete & recreate", namespace, name);
+            client.configMaps().inNamespace(namespace).withName(name).delete();
+            client.configMaps().inNamespace(namespace).resource(desired).create();
+            LOG.info("Recreated immutable ConfigMap '{}/{}'", namespace, name);
+            return;
+        }
+
+        client.configMaps().inNamespace(namespace).resource(desired).createOrReplace();
+        LOG.info("Updated ConfigMap '{}/{}'", namespace, name);
+    }
+
+    /**
+     * k8s secret renderer
+     */
+
+    private void upsertOpaqueSecret(String namespace, String releaseName, RenderConfigSpec spec) {
+        final String name = spec.getResourceName();
+        LOG.info("Upserting Opaque Secret '{}/{}' with {} file(s)", namespace, name, spec.getFiles().size());
+
+        // Build metadata
+        ObjectMeta meta = new ObjectMetaBuilder()
+                .withName(name)
+                .withNamespace(namespace)
+                .addToAnnotations("managed-by", "ambari-k8s-view")
+                .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                .build();
+
+        if (!spec.getLabels().isEmpty()) {
+            if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+            meta.getLabels().putAll(spec.getLabels());
+        }
+        if (!spec.getAnnotations().isEmpty()) {
+            if (meta.getAnnotations() == null) meta.setAnnotations(new HashMap<>());
+            meta.getAnnotations().putAll(spec.getAnnotations());
+        }
+
+        // Secret data must be base64-encoded (Fabric8 wants the value already encoded when using withData)
+        Map<String, String> encodedData = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : spec.getFiles().entrySet()) {
+            String key = Objects.requireNonNull(e.getKey(), "file key");
+            String value = e.getValue() == null ? "" : e.getValue();
+            encodedData.put(key, Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8)));
+        }
+
+        Secret desired = new SecretBuilder()
+                .withMetadata(meta)
+                .withType("Opaque")
+                .withData(encodedData)
+                .withImmutable(spec.getImmutable()) // may be null
+                .build();
+
+        // Stamp Helm ownership if requested
+        if (releaseName != null && !releaseName.isBlank()) {
+            ensureHelmOwnership(desired, releaseName, namespace);
+        }
+
+        Secret existing = client.secrets().inNamespace(namespace).withName(name).get();
+        if (existing == null) {
+            client.secrets().inNamespace(namespace).resource(desired).create();
+            LOG.info("Created Opaque Secret '{}/{}'", namespace, name);
+            return;
+        }
+
+        boolean existingImmutable = Boolean.TRUE.equals(existing.getImmutable());
+        boolean sameData = Objects.equals(existing.getData(), desired.getData());
+
+        if (existingImmutable && !sameData) {
+            LOG.info("Secret '{}/{}' is immutable and data changed → delete & recreate", namespace, name);
+            client.secrets().inNamespace(namespace).withName(name).delete();
+            client.secrets().inNamespace(namespace).resource(desired).create();
+            LOG.info("Recreated immutable Opaque Secret '{}/{}'", namespace, name);
+            return;
+        }
+
+        client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+        LOG.info("Updated Opaque Secret '{}/{}'", namespace, name);
+    }
+
+
+    /**
+     * Create or update a ConfigMap with string data entries.
+     * If immutable and content changed, we delete & recreate (mirrors Secret logic).
+     */
+    public void createOrUpdateConfigMap(String namespace,
+                                        String configMapName,
+                                        Map<String, String> data,
+                                        Map<String, String> labels,
+                                        Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(configMapName, "configMapName");
+        Objects.requireNonNull(data, "data");
+        checkConfiguration();
+
+        try {
+            ObjectMeta meta = new ObjectMetaBuilder()
+                    .withName(configMapName)
+                    .withNamespace(namespace)
+                    .addToAnnotations("managed-by", "ambari-k8s-view")
+                    .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                    .build();
+
+            if (labels != null && !labels.isEmpty()) {
+                if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+                meta.getLabels().putAll(labels);
+            }
+            if (annotations != null && !annotations.isEmpty()) {
+                if (meta.getAnnotations() == null) meta.setAnnotations(new HashMap<>());
+                meta.getAnnotations().putAll(annotations);
+            }
+
+            ConfigMap desired = new ConfigMapBuilder()
+                    .withMetadata(meta)
+                    .withData(new LinkedHashMap<>(data))
+                    .build();
+
+            ConfigMap existing = client.configMaps().inNamespace(namespace).withName(configMapName).get();
+
+            if (existing == null) {
+                client.configMaps().inNamespace(namespace).resource(desired).create();
+                LOG.info("Created ConfigMap '{}/{}'", namespace, configMapName);
+                return;
+            }
+
+            // If immutable (rare), delete & recreate on content change.
+            boolean existingImmutable = Boolean.TRUE.equals(existing.getImmutable());
+            boolean sameData = Objects.equals(existing.getData(), desired.getData());
+
+            if (existingImmutable && !sameData) {
+                LOG.info("ConfigMap '{}/{}' is immutable and data changed → delete & recreate", namespace, configMapName);
+                client.configMaps().inNamespace(namespace).withName(configMapName).delete();
+                client.configMaps().inNamespace(namespace).resource(desired).create();
+                LOG.info("Recreated immutable ConfigMap '{}/{}'", namespace, configMapName);
+                return;
+            }
+
+            client.configMaps().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated ConfigMap '{}/{}'", namespace, configMapName);
+
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update ConfigMap " + namespace + "/" + configMapName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Restart a deployment by deleting its pods so the controller re-pulls the current image/tag.
+     * No-op if the deployment does not exist.
+     */
+    public void restartDeployment(String namespace, String deploymentName) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(deploymentName, "deploymentName");
+        checkConfiguration();
+        try {
+            var deploy = client.apps().deployments().inNamespace(namespace).withName(deploymentName).get();
+            if (deploy == null) {
+                LOG.warn("Deployment {}/{} not found; cannot restart", namespace, deploymentName);
+                return;
+            }
+            // Delete pods owned by this deployment to force a restart
+            var selector = deploy.getSpec().getSelector();
+            if (selector == null || selector.getMatchLabels() == null || selector.getMatchLabels().isEmpty()) {
+                LOG.warn("Deployment {}/{} has no selector; skipping restart", namespace, deploymentName);
+                return;
+            }
+            var labels = selector.getMatchLabels();
+            client.pods().inNamespace(namespace).withLabels(labels).delete();
+            LOG.info("Requested restart of deployment {}/{} by deleting pods", namespace, deploymentName);
+        } catch (Exception e) {
+            LOG.warn("Failed to restart deployment {}/{}: {}", namespace, deploymentName, e.toString());
+        }
+    }
+
+    /**
+     * Convenience overload: create/update a Secret with multiple keys (binary).
+     * Keys are base64-encoded under the hood by Fabric8 (we pass already-encoded values).
+     */
+    public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(binaryData, "binaryData");
+        checkConfiguration();
+
+        try {
+            Map<String, String> b64 = new LinkedHashMap<>();
+            for (Map.Entry<String, byte[]> e : binaryData.entrySet()) {
+                b64.put(e.getKey(), Base64.getEncoder().encodeToString(e.getValue()));
+            }
+
+            ObjectMeta meta = new ObjectMetaBuilder()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToAnnotations("managed-by", "ambari-k8s-view")
+                    .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                    .build();
+
+            Secret desired = new SecretBuilder()
+                    .withMetadata(meta)
+                    .withType("Opaque")
+                    .withData(b64)
+                    .build();
+
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null) {
+                client.secrets().inNamespace(namespace).resource(desired).create();
+                LOG.info("Created Opaque Secret '{}/{}'", namespace, secretName);
+                return;
+            }
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated Opaque Secret '{}/{}'", namespace, secretName);
+
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Read a single key from an Opaque Secret as a UTF-8 string.
+     *
+     * @param namespace  Kubernetes namespace
+     * @param secretName Secret name
+     * @param dataKey    key inside .data of the Secret
+     * @return Optional containing the decoded UTF-8 value, or empty if the Secret
+     *         or key does not exist, or if the value is not valid base64.
+     */
+    public Optional<String> readOpaqueSecretKeyAsString(String namespace,
+                                                        String secretName,
+                                                        String dataKey) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(dataKey, "dataKey");
+        checkConfiguration();
+
+        try {
+            Secret secret = client.secrets()
+                    .inNamespace(namespace)
+                    .withName(secretName)
+                    .get();
+
+            if (secret == null) {
+                LOG.info("Opaque Secret '{}/{}' not found when reading key '{}'",
+                        namespace, secretName, dataKey);
+                return Optional.empty();
+            }
+
+            Map<String, String> data = secret.getData();
+            if (data == null || !data.containsKey(dataKey)) {
+                LOG.info("Key '{}' not found in Opaque Secret '{}/{}'",
+                        dataKey, namespace, secretName);
+                return Optional.empty();
+            }
+
+            String b64 = data.get(dataKey);
+            if (b64 == null || b64.isBlank()) {
+                LOG.info("Key '{}' in Opaque Secret '{}/{}' is empty",
+                        dataKey, namespace, secretName);
+                return Optional.empty();
+            }
+
+            try {
+                byte[] decoded = Base64.getDecoder().decode(b64);
+                return Optional.of(new String(decoded, StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException ex) {
+                LOG.warn("Value for key '{}' in Secret '{}/{}' is not valid base64: {}",
+                        dataKey, namespace, secretName, ex.toString());
+                return Optional.empty();
+            }
+
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            // Treat 404 as "not found" → empty
+            if (e.getCode() == 404) {
+                LOG.info("Opaque Secret '{}/{}' not found (HTTP 404) when reading key '{}'",
+                        namespace, secretName, dataKey);
+                return Optional.empty();
+            }
+            throw new RuntimeException(
+                    "Failed to read Secret " + namespace + "/" + secretName +
+                            " while accessing key '" + dataKey + "': " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Ensure or rotate a Secret containing a Java truststore (JKS/PKCS12) sourced from a local file.
+     * <p>
+     * Behavior:
+     * <ul>
+     *   <li>If the target Secret does not exist → create it from the local truststore file.</li>
+     *   <li>If it exists → compare existing bytes with the local file. If different OR the earliest certificate
+     *       in the local truststore expires within {@code minDaysLeft} → replace the Secret.</li>
+     * </ul>
+     *
+     * <p>Annotations set on the Secret:
+     * <ul>
+     *   <li><b>managed-by</b>=ambari-k8s-view</li>
+     *   <li><b>clemlab.com/not-after</b>=earliest certificate NotAfter</li>
+     *   <li><b>clemlab.com/keystore-type</b>=JKS|PKCS12</li>
+     * </ul>
+     *
+     * @param namespace           Kubernetes namespace
+     * @param secretName          target Secret name to (create|replace)
+     * @param truststorePath      absolute path to local truststore file (e.g. /etc/trino/ranger/truststore.jks)
+     * @param truststoreType      "JKS" (default) or "PKCS12"
+     * @param truststorePassword  keystore password
+     * @param secretDataKey       key name inside the Secret (e.g. "truststore.jks"); default if null/blank: "truststore.jks"
+     * @param minDaysLeft         rotate if earliest cert expires within this many days
+     * @param extraLabels         optional labels to merge
+     */
+    public void ensureOrRotateTruststoreSecretFromLocalFile(String namespace,
+                                                            String secretName,
+                                                            String truststorePath,
+                                                            String truststoreType,
+                                                            char[] truststorePassword,
+                                                            String secretDataKey,
+                                                            int minDaysLeft,
+                                                            Map<String,String> extraLabels) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(truststorePath, "truststorePath");
+        if (truststorePassword == null || truststorePassword.length == 0) {
+            throw new IllegalArgumentException("truststorePassword must be provided");
+        }
+
+        LOG.info("Creating secret:{} from local truststore file:{} and inserting as key:{} data in the secret", secretName, truststorePath, secretDataKey);
+        final Path path = Paths.get(truststorePath);
+        if (!Files.exists(path)) {
+            throw new IllegalStateException("Local truststore not found: " + path);
+        }
+
+        final String storeType = (truststoreType == null || truststoreType.isBlank()) ? "JKS" : truststoreType;
+        final String dataKey   = (secretDataKey == null || secretDataKey.isBlank()) ? "truststore.jks" : secretDataKey;
+
+        try {
+            // 1) Read local truststore bytes
+            byte[] localBytes = Files.readAllBytes(path);
+            // 2) Parse local truststore to compute earliest NotAfter (for rotation signal + annotation)
+            KeyStore ks = WebHookConfigurationService.loadKeyStore(path, truststorePassword, storeType);
+            List<X509Certificate> certs = WebHookConfigurationService.extractX509FromTrustStore(ks);
+            if (certs.isEmpty()) {
+                LOG.warn("No certificates found in local truststore {}; continuing but rotation-by-expiry will be disabled.", path);
+            }
+            Instant earliest = certs.isEmpty()
+                    ? Instant.EPOCH
+                    : WebHookConfigurationService.earliestExpiry(certs); // re-use your existing helper
+
+            // 3) Check current Secret
+            Secret existing = this.client.secrets().inNamespace(namespace).withName(secretName).get();
+            LOG.info("Secret {} does exists: {}", existing);
+            boolean needUpdate = (existing == null);
+            if (!needUpdate) {
+                LOG.info("Checking if secret does need to be updated");
+                String curB64 = (existing.getData() != null) ? existing.getData().get(dataKey) : null;
+                byte[] curBytes = (curB64 != null) ? Base64.getDecoder().decode(curB64) : null;
+
+                boolean contentDiffers = (curBytes == null) || !Arrays.equals(curBytes, localBytes);
+                boolean expiringSoon   = !certs.isEmpty() &&
+                        earliest.isBefore(Instant.now().plus(minDaysLeft, java.time.temporal.ChronoUnit.DAYS));
+
+                if (contentDiffers || expiringSoon) {
+                    needUpdate = true;
+                    LOG.info("Truststore Secret needs update: differs={} expiringSoon={} (earliestNotAfter={}) {}/{}",
+                            contentDiffers, expiringSoon, earliest, namespace, secretName);
+                } else {
+                    LOG.info("Truststore Secret up-to-date (earliestNotAfter={}) {}/{}", earliest, namespace, secretName);
+                }
+            }
+
+            if (!needUpdate) {
+                return;
+            }
+
+            // 4) Build Secret with labels/annotations
+            Map<String,String> labels = new LinkedHashMap<>();
+            labels.put("managed-by", "ambari-k8s-view");
+            labels.put("component", "ambari-truststore");
+            if (extraLabels != null && !extraLabels.isEmpty()) labels.putAll(extraLabels);
+
+            Map<String,String> ann = new LinkedHashMap<>();
+            ann.put("managed-by", "ambari-k8s-view");
+            ann.put("clemlab.com/keystore-type", storeType);
+            if (!certs.isEmpty()) {
+                ann.put("clemlab.com/not-after", earliest.toString());
+            }
+
+            Secret desired = new SecretBuilder()
+                    .withNewMetadata()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToLabels(labels)
+                    .addToAnnotations(ann)
+                    .endMetadata()
+                    .withType("Opaque")
+                    .addToData(dataKey, Base64.getEncoder().encodeToString(localBytes))
+                    .build();
+
+            this.client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Created/rotated Truststore Secret {}/{} (key={}, earliestNotAfter={}, type={})",
+                    namespace, secretName, dataKey, earliest, storeType);
+            LOG.info("String equivalent truststore.jks is {}", Base64.getEncoder().encodeToString(localBytes));
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read local truststore file: " + path + ": " + e.getMessage(), e);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create/rotate truststore Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+
+    /**
+     * Lists Kubernetes Services matching a specific label selector.
+     * Returns a list of maps suitable for the UI {label: "...", value: "..."}
+     */
+    public List<Map<String, String>> listServicesByLabel(String labelKey) {
+        // Guard: ensure client is configured
+        if (client == null) return Collections.emptyList();
+
+        // Assumption: labelKey passed from UI is "trino".
+        // We look for 'app.kubernetes.io/name=trino' OR 'app=trino'
+        // Ideally, the UI passes the full selector, but let's handle simple names.
+
+        String selector = labelKey.contains("=") ? labelKey : "app.kubernetes.io/name=" + labelKey;
+        return serviceCache.get(selector, k -> fetchServicesFromK8s(k));
+    }
+    private List<Map<String, String>> fetchServicesFromK8s(String selector) {
+        try {
+            // Fetch services across ALL namespaces
+            List<io.fabric8.kubernetes.api.model.Service> svcList = client.services()
+                    .inAnyNamespace()
+                    .withLabelSelector(selector)
+                    .list()
+                    .getItems();
+
+            List<Map<String, String>> results = new ArrayList<>();
+            for (io.fabric8.kubernetes.api.model.Service svc : svcList) {
+                String name = svc.getMetadata().getName();
+                String ns = svc.getMetadata().getNamespace();
+
+                // Find a usable port (prefer 8080, 80, or the first one)
+                Integer port = 80;
+                if (svc.getSpec().getPorts() != null && !svc.getSpec().getPorts().isEmpty()) {
+                    port = svc.getSpec().getPorts().get(0).getPort();
+                }
+
+                // Construct internal DNS: service.namespace.svc.cluster.local
+                String internalDns = String.format("%s.%s.svc.cluster.local", name, ns);
+
+                // Format for UI
+                Map<String, String> item = new HashMap<>();
+                item.put("label", String.format("%s (%s)", name, ns)); // Text shown in dropdown
+                item.put("value", internalDns); // Value put into values.yaml
+
+                // Optional: You could pass port separately if needed,
+                // but usually connection strings take "host:port" or just host.
+                // item.put("port", String.valueOf(port));
+
+                results.add(item);
+            }
+            return results;
+        } catch (Exception e) {
+            LOG.error("Error listing K8s services with label {}", selector, e);
+            throw new RuntimeException("K8s Service Discovery failed", e);
+        }
+    }
+
+    /**
+     * Lists Kubernetes Secrets matching a label selector.
+     * Used for discovering Managed Configurations.
+     * Returns a list of maps {label: "Name (ns)", value: "secretName", ...metadata}
+     */
+    public List<Map<String, String>> listSecretsByLabel(String labelKey, String labelValue) {
+        checkConfiguration();
+        try {
+            // If labelValue is null/wildcard, just check for existence of key
+            var filter = client.secrets().inAnyNamespace();
+
+            List<Secret> secrets;
+            if (labelValue != null && !labelValue.equals("*")) {
+                secrets = filter.withLabel(labelKey, labelValue).list().getItems();
+            } else {
+                secrets = filter.withLabel(labelKey).list().getItems();
+            }
+
+            List<Map<String, String>> results = new ArrayList<>();
+            for (Secret s : secrets) {
+                Map<String, String> item = new HashMap<>();
+                String name = s.getMetadata().getName();
+                String ns = s.getMetadata().getNamespace();
+
+                // Read annotations for metadata (language, description, filename)
+                Map<String, String> ann = s.getMetadata().getAnnotations();
+                if (ann == null) ann = Collections.emptyMap();
+
+                item.put("name", name);
+                item.put("namespace", ns);
+                item.put("filename", ann.getOrDefault("ambari.clemlab.com/filename", "config"));
+                item.put("description", ann.getOrDefault("ambari.clemlab.com/description", ""));
+                item.put("type", ann.getOrDefault("ambari.clemlab.com/config-type", "generic"));
+                item.put("language", ann.getOrDefault("ambari.clemlab.com/language", "plaintext"));
+
+                // For the dropdown value, we usually just need the name, but sometimes we need ns/name
+                // For k8s-discovery binding, usually just the name is sufficient if in the same namespace
+                item.put("value", name);
+                item.put("label", String.format("%s (%s)", name, ns));
+
+                results.add(item);
+            }
+            return results;
+        } catch (Exception e) {
+            LOG.error("Error listing secrets", e);
+            throw new RuntimeException("Secret discovery failed", e);
+        }
+    }
+
+    /**
+     * Reads the content of a managed configuration secret to display in the UI editor.
+     */
+    public String getManagedConfigContent(String namespace, String name, String filename) {
+        return readOpaqueSecretKeyAsString(namespace, name, filename).orElse("");
+    }
+
+    public void deleteSecret(String namespace, String name) {
+        checkConfiguration();
+        client.secrets().inNamespace(namespace).withName(name).delete();
+    }
+
+    /**
+     * Retrieves the user-supplied configuration (values.yaml) for a specific Helm release
+     * by decoding the Kubernetes Secret managed by Helm.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getHelmReleaseValues(String namespace, String releaseName) {
+        checkConfiguration();
+        try {
+            // 1. Find the secret for the 'deployed' release
+            // Helm secrets have labels: name=<release>, owner=helm, status=deployed
+            List<Secret> secrets = client.secrets().inNamespace(namespace)
+                    .withLabel("owner", "helm")
+                    .withLabel("name", releaseName)
+                    .withLabel("status", "deployed")
+                    .list().getItems();
+
+            if (secrets.isEmpty()) {
+                // Fallback: get the latest version if status is not deployed (e.g. failed)
+                secrets = client.secrets().inNamespace(namespace)
+                        .withLabel("owner", "helm")
+                        .withLabel("name", releaseName)
+                        .list().getItems();
+
+                if (secrets.isEmpty()) {
+                    LOG.warn("No Helm release secret found for {}/{}", namespace, releaseName);
+                    return Collections.emptyMap();
+                }
+
+                // Sort by version descending (v2 > v1)
+                secrets.sort((s1, s2) -> {
+                    int v1 = getHelmVersionFromSecret(s1);
+                    int v2 = getHelmVersionFromSecret(s2);
+                    return Integer.compare(v2, v1);
+                });
+            }
+
+            // 2. Decode the latest secret
+            Secret latestSecret = secrets.get(0);
+            return decodeHelmValues(latestSecret);
+
+        } catch (Exception e) {
+            LOG.error("Failed to decode Helm values for {}/{}", namespace, releaseName, e);
+            throw new RuntimeException("Could not retrieve configuration: " + e.getMessage());
+        }
+    }
+
+    private int getHelmVersionFromSecret(Secret s) {
+        try {
+            String v = s.getMetadata().getLabels().get("version");
+            return Integer.parseInt(v);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> decodeHelmValues(Secret secret) throws IOException {
+        // Helm v3 Secret Storage Format:
+        // 1. K8s Secret Data "release" -> Base64 Encoded (standard K8s)
+        // 2. Decoded Payload -> Another Base64 Encoded String (Helm's internal encoding)
+        // 3. Decoded Payload -> Gzipped Bytes
+        // 4. Gunzipped Bytes -> JSON String (Protobuf Release object)
+        // 5. JSON Object -> "config" field contains the user values
+
+        if (secret.getData() == null || !secret.getData().containsKey("release")) {
+            return Collections.emptyMap();
+        }
+
+        // Layer 1: Standard K8s Base64
+        String k8sBase64 = secret.getData().get("release");
+        byte[] helmPayloadBytes = Base64.getDecoder().decode(k8sBase64);
+        String helmPayloadStr = new String(helmPayloadBytes, StandardCharsets.UTF_8);
+
+        // Layer 2: Helm Internal Base64
+        byte[] gzippedBytes = Base64.getDecoder().decode(helmPayloadStr);
+
+        // Layer 3: GZIP -> JSON
+        try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(gzippedBytes));
+             InputStreamReader reader = new InputStreamReader(gis, StandardCharsets.UTF_8)) {
+
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, Object> releaseData = mapper.readValue(reader, Map.class);
+
+            // Layer 4: Extract "config"
+            Object config = releaseData.get("config");
+            if (config instanceof Map) {
+                return (Map<String, Object>) config;
+            }
+            return Collections.emptyMap();
         }
     }
 }

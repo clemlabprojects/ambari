@@ -1,32 +1,38 @@
 package org.apache.ambari.view.k8s.resources;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.marcnuri.helm.Release;
+
 import org.apache.ambari.view.ViewContext;
-import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
+import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
+import org.apache.ambari.view.k8s.model.HelmReleasesResponse;
+import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.HelmUpgradeRequest;
-import org.apache.ambari.view.k8s.service.HelmService;
-import org.apache.ambari.view.k8s.service.HelmRepositoryService;
-import org.apache.ambari.view.k8s.service.ViewConfigurationService;
+import org.apache.ambari.view.k8s.service.*;
+import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
-import org.apache.ambari.view.k8s.service.PathConfig;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
-import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.service.PathConfig;
+import org.apache.ambari.view.k8s.service.CommandService;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * REST resource for Helm operations including deployments, upgrades, and releases management
+ * REST resource for Helm operations (list/deploy/upgrade/rollback).
+ * Keeps a short-lived cache of release listings to avoid hammering the cluster
+ * on frequent UI polling. Stateless otherwise; thread-safe because state is confined
+ * to static cache or request scope.
  */
 @Path("/helm")
 @Produces(MediaType.APPLICATION_JSON)
@@ -35,16 +41,61 @@ public class HelmResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(HelmResource.class);
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Inject
     private ViewContext viewContext;
 
     @Inject
     private ViewConfigurationService configService;
 
+    private final KubernetesService kubernetesService;
+    private final FluxGitOpsBackend fluxGitOpsBackend;
+    private final CommandService commandService;
+
+    // Lightweight in-memory cache for releases to avoid hammering Helm/K8s on frequent polls
+    private static final Map<String, CachedReleases> RELEASE_CACHE = new ConcurrentHashMap<>();
+    private static final long RELEASE_CACHE_TTL_MILLIS = 10_000; // 10s
+
+
     public HelmResource(ViewContext context) {
         this.viewContext = context;
         this.configService = new ViewConfigurationService(viewContext);
+        this.kubernetesService = KubernetesService.get(viewContext);
+        this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
+        this.commandService = new CommandService(viewContext);
     }
+
+    /**
+     * Health check for a repo id.
+     */
+    @GET
+    @Path("/repos/{id}/check")
+    public Response checkRepo(@PathParam("id") String id) {
+        try {
+            boolean ok = new HelmRepositoryService(viewContext).check(id);
+            return Response.ok(Map.of("id", id, "ok", ok)).build();
+        } catch (Exception e) {
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+    }
+
+  /**
+   * Trigger monitoring (kube-prometheus-stack) bootstrap using the provided repoId (or default).
+   */
+  @POST
+  @Path("/monitoring/install")
+  public Response installMonitoring(@QueryParam("repoId") String repoId) {
+    try {
+      var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId);
+      if (info == null) {
+        return Response.serverError().entity(Map.of("error", "Monitoring install failed or not configured")).build();
+      }
+      return Response.ok(Map.of("namespace", info.namespace(), "release", info.release(), "url", info.url())).build();
+    } catch (Exception e) {
+      return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+    }
+  }
 
     private String getKubeconfigContents() {
         return configService.getKubeconfigContents();
@@ -52,29 +103,158 @@ public class HelmResource {
 
     @GET
     @Path("/releases")
-    public List<HelmReleaseDTO> list(@QueryParam("namespace") String namespace) {
-        String kubeconfigContent = getKubeconfigContents();
-        List<Release> releases = new HelmService(viewContext).list(namespace, kubeconfigContent);
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(viewContext);
+    public HelmReleasesResponse list(@QueryParam("namespace") String namespace,
+                                     @QueryParam("limit") @DefaultValue("50") int limit,
+                                     @QueryParam("offset") @DefaultValue("0") int offset) {
+        final String kubeconfigContent = getKubeconfigContents();
+        final HelmService helmService = new HelmService(viewContext);
+        final ReleaseMetadataService metadataService = new ReleaseMetadataService(viewContext);
+        final GlobalConfigService globalConfigService = new GlobalConfigService();
+        final String currentGlobalFingerprint = globalConfigService.fingerprint();
+        final SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
+
+        List<Release> releases = helmService.list(namespace, kubeconfigContent);
+        int total = releases.size();
+
+        int from = Math.min(Math.max(offset, 0), total);
+        int to = Math.min(from + Math.max(limit, 1), total);
+        List<Release> page = releases.subList(from, to);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
-        for (Release release : releases) {
+        Map<String,String> versionCache = new HashMap<>();
+
+        for (Release release : page) {
             HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
-            
-            // Enrich with metadata if available
+
+            List<ReleaseEndpointDTO> allEndpoints = new ArrayList<>();
+
             K8sReleaseEntity metadata = metadataService.find(releaseDto.namespace, releaseDto.name);
             if (metadata != null) {
                 releaseDto.managedByUi = metadata.isManagedByUi();
                 releaseDto.serviceKey = metadata.getServiceKey();
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
+                if (metadata.getVersion() != null && !metadata.getVersion().isBlank()) {
+                    releaseDto.version = metadata.getVersion();
+                }
+                releaseDto.restartRequired =
+                        currentGlobalFingerprint != null
+                                && metadata.getGlobalConfigVersion() != null
+                                && !currentGlobalFingerprint.equals(metadata.getGlobalConfigVersion());
+                if (metadata.getServiceKey() == null || metadata.getServiceKey().isBlank()) {
+                    releaseDto.restartRequired = false;
+                }
+                releaseDto.securityProfile = metadata.getSecurityProfile();
+                releaseDto.deploymentMode = metadata.getDeploymentMode();
+                releaseDto.gitCommitSha = metadata.getGitCommitSha();
+                releaseDto.gitBranch = metadata.getGitBranch();
+                releaseDto.gitPath = metadata.getGitPath();
+                releaseDto.gitRepoUrl = metadata.getGitRepoUrl();
+                releaseDto.gitPrUrl = metadata.getGitPrUrl();
+                releaseDto.gitPrNumber = metadata.getGitPrNumber();
+                releaseDto.gitPrState = metadata.getGitPrState();
+
+                // Backend-aware status lookup (Flux or direct Helm)
+                try {
+                    HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
+                    if (refreshed != null) {
+                        if (refreshed.status != null) releaseDto.status = refreshed.status;
+                        if (refreshed.message != null) releaseDto.message = refreshed.message;
+                        releaseDto.lastAppliedRevision = refreshed.lastAppliedRevision;
+                        releaseDto.lastAttemptedRevision = refreshed.lastAttemptedRevision;
+                        releaseDto.lastHandledReconcileAt = refreshed.lastHandledReconcileAt;
+                        releaseDto.sourceStatus = refreshed.sourceStatus;
+                        releaseDto.sourceMessage = refreshed.sourceMessage;
+                        releaseDto.sourceName = refreshed.sourceName;
+                        releaseDto.sourceNamespace = refreshed.sourceNamespace;
+                        releaseDto.reconcileState = refreshed.reconcileState;
+                        releaseDto.reconcileMessage = refreshed.reconcileMessage;
+                        releaseDto.observedGeneration = refreshed.observedGeneration;
+                        releaseDto.desiredGeneration = refreshed.desiredGeneration;
+                        releaseDto.staleGeneration = refreshed.staleGeneration;
+                        releaseDto.conditions = refreshed.conditions;
+                        releaseDto.sourceConditions = refreshed.sourceConditions;
+                        releaseDto.lastTransitionTime = refreshed.lastTransitionTime;
+                        if (refreshed.gitPrState != null) {
+                            releaseDto.gitPrState = refreshed.gitPrState;
+                        }
+                        if (refreshed.gitPrUrl != null) {
+                            releaseDto.gitPrUrl = refreshed.gitPrUrl;
+                        }
+                    }
+                } catch (Exception ex) {
+                    LOG.warn("Backend status lookup failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
+                }
+
+                if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
+                    try {
+                        var currentProfile = securityProfileService.resolveProfile(metadata.getSecurityProfile());
+                        String currentHash = securityProfileService.fingerprint(currentProfile);
+                        String storedHash = metadata.getSecurityProfileHash();
+                        if (currentHash != null && storedHash != null && !currentHash.equals(storedHash)) {
+                            releaseDto.securityProfileStale = true;
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to compare security profile for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
+                    }
+                }
+
+                String endpointsJson = metadata.getEndpointsJson();
+                if (endpointsJson != null && !endpointsJson.isEmpty()) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> rawList =
+                                objectMapper.readValue(endpointsJson, List.class);
+
+                        if (rawList != null && !rawList.isEmpty()) {
+                            for (Map<String, Object> e : rawList) {
+                                ReleaseEndpointDTO dto = new ReleaseEndpointDTO();
+                                if (e.get("id") != null) dto.setId(String.valueOf(e.get("id")));
+                                if (e.get("label") != null) dto.setLabel(String.valueOf(e.get("label")));
+                                if (e.get("url") != null) dto.setUrl(String.valueOf(e.get("url")));
+                                if (e.get("description") != null) dto.setDescription(String.valueOf(e.get("description")));
+                                if (e.get("kind") != null) dto.setKind(String.valueOf(e.get("kind")));
+                                allEndpoints.add(dto);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to parse endpointsJson for {}/{}: {}",
+                                releaseDto.namespace, releaseDto.name, ex.toString());
+                    }
+                }
             } else {
                 releaseDto.managedByUi = false;
-                // Light fallback: could try to infer serviceKey from chartRef vs charts.json here if needed
+                releaseDto.restartRequired = false;
             }
+
+            allEndpoints.addAll(
+                    metadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
+            );
+
+            if (!allEndpoints.isEmpty()) {
+                releaseDto.endpoints = allEndpoints;
+            }
+
+            // If version is still missing, attempt to resolve via helm show chart
+            if (releaseDto.version == null || releaseDto.version.isBlank()) {
+                String chartRef = metadata != null && metadata.getChartRef() != null && !metadata.getChartRef().isBlank()
+                        ? metadata.getChartRef()
+                        : releaseDto.chart;
+                String cacheKey = chartRef + "::" + (metadata != null ? metadata.getVersion() : "");
+                String resolved = versionCache.get(cacheKey);
+                if (resolved == null) {
+                    resolved = helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null);
+                    versionCache.put(cacheKey, resolved == null ? "" : resolved);
+                }
+                if (resolved != null && !resolved.isBlank()) {
+                    releaseDto.version = resolved;
+                }
+            }
+
             releaseList.add(releaseDto);
         }
-        return releaseList;
+
+        return new HelmReleasesResponse(releaseList, total);
     }
 
     @POST
@@ -98,6 +278,7 @@ public class HelmResource {
             Release deployedRelease = helmService.deployOrUpgrade(
                 deployRequest, kubeContext, repositoryId, chartVersion
               );
+            RELEASE_CACHE.clear(); // invalidate cache after mutation
             LOG.info("Deployed release: {} in namespace: {} with id:{}", deployedRelease.getName(), deployedRelease.getNamespace());
             return Response.ok(buildReleaseDto(deployedRelease)).build();
         } catch (Exception e) {
@@ -136,6 +317,7 @@ public class HelmResource {
                 .deployOrUpgrade(deployRequest, getKubeconfigContents(), 
                                upgradeRequest.getRepoId(), upgradeRequest.getVersion());
 
+        RELEASE_CACHE.clear(); // invalidate cache after mutation
         return HelmReleaseDTO.from(upgradedRelease);
     }
 
@@ -164,11 +346,86 @@ public class HelmResource {
         return releaseDto;
     }
 
+    private static List<HelmReleaseDTO> getCachedReleases(String namespace) {
+        String key = namespace == null ? "__ALL__" : namespace;
+        CachedReleases cached = RELEASE_CACHE.get(key);
+        if (cached == null) return null;
+        if (System.currentTimeMillis() - cached.timestampMs > RELEASE_CACHE_TTL_MILLIS) {
+            RELEASE_CACHE.remove(key);
+            return null;
+        }
+        return cached.releases;
+    }
+
+    private static void putCachedReleases(String namespace, List<HelmReleaseDTO> releases) {
+        String key = namespace == null ? "__ALL__" : namespace;
+        RELEASE_CACHE.put(key, new CachedReleases(System.currentTimeMillis(), releases));
+    }
+
+    private static final class CachedReleases {
+        final long timestampMs;
+        final List<HelmReleaseDTO> releases;
+        CachedReleases(long ts, List<HelmReleaseDTO> releases) {
+            this.timestampMs = ts;
+            this.releases = releases;
+        }
+    }
+
     @DELETE
     @Path("/release/{namespace}/{name}")
     public Response uninstall(@PathParam("namespace") String namespace,
-                             @PathParam("name") String releaseName) {
-        new HelmService(viewContext).uninstall(namespace, releaseName, getKubeconfigContents());
+                             @PathParam("name") String releaseName,
+                             @QueryParam("gitRepoUrl") String gitRepoUrl,
+                             @QueryParam("gitAuthToken") String gitAuthToken,
+                             @QueryParam("gitSshKey") String gitSshKey,
+                             @QueryParam("gitBranch") String gitBranch) {
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(viewContext);
+        K8sReleaseEntity meta = metadataService.find(namespace, releaseName);
+        CommandService commandService = new CommandService(viewContext);
+        // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
+        try {
+            if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+                try {
+                    String branchToUse = gitBranch != null && !gitBranch.isBlank() ? gitBranch : meta.getGitBranch();
+                    String repoUrlToUse = gitRepoUrl != null && !gitRepoUrl.isBlank() ? gitRepoUrl : meta.getGitRepoUrl();
+                    String repoPath = meta.getGitPath();
+                    String authTokenToUse = gitAuthToken;
+                    String sshKeyToUse = gitSshKey;
+                    if ((authTokenToUse == null || authTokenToUse.isBlank()) && (sshKeyToUse == null || sshKeyToUse.isBlank())) {
+                        GitCredentialService gitCredentialService = new GitCredentialService(viewContext);
+                        String resolved = gitCredentialService.resolveSecret(meta.getGitCredentialAlias());
+                        // Heuristic: if it looks like an RSA/PEM key, treat as sshKey, else token
+                        if (resolved != null && resolved.contains("BEGIN")) {
+                            sshKeyToUse = resolved;
+                        } else {
+                            authTokenToUse = resolved;
+                        }
+                    }
+                    fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, repoPath, authTokenToUse, sshKeyToUse);
+                    LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
+                            namespace, releaseName, repoUrlToUse, branchToUse, repoPath);
+                } catch (Exception ex) {
+                    LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
+                    return Response.serverError().entity(Map.of(
+                            "error", "Flux destroy failed: " + ex.getMessage(),
+                            "release", releaseName,
+                            "namespace", namespace
+                    )).build();
+                }
+            } else {
+                // Use backend dispatcher (defaults to direct Helm).
+                commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
+            }
+        } finally {
+            try {
+                if (meta != null) {
+                    metadataService.delete(namespace, releaseName);
+                }
+            } catch (Exception ex) {
+                LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
+            }
+            RELEASE_CACHE.clear(); // invalidate cache after mutation
+        }
         return Response.ok().build();
     }
 
@@ -178,6 +435,7 @@ public class HelmResource {
                             @QueryParam("name") String releaseName,
                             @QueryParam("revision") int revision) {
         new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+        RELEASE_CACHE.clear(); // invalidate cache after mutation
         return Response.ok().build();
     }
 
@@ -254,5 +512,21 @@ public class HelmResource {
                     .build();
         }
     }
-}
 
+
+    @GET
+    @Path("/{namespace}/{releaseName}/values")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getValues(@PathParam("namespace") String namespace,
+                              @PathParam("releaseName") String releaseName) {
+        try {
+            // Call the method we just added to KubernetesService
+            Map<String, Object> values = this.kubernetesService.getHelmReleaseValues(namespace, releaseName);
+            return Response.ok(values).build();
+        } catch (Exception e) {
+            return Response.serverError()
+                    .entity(Collections.singletonMap("error", e.getMessage()))
+                    .build();
+        }
+    }
+}

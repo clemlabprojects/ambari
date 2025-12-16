@@ -256,6 +256,7 @@ public abstract class KerberosOperationHandler {
   public abstract boolean principalExists(String principal, boolean service)
       throws KerberosOperationException;
 
+
   /**
    * Creates a new principal in a previously configured KDC
    * <p/>
@@ -892,4 +893,15 @@ public abstract class KerberosOperationHandler {
 
     return (executablePath == null) ? executable : executablePath;
   }
+
+  /**
+  * Hook for KDC backends that require a host object to exist before creating service principals.
+  * Default: no-op (MIT/AD don’t need this).
+  * Subclasses (e.g., FreeIPA) may override to ensure the host exists, creating it if necessary.
+  *
+  * @param hostname FQDN or short host the service principal refers to (may be null/blank)
+  * @throws KerberosOperationException to signal backend/tooling errors
+  */
+  public abstract void ensureHostExists(String hostname) throws KerberosOperationException;
+  
 }

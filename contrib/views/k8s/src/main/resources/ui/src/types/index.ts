@@ -7,14 +7,15 @@ export interface UserPermissions {
   canWrite: boolean;
 }
 
-export interface HelmRelease {
+export interface ReleaseEndpoint {
   id: string;
-  name: string;
-  namespace: string;
-  chart: string;
-  version: string;
-  status: 'deployed' | 'pending_upgrade' | 'failed' | 'uninstalling';
+  label?: string;
+  url?: string;
+  kind?: 'service' | 'ingress' | 'route';
+  protocol?: 'http' | 'https';
+  internal?: boolean;
 }
+
 export interface HelmRelease {
   id: string;
   name: string;
@@ -30,6 +31,34 @@ export interface HelmRelease {
   serviceKey?: string;   // ex: "trino", "prometheus"
   repoId?: string;
   chartRef?: string;
+  securityProfile?: string;
+  securityProfileStale?: boolean;
+  deploymentMode?: string; // DIRECT_HELM | FLUX_GITOPS
+  gitCommitSha?: string;
+  gitBranch?: string;
+  gitPath?: string;
+  gitRepoUrl?: string;
+  gitPrUrl?: string;
+  gitPrNumber?: string;
+  gitPrState?: string;
+  sourceStatus?: string;
+  sourceMessage?: string;
+  sourceName?: string;
+  sourceNamespace?: string;
+  reconcileState?: string;
+  reconcileMessage?: string;
+  observedGeneration?: string;
+  desiredGeneration?: string;
+  staleGeneration?: boolean;
+  lastTransitionTime?: string;
+  conditions?: Array<Record<string, string>>;
+  sourceConditions?: Array<Record<string, string>>;
+  message?: string;
+  lastAppliedRevision?: string;
+  lastAttemptedRevision?: string;
+  lastHandledReconcileAt?: string;
+  // ---- mapping from chart definition to release ----
+  endpoints?: ReleaseEndpoint[];
 }
 
 export interface ClusterNode {
@@ -86,4 +115,11 @@ export interface HelmRepo {
   authMode: "anonymous" | "basic" | "token";
   username?: string;
   authInvalid?: boolean;
+  imageProject?: string;
+  imageRegistryHostOverride?: string;
+}
+
+export interface HelmReleasePage {
+  items: HelmRelease[];
+  total: number;
 }

@@ -1,20 +1,189 @@
 // ui/src/api/client.ts
 import { getMockClusterStats, getMockComponentStatuses, getMockClusterEvents, getMockNodes, getMockHelmReleases, getChartsJSON, getMockHelmRepos } from './mock';
+import { getMockSecurityConfig } from './mock';
 import type {ClusterService} from '../types/ServiceTypes';
 import type {HelmRepo} from '../types';
+import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 
-const API_BASE_URL = `/api/v1/views/K8S-VIEW/versions/1.0.0.1/instances/K8S_VIEW_INSTANCE/resources/api`;
+/**
+ * Resolve API base from current view URL so bumps to the view version or instance
+ * do not break the frontend. Falls back to the known default if parsing fails.
+ */
+const resolveApiBase = (): string => {
+  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.1/instances/K8S_VIEW_INSTANCE/resources/api`;
+  if (typeof window === 'undefined') return fallback;
+  try {
+    // Examples of pathname we might see:
+    //  /#/main/views/K8S-VIEW/1.0.0.1/K8S_VIEW_INSTANCE
+    //  /main/views/K8S-VIEW/1.0.0.1/K8S_VIEW_INSTANCE
+    const path = window.location.pathname + window.location.hash;
+    const match = path.match(/views\/([^/]+)\/([^/]+)\/([^/#?]+)/);
+    if (!match) return fallback;
+    const [, viewName, version, instance] = match;
+    return `/api/v1/views/${viewName}/versions/${version}/instances/${instance}/resources/api`;
+  } catch {
+    return fallback;
+  }
+};
 
-export type CommandState = 'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED';
+export const API_BASE_URL = resolveApiBase();
+
+// Backend uses single-L "CANCELED"; keep backward compatibility with old "CANCELLED"
+export type CommandState = 'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED'|'CANCELED';
 
 export type CommandStatus = {
   id: string;
+  hasChildren?: boolean;
+  type?: string;
   state: CommandState;
   percent: number;
   step: number;
   message: string;
+  createdBy?: string;
   error?: string;
   result?: any;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export interface StackServiceDef {
+  name: string;
+  label: string;
+  chart: string;
+  description: string;
+  form: any[]; // FormField[]
+}
+
+export interface StackConfig {
+  name: string;
+  description: string;
+  properties: StackProperty[];
+}
+
+export const getGlobalConfigs = async (): Promise<StackConfig[]> => {
+  if (import.meta.env.DEV) {
+    return (await import('./mock')).getStackConfigsMock('GLOBAL') as any;
+  }
+  const res = await fetch(`./api/v1/globals/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  if (!res.ok) throw new Error('Failed to load global configs');
+  return res.json();
+};
+
+export interface StackProperty {
+  name: string;
+  displayName: string;
+  description?: string;
+  type: 'string' | 'int' | 'boolean' | 'password' | 'content';
+  value: any;
+  required?: boolean;
+  language?: string;
+  unit?: string;
+}
+
+export interface SecurityConfig {
+  mode?: 'none' | 'ldap' | 'ad' | 'oidc';
+  ldap?: {
+    url?: string;
+    bindDn?: string;
+    bindPassword?: string;
+    userDnTemplate?: string;
+    baseDn?: string;
+    groupSearchBase?: string;
+    groupSearchFilter?: string;
+    referral?: string;
+    startTls?: boolean;
+    adUrl?: string;
+    adBaseDn?: string;
+    adBindDn?: string;
+    adBindPassword?: string;
+    adUserSearchFilter?: string;
+    adDomain?: string;
+  };
+  oidc?: {
+    issuerUrl?: string;
+    clientId?: string;
+    clientSecret?: string;
+    scopes?: string;
+    redirectUri?: string;
+    userClaim?: string;
+    groupsClaim?: string;
+    skipTlsVerify?: boolean;
+    caSecret?: string;
+  };
+  tls?: {
+    truststoreSecret?: string;
+    truststorePasswordKey?: string;
+    truststoreKey?: string;
+  };
+  extraProperties?: Record<string, any>;
+}
+
+// Workloads browsing helpers (namespaces, pods, services, logs)
+export const getNamespaces = async (): Promise<KubeNamespace[]> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export const getPods = async (ns: string, labelSelector?: string): Promise<KubePod[]> => {
+  const params = new URLSearchParams();
+  if (labelSelector) params.set('labelSelector', labelSelector);
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export const getServices = async (ns: string, labelSelector?: string): Promise<KubeService[]> => {
+  const params = new URLSearchParams();
+  if (labelSelector) params.set('labelSelector', labelSelector);
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export const getPodLogs = async (ns: string, pod: string, container?: string, tailLines?: number): Promise<string> => {
+  const params = new URLSearchParams();
+  if (container) params.set('container', container);
+  if (tailLines) params.set('tailLines', tailLines.toString());
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Failed to fetch logs (${res.status})`);
+  }
+  return res.text();
+};
+
+export const getNamespaceEvents = async (ns: string): Promise<KubeEvent[]> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export const getPodEvents = async (ns: string, pod: string): Promise<KubeEvent[]> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export const describePod = async (ns: string, pod: string): Promise<string> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.text();
+};
+
+export const describeService = async (ns: string, svc: string): Promise<string> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.text();
+};
+
+export const deletePod = async (ns: string, pod: string, graceSeconds?: number): Promise<void> => {
+  const params = new URLSearchParams();
+  if (graceSeconds != null) params.set('graceSeconds', graceSeconds.toString());
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) throw new Error(await res.text());
+};
+
+export const restartPod = async (ns: string, pod: string): Promise<void> => {
+  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error(await res.text());
 };
 
 async function fetchJson<T = unknown>(
@@ -74,13 +243,23 @@ export async function deployHelm(
   return response.json().catch(() => ({}));
 }
 
-export const getAvailableServices = async () => {
-  if (import.meta.env.DEV) {
-    return getChartsJSON();
-  }
-  const response = await fetch(`${API_BASE_URL}/charts/available`);
+export async function checkHelmRepo(id: string) {
+  const response = await fetch(`${API_BASE_URL}/helm/repos/${id}/check`, {
+    method: 'GET',
+    credentials: 'include'
+  });
   return handleApiResponse(response);
 }
+
+export async function installMonitoring(repoId?: string) {
+  const params = repoId ? `?repoId=${encodeURIComponent(repoId)}` : '';
+  const response = await fetch(`${API_BASE_URL}/helm/monitoring/install${params}`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  return handleApiResponse(response);
+}
+
 
 export const getClusterEvents = async () => {
   if (import.meta.env.DEV) {
@@ -92,37 +271,182 @@ export const getClusterEvents = async () => {
 };
 
 /**
- * Fetches existing cluster services of a specific type (e.g., HIVE_METASTORE).
- * @param serviceType The type of service to fetch from the backend.
+ * Fetches existing Ambari cluster services (e.g. Hive Metastore URI).
+ * Calls GET /api/discovery/ambari?serviceType=...
  */
 export const getClusterServices = async (serviceType: string): Promise<ClusterService[]> => {
-    // In a real implementation, this would call your backend which in turn queries Ambari or another service registry.
-    console.log(`Fetching cluster services of type: ${serviceType}`);
-    // MOCK IMPLEMENTATION FOR NOW
-    if (serviceType === 'HIVE_METASTORE') {
-        return new Promise(resolve => setTimeout(() => resolve([
-            { label: 'Hive Metastore (Primary)', value: 'thrift://metastore.hadoop.local:9083' },
-            { label: 'Hive Metastore (Secondary)', value: 'thrift://metastore-ha.hadoop.local:9083' }
-        ]), 500));
-    }
-    return Promise.resolve([]);
+    // No more mock. Call the backend.
+    const params = new URLSearchParams({ serviceType });
+    const response = await fetch(`${API_BASE_URL}/discovery/ambari?${params.toString()}`, {
+      credentials: 'include'
+    });
+    return handleApiResponse(response);
 };
 
-export const getClusterStats = async () => {
+/**
+ * Discover monitoring stack (kube-prometheus-stack) and return namespace/release.
+ */
+export const getMonitoringDiscovery = async (): Promise<{ namespace: string; release: string; url?: string }> => {
+  const response = await fetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
+  return handleApiResponse(response);
+};
+
+export const getViewSettings = async (): Promise<any> => {
+  const response = await fetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(txt || 'Failed to load settings');
+  }
+  return response.json();
+};
+
+export const saveViewSettings = async (settings: any): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/configurations/settings`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings)
+  });
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(txt || 'Failed to save settings');
+  }
+};
+
+export interface SecurityProfiles {
+  defaultProfile?: string;
+  profiles: Record<string, SecurityConfig>;
+}
+
+export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
+  if (import.meta.env.DEV) {
+    return getMockSecurityConfig();
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load security config');
+  }
+  return res.json();
+};
+
+export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> => {
+  const res = await fetch(`${API_BASE_URL}/configurations/security`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg || {})
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to save security config');
+  }
+};
+
+export const getSecuritySchema = async (): Promise<any> => {
+  if (import.meta.env.DEV) {
+    const { getMockSecuritySchema } = await import('./mock');
+    return getMockSecuritySchema();
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/security/schema`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load security schema');
+  }
+  return res.json();
+};
+
+
+/**
+ * Fetches running Kubernetes services matching a specific label.
+ * Calls GET /api/discovery/k8s?label=...
+ */
+
+export const getDiscoveredK8sServices = async (labelSelector: string): Promise<ClusterService[]> => {
+    // In import.meta.env.DEV you might want to return mock data, 
+    // otherwise call the real backend.
+    if (import.meta.env.DEV) {
+       console.log(`Mocking K8s discovery for label: ${labelSelector}`);
+       return [
+         { label: 'trino-test-1 (mock)', value: 'trino-test-1.default.svc.cluster.local' }
+       ];
+    }
+
+    const params = new URLSearchParams({ label: labelSelector });
+    // Note: ensure API_BASE_URL includes the /resources/api part as defined in your file
+    const response = await fetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
+    return handleApiResponse(response);
+}
+
+export const getClusterStats = async (forceRefresh = false) => {
   if (import.meta.env.DEV) {
     if (sessionStorage.getItem('isUnconfigured')) {
       throw new Error('unconfigured');
     }
     return getMockClusterStats();
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/stats`);
+  const params = new URLSearchParams();
+  if (forceRefresh) params.set('forceRefresh', 'true');
+  const response = await fetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
   return handleApiResponse(response);
 };
 
 export async function getCommandStatus(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}`);
+  // Explicit fetch keeps polling simple and avoids any header/caching surprises
+  const response = await fetch(`${API_BASE_URL}/commands/${id}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
   if (!response.ok) throw new Error(`Status failed: ${response.status}`);
   return response.json() as Promise<CommandStatus>;
+}
+
+export async function listCommands(limit = 10, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${API_BASE_URL}/commands?${params.toString()}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`List failed: ${response.status}`);
+  return response.json() as Promise<CommandStatus[]>;
+}
+
+export async function getCommandLogs(id: string, offset = 0, limit = 65536) {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  const response = await fetch(`${API_BASE_URL}/commands/${id}/logs?${params.toString()}`, {
+    credentials: 'include',
+    cache: 'no-store'
+  });
+  if (!response.ok) throw new Error(`Logs failed: ${response.status}`);
+  return response.json() as Promise<{ content: string; nextOffset: number; eof: boolean; size: number }>;
+}
+
+export async function listChildCommands(id: string) {
+  const response = await fetch(`${API_BASE_URL}/commands/${id}/children`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`List children failed: ${response.status}`);
+  return response.json() as Promise<CommandStatus[]>;
+}
+
+export async function cancelCommand(id: string) {
+  const response = await fetch(`${API_BASE_URL}/commands/${id}/cancel`, { method: 'POST' });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text || `Cancel failed: ${response.status}`);
+  }
+}
+
+export async function refreshDependencies() {
+  const response = await fetch(`${API_BASE_URL}/commands/dependencies/refresh`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text || `Refresh failed: ${response.status}`);
+  }
 }
 
 export const getComponentStatuses = async () => {
@@ -134,12 +458,13 @@ export const getComponentStatuses = async () => {
   return handleApiResponse(response);
 };
 
-export const getHelmReleases = async () => {
+export const getHelmReleases = async (limit = 20, offset = 0) => {
     if (import.meta.env.DEV) {
         if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
         return getMockHelmReleases();
     }
-    const response = await fetch(`${API_BASE_URL}/helm/releases`);
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const response = await fetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
     return handleApiResponse(response);
 };
 
@@ -173,13 +498,14 @@ export const getKubeconfigContent = async (): Promise<string> => {
   return response.text();
 };
 
-export const getNodes = async () => {
-    if (import.meta.env.DEV) {
-        if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
-        return getMockNodes();
-    }
-    const response = await fetch(`${API_BASE_URL}/nodes`);
-    return handleApiResponse(response);
+export const getNodes = async (limit = 200, offset = 0) => {
+  if (import.meta.env.DEV) {
+    if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
+    return { items: getMockNodes(), total: getMockNodes().length };
+  }
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${API_BASE_URL}/nodes?${params.toString()}`);
+  return handleApiResponse(response);
 };
 
 export const isViewConfigured = async () => {
@@ -255,8 +581,20 @@ export const saveHelmRepo = (repo: HelmRepo, secret?: string) =>
   );
 
 export async function submitHelmDeploy(payload: {
-  chart: string; releaseName: string; namespace: string; values: any; serviceKey?: string;
+  chart: string;
+  releaseName: string;
+  namespace: string;
+  values: any;
+  serviceKey?: string;
+  securityProfile?: string;
+  repoId?: string;
+  deploymentMode?: string;
+  git?: any;
 }, params: URLSearchParams = new URLSearchParams()) {
+  // always propagate repoId as a query param to help the backend resolve the repository deterministically
+  if (payload.repoId && !params.has('repoId')) {
+    params.set('repoId', payload.repoId);
+  }
   const url = `${API_BASE_URL}/commands/helm/deploy?${params.toString()}`;
   const response = await fetch(url, {
     method: 'POST',
@@ -273,8 +611,12 @@ export async function submitHelmDeploy(payload: {
  * @param name release name
  * @param namespace release namespace
  */
-export async function uninstallHelm(name: string, namespace: string) {
-  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+export async function uninstallHelm(
+  name: string,
+  namespace: string,
+  params: URLSearchParams = new URLSearchParams()
+) {
+  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
   const response = await fetch(url, { method: 'DELETE' });
   if (!response.ok) throw new Error(`Uninstall failed: ${response.status}`);
   // backend returns empty body → don't call .json()
@@ -332,4 +674,111 @@ export async function validateChart(
     }, 30000); // 30s is enough for validate
     if (!response.ok) throw new Error(`Validate failed: ${response.status}`);
     return response.json();
+}
+
+// Add to your existing client.ts
+
+export interface ManagedConfig {
+  name: string;
+  namespace: string;
+  type: string;       // e.g. "superset-python"
+  filename: string;   // e.g. "superset_config.py"
+  language: string;   // e.g. "python"
+  description?: string;
+  content?: string;
+  isDefault?: boolean; // True if seeded by system
+}
+
+export const listManagedConfigs = async (): Promise<ManagedConfig[]> => {
+  // Pass namespace=dashboarding or handle in backend logic
+  // Using relative path assuming proxy is set up or base URL matches
+  const response = await fetch(`${API_BASE_URL}/configurations`, {
+    headers: { 'X-Requested-By': 'ambari' }
+  });
+  if (!response.ok) throw new Error('Failed to fetch configurations');
+  return response.json();
+};
+
+export const getManagedConfigContent = async (namespace: string, name: string, filename: string): Promise<string> => {
+  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}?filename=${filename}`, {
+    headers: { 'X-Requested-By': 'ambari' }
+  });
+  if (!response.ok) throw new Error('Failed to fetch content');
+  const json = await response.json();
+  return json.content || '';
+};
+
+export const saveManagedConfig = async (config: ManagedConfig) => {
+  const response = await fetch(`${API_BASE_URL}/configurations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-By': 'ambari'
+    },
+    body: JSON.stringify(config)
+  });
+  if (!response.ok) throw new Error('Failed to save config');
+};
+
+export const deleteManagedConfig = async (name: string, namespace: string) => {
+  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}`, {
+    method: 'DELETE',
+    headers: { 'X-Requested-By': 'ambari' }
+  });
+  if (!response.ok) throw new Error('Failed to delete config');
+};
+
+
+/**
+ * Fetches the current user-supplied values for a specific Helm release.
+ * Maps to Backend: GET /api/v1/helm/{namespace}/{releaseName}/values
+ */
+export const getReleaseValues = async (namespace: string, releaseName: string): Promise<any> => {
+  // Construct the URL. Adjust the base path ('./api/v1') if your setup differs.
+  const url = `${API_BASE_URL}/helm/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/values`;
+  
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 
+      'Content-Type': 'application/json',
+      'X-Requested-By': 'ambari' // Required by Ambari CSRF protection
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to fetch release values: ${response.status} ${errorText}`);
+  }
+
+  // The backend returns a JSON object (Map<String, Object>) representing the values.yaml
+  return response.json();
+};
+
+/** Stack Definition */
+export const getStackService = async (name: string): Promise<StackServiceDef> => {
+  if (import.meta.env.DEV) {
+    return (await import('./mock')).getStackServiceMock(name);
+  }
+  const res = await fetch(`${API_BASE_URL}/services/${name}`, { headers: { 'X-Requested-By': 'ambari' } });
+  if (!res.ok) throw new Error("Failed to load service definition");
+  return res.json();
+};
+
+export const getStackConfigs = async (name: string): Promise<StackConfig[]> => {
+  if (import.meta.env.DEV) {
+    return (await import('./mock')).getStackConfigsMock(name) as any;
+  }
+  const res = await fetch(`${API_BASE_URL}/services/${name}/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  if (!res.ok) throw new Error("Failed to load configs");
+  return res.json();
+};
+
+
+export const getAvailableServices = async () => {
+  if (import.meta.env.DEV) {
+    // Use KDPS-style mocks in dev
+    return getChartsJSON();
+  }
+  const response = await fetch(`${API_BASE_URL}/services`, { headers: { 'X-Requested-By': 'ambari' } });
+  return handleApiResponse(response);
 }

@@ -1,0 +1,5 @@
+{
+  "name": "trino-files",
+  "description": "File-based overrides for Trino (placeholder)",
+  "properties": []
+}

@@ -4,13 +4,16 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.AmbariException;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.WebHookConfigurationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.security.auth.x500.X500Principal;
+import javax.ws.rs.core.MultivaluedMap;
 import java.math.BigInteger;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.security.cert.X509Certificate;
@@ -43,6 +46,8 @@ public class WebHookBootstrap {
 
     private static final Logger LOG = LoggerFactory.getLogger(WebHookBootstrap.class);
     private static final String BC = "BC";
+    public static final String USER_ALIAS = "ambari.k8s.webhook.user";
+    public static final String PASS_ALIAS = "ambari.k8s.webhook.password";
 
     static {
         // BouncyCastle once per JVM
@@ -68,21 +73,27 @@ public class WebHookBootstrap {
      */
     public static void prepareWebhookPrereqs(ViewContext ctx,
                                              KubernetesService k8sSvc,
-                                             String webhookName) {
+                                             String webhookName, MultivaluedMap<String,String> callerHeaders,
+                                             URI baseUri) {
         Objects.requireNonNull(ctx,          "ViewContext must not be null");
         Objects.requireNonNull(k8sSvc,       "KubernetesService must not be null");
         Objects.requireNonNull(webhookName,  "webhookName must not be null");
 
+        AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
         final long t0 = System.currentTimeMillis();
         LOG.info("[webhook={}]: starting prerequisite preparation", webhookName);
 
         // ---- 1) Read inputs from ambari.properties with sensible defaults ----
-        final String ns        = prop(ctx, webhookName, "namespace",              "ambari-managed-mutating-webhooks");
+        final String ns        = prop(ctx, webhookName, "namespace",              "ambari-mutating-webhooks");
         final String appName   = prop(ctx, webhookName, "appName",                webhookName);
         final String dnsSuffix = prop(ctx, webhookName, "dnsSuffix",              ".svc.cluster.local");
         final String clientSec = prop(ctx, webhookName, "clientMtls.secretName",  webhookName + "-client-tls");
         final String serveSec  = prop(ctx, webhookName, "serverTls.secretName",   webhookName + "-tls");
+        final String secretName = prop(ctx, webhookName, "backend.caSecretName",   "ambari-root-ca");
+        final String webhookUserName = prop(ctx, webhookName, "backend.webhookUsername",   "webhook-user");
+        final String webhookUserSecret = prop(ctx, webhookName, "backend.webhookUserSecret",   "webhook-user");
 
+        final int minDaysLeft = 30;
         LOG.info("[webhook={}] resolved inputs: namespace='{}', appName='{}', dnsSuffix='{}', clientSecret='{}', servingSecret='{}'",
                 webhookName, ns, appName, dnsSuffix, clientSec, serveSec);
 
@@ -96,13 +107,13 @@ public class WebHookBootstrap {
         }
 
         // ---- 3) Ensure Ambari CA exists (or create it) ----
-        WebHookConfigurationService wh = new WebHookConfigurationService(ctx, k8sSvc);
-        WebHookConfigurationService.CertificateAuthorityMaterial ca = wh.ensureAmbariCertificateAuthority();
+        WebHookConfigurationService webHookConfigurationService = new WebHookConfigurationService(ctx, k8sSvc);
+        WebHookConfigurationService.CertificateAuthorityMaterial ca = webHookConfigurationService.ensureAmbariCertificateAuthority();
         LOG.info("[webhook={}] Ambari CA ready (dir={})", webhookName, ca.storageDirectory());
 
         // ---- 4) Ensure client mTLS Secret used by the webhook to call Ambari ----
         try {
-            wh.ensureClientMtlsSecret(
+            webHookConfigurationService.ensureClientMtlsSecret(
                     ns,
                     clientSec,
                     "ambari-webhook-client",           // CN label
@@ -144,12 +155,89 @@ public class WebHookBootstrap {
             throw e;
         }
 
+        // ----- 7) load ambari'server CA from JAVA based keystore
+        final String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
+        boolean truststoreExists = (truststorePath != null && !truststorePath.isBlank());
+        if (truststoreExists) {
+            try {
+                final String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
+                        .filter(s -> !s.isBlank()).orElse("JKS");
+
+                // Read property (could be plain or ${alias=...})
+                final String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password"))
+                        .orElse("");
+
+                char[] truststorePass = ambariAliasResolver.resolve(ctx, truststorePassProp);
+                webHookConfigurationService.ensureOrRotateAmbariTruststoreCaSecret(
+                        ns,
+                        secretName,
+                        truststorePath,
+                        truststoreType,
+                        truststorePass,
+                        minDaysLeft,
+                        Map.of("purpose", "backend-ca-external")
+                );
+
+            } catch (Exception e) {
+                LOG.error("[webhook={}] failed creating ambari truststore CA Secret {}/{}", webhookName, ns, secretName, e);
+                throw e;
+            }
+        } else {
+            LOG.warn("[webhook={}] ambari truststore path not configured; skipping truststore CA Secret creation", webhookName);
+        }
+        // -- 8) create an internal ambari user for mutating-webhook authentication on ambari's view 'rest API
+        /**
+         * the first step does create username/password in credentials.jceks
+         * the second steps does make the ambari REST API call to create the user
+         */
+        try {
+            Set<String> existingAliases = ambariAliasResolver.getCredentialStore().listCredentials();
+            String user;
+            if (existingAliases.contains(USER_ALIAS)) {
+                user = new String(ambariAliasResolver.getPasswordForAlias(USER_ALIAS));
+            } else {
+                user = webhookUserName; // or derive from cluster/namespace
+                ambariAliasResolver.addAliasToCredentialStore(USER_ALIAS, user);
+                LOG.info("Created credential alias '{}'", USER_ALIAS);
+            }
+
+            String ambariMutatingWebhookPassword;
+            if (existingAliases.contains(PASS_ALIAS)) {
+                ambariMutatingWebhookPassword = new String(ambariAliasResolver.getPasswordForAlias(PASS_ALIAS));
+                LOG.info("Fetched ambari-mutating-webhook password from credential  with alias '{}'", PASS_ALIAS);
+            } else {
+                ambariMutatingWebhookPassword = strongPassword();
+                ambariAliasResolver.addAliasToCredentialStore(PASS_ALIAS, ambariMutatingWebhookPassword);
+                LOG.info("Created ambari-mutating-webhook password in credential with alias '{}'", PASS_ALIAS);
+            }
+
+            // Build Ambari API base from the same host the View is running
+            String ambariApiBase = baseUri.resolve("/api/v1").toString();
+
+            //Build Ambari Action Client with credential headers and base api
+            var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, AmbariActionClient.toAuthHeaders(callerHeaders));
+
+            ambariActionClient.createWebhookAmbariUser(user, ambariMutatingWebhookPassword, true);
+            webHookConfigurationService.ensureWebhookSecret(ns, webhookUserSecret, webhookUserName, ambariMutatingWebhookPassword);
+
+        } catch (AmbariException e) {
+            throw new RuntimeException(e);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
         LOG.info("[webhook={}] prerequisite preparation complete in {} ms", webhookName, (System.currentTimeMillis() - t0));
     }
 
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    private static String strongPassword() {
+        // 32 chars URL-safe random
+        return java.util.UUID.randomUUID().toString().replace("-", "")
+                + Long.toHexString(new java.security.SecureRandom().nextLong());
+    }
 
     /** Read a passthrough property with default: k8s.view.webhooks.<webhook>.<key> */
     private static String prop(ViewContext ctx, String webhookName, String key, String def) {
@@ -292,4 +380,6 @@ public class WebHookBootstrap {
             throw new IllegalStateException("Failed to compute caBundle", e);
         }
     }
+
+
 }
