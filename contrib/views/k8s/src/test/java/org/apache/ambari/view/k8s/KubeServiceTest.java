@@ -27,7 +27,7 @@ class KubeServiceTest {
   @Test
   void getClusterStatsReturns200AndBody() throws Exception {
     ClusterStats stats = new ClusterStats(null,null,null,null,null);
-    when(k8s.getClusterStats()).thenReturn(stats);
+        when(k8s.getClusterStats(false)).thenReturn(stats);
 
     KubeService api = new KubeService();
     api.setKubernetesService(k8s);
@@ -37,11 +37,11 @@ class KubeServiceTest {
     f.setAccessible(true);
     f.set(api, ctx);
 
-    Response r = api.getClusterStats();
+        Response r = api.getClusterStats(false);
     assertEquals(200, r.getStatus());
     assertEquals(stats, r.getEntity());
 
-    verify(k8s).getClusterStats();
+        verify(k8s).getClusterStats(false);
   }
 
   @Test

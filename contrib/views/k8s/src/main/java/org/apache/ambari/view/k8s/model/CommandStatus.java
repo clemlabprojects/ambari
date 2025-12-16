@@ -10,6 +10,8 @@ public class CommandStatus {
     
     @JsonProperty("id")
     public String id;
+    @JsonProperty("hasChildren")
+    public boolean hasChildren;
     
     @JsonProperty("type")
     public CommandType type;
@@ -25,10 +27,13 @@ public class CommandStatus {
     
     @JsonProperty("message")
     public String message;        // Status message like "Validating...", "Syncing repository...", etc.
-    
+
+    @JsonProperty("createdBy")
+    public String createdBy;      // Ambari user that initiated the command
+
     @JsonProperty("createdAt")
     public String createdAt;      // ISO-8601 timestamp
-    
+
     @JsonProperty("updatedAt")
     public String updatedAt;      // ISO-8601 timestamp
     

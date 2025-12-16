@@ -163,7 +163,9 @@ public interface Resource {
     LoggingQuery,
     RemoteCluster,
     Auth,
-    ADHOC_KEYTAB;
+    ADHOC_KEYTAB,
+    RANGER_PLUGIN_REPOSITORY;
+
 
 
     /**
@@ -204,6 +206,7 @@ public interface Resource {
     public static final Type Setting = InternalType.Setting.getType();
     public static final Type Host = InternalType.Host.getType();
     public static final Type ADHOC_KEYTAB = InternalType.ADHOC_KEYTAB.getType();
+    public static final Type RANGER_PLUGIN_REPOSITORY = InternalType.RANGER_PLUGIN_REPOSITORY.getType();
     public static final Type Component = InternalType.Component.getType();
     public static final Type HostComponent = InternalType.HostComponent.getType();
     public static final Type Configuration = InternalType.Configuration.getType();

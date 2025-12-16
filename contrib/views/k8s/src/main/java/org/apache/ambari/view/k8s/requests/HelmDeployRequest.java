@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 
@@ -24,8 +25,59 @@ public class HelmDeployRequest {
     private String serviceKey;
     private String version;
     private String secretName;
+    private String repoId;
     private LinkedHashMap<String,Object> dependencies;
-    private Map<String, Object> mounts;
+    private Object mounts; // accept map or list
+    private transient Map<String, Object> normalizedMounts;
+    private String imageGlobalRegistryProperty;
+    private String deploymentMode = "DIRECT_HELM"; // DIRECT_HELM | FLUX_GITOPS
+    private GitOptions git;
+
+    // Stack-based configuration overrides (per-config/per-property)
+    private Map<String, Object> stackConfigOverrides;
+
+    // Global config management related configurations
+    private List<ConfigInstantiation> configInstantiations;
+
+    // hadoop related config maps
+    private List<Map<String,Object>> requiredConfigMaps; // list of cm/secret specs
+
+    // ranger plugin related properties
+    private Map<String, Map<String,Object>> ranger;      // keyed items (security/audit/ssl/truststores)
+
+    // endpoints (UI / external URLs etc)
+    private List<Map<String,Object>> endpoints;
+
+    // Optional security profile name
+    private String securityProfile;
+
+    public static class GitOptions {
+        private String repoUrl;
+        private String baseBranch;
+        private String pathPrefix;
+        private String authToken;
+        private String sshKey;
+        private String commitMode; // DIRECT_COMMIT or PR_MODE
+        private String branch;
+        private String credentialAlias;
+
+        public String getRepoUrl() { return repoUrl; }
+        public void setRepoUrl(String repoUrl) { this.repoUrl = repoUrl; }
+        public String getBaseBranch() { return baseBranch; }
+        public void setBaseBranch(String baseBranch) { this.baseBranch = baseBranch; }
+        public String getPathPrefix() { return pathPrefix; }
+        public void setPathPrefix(String pathPrefix) { this.pathPrefix = pathPrefix; }
+        public String getAuthToken() { return authToken; }
+        public void setAuthToken(String authToken) { this.authToken = authToken; }
+        public String getSshKey() { return sshKey; }
+        public void setSshKey(String sshKey) { this.sshKey = sshKey; }
+        public String getCommitMode() { return commitMode; }
+        public void setCommitMode(String commitMode) { this.commitMode = commitMode; }
+        public String getBranch() { return branch; }
+        public void setBranch(String branch) { this.branch = branch; }
+        public String getCredentialAlias() { return credentialAlias; }
+        public void setCredentialAlias(String credentialAlias) { this.credentialAlias = credentialAlias; }
+    }
 
     // Getters and Setters
     public String getChart() { 
@@ -68,6 +120,30 @@ public class HelmDeployRequest {
         this.serviceKey = serviceKey; 
     }
 
+    public String getRepoId() {
+        return repoId;
+    }
+
+    public void setRepoId(String repoId) {
+        this.repoId = repoId;
+    }
+
+    public String getDeploymentMode() {
+        return deploymentMode;
+    }
+
+    public void setDeploymentMode(String deploymentMode) {
+        this.deploymentMode = deploymentMode;
+    }
+
+    public GitOptions getGit() {
+        return git;
+    }
+
+    public void setGit(GitOptions git) {
+        this.git = git;
+    }
+
     public void setDependencies(LinkedHashMap<String, Object> dependencies) {
         this.dependencies = dependencies;
     }
@@ -88,33 +164,161 @@ public class HelmDeployRequest {
     }
     public String getSecretName(){ return this.secretName ;}
 
-    public Map<String, Object> getMounts() { return mounts; }
+    public Map<String, Object> getMounts() {
+        if (normalizedMounts != null) return normalizedMounts;
+        if (mounts == null) return null;
+        try {
+            if (mounts instanceof Map) {
+                //noinspection unchecked
+                normalizedMounts = (Map<String, Object>) mounts;
+                return normalizedMounts;
+            }
+            if (mounts instanceof List) {
+                LinkedHashMap<String, Object> converted = new LinkedHashMap<>();
+                int idx = 0;
+                for (Object o : (List<?>) mounts) {
+                    if (o instanceof Map<?, ?> m) {
+                        Object k = m.get("key");
+                        String key = (k != null) ? String.valueOf(k) : "mount-" + idx;
+                        converted.put(key, m);
+                    } else {
+                        converted.put("mount-" + idx, o);
+                    }
+                    idx++;
+                }
+                normalizedMounts = converted;
+                return normalizedMounts;
+            }
+            if (mounts instanceof String s) {
+                if (s.isBlank()) return null;
+                // Attempt to parse JSON string
+                Object parsed = OM.readValue(s, Object.class);
+                this.mounts = parsed;
+                return getMounts();
+            }
+        } catch (Exception ignore) {
+            // fall through
+        }
+        return null;
+    }
 
-    // Accept both object and string (for safety)
-    @JsonSetter("mounts")
-    public void setMounts(Object raw) {
+    public String getImageGlobalRegistryProperty() { return this.imageGlobalRegistryProperty; }
+
+    public void setImageGlobalRegistryProperty(String imageGlobalRegistryProperty) {
+        this.imageGlobalRegistryProperty = imageGlobalRegistryProperty;
+    };
+
+    public Map<String, Object> getStackConfigOverrides() {
+        return stackConfigOverrides;
+    }
+
+    @JsonSetter("stackConfigOverrides")
+    public void setStackConfigOverrides(Object raw) {
         try {
             if (raw == null) {
-                this.mounts = null;
+                this.stackConfigOverrides = null;
             } else if (raw instanceof Map) {
-                // already the right shape
                 //noinspection unchecked
-                this.mounts = (Map<String, Object>) raw;
+                this.stackConfigOverrides = (Map<String, Object>) raw;
             } else if (raw instanceof String s) {
-                if (s.isBlank()) {
-                    this.mounts = null;
-                } else {
-                    // parse JSON string into map
-                    //noinspection unchecked
-                    this.mounts = OM.readValue(s, LinkedHashMap.class);
-                }
-            } else {
-                // unknown shape (array/spec) -> ignore or convert as you like
-                this.mounts = null;
+                this.stackConfigOverrides = s.isBlank() ? null : OM.readValue(s, Map.class);
             }
-        } catch (Exception e) {
-            // be tolerant; log upstream if needed
-            this.mounts = null;
+        } catch (Exception ignore) {
+            this.stackConfigOverrides = null;
         }
     }
+    @JsonSetter("mounts")
+    public void setMounts(Object mounts) { 
+        this.mounts = mounts; 
+        this.normalizedMounts = null;
+    }
+
+    public List<Map<String, Object>> getRequiredConfigMaps() { return requiredConfigMaps; }
+
+    @JsonSetter("requiredConfigMaps")
+    public void setRequiredConfigMaps(Object raw) {
+        try {
+            if (raw == null) {
+                this.requiredConfigMaps = null;
+            } else if (raw instanceof List) {
+                //noinspection unchecked
+                this.requiredConfigMaps = (List<Map<String,Object>>) raw;
+            } else if (raw instanceof String s) {
+                this.requiredConfigMaps = s.isBlank() ? null : OM.readValue(s, List.class);
+            }
+        } catch (Exception ignore) {
+            this.requiredConfigMaps = null;
+        }
+    }
+
+    /** Optional map of ranger items keyed by logical name. */
+    public Map<String, Map<String, Object>> getRanger() { return ranger; }
+
+    @JsonSetter("ranger")
+    public void setRanger(Object raw) {
+        try {
+            if (raw == null) {
+                this.ranger = null;
+            } else if (raw instanceof Map) {
+                //noinspection unchecked
+                this.ranger = (Map<String, Map<String,Object>>) raw;
+            } else if (raw instanceof String s) {
+                this.ranger = s.isBlank() ? null : OM.readValue(s, Map.class);
+            }
+        } catch (Exception ignore) {
+            this.ranger = null;
+        }
+    }
+
+    // ---------------- endpoints ----------------
+
+    public List<Map<String, Object>> getEndpoints() {
+        return endpoints;
+    }
+
+    @JsonSetter("endpoints")
+    public void setEndpoints(Object raw) {
+        try {
+            if (raw == null) {
+                this.endpoints = null;
+            } else if (raw instanceof List) {
+                // expected shape: list of maps (each one endpoint descriptor)
+                //noinspection unchecked
+                this.endpoints = (List<Map<String,Object>>) raw;
+            } else if (raw instanceof String s) {
+                // tolerate JSON string (frontend might send serialized JSON)
+                this.endpoints = s.isBlank() ? null : OM.readValue(s, List.class);
+            } else {
+                // anything else => ignore
+                this.endpoints = null;
+            }
+        } catch (Exception ignore) {
+            this.endpoints = null;
+        }
+    }
+
+    // ----------------- security profile ----------------
+
+    public String getSecurityProfile() {
+        return securityProfile;
+    }
+
+    public void setSecurityProfile(String securityProfile) {
+        this.securityProfile = securityProfile;
+    }
+
+    // ----------------- global config management --------------
+    public List<ConfigInstantiation> getConfigInstantiations() {
+        return configInstantiations;
+    }
+    public void setConfigInstantiations(List<ConfigInstantiation> configInstantiations) {
+        this.configInstantiations = configInstantiations;
+    }
+
+    public static class ConfigInstantiation {
+        public String profileId;      // The DB ID of the Global Config
+        public String targetSecretName; // What to name the Secret in K8s
+        // We don't need targetNamespace, it's the same as the Release
+    }
+
 }

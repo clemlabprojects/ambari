@@ -196,6 +196,10 @@ public class KerberosHelperTest extends EasyMockSupport {
           }
 
           @Override
+          public void ensureHostExists(String hostname) throws KerberosOperationException {
+              return; // nothing to do
+          }
+          @Override
           public void close() throws KerberosOperationException {
 
           }

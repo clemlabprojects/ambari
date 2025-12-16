@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -31,35 +34,62 @@ import (
 //
 
 type WebhookConfig struct {
-	ListenAddress                     string        // e.g. ":8443"
-	KerberosRealm                     string        // e.g. "EXAMPLE.COM"
-	ClusterDnsSuffix                  string        // e.g. ".svc.cluster.local"
-	BackendBaseUrl                    string        // e.g. "https://ambari-backend.svc:8443"
-	BackendRequestTimeout             time.Duration // e.g. 3s
-	BackendRetryCount                 int           // e.g. 2
-	AdmissionRequestTimeout           time.Duration // e.g. 5s
-	LogAdmissionFailures              bool
-	BackendAuthMode                   string // "none" | "serviceaccount-jwt" | "mtls"
-	BackendAuthServiceAccountJwtPath  string
+	ListenAddress                    string        // e.g. ":8443"
+	KerberosRealm                    string        // e.g. "EXAMPLE.COM"
+	ClusterDnsSuffix                 string        // e.g. ".svc.cluster.local"
+	BackendBaseUrl                   string        // e.g. "https://ambari-backend.svc:8443"
+	BackendRequestTimeout            time.Duration // e.g. 3s
+	BackendRetryCount                int           // e.g. 2
+	AdmissionRequestTimeout          time.Duration // e.g. 5s
+	LogAdmissionFailures             bool
+	BackendAuthMode                  string // "none" | "serviceaccount-jwt" | "basic" | "mtls" | combos with mtls (e.g. "mtls,basic")
+	BackendAuthServiceAccountJwtPath string
+	BackendBasicUserPath             string // ambari mutating webhook username
+	BackendBasicPassPath             string // ambari mutating webhook password
 
 	// Genericization knobs
 	NeedsKeytabLabelKey string // label key to force keytab, default: security.clemlab.com/needs-keytab
-	ServiceLabelKey     string // label key carrying service name, default: clemlab-webhook-service
+	ServiceLabelKey     string // label key carrying service name, default: security.clemlab.com/service
 
 	PrincipalTemplate string // default: "{service}/{fqdn}@{realm}"
 
-	SecretPrefix string // default: "keytab-"
-	SecretDataKey string // default: "service.keytab"
-	VolumeName string     // default: "keytab-volume"
-	MountPath string      // default: "/etc/security/keytabs"
+	SecretPrefix   string // default: "keytab-"
+	SecretDataKey  string // default: "service.keytab"
+	VolumeName     string // default: "keytab-volume"
+	MountPath      string // default: "/etc/security/keytabs"
 	ContainerIndex int    // default: 0
+
+	// mTLS to backend (paths mounted from Secret)
+	BackendClientCertPath string
+	BackendClientKeyPath  string
+	BackendCaCertPath     string
+
+	// How to build the {fqdn} part of the principal:
+	//   "service" -> <service>.<namespace>.<suffix>
+	//   "pod"     -> <pod>[.<subdomain>].<namespace>.<suffix>
+	PrincipalFqdnMode string
+
+	// Kerberos identity mode:
+	//   "service"  -> service/<fqdn>@REALM  (default)
+	//   "headless" -> headless like {service}-{namespace}@REALM
+	//   "auto"     -> try service, fallback to headless if FQDN too long
+	PrincipalMode       string
+	HeadlessTemplate    string // default "{service}-{namespace}@{realm}"
+	HeadlessHostTemplate string // NEW: e.g. "{service}-{namespace}.k8s"
+	MaxIpaHostnameChars int    // default 64 (IPA host-add cap)
+	ClusterTag string
+
+	CorrelationConfigMap string // name of ConfigMap holding <release>.commandId (default: k8s-view-metadata)
+
+	parentCommandId string // derived per request
+	releaseName     string // derived per request
 }
 
 func loadWebhookConfig() WebhookConfig {
 	return WebhookConfig{
 		ListenAddress:                    getEnvOrDefault("LISTEN_ADDRESS", ":8443"),
 		KerberosRealm:                    mustGetEnv("KRB_REALM"),
-		ClusterDnsSuffix:                 getEnvOrDefault("DNS_SUFFIX", ".svc.cluster.local"),
+		ClusterDnsSuffix:                 getEnvOrDefault("DNS_SUFFIX", ".k8s"), //was .svc.cluster.local
 		BackendBaseUrl:                   mustGetEnv("BACKEND_URL"),
 		BackendRequestTimeout:            getEnvDuration("BACKEND_TIMEOUT", 3*time.Second),
 		BackendRetryCount:                getEnvInt("BACKEND_RETRIES", 2),
@@ -67,9 +97,11 @@ func loadWebhookConfig() WebhookConfig {
 		LogAdmissionFailures:             getEnvBool("FAILURE_POLICY_LOG", true),
 		BackendAuthMode:                  getEnvOrDefault("BACKEND_AUTH_MODE", "serviceaccount-jwt"),
 		BackendAuthServiceAccountJwtPath: getEnvOrDefault("BACKEND_AUTH_SA_JWT_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+		BackendBasicUserPath:             getEnvOrDefault("BACKEND_BASIC_USER_PATH", "/ambari-auth/username"),
+		BackendBasicPassPath:             getEnvOrDefault("BACKEND_BASIC_PASS_PATH", "/ambari-auth/password"),
 
 		NeedsKeytabLabelKey: getEnvOrDefault("NEEDS_KEYTAB_LABEL_KEY", "security.clemlab.com/needs-keytab"),
-		ServiceLabelKey:     getEnvOrDefault("SERVICE_LABEL_KEY", "security.clemlab.com/webhooks-enabled"),
+		ServiceLabelKey:     getEnvOrDefault("SERVICE_LABEL_KEY", "security.clemlab.com/service"),
 
 		PrincipalTemplate: getEnvOrDefault("PRINCIPAL_TEMPLATE", "{service}/{fqdn}@{realm}"),
 
@@ -78,6 +110,21 @@ func loadWebhookConfig() WebhookConfig {
 		VolumeName:     getEnvOrDefault("VOLUME_NAME", "keytab-volume"),
 		MountPath:      getEnvOrDefault("MOUNT_PATH", "/etc/security/keytabs"),
 		ContainerIndex: getEnvInt("MOUNT_CONTAINER_INDEX", 0),
+
+		BackendClientCertPath: getEnvOrDefault("BACKEND_CLIENT_CERT_PATH", "/auth/client.crt"),
+		BackendClientKeyPath:  getEnvOrDefault("BACKEND_CLIENT_KEY_PATH", "/auth/client.key"),
+		BackendCaCertPath:     getEnvOrDefault("BACKEND_CA_CERT_PATH", "/auth/ca.crt"),
+
+		// Defaults
+		PrincipalFqdnMode:   getEnvOrDefault("PRINCIPAL_FQDN_MODE", "namespace"),
+		PrincipalMode:       getEnvOrDefault("PRINCIPAL_MODE", "headless"),
+		HeadlessTemplate:    getEnvOrDefault("HEADLESS_TEMPLATE", "{service}-{namespace}@{realm}"),
+		HeadlessHostTemplate:  getEnvOrDefault("HEADLESS_HOST_TEMPLATE", "{service}-{namespace}.k8s"),
+		MaxIpaHostnameChars: getEnvInt("IPA_HOSTNAME_MAX", 64),
+		// Accept either CLUSTER_TAG or CLUSTER_NAME; first non-empty wins.
+    ClusterTag:          getEnvFirstNonEmpty("CLUSTER_TAG", "CLUSTER_NAME"),
+
+		CorrelationConfigMap: getEnvOrDefault("CORRELATION_CONFIGMAP", "k8s-view-metadata"),
 	}
 }
 
@@ -130,10 +177,32 @@ func getEnvBool(key string, defaultValue bool) bool {
 //
 
 var (
-	globalConfig WebhookConfig
-	kubeClient   *kubernetes.Clientset
-	httpClient   *http.Client
+	globalConfig     WebhookConfig
+	kubeClient       *kubernetes.Clientset
+	httpClient       *http.Client
+	backendBasicUser string
+	backendBasicPass string
 )
+
+//
+// ---------------------------
+// Validation
+// ---------------------------
+//
+
+func validateBackendAuthMode(mode string) error {
+	m := strings.ToLower(strings.TrimSpace(mode))
+	if m == "" || m == "none" {
+		return nil
+	}
+	hasBasic := strings.Contains(m, "basic")
+	hasJWT := strings.Contains(m, "serviceaccount-jwt")
+	if hasBasic && hasJWT {
+		return fmt.Errorf("BACKEND_AUTH_MODE cannot combine 'basic' and 'serviceaccount-jwt'")
+	}
+	// 'mtls' can be combined with either header scheme.
+	return nil
+}
 
 //
 // ---------------------------
@@ -144,16 +213,50 @@ var (
 func main() {
 	globalConfig = loadWebhookConfig()
 
+	// Validate auth mode early
+	if err := validateBackendAuthMode(globalConfig.BackendAuthMode); err != nil {
+		log.Fatalf("invalid BACKEND_AUTH_MODE: %v", err)
+	}
+
 	inClusterConfig, err := rest.InClusterConfig()
 	if err != nil {
 		log.Fatalf("cannot load in-cluster Kubernetes config: %v", err)
 	}
 	kubeClient, err = kubernetes.NewForConfig(inClusterConfig)
+	log.Printf("Kubernetes client configured for host %s", inClusterConfig.Host)
 	if err != nil {
 		log.Fatalf("cannot create Kubernetes client: %v", err)
 	}
 
 	httpClient = &http.Client{Timeout: globalConfig.BackendRequestTimeout}
+	log.Printf("HTTP client for backend configured with timeout %s", globalConfig.BackendRequestTimeout)
+
+	// Enable mTLS transport when BackendAuthMode contains "mtls"
+	if strings.Contains(strings.ToLower(globalConfig.BackendAuthMode), "mtls") {
+		log.Printf("setting up mTLS HTTP client for backend communication")
+		if c, err := buildMtlsHTTPClient(globalConfig); err != nil {
+			log.Fatalf("failed to set up mTLS HTTP client for backend: %v", err)
+		} else {
+			httpClient = c
+		}
+	} else {
+		log.Printf("backend authentication mode (no mTLS): %s", globalConfig.BackendAuthMode)
+	}
+
+	// Preload BASIC creds if requested
+	if strings.Contains(strings.ToLower(globalConfig.BackendAuthMode), "basic") {
+		u, uErr := os.ReadFile(globalConfig.BackendBasicUserPath)
+		p, pErr := os.ReadFile(globalConfig.BackendBasicPassPath)
+		if uErr != nil || pErr != nil {
+			log.Fatalf("basic auth requested but credentials not readable (user=%v, pass=%v)", uErr, pErr)
+		}
+		backendBasicUser = strings.TrimSpace(string(u))
+		backendBasicPass = strings.TrimSpace(string(p))
+		if backendBasicUser == "" || backendBasicPass == "" {
+			log.Fatalf("basic auth requested but username/password are empty")
+		}
+		log.Printf("loaded basic auth credentials from %s and %s", globalConfig.BackendBasicUserPath, globalConfig.BackendBasicPassPath)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mutate", withRequestTimeout(handleAdmissionMutate, globalConfig.AdmissionRequestTimeout))
@@ -192,7 +295,7 @@ func withRequestTimeout(handler http.HandlerFunc, timeout time.Duration) http.Ha
 
 //
 // ---------------------------
-/* Admission handler */
+// Admission handler
 // ---------------------------
 //
 
@@ -223,27 +326,51 @@ func handleAdmissionMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Derive release name from common Helm labels and try to fetch parent command id from ConfigMap
 	namespace := firstNonEmpty(incomingPod.Namespace, request.Namespace)
+	globalConfig.releaseName = firstNonEmpty(incomingPod.Labels["app.kubernetes.io/instance"], incomingPod.Labels["helm.sh/release"])
+	globalConfig.parentCommandId = ""
+	if globalConfig.releaseName != "" {
+		if cmdId, err := lookupCommandCorrelation(r.Context(), namespace, globalConfig.releaseName); err == nil {
+			globalConfig.parentCommandId = cmdId
+		} else {
+			log.Printf("Could not find correlation for release %s in namespace %s: %v", globalConfig.releaseName, namespace, err)
+		}
+	}
+
 	podName := incomingPod.Name
-	fullQualifiedDomainName := computePodFqdn(&incomingPod, namespace, globalConfig.ClusterDnsSuffix)
+	log.Printf("Accepted incoming pod name %s", podName)
+	// Compute FQDN based on mode, with safety fallbacks
+	var fqdn string
+	switch strings.ToLower(globalConfig.PrincipalFqdnMode) {
+	case "pod":
+		fqdn = computePodFqdn(&incomingPod, namespace, globalConfig.ClusterDnsSuffix)
+	default:
+		fqdn = computeServiceFqdn(serviceName, namespace, globalConfig.ClusterDnsSuffix)
+	}
 
-	// Principal like "{service}/{fqdn}@{realm}"
-	principal := buildPrincipal(serviceName, fullQualifiedDomainName, globalConfig.KerberosRealm)
+	// Decide principal (service vs headless)
+	principal := decidePrincipal(serviceName, namespace, fqdn, globalConfig)
+	log.Printf("Principal name for pod is %s", principal)
 
-	secretName := sanitizeName(globalConfig.SecretPrefix + podName)
-
+	secretName := deriveSecretName(&incomingPod, request.UID, globalConfig.SecretPrefix)
+	log.Printf("secretName as been derived as %s", secretName)
+	
 	if err := enqueueKeytabCreation(r.Context(), principal, namespace, podName, secretName, globalConfig.SecretDataKey); err != nil {
 		writeAdmissionError(w, &admissionReview, fmt.Errorf("cannot enqueue keytab creation: %w", err))
 		return
 	}
 
 	patchBytes, patchType, err := buildJSONPatchForVolumeAndMount(&incomingPod, secretName)
+
 	if err != nil {
+		log.Printf("Error building JSONPatch: %v", err)
 		writeAdmissionError(w, &admissionReview, fmt.Errorf("cannot build JSONPatch: %w", err))
 		return
 	}
 
-
+	log.Printf("Patch to be applied: %s", string(patchBytes))
+	log.Printf("PatchType: %v", patchType)
 	writeAdmissionAllow(w, &admissionReview, &patchType, patchBytes)
 }
 
@@ -269,9 +396,24 @@ func podTargeting(pod *corev1.Pod) (bool, string) {
 
 func computePodFqdn(pod *corev1.Pod, namespace, dnsSuffix string) string {
 	if pod.Spec.Subdomain != "" {
-		return fmt.Sprintf("%s.%s.%s%s", pod.Name, pod.Spec.Subdomain, namespace, dnsSuffix)
+		return fmt.Sprintf("%s.%s.%s%s", pod.Name, pod.Spec.Subdomain, namespace, normalizeSuffix(dnsSuffix))
 	}
-	return fmt.Sprintf("%s.%s%s", pod.Name, namespace, dnsSuffix)
+	return fmt.Sprintf("%s.%s%s", pod.Name, namespace, normalizeSuffix(dnsSuffix))
+}
+
+// compute Service FQDN: <service>.<namespace><suffix>
+func computeServiceFqdn(service, namespace, dnsSuffix string) string {
+	suffix := normalizeSuffix(dnsSuffix)
+	return fmt.Sprintf("%s.%s%s", sanitizeName(service), namespace, suffix)
+}
+
+func normalizeSuffix(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimPrefix(s, ".")
+	return "." + s
 }
 
 func buildPrincipal(service, fqdn, realm string) string {
@@ -285,6 +427,21 @@ func buildPrincipal(service, fqdn, realm string) string {
 	return out
 }
 
+// lookupCommandCorrelation reads a ConfigMap (default k8s-view-metadata) in the namespace
+// and returns the commandId stored under "<releaseName>.commandId".
+func lookupCommandCorrelation(ctx context.Context, namespace, releaseName string) (string, error) {
+	cmName := firstNonEmpty(globalConfig.CorrelationConfigMap, "k8s-view-metadata")
+	cm, err := kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, cmName, meta.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("%s.commandId", releaseName)
+	if v, ok := cm.Data[key]; ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v), nil
+	}
+	return "", fmt.Errorf("key %s not found in ConfigMap %s", key, cmName)
+}
+
 //
 // ---------------------------
 // Backend and Secret helpers
@@ -292,17 +449,21 @@ func buildPrincipal(service, fqdn, realm string) string {
 //
 
 func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, secretName, keyNameInSecret string) error {
-	// globalConfig.BackendBaseUrl should already be your ".../resources/api/commands" base
-	// e.g. https://.../api/v1/views/.../resources/api/commands
 	url := strings.TrimRight(globalConfig.BackendBaseUrl, "/") + "/kerberos/keytab"
 
-	// Send as JSON so the backend can grow without re-parsing query strings
 	payload := map[string]string{
 		"principal":       principal,
 		"namespace":       namespace,
 		"podName":         podName,
 		"secretName":      secretName,
-		"keyNameInSecret": keyNameInSecret, // e.g. "service.keytab"
+		"keyNameInSecret": keyNameInSecret,
+	}
+	// Optional correlation to a Helm deploy root command so the backend can nest steps properly.
+	if globalConfig.parentCommandId != "" {
+		payload["parentCommandId"] = globalConfig.parentCommandId
+	}
+	if globalConfig.releaseName != "" {
+		payload["releaseName"] = globalConfig.releaseName
 	}
 	body, _ := json.Marshal(payload)
 
@@ -323,6 +484,7 @@ func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, s
 	}
 	return nil
 }
+
 func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, error) {
 	var lastError error
 	for attempt := 0; attempt <= globalConfig.BackendRetryCount; attempt++ {
@@ -353,22 +515,38 @@ func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, er
 }
 
 func attachBackendAuth(req *http.Request) error {
-	switch strings.ToLower(globalConfig.BackendAuthMode) {
-	case "none":
+	mode := strings.ToLower(strings.TrimSpace(globalConfig.BackendAuthMode))
+	if mode == "" || mode == "none" {
 		return nil
-	case "serviceaccount-jwt":
+	}
+
+	// mTLS is transport-level; no header needed here (handled in httpClient)
+	if strings.Contains(mode, "basic") {
+		if backendBasicUser == "" || backendBasicPass == "" {
+			return fmt.Errorf("basic auth requested but credentials are empty")
+		}
+		creds := backendBasicUser + ":" + backendBasicPass
+		log.Printf("backend auth: attaching Basic Authorization header")
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(creds)))
+		return nil
+	}
+
+	if strings.Contains(mode, "serviceaccount-jwt") {
 		tokenBytes, err := os.ReadFile(globalConfig.BackendAuthServiceAccountJwtPath)
 		if err != nil {
 			return fmt.Errorf("cannot read service account JWT: %w", err)
 		}
+		log.Printf("backend auth: attaching ServiceAccount JWT Authorization header")
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tokenBytes)))
 		return nil
-	case "mtls":
-		// For mTLS, set up a custom Transport at process start (omitted here for brevity).
-		return nil
-	default:
-		return fmt.Errorf("unknown BACKEND_AUTH_MODE: %s", globalConfig.BackendAuthMode)
 	}
+
+	if strings.Contains(mode, "mtls") {
+		// headerless; already configured on the client transport
+		return nil
+	}
+
+	return fmt.Errorf("unknown BACKEND_AUTH_MODE: %s", globalConfig.BackendAuthMode)
 }
 
 func createSecretOwnedByPod(ctx context.Context, namespace, podName string, podUid types.UID, secretName string, keytabBytes []byte) error {
@@ -387,7 +565,7 @@ func createSecretOwnedByPod(ctx context.Context, namespace, podName string, podU
 				UID:        podUid,
 			}},
 		},
-		Immutable: ptr(true), // <-- correct placement
+		Immutable: ptr(true),
 		Type:      corev1.SecretTypeOpaque,
 		Data:      map[string][]byte{globalConfig.SecretDataKey: keytabBytes},
 	}
@@ -435,7 +613,7 @@ func buildJSONPatchForVolumeAndMount(pod *corev1.Pod, secretName string) ([]byte
 
 	var ops []jsonPatchOp
 
-	// Add or append volume
+	// 1) Volumes: add the secret-backed volume once at pod level
 	if pod.Spec.Volumes == nil {
 		ops = append(ops, jsonPatchOp{
 			Op:   "add",
@@ -446,31 +624,63 @@ func buildJSONPatchForVolumeAndMount(pod *corev1.Pod, secretName string) ([]byte
 		})
 	} else {
 		ops = append(ops, jsonPatchOp{
-			Op:    "add",
-			Path:  "/spec/volumes/-",
+			Op:   "add",
+			Path: "/spec/volumes/-",
 			Value: vol,
 		})
 	}
 
-	// Add or append volumeMount to selected container
-	cIdx := globalConfig.ContainerIndex
-	if pod.Spec.Containers[cIdx].VolumeMounts == nil {
+	// 2) VolumeMounts: mount into ALL containers in the pod
+	for idx, c := range pod.Spec.Containers {
+		if c.VolumeMounts == nil {
+			// no volumeMounts array yet for this container
+			ops = append(ops, jsonPatchOp{
+				Op:   "add",
+				Path: fmt.Sprintf("/spec/containers/%d/volumeMounts", idx),
+				Value: []corev1.VolumeMount{
+					vm,
+				},
+			})
+		} else {
+			// append to existing volumeMounts
+			ops = append(ops, jsonPatchOp{
+				Op:    "add",
+				Path:  fmt.Sprintf("/spec/containers/%d/volumeMounts/-", idx),
+				Value: vm,
+			})
+		}
+	}
+
+	// 3) Debug annotations (unchanged)
+	if pod.Annotations == nil {
 		ops = append(ops, jsonPatchOp{
 			Op:   "add",
-			Path: fmt.Sprintf("/spec/containers/%d/volumeMounts", cIdx),
-			Value: []corev1.VolumeMount{
-				vm,
+			Path: "/metadata/annotations",
+			Value: map[string]string{
+				"clemlab.com/keytab-secret":    secretName,
+				"clemlab.com/keytab-volume":    globalConfig.VolumeName,
+				"clemlab.com/keytab-mountpath": globalConfig.MountPath,
 			},
 		})
 	} else {
-		ops = append(ops, jsonPatchOp{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/containers/%d/volumeMounts/-", cIdx),
-			Value: vm,
-		})
+		for k, v := range map[string]string{
+			"clemlab.com/keytab-secret":    secretName,
+			"clemlab.com/keytab-volume":    globalConfig.VolumeName,
+			"clemlab.com/keytab-mountpath": globalConfig.MountPath,
+		} {
+			key := strings.ReplaceAll(k, "/", "~1")
+			ops = append(ops, jsonPatchOp{
+				Op:    "add",
+				Path:  "/metadata/annotations/" + key,
+				Value: v,
+			})
+		}
 	}
 
 	patchBytes, err := json.Marshal(ops)
+	if err == nil {
+		log.Printf("JSONPatch ops count=%d bytes=%d", len(ops), len(patchBytes))
+	}
 	return patchBytes, admissionv1.PatchTypeJSONPatch, err
 }
 
@@ -481,27 +691,57 @@ func buildJSONPatchForVolumeAndMount(pod *corev1.Pod, secretName string) ([]byte
 //
 
 func writeAdmissionAllow(w http.ResponseWriter, review *admissionv1.AdmissionReview, patchType *admissionv1.PatchType, patch []byte) {
-	response := &admissionv1.AdmissionResponse{
-		UID:     review.Request.UID,
-		Allowed: true,
+	w.Header().Set("Content-Type", "application/json")
+	log.Printf("Writing admission allow response")
+	resp := &admissionv1.AdmissionResponse{
+			UID:     review.Request.UID,
+			Allowed: true,
 	}
+	log.Printf("Patch length: %d", len(patch))
 	if patch != nil && patchType != nil {
-		response.PatchType = patchType
-		response.Patch = patch
+			log.Printf("Setting patch in admission response")
+			resp.PatchType = patchType
+			resp.Patch = patch // []byte -> base64 in JSON automatically
 	}
-	_ = json.NewEncoder(w).Encode(admissionv1.AdmissionReview{Response: response})
+	log.Printf("Encoding admission response struct")
+	out := admissionv1.AdmissionReview{
+			TypeMeta: meta.TypeMeta{
+					APIVersion: "admission.k8s.io/v1",
+					Kind:       "AdmissionReview",
+			},
+			Response: resp,
+	}
+	log.Printf("Encoding admission response")
+	_ = json.NewEncoder(w).Encode(out)
+
+	log.Printf("admission allowed for UID %s", review.Request.UID)
+	log.Printf("admission patch: %s", string(patch))
+	log.Printf("admission patch type: %v", patchType)
 }
 
 func writeAdmissionError(w http.ResponseWriter, review *admissionv1.AdmissionReview, err error) {
+	log.Printf("Writing admission error response: %v", err)
 	if globalConfig.LogAdmissionFailures {
-		log.Printf("admission denied: %v", err)
+			log.Printf("admission denied: %v", err)
 	}
-	response := &admissionv1.AdmissionResponse{
-		UID:     review.Request.UID,
-		Allowed: false,
-		Result:  &meta.Status{Message: err.Error()},
+	w.Header().Set("Content-Type", "application/json")
+
+	resp := &admissionv1.AdmissionResponse{
+			UID:     review.Request.UID,
+			Allowed: false,
+			Result:  &meta.Status{Message: err.Error()},
 	}
-	_ = json.NewEncoder(w).Encode(admissionv1.AdmissionReview{Response: response})
+
+	out := admissionv1.AdmissionReview{
+			TypeMeta: meta.TypeMeta{
+					APIVersion: "admission.k8s.io/v1",
+					Kind:       "AdmissionReview",
+			},
+			Response: resp,
+	}
+	_ = json.NewEncoder(w).Encode(out)
+
+	log.Printf("admission denied for UID %s", review.Request.UID)
 }
 
 //
@@ -527,4 +767,141 @@ func sanitizeName(s string) string {
 	s = strings.ReplaceAll(s, "_", "-")
 	s = strings.ReplaceAll(s, "/", "-")
 	return s
+}
+
+// --- mTLS helper (backend) ---
+
+func buildMtlsHTTPClient(cfg WebhookConfig) (*http.Client, error) {
+	cert, err := tls.LoadX509KeyPair(cfg.BackendClientCertPath, cfg.BackendClientKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load client cert/key: %w", err)
+	}
+
+	log.Printf("loaded client certificate with %d certs", len(cert.Certificate))
+	caPEM, err := os.ReadFile(cfg.BackendCaCertPath)
+	log.Printf("read CA cert file %s (%d bytes)", cfg.BackendCaCertPath, len(caPEM))
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	caPool := x509.NewCertPool()
+	if ok := caPool.AppendCertsFromPEM(caPEM); !ok {
+		return nil, fmt.Errorf("append CA cert: invalid PEM")
+	}
+
+	tlsConf := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caPool,
+	}
+	tr := &http.Transport{
+		TLSClientConfig:     tlsConf,
+		ForceAttemptHTTP2:   true,
+		DisableCompression:  false,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	log.Printf("mTLS HTTP client configured with TLS version >= %d", tlsConf.MinVersion)
+	log.Printf("mTLS HTTP client using CA pool with %d certs", len(caPool.Subjects()))
+	return &http.Client{
+		Timeout:   cfg.BackendRequestTimeout,
+		Transport: tr,
+	}, nil
+}
+
+// Principal decision & builders
+func decidePrincipal(service, namespace, fqdn string, cfg WebhookConfig) string {
+    mode := strings.ToLower(strings.TrimSpace(cfg.PrincipalMode))
+    switch mode {
+    case "headless":
+        // true headless (no slash) → Ambari won't ensure host; IPA should create a user principal
+        return buildHeadlessPrincipal(service, namespace, cfg.ClusterTag, cfg.KerberosRealm, cfg.HeadlessTemplate)
+    case "auto":
+        if len(fqdn) > cfg.MaxIpaHostnameChars {
+            log.Printf("FQDN '%s' length=%d > IPA cap=%d → using HEADLESS principal",
+                fqdn, len(fqdn), cfg.MaxIpaHostnameChars)
+            return buildHeadlessPrincipal(service, namespace, cfg.ClusterTag, cfg.KerberosRealm, cfg.HeadlessTemplate)
+        }
+        // service principal (slash)
+        return buildPrincipal(service, fqdn, cfg.KerberosRealm)
+		case "service":
+				return buildPrincipal(service, fqdn, cfg.KerberosRealm)
+    default: // "service"
+        return buildPrincipal(service, fqdn, cfg.KerberosRealm)
+    }
+}
+
+func buildSyntheticHost(service, namespace, tpl string) string {
+    if tpl == "" { tpl = "{service}-{namespace}.k8s" }
+    out := strings.ReplaceAll(tpl, "{service}", sanitizeName(service))
+    out = strings.ReplaceAll(out, "{namespace}", sanitizeName(namespace))
+    // Make sure final label(s) are DNS-safe and short; last safety trim:
+    out = strings.Trim(out, ".")
+    // Disallow underscores/slashes already handled by sanitizeName; ensure no spaces:
+    out = strings.ReplaceAll(out, " ", "-")
+    return out
+}
+
+func tidyKerbName(s string) string {
+    // collapse multiple dashes
+    for strings.Contains(s, "--") {
+        s = strings.ReplaceAll(s, "--", "-")
+    }
+    // trim dangling separators next to '@'
+    s = strings.TrimSuffix(s, "-@")
+    s = strings.TrimPrefix(s, "@")
+    s = strings.Trim(s, "-")
+    return s
+}
+
+func buildHeadlessPrincipal(service, namespace, cluster, realm, tpl string) string {
+    if tpl == "" {
+        tpl = "{service}-{namespace}-{cluster}@{realm}"
+    }
+    out := strings.ReplaceAll(tpl, "{service}", sanitizeName(service))
+    out = strings.ReplaceAll(out, "{namespace}", sanitizeName(namespace))
+    out = strings.ReplaceAll(out, "{cluster}", sanitizeName(cluster)) // empty ok
+    out = strings.ReplaceAll(out, "{realm}", realm)
+    return tidyKerbName(out)
+}
+
+func getEnvFirstNonEmpty(keys ...string) string {
+    for _, k := range keys {
+        if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+            return v
+        }
+    }
+    return ""
+}
+
+// --- helper to ensure start/end are alphanumeric
+var rfc1123Trim = regexp.MustCompile(`^[^a-z0-9]+|[^a-z0-9]+$`)
+
+func deriveSecretName(pod *corev1.Pod, reqUID types.UID, prefix string) string {
+    base := pod.Name
+    if base == "" {
+        // Use generateName if present
+        base = pod.GenerateName
+        if base == "" {
+            base = "pod"
+        }
+        // generateName typically ends with '-', trim it
+        base = strings.TrimSuffix(base, "-")
+
+        // Add a short, deterministic suffix from the AdmissionRequest UID
+        suf := strings.ToLower(string(reqUID))
+        if len(suf) > 8 {
+            suf = suf[:8]
+        }
+        base = base + "-" + suf
+    }
+
+    // Compose, sanitize, and enforce RFC1123 start/end
+    name := sanitizeName(prefix + base)
+    name = rfc1123Trim.ReplaceAllString(name, "") // trim non-alnum at start/end
+    if name == "" {
+        // absolute fallback — should never happen
+        suf := strings.ToLower(string(reqUID))
+        if len(suf) > 8 { suf = suf[:8] }
+        name = "keytab-" + suf
+    }
+    return name
 }

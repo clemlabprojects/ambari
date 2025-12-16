@@ -17,6 +17,9 @@ public class CommandStatusEntity {
   @Column(length = 128)
   private String viewInstance;
 
+  @Column(length = 128)
+  private String createdBy;
+
   @Column(length = 64)
   private String workerId;         // identifiant du process/worker en charge
 
@@ -46,6 +49,8 @@ public class CommandStatusEntity {
   public void setId(String id) { this.id = id; }
   public String getViewInstance() { return viewInstance; }
   public void setViewInstance(String viewInstance) { this.viewInstance = viewInstance; }
+  public String getCreatedBy() { return createdBy; }
+  public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
   public String getWorkerId() { return workerId; }
   public void setWorkerId(String workerId) { this.workerId = workerId; }
   public Integer getAttempt() { return attempt; }

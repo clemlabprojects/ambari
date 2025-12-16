@@ -5,6 +5,8 @@ import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.service.CommandService;
+import org.apache.ambari.view.k8s.service.CommandLogService;
+import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.*;
@@ -18,6 +20,9 @@ public class CommandResource {
 
   private final ViewContext viewContext;
 
+  private final AmbariAliasResolver ambariAliasResolver;
+  private final CommandLogService commandLogService;
+
   @Context
   private UriInfo uriInfo;
 
@@ -25,7 +30,16 @@ public class CommandResource {
   private HttpServletRequest request;
 
   public CommandResource(ViewContext vc) {
+
     this.viewContext = vc;
+    this.ambariAliasResolver = new AmbariAliasResolver(this.viewContext);
+    this.commandLogService = new CommandLogService(vc);
+  }
+
+  public CommandResource(ViewContext vc, AmbariAliasResolver ambariAliasResolver) {
+    this.viewContext = vc;
+    this.ambariAliasResolver = ambariAliasResolver;
+    this.commandLogService = new CommandLogService(vc);
   }
 
   @POST
@@ -36,10 +50,37 @@ public class CommandResource {
                                @QueryParam("version") String version,
                                @QueryParam("kubeContext") String kubeContext,
                                @Context HttpHeaders headers, @Context UriInfo ui) {
-    String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui));
-    return Response.status(Response.Status.ACCEPTED)
-            .entity(Map.of("id", id))
-            .build();
+    try {
+      String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(), ui.getBaseUri(), this.ambariAliasResolver);
+      return Response.status(Response.Status.ACCEPTED)
+              .entity(Map.of("id", id))
+              .build();
+    } catch (IllegalArgumentException iae) {
+      return Response.status(Response.Status.BAD_REQUEST)
+              .entity(Map.of("error", iae.getMessage()))
+              .build();
+    }
+  }
+
+  @GET
+  @Path("/")
+  public Response listCommands(@QueryParam("limit") @DefaultValue("10") int limit,
+                               @QueryParam("offset") @DefaultValue("0") int offset) {
+    try {
+      return Response.ok(CommandService.get(viewContext).listCommands(limit, offset)).build();
+    } catch (Exception ex) {
+      return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+    }
+  }
+
+  @GET
+  @Path("/{id}/children")
+  public Response listChildren(@PathParam("id") String id) {
+    try {
+      return Response.ok(CommandService.get(viewContext).listChildren(id)).build();
+    } catch (Exception ex) {
+      return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+    }
   }
 
   @GET
@@ -48,6 +89,43 @@ public class CommandResource {
     CommandStatus st = CommandService.get(viewContext).getStatus(id);
     if (st == null) return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error","unknown id")).build();
     return Response.ok(st).build();
+  }
+
+  @POST
+  @Path("/{id}/cancel")
+  public Response cancel(@PathParam("id") String id) {
+    CommandService.get(viewContext).cancel(id);
+    return Response.status(Response.Status.ACCEPTED)
+            .entity(Map.of("id", id, "state", "CANCELLED"))
+            .build();
+  }
+
+  @GET
+  @Path("/{id}/logs")
+  public Response getLogs(@PathParam("id") String id,
+                          @QueryParam("offset") @DefaultValue("0") long offset,
+                          @QueryParam("limit") @DefaultValue("65536") int limit) {
+    CommandLogService.LogChunk chunk = commandLogService.read(id, offset, limit);
+    return Response.ok(Map.of(
+            "content", chunk.content,
+            "nextOffset", chunk.nextOffset,
+            "eof", chunk.eof,
+            "size", chunk.size
+    )).build();
+  }
+
+  /**
+   * Trigger a refresh/restart of shared dependencies (e.g., mutating webhooks) so they pull the latest image.
+   */
+  @POST
+  @Path("/dependencies/refresh")
+  public Response refreshDependencies(@Context UriInfo ui) {
+    try {
+      CommandService.get(viewContext).refreshSharedDependencies();
+      return Response.ok(Map.of("status", "ok")).build();
+    } catch (Exception ex) {
+      return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+    }
   }
 
   /**

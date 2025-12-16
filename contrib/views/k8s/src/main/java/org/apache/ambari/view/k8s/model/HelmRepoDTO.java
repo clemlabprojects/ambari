@@ -14,6 +14,8 @@ public class HelmRepoDTO {
   public String username;
   public Boolean authInvalid;
   public String lastChecked; // ISO-8601
+  public String imageProject;
+  public String imageRegistryHostOverride; // optional, could even be hidden from normal UI
 
   public static HelmRepoDTO fromEntity(HelmRepoEntity e) {
     HelmRepoDTO d = new HelmRepoDTO();
@@ -24,6 +26,9 @@ public class HelmRepoDTO {
     d.authMode = e.getAuthMode();
     d.username = e.getUsername();
     d.authInvalid = e.isAuthInvalid();
+    d.imageProject = e.getImageProject();
+    d.imageRegistryHostOverride = e.getImageRegistryHostOverride();
+
     return d;
   }
 }

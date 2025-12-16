@@ -861,6 +861,16 @@ public class ClusterService extends BaseService {
     return new AdhocKeytabService(clusterName);
   }
 
+  /**
+   * Ranger Plugin Repository which can be used by external ambari views for creating
+   * princ/keytabs without the passing by installing components
+   */
+
+  @Path("{clusterName}/ranger_plugin_repository")
+  public RangerPluginService configureRangerPluginService(@Context javax.ws.rs.core.Request request,
+                                           @PathParam("clusterName") String clusterName) {
+    return new RangerPluginService(clusterName);
+  }
   // ----- helper methods ----------------------------------------------------
 
   /**

@@ -1,0 +1,5 @@
+{
+  "name": "trino-env",
+  "description": "Environment overrides for Trino (placeholder)",
+  "properties": []
+}

@@ -1,0 +1,14 @@
+{
+  "name": "superset-files",
+  "description": "Custom Superset configuration files rendered into a Secret",
+  "properties": [
+    {
+      "name": "superset_config.py",
+      "displayName": "superset_config.py",
+      "description": "Python overrides injected via superset_config_custom.py",
+      "type": "content",
+      "language": "python",
+      "valueSourceFile": "superset_config.py"
+    }
+  ]
+}

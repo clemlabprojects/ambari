@@ -9,8 +9,11 @@ import DashboardPage from './pages/DashboardPage';
 import NodesPage from './pages/NodesPage';
 import HelmReleasesPage from './pages/HelmReleasesPage';
 import ConfigurationPage from './pages/ConfigurationPage';
+import WorkloadsPage from './pages/WorkloadsPage';
+const GlobalSecurityPage = React.lazy(() => import('./pages/GlobalSecurityPage'));
+const GlobalConfigurationsPage = React.lazy(() => import('./pages/GlobalConfigurationsPage'));
+const ServiceWizardPage = React.lazy(() => import('./pages/ServiceWizardPage'));
 import { Spin} from 'antd';
-import { NavLink, useLocation } from 'react-router-dom';
 import '@ant-design/v5-patch-for-react-19';
 /**
  * This component contains the main routing logic.
@@ -18,10 +21,7 @@ import '@ant-design/v5-patch-for-react-19';
  */
 const AppRouter: React.FC = () => {
   const {status } = useClusterStatus();
-  const location = useLocation();
-  console.log('DEBUG: Current location from App.tsx:', location.pathname);
   if (status === 'loading') {
-    console.log('DEBUG: AppRouter is loading...');
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}><Spin size="large" tip="Loading Configuration..." /></div>;
   }
 
@@ -49,7 +49,11 @@ const AppRouter: React.FC = () => {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/nodes" element={<NodesPage />} />
         <Route path="/helm" element={<HelmReleasesPage />} />
+        <Route path="/services/:serviceName" element={<React.Suspense fallback={<Spin />}><ServiceWizardPage /></React.Suspense>} />
         <Route path="/configuration" element={<ConfigurationPage />} />
+        <Route path="/global-security" element={<React.Suspense fallback={<Spin />}><GlobalSecurityPage /></React.Suspense>} />
+        <Route path="/managed-configs" element={<React.Suspense fallback={<Spin />}><GlobalConfigurationsPage /></React.Suspense>} />
+        <Route path="/workloads" element={<WorkloadsPage />} />
         <Route path="/repositories" element={<RepositoriesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

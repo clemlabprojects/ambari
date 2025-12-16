@@ -9,9 +9,13 @@ import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import java.util.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
 /**
  * Service for managing Helm operations including deployments, upgrades, and releases.
  *
@@ -28,7 +32,7 @@ public class HelmService {
 
     private final ViewContext viewContext;
     private final HelmClient helmClient;
-    private final HelmRepositoryService repositoryService;
+     final HelmRepositoryService repositoryService;
     private final PathConfig pathConfiguration;
 
     public HelmService(ViewContext ctx) {
@@ -455,6 +459,24 @@ public class HelmService {
         return this.helmClient;
     }
 
+    /**
+     * Best-effort chart version lookup via `helm show chart`.
+     * Returns null on error or if version cannot be determined.
+     */
+    public String resolveChartVersion(String chartRef, String versionOpt) {
+        if (chartRef == null || chartRef.isBlank()) return null;
+        try {
+            String yaml = helmClient.showChart(chartRef, versionOpt, pathConfiguration.repositoriesConfig());
+            if (yaml == null || yaml.isBlank()) return null;
+            Map<String,Object> parsed = new ObjectMapper(new YAMLFactory()).readValue(yaml, Map.class);
+            Object v = parsed.get("version");
+            return v != null ? String.valueOf(v) : null;
+        } catch (Exception e) {
+            LOG.warn("Failed to resolve chart version for {}: {}", chartRef, e.toString());
+            return null;
+        }
+    }
+
     /** Turn a URL like https://registry.clemlab.com/whatever into 'registry.clemlab.com' */
     private static String normalizeRegistryServer(String url) {
         if (url == null) return "";
@@ -491,8 +513,16 @@ public class HelmService {
         }
         LOG.info("Ensuring imagePullSecret '{}' in namespace '{}' for repoId '{}' (registry server: '{}')",
                 secretName, namespace, repoId, registryServer);
-        KubernetesService kubernetesService = new KubernetesService(this.viewContext);
+        KubernetesService kubernetesService = KubernetesService.get(this.viewContext);
         kubernetesService.ensureImagePullSecretWithUsernameAndPassword(repoId,namespace,secretName,username,password,registryServer,serviceAccountsToPatch);
     }
 
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> showValuesAsMap(String chartName, String repoIdOpt, String versionOpt) {
+        return this.repositoryService.showValuesAsMap(chartName,repoIdOpt,versionOpt);
+    }
+
+    public HelmRepositoryService getRepositoryService(){
+        return this.repositoryService;
+    }
 }

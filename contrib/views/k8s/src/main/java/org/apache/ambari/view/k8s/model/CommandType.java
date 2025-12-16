@@ -9,12 +9,16 @@ public enum CommandType {
 
     K8S_MOUNTS_DIR_EXEC,
     // Leaf steps used by the orchestrator
+
+    CLUSTER_STACK_CONFIGURATION_REQUIREMENTS,
+
     HELM_REPO_VALIDATE,
     HELM_REPO_ADD,
     HELM_REPO_REMOVE,
     HELM_REPO_LOGIN,
 
     HELM_DEPLOY_DRY_RUN,
+    CONFIG_MATERIALIZE,
     HELM_DEPLOY,
     HELM_UPGRADE,
     HELM_UNINSTALL,
@@ -28,5 +32,9 @@ public enum CommandType {
     // keytabs
     KEYTAB_REQUEST_ROOT,
     KEYTAB_ISSUE_PRINCIPAL,   // create-if-missing principal + keytab (idempotent)
-    KEYTAB_CREATE_SECRET
+    KEYTAB_CREATE_SECRET,
+
+    // Ranger related commands
+    RANGER_REPOSITORY_CREATION,
+    RANGER_USER_CREATION,
 }

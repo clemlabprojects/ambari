@@ -53,7 +53,7 @@
             <configuration>
               <outputDirectory>${project.build.directory}/lib</outputDirectory>
               <includeScope>compile</includeScope>
-              <excludeScope>test</excludeScope>
+              <!-- <excludeScope>test</excludeScope> -->
               <excludeArtifactIds>jasper-runtime,jasper-compiler
               </excludeArtifactIds>
             </configuration>

@@ -16,10 +16,15 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
+import javax.crypto.SecretKey;
 import javax.security.auth.x500.X500Principal;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
@@ -28,11 +33,20 @@ import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.Base64;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import static java.util.Base64.getDecoder;
+import static java.util.Base64.getEncoder;
 
 /**
  * Manages Ambari's internal CA (PEM files on disk), issues/rotates client & server TLS certs,
  * and creates/updates Kubernetes Secrets.
+ *
+ * Concurrency hardening:
+ *  - Per-directory JVM-level ReadWriteLock.
+ *  - Cross-process exclusive lock via .ca.lock file.
+ *  - Atomic, fsync'ed file writes with ATOMIC_MOVE.
  */
 public class WebHookConfigurationService {
 
@@ -46,12 +60,15 @@ public class WebHookConfigurationService {
 
     // Default validity
     private static final int DEFAULT_CA_VALIDITY_DAYS      = 3650; // ~10 years
-    private static final int DEFAULT_CLIENT_VALIDITY_DAYS  = 360;  // 6 months
+    private static final int DEFAULT_CLIENT_VALIDITY_DAYS  = 360;  // ~12 months
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
     private final KubernetesClient kubernetesClient;
     private final ViewConfigurationService configurationService;
+
+    // Per-directory in-JVM lock map
+    private static final ConcurrentHashMap<String, ReentrantReadWriteLock> CA_LOCKS = new ConcurrentHashMap<>();
 
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -64,7 +81,7 @@ public class WebHookConfigurationService {
         this.configurationService = new ViewConfigurationService(viewContext);
     }
 
-    // -------------------- Public API (existing) --------------------
+    // -------------------- Public API --------------------
 
     /** Ensure Ambari CA exists on disk and return its material. */
     public CertificateAuthorityMaterial ensureAmbariCertificateAuthority() {
@@ -72,35 +89,36 @@ public class WebHookConfigurationService {
         Path caCertPath  = caDirectory.resolve(DEFAULT_CA_CERT_FILENAME);
         Path caKeyPath   = caDirectory.resolve(DEFAULT_CA_KEY_FILENAME);
 
+        ReentrantReadWriteLock.WriteLock writeLock = caLock(caDirectory).writeLock();
+        writeLock.lock();
+        FileLock processLock = lockDirectoryExclusive(caDirectory);
         try {
-            Files.createDirectories(caDirectory);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to create CA directory: " + caDirectory, e);
-        }
+            runIO(() -> { Files.createDirectories(caDirectory); return null; });
 
-        if (Files.exists(caCertPath) && Files.exists(caKeyPath)) {
-            LOG.info("Ambari CA already present at {}", caDirectory);
-            try {
-                String caCertPem = Files.readString(caCertPath, StandardCharsets.UTF_8);
-                String caKeyPem  = Files.readString(caKeyPath, StandardCharsets.UTF_8);
+            if (Files.exists(caCertPath) && Files.exists(caKeyPath)) {
+                LOG.info("Ambari CA already present at {}", caDirectory);
+                String caCertPem = runIO(() -> Files.readString(caCertPath, StandardCharsets.UTF_8));
+                String caKeyPem  = runIO(() -> Files.readString(caKeyPath,  StandardCharsets.UTF_8));
                 return new CertificateAuthorityMaterial(caCertPem, caKeyPem, caDirectory.toString());
-            } catch (IOException e) {
-                throw new UncheckedIOException("Failed to read existing CA material from " + caDirectory, e);
             }
+
+            LOG.info("Generating a new Ambari internal CA under {}", caDirectory);
+            KeyPair caKeyPair = generateKeyPair();
+            X509Certificate caCertificate = selfSignCaCertificate(caKeyPair, "CN=Ambari Internal CA");
+
+            String caCertPem = toPemCertificate(caCertificate);
+            String caKeyPem  = toPemPrivateKey(caKeyPair.getPrivate());
+
+            // atomic writes
+            writeString(caCertPath, caCertPem);
+            writeString(caKeyPath,  caKeyPem);
+
+            LOG.info("Ambari CA generated: {}, {}", caCertPath, caKeyPath);
+            return new CertificateAuthorityMaterial(caCertPem, caKeyPem, caDirectory.toString());
+        } finally {
+            try { if (processLock != null) processLock.close(); } catch (IOException ignore) {}
+            writeLock.unlock();
         }
-
-        LOG.info("Generating a new Ambari internal CA under {}", caDirectory);
-        KeyPair caKeyPair = generateKeyPair();
-        X509Certificate caCertificate = selfSignCaCertificate(caKeyPair, "CN=Ambari Internal CA");
-
-        String caCertPem = toPemCertificate(caCertificate);
-        String caKeyPem  = toPemPrivateKey(caKeyPair.getPrivate());
-
-        writeString(caCertPath, caCertPem);
-        writeString(caKeyPath,  caKeyPem);
-
-        LOG.info("Ambari CA generated: {}, {}", caCertPath, caKeyPath);
-        return new CertificateAuthorityMaterial(caCertPem, caKeyPem, caDirectory.toString());
     }
 
     /** Issue a client certificate (mTLS) for webhook (or any client). */
@@ -186,17 +204,50 @@ public class WebHookConfigurationService {
         createOrUpdateWebhookClientSecret(namespace, secretName, client, additionalLabels);
     }
 
+    /**
+     * ensure the ambari mutating webhook username/password are stored correctly as secret in k8s/openshift
+
+     * @param namespace the target namespace
+     * @param secretName the creds username/password
+     */
+    public void ensureWebhookSecret(
+                                           String namespace,
+                                           String secretName,
+                                           String userName,
+                                           String password) {
+
+        KubernetesClient kubernetesClient = this.kubernetesService.getClient();
+        Map<String,String> data = new LinkedHashMap<>();
+        data.put("username", base64(userName));
+        data.put("password", base64(password));
+
+        Secret desired = new SecretBuilder()
+                .withNewMetadata()
+                .withName(secretName).withNamespace(namespace)
+                .addToLabels("managed-by", "ambari-k8s-view")
+                .addToLabels("component", "webhook-ambari-credentials")
+                .endMetadata()
+                .withType("Opaque")
+                .addToData(data)
+                .build();
+
+        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        if (existing == null) {
+            kubernetesClient.secrets().inNamespace(namespace).resource(desired).create();
+            LOG.info("Created webhook credentials Secret {}/{}", namespace, secretName);
+        } else {
+            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated webhook credentials Secret {}/{}", namespace, secretName);
+        }
+    }
     // -------------------- New rotation-aware helpers --------------------
 
     /** Return base64(der) of current CA (no rotation). */
     public String currentCaBundleBase64() {
         CertificateAuthorityMaterial ca = ensureAmbariCertificateAuthority();
-        try {
-            X509Certificate c = parseCertificateFromPem(ca.caCertificatePem());
-            return Base64.getEncoder().encodeToString(c.getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to encode current CA", e);
-        }
+        // ✅ Return base64(PEM BYTES), not DER
+        return java.util.Base64.getEncoder()
+            .encodeToString(ca.caCertificatePem().getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -207,23 +258,40 @@ public class WebHookConfigurationService {
         CertificateAuthorityMaterial ca = ensureAmbariCertificateAuthority();
         X509Certificate caCert = parseCertificateFromPem(ca.caCertificatePem());
         if (!expiresBefore(caCert, minDaysLeft)) {
-            try { return Base64.getEncoder().encodeToString(caCert.getEncoded()); }
-            catch (Exception e) { throw new IllegalStateException("CA encode failed", e); }
+            // ✅ base64(PEM bytes)
+            return java.util.Base64.getEncoder()
+                .encodeToString(ca.caCertificatePem().getBytes(StandardCharsets.UTF_8));
         }
 
         LOG.warn("Ambari CA is nearing expiration (notAfter={}): rotating CA",
                 caCert.getNotAfter().toInstant());
 
-        // Generate NEW CA and replace files atomically
         Path dir = Paths.get(ca.storageDirectory());
-        KeyPair kp = generateKeyPair();
-        X509Certificate newCa = selfSignCaCertificate(kp, "CN=Ambari Internal CA");
+        ReentrantReadWriteLock.WriteLock writeLock = caLock(dir).writeLock();
+        writeLock.lock();
+        FileLock processLock = lockDirectoryExclusive(dir);
+        try {
+            // Re-check inside lock to avoid races if another thread rotated meanwhile
+            CertificateAuthorityMaterial current = ensureAmbariCertificateAuthority();
+            X509Certificate currentCert = parseCertificateFromPem(current.caCertificatePem());
+            if (!expiresBefore(currentCert, minDaysLeft)) {
+                return getEncoder().encodeToString(currentCert.getEncoded());
+            }
 
-        writeString(dir.resolve(DEFAULT_CA_CERT_FILENAME), toPemCertificate(newCa));
-        writeString(dir.resolve(DEFAULT_CA_KEY_FILENAME),  toPemPrivateKey(kp.getPrivate()));
+            KeyPair kp = generateKeyPair();
+            X509Certificate newCa = selfSignCaCertificate(kp, "CN=Ambari Internal CA");
 
-        try { return Base64.getEncoder().encodeToString(newCa.getEncoded()); }
-        catch (Exception e) { throw new IllegalStateException("Failed to encode new CA", e); }
+            String newPem = toPemCertificate(newCa);
+            writeString(dir.resolve(DEFAULT_CA_CERT_FILENAME), newPem);
+            writeString(dir.resolve(DEFAULT_CA_KEY_FILENAME),  toPemPrivateKey(kp.getPrivate()));
+
+            return getEncoder().encodeToString(newPem.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to rotate CA", e);
+        } finally {
+            try { if (processLock != null) processLock.close(); } catch (IOException ignore) {}
+            writeLock.unlock();
+        }
     }
 
     /**
@@ -245,7 +313,7 @@ public class WebHookConfigurationService {
 
         if (existing != null && existing.getData() != null && existing.getData().get("client.crt") != null) {
             try {
-                String crtPem = new String(Base64.getDecoder().decode(existing.getData().get("client.crt")), StandardCharsets.UTF_8);
+                String crtPem = new String(getDecoder().decode(existing.getData().get("client.crt")), StandardCharsets.UTF_8);
                 X509Certificate crt = parseCertificateFromPem(crtPem);
                 if (!expiresBefore(crt, minDaysLeft)) {
                     needIssue = false;
@@ -308,7 +376,7 @@ public class WebHookConfigurationService {
 
         if (existing != null && existing.getData() != null && existing.getData().get("tls.crt") != null) {
             try {
-                String crtPem = new String(Base64.getDecoder().decode(existing.getData().get("tls.crt")), StandardCharsets.UTF_8);
+                String crtPem = new String(getDecoder().decode(existing.getData().get("tls.crt")), StandardCharsets.UTF_8);
                 X509Certificate crt = parseCertificateFromPem(crtPem);
                 if (!expiresBefore(crt, minDaysLeft)) {
                     needIssue = false;
@@ -382,8 +450,8 @@ public class WebHookConfigurationService {
                     .addToAnnotations(ann)
                     .endMetadata()
                     .withType("kubernetes.io/tls")
-                    .addToData("tls.crt", Base64.getEncoder().encodeToString(certPem.getBytes(StandardCharsets.UTF_8)))
-                    .addToData("tls.key", Base64.getEncoder().encodeToString(keyPem.getBytes(StandardCharsets.UTF_8)))
+                    .addToData("tls.crt", getEncoder().encodeToString(certPem.getBytes(StandardCharsets.UTF_8)))
+                    .addToData("tls.key", getEncoder().encodeToString(keyPem.getBytes(StandardCharsets.UTF_8)))
                     .build();
 
             kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
@@ -444,6 +512,16 @@ public class WebHookConfigurationService {
         }
     }
 
+    /**
+     *
+     * @param clientPublicKey
+     * @param subjectCommonName
+     * @param dnsSubjectAlternativeNames
+     * @param uriSubjectAlternativeNames
+     * @param validityDays
+     * @param certificateAuthorityMaterial
+     * @return
+     */
     private X509Certificate signClientCertificate(PublicKey clientPublicKey,
                                                   String subjectCommonName,
                                                   List<String> dnsSubjectAlternativeNames,
@@ -524,11 +602,80 @@ public class WebHookConfigurationService {
         return cert.getSerialNumber().toString(16);
     }
 
+    // -------------------- Atomic FS + locking helpers --------------------
+
+    /** Cross-process exclusive lock on a per-directory lock file. */
+    private FileLock lockDirectoryExclusive(Path dir) {
+        try {
+            Files.createDirectories(dir);
+            Path lockFile = dir.resolve(".ca.lock");
+            FileChannel ch = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            FileLock lock = ch.lock(); // blocks until exclusive
+            return lock; // caller closes() to release (channel closes with it)
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to lock CA directory " + dir, e);
+        }
+    }
+
+    /** Atomic write with fsync using temp file + ATOMIC_MOVE. */
+    private void writeStringAtomic(Path path, String content) {
+        runIO(() -> {
+            Path dir = path.getParent();
+            Files.createDirectories(dir);
+            Path tmp = Files.createTempFile(dir, path.getFileName().toString(), ".tmp");
+            try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+                ByteBuffer buf = ByteBuffer.wrap(bytes);
+                while (buf.hasRemaining()) ch.write(buf);
+                ch.force(true); // fsync data+metadata
+            }
+            Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            return null;
+        });
+    }
+
+    private void writeString(Path path, String content) {
+        writeStringAtomic(path, content);
+    }
+
+    private ReentrantReadWriteLock caLock(Path caDir) {
+        String key = caDir.toAbsolutePath().normalize().toString();
+        return CA_LOCKS.computeIfAbsent(key, k -> new ReentrantReadWriteLock());
+    }
+
+    private Path resolveCaDirectory() {
+        // Priority: ambari.property k8s.view.webhook.ca.dir → else use view resource path + "/ca"
+        String configured = viewContext.getAmbariProperty("k8s.view.webhook.ca.dir");
+        if (configured != null && !configured.isBlank()) {
+            return Paths.get(configured);
+        }
+        String base = configurationService.getViewResourcePath();
+        return Paths.get(base, "ca");
+    }
+
+    // Small utility to wrap checked IO without deprecated doPrivileged
+    private <T> T runIO(CheckedIO<T> action) {
+        try {
+            return action.run();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface CheckedIO<T> {
+        T run() throws Exception;
+    }
+
     // -------------------- PEM helpers (simple, no password) --------------------
 
     private static String toPemCertificate(X509Certificate certificate) {
         try {
-            String base64 = Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
+            String base64 = java.util.Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
                     .encodeToString(certificate.getEncoded());
             return "-----BEGIN CERTIFICATE-----\n" + base64 + "\n-----END CERTIFICATE-----\n";
         } catch (CertificateEncodingException e) {
@@ -537,7 +684,7 @@ public class WebHookConfigurationService {
     }
 
     private static String toPemPrivateKey(PrivateKey privateKey) {
-        String base64 = Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
+        String base64 = java.util.Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
                 .encodeToString(privateKey.getEncoded());
         return "-----BEGIN PRIVATE KEY-----\n" + base64 + "\n-----END PRIVATE KEY-----\n";
     }
@@ -547,7 +694,7 @@ public class WebHookConfigurationService {
             String normalized = pem.replace("-----BEGIN CERTIFICATE-----", "")
                     .replace("-----END CERTIFICATE-----", "")
                     .replaceAll("\\s", "");
-            byte[] der = Base64.getDecoder().decode(normalized);
+            byte[] der = getDecoder().decode(normalized);
             java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
             return (X509Certificate) cf.generateCertificate(new java.io.ByteArrayInputStream(der));
         } catch (Exception e) {
@@ -560,7 +707,7 @@ public class WebHookConfigurationService {
             String normalized = pem.replace("-----BEGIN PRIVATE KEY-----", "")
                     .replace("-----END PRIVATE KEY-----", "")
                     .replaceAll("\\s", "");
-            byte[] der = Base64.getDecoder().decode(normalized);
+            byte[] der = getDecoder().decode(normalized);
             KeyFactory kf = KeyFactory.getInstance("EC");
             return kf.generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(der));
         } catch (Exception e) {
@@ -569,30 +716,11 @@ public class WebHookConfigurationService {
     }
 
     private static String base64(String value) {
-        return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+        return getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static <T> List<T> safeList(List<T> maybeNull) {
         return maybeNull == null ? Collections.emptyList() : maybeNull;
-    }
-
-    private void writeString(Path path, String content) {
-        try {
-            Files.writeString(path, content, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to write file " + path, e);
-        }
-    }
-
-    private Path resolveCaDirectory() {
-        // Priority: ambari.property k8sview.webhook.ca.dir → else use view resource path + "/ca"
-        String configured = viewContext.getAmbariProperty("k8s.view.webhook.ca.dir");
-        if (configured != null && !configured.isBlank()) {
-            return Paths.get(configured);
-        }
-        String base = configurationService.getViewResourcePath();
-        return Paths.get(base, "ca");
     }
 
     // -------------------- Value objects --------------------
@@ -604,4 +732,148 @@ public class WebHookConfigurationService {
     public record ClientCertificateMaterial(String clientCertificatePem,
                                             String clientPrivateKeyPem,
                                             String certificateAuthorityCertificatePem) {}
+
+
+    // Load a KeyStore (JKS or PKCS12) from disk.
+    public static KeyStore loadKeyStore(Path path, char[] password, String type) {
+        try (InputStream in = Files.newInputStream(path)) {
+            KeyStore ks = KeyStore.getInstance(type != null && !type.isBlank() ? type : "JKS");
+            ks.load(in, password);
+            return ks;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to load KeyStore '" + path + "' type=" + type, e);
+        }
+    }
+
+    // Extract all X509 certificate entries from a KeyStore.
+    public static List<X509Certificate> extractX509FromTrustStore(KeyStore ks) {
+        try {
+            List<X509Certificate> list = new ArrayList<>();
+            for (Enumeration<String> e = ks.aliases(); e.hasMoreElements(); ) {
+                String alias = e.nextElement();
+                java.security.cert.Certificate c = ks.getCertificate(alias);
+                if (c instanceof X509Certificate x) {
+                    list.add(x);
+                } else if (c != null) {
+                    // ignore non-x509 entries
+                }
+            }
+            if (list.isEmpty()) {
+                throw new IllegalStateException("No X509 certificates found in truststore");
+            }
+            return list;
+        } catch (KeyStoreException e) {
+            throw new IllegalStateException("Failed to enumerate truststore entries", e);
+        }
+    }
+
+    // Convert a list of X509 certs to a single PEM bundle string.
+    public static String toPemBundle(List<X509Certificate> certs) {
+        StringBuilder sb = new StringBuilder();
+        for (X509Certificate c : certs) {
+            sb.append(toPemCertificate(c)); // you already have toPemCertificate(...)
+        }
+        return sb.toString();
+    }
+
+    // Return earliest NotAfter among certs (used for rotation decisions).
+    public static Instant earliestExpiry(List<X509Certificate> certs) {
+        return certs.stream()
+                .map(c -> c.getNotAfter().toInstant())
+                .min(Comparator.naturalOrder())
+                .orElse(Instant.EPOCH);
+    }
+
+    // Compare two PEM bundles for exact equality (trimmed).
+    public static boolean pemEqual(String a, String b) {
+        return a != null && b != null && a.trim().equals(b.trim());
+    }
+
+    /**
+    * Ensure/rotate a Secret containing Ambari's HTTPS truststore certificates (as PEM bundle).
+    * Writes a Secret with key: ca.crt
+    *
+    * @param namespace        k8s namespace
+    * @param secretName       Secret name to (create|replace)
+    * @param truststorePath   absolute path to JKS (e.g. /etc/ambari-server/conf/truststore.jks)
+    * @param truststoreType   "JKS" (default) or "PKCS12"
+    * @param truststorePass   plain password chars (you can retrieve from Ambari configs/secure store)
+    * @param minDaysLeft      rotate when earliest cert expires within this many days
+    * @param extraLabels      optional labels
+    */
+    public void ensureOrRotateAmbariTruststoreCaSecret(String namespace,
+                                                    String secretName,
+                                                    String truststorePath,
+                                                    String truststoreType,
+                                                    char[] truststorePass,
+                                                    int minDaysLeft,
+                                                    Map<String,String> extraLabels) {
+        Objects.requireNonNull(namespace);
+        Objects.requireNonNull(secretName);
+        Objects.requireNonNull(truststorePath);
+
+        Path jks = Paths.get(truststorePath);
+        if (!Files.exists(jks)) {
+            throw new IllegalStateException("Ambari truststore not found: " + jks);
+        }
+
+        KeyStore ks = loadKeyStore(jks, truststorePass, (truststoreType == null || truststoreType.isBlank()) ? "JKS" : truststoreType);
+        List<X509Certificate> certs = extractX509FromTrustStore(ks);
+        String pemBundle = toPemBundle(certs);
+        Instant earliest = earliestExpiry(certs);
+
+        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        boolean needUpdate = (existing == null);
+
+        if (!needUpdate) {
+            String b64 = existing.getData() != null ? existing.getData().get("ca.crt") : null;
+            if (b64 == null) {
+                LOG.warn("Existing Secret missing ca.crt; will update {}/{}", namespace, secretName);
+                needUpdate = true;
+            } else {
+                String currentPem = new String(getDecoder().decode(b64), StandardCharsets.UTF_8);
+                boolean differs = !pemEqual(currentPem, pemBundle);
+                boolean expiringSoon = earliest.isBefore(Instant.now().plus(minDaysLeft, ChronoUnit.DAYS));
+                if (differs || expiringSoon) {
+                    LOG.info("Truststore CA Secret needs update: differs={}, expiringSoon={} (earliestNotAfter={}) {}/{}",
+                            differs, expiringSoon, earliest, namespace, secretName);
+                    needUpdate = true;
+                }
+            }
+        }
+
+        if (!needUpdate) {
+            LOG.info("Truststore CA Secret up-to-date (earliestNotAfter={}) {}/{}", earliest, namespace, secretName);
+            return;
+        }
+
+        Map<String,String> labels = new LinkedHashMap<>();
+        labels.put("managed-by", "ambari-k8s-view");
+        labels.put("component", "ambari-truststore-ca");
+        if (extraLabels != null) labels.putAll(extraLabels);
+
+        Map<String,String> ann = new LinkedHashMap<>();
+        ann.put("managed-by", "ambari-k8s-view");
+        ann.put("clemlab.com/not-after", earliest.toString());
+
+        Secret desired = new SecretBuilder()
+                .withNewMetadata()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToLabels(labels)
+                    .addToAnnotations(ann)
+                .endMetadata()
+                .withType("Opaque")
+                .addToData("ca.crt", getEncoder().encodeToString(pemBundle.getBytes(StandardCharsets.UTF_8)))
+                .build();
+
+        kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+        LOG.info("Created/rotated Truststore CA Secret {}/{} (earliestNotAfter={})",
+                namespace, secretName, earliest);
+    }
+
+
+
+
+
 }

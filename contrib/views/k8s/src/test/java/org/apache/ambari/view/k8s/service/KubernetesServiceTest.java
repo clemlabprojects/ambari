@@ -122,7 +122,7 @@ class KubernetesServiceTest {
             .build())
         .create();
 
-    ClusterStats stats = svc.getClusterStats();
+    ClusterStats stats = svc.getClusterStats(false);
     assertNotNull(stats, "ClusterStats ne doit pas être null");
     assertNotNull(stats.getNodes(), "Nodes stat ne doit pas être null");
     assertEquals(1.0, stats.getNodes().getTotal(), 0.0001,

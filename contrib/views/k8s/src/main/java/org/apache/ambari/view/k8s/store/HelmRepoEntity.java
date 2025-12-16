@@ -6,6 +6,7 @@ import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.Table;
+import java.net.URI;
 
 /**
  * Entity representing a Helm repository configuration.
@@ -45,7 +46,14 @@ public class HelmRepoEntity extends BaseModel {
     @Column(length = 128)
     private String secretRef;   // pointer in InstanceData (encrypted); never expose
 
+    @Column(length = 256)
+    private String imageProject; // e.g. "clemlabprojects"
+
+    @Column(length = 512)
+    private String imageRegistryHostOverride; // optional: e.g. "another.registry.com"
+
     private boolean authInvalid;
+
 
     // Getters and setters
     public String getType() { 
@@ -124,5 +132,51 @@ public class HelmRepoEntity extends BaseModel {
     @Override
     public void setUpdatedAt(String updatedAt) { 
         super.setUpdatedAt(updatedAt); 
+    }
+
+    public String getImageProject() {
+        return imageProject;
+    }
+
+    public void setImageProject(String imageProject) {
+        this.imageProject = imageProject;
+    }
+
+    public String getImageRegistryHostOverride() {
+        return imageRegistryHostOverride;
+    }
+
+    public void setImageRegistryHostOverride(String imageRegistryHostOverride) {
+        this.imageRegistryHostOverride = imageRegistryHostOverride;
+    }
+
+    public String getEffectiveRegistryHost() {
+        // 1. explicit override wins
+        if (imageRegistryHostOverride != null && !imageRegistryHostOverride.isBlank()) {
+            return imageRegistryHostOverride.trim();
+        }
+
+        // 2. derive from url
+        if (type != null && type.equalsIgnoreCase("HTTP")) {
+            // url like https://charts.clemlab.com/bitnami
+            try {
+                URI uri = URI.create(url);
+                return uri.getHost();
+            } catch (Exception e) {
+                return null;
+            }
+        } else {
+            // OCI: stored as "registry.host/namespace"
+            if (url == null) return null;
+            int slash = url.indexOf('/');
+            return (slash > 0) ? url.substring(0, slash) : url;
+        }
+    }
+
+    public String getEffectiveImageRegistry() {
+        String host = getEffectiveRegistryHost();
+        if (host == null || host.isBlank()) return null;
+        if (imageProject == null || imageProject.isBlank()) return host;
+        return host + "/" + imageProject.trim();
     }
 }

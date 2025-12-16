@@ -136,9 +136,10 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
                     str(props.get(PROP_DEFAULT_REALM_NS)));
             final String context      = firstNonBlank(str(props.get(PROP_CONTEXT)),
                     str(props.get(PROP_CONTEXT_NS)),
-                    (principal == null
-                            ? "Generate ad-hoc keytab"
-                            : "Generate ad-hoc keytab for " + principal));
+                    ("Kerberos Webhook Keytab generation"));
+//            (principal == null
+//                    ? "Kerberos Webhook Keytab generation"
+//                    : "Kerberos Webhook Keytab generation" + principal));
             final int timeoutSecs     = firstInt(asInt(props.get(PROP_TIMEOUT)),
                     asInt(props.get(PROP_TIMEOUT_NS)),
                     600);

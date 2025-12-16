@@ -331,4 +331,41 @@ public class IPAKerberosOperationHandler extends KDCKerberosOperationHandler {
 
     return result;
   }
+
+  @Override
+  public void ensureHostExists(String hostname) throws KerberosOperationException {
+    if (hostname == null || hostname.isBlank()) {
+      return; // nothing to do
+    }
+
+    // 1) Check if host exists
+    String[] show = new String[] { "host-show", hostname };
+    ShellCommandUtil.Result r = invokeIpa(show);
+    if (r == null) {
+      throw new KerberosOperationException("Failed to execute 'ipa host-show " + hostname + "': null result");
+    }
+    if (r.getExitCode() == 0) {
+      // Host already present -> idempotent
+      return;
+    }
+
+    final String stderr = (r.getStderr() == null) ? "" : r.getStderr();
+    // FreeIPA typically reports "not found" for missing hosts; be tolerant.
+    boolean missing = stderr.toLowerCase().contains("not found")
+        || stderr.toLowerCase().contains("does not exist");
+
+    if (!missing) {
+      // Some other error (auth, connectivity, etc.)
+      throw new KerberosOperationException(
+          "Unable to check FreeIPA host '" + hostname + "': exit=" + r.getExitCode() + " stderr=" + stderr);
+    }
+
+    // 2) Create the host (idempotent if created concurrently elsewhere)
+    String[] add = new String[] { "host-add", hostname };
+    ShellCommandUtil.Result addRes = invokeIpa(add);
+    if (addRes == null || addRes.getExitCode() != 0) {
+      String addErr = (addRes == null) ? "null result" : addRes.getStderr();
+      throw new KerberosOperationException("Failed to create FreeIPA host '" + hostname + "': " + addErr);
+    }
+  }
 }

@@ -1,0 +1,413 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Select, Progress, Modal } from 'antd';
+import { useNavigate, useParams } from 'react-router-dom';
+import Editor from '@monaco-editor/react';
+import yaml from 'yaml';
+
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, type HelmRepo, getSecurityConfig, type SecurityProfiles } from '../api/client';
+import InstallStep from '../components/wizard/InstallStep';
+import ConfigurationStep from '../components/wizard/ConfigurationStep';
+import ReviewStep from '../components/wizard/ReviewStep';
+import { applyBindingTargets, buildVarContext, deleteAtStr } from '../components/ServiceInstallationModal/bindings';
+import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
+import { useClusterStatus } from '../context/ClusterStatusContext';
+
+const { Title, Text } = Typography;
+
+const { Content } = Layout;
+
+const ServiceWizardPage: React.FC = () => {
+  const { serviceName } = useParams<{ serviceName: string }>();
+  const navigate = useNavigate();
+  const { token } = theme.useToken();
+  const [current, setCurrent] = useState(0);
+  
+  // Data
+  const [def, setDef] = useState<any>(null);
+  const [configs, setConfigs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [repos, setRepos] = useState<HelmRepo[]>([]);
+  const [securityProfiles, setSecurityProfiles] = useState<SecurityProfiles>({ defaultProfile: undefined, profiles: {} });
+
+  // State
+  const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
+  const [configOverrides, setConfigOverrides] = useState<Record<string, any>>({}); // Step 3 data
+
+  // YAML preview / editor state (mirrors the modal behaviour)
+  const [view, setView] = useState<'preview' | 'editor'>('preview');
+  const [editorYaml, setEditorYaml] = useState('');
+  const [editMode, setEditMode] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const isDirtyRef = useRef(false);
+  const parsedRef = useRef<Record<string, any> | null>(null);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+
+  // Command status drawer
+  const [showOpsModal, setShowOpsModal] = useState(false);
+  const [lastCommandId, setLastCommandId] = useState<string | undefined>(undefined);
+  const { refresh: refreshCluster } = useClusterStatus();
+
+  useEffect(() => {
+    if (!serviceName) return;
+    const load = async () => {
+        try {
+            const svcDef = await getStackService(serviceName);
+            const svcCfgs = await getStackConfigs(serviceName);
+            setDef(svcDef);
+            setConfigs(svcCfgs);
+            // Repos are best-effort; don't fail the page if repo API errors
+            try {
+              const repoList = await getHelmRepos();
+              const sorted = (repoList || []).slice().sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+              setRepos(sorted);
+              if (sorted.length > 0) {
+                setInstallValues((prev: any) => ({ ...prev, repoId: prev.repoId || sorted[0].id }));
+              }
+            } catch (repoErr: any) {
+              console.warn('Repo load failed', repoErr);
+            }
+            // Load security profiles
+            try {
+              const sec = await getSecurityConfig();
+              setSecurityProfiles(sec);
+              if (sec.defaultProfile) {
+                setInstallValues((prev: any) => ({ ...prev, securityProfile: prev.securityProfile || sec.defaultProfile }));
+              }
+            } catch (e: any) {
+              console.warn('Security profiles load failed', e);
+            }
+
+            // Initialize defaults
+            const initial: any = { releaseName: serviceName.toLowerCase(), namespace: 'dashboarding', deploymentMode: 'DIRECT_HELM' };
+            const applyDefaults = (fields: any[], target: any) => {
+              fields.forEach(f => {
+                if (f.type === 'group' && Array.isArray((f as any).fields)) {
+                  applyDefaults((f as any).fields, target);
+                } else if ((f as any).defaultValue !== undefined) {
+                  const parts = f.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+                  let cur = target;
+                  for (let i = 0; i < parts.length - 1; i++) {
+                    cur[parts[i]] = cur[parts[i]] || {};
+                    cur = cur[parts[i]];
+                  }
+                  cur[parts[parts.length - 1]] = (f as any).defaultValue;
+                }
+              });
+            };
+            if (Array.isArray(svcDef?.form)) applyDefaults(svcDef.form, initial);
+            // Seed mount defaults from service definition (if any)
+            if (Array.isArray((svcDef as any)?.mounts) && (svcDef as any).mounts.length > 0) {
+              const mountObj: any = {};
+              (svcDef as any).mounts.forEach((m: any) => {
+                if (!m?.key) return;
+                mountObj[m.key] = {
+                  ...(m.defaults || {}),
+                  mountPath: m.defaultMountPath || '/data'
+                };
+              });
+              initial.mounts = mountObj;
+            }
+            setInstallValues(initial);
+        } catch(e) { message.error("Failed to load definition"); }
+        finally { setLoading(false); }
+    };
+    load();
+  }, [serviceName]);
+
+  // --- helpers ---
+  const getExcludedPaths = (fields: any[]): string[] => {
+    let paths: string[] = [];
+    fields.forEach(f => {
+      if ((f as any).excludeFromValues) paths.push(f.name);
+      if (f.type === 'group' && (f as any).fields) {
+        paths = [...paths, ...getExcludedPaths((f as any).fields)];
+      }
+    });
+    return paths;
+  };
+
+  const previewYaml = useMemo(() => {
+    if (!def) return '';
+    try {
+      const merged = JSON.parse(JSON.stringify(installValues || {}));
+
+      // Apply bindings same way as the modal
+      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {});
+      applyBindingTargets(merged, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
+
+      // Drop fields that should not end up in values.yaml
+      if (Array.isArray(def.form)) {
+        getExcludedPaths(def.form).forEach(p => deleteAtStr(merged, p));
+      }
+
+      return yaml.stringify(merged, { aliasDuplicateObjects: false });
+    } catch (e) {
+      return '# (preview unavailable)';
+    }
+  }, [installValues, def]);
+
+  useEffect(() => {
+    if (!editMode && !isDirtyRef.current) {
+      setEditorYaml(previewYaml);
+      setParseError(null);
+    }
+  }, [previewYaml, editMode]);
+
+  const onEditorChange = (value?: string) => {
+    isDirtyRef.current = true;
+    const text = value ?? '';
+    setEditorYaml(text);
+    try {
+      const parsed = yaml.parse(text || '') || {};
+      parsedRef.current = parsed;
+      setParseError(null);
+    } catch (e: any) {
+      parsedRef.current = null;
+      setParseError(e?.message || 'Invalid YAML');
+    }
+  };
+
+  const buildFinalValues = () => {
+    // Start from form values
+    const base = JSON.parse(JSON.stringify(installValues || {}));
+
+    // Apply bindings same way as preview
+    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {});
+    applyBindingTargets(base, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
+
+    // Drop fields that should not end up in values.yaml
+    if (Array.isArray(def?.form)) {
+      getExcludedPaths(def.form).forEach(p => deleteAtStr(base, p));
+    }
+
+    // If YAML editor overrides are present and valid, merge them in
+    if (editMode && parsedRef.current && !parseError) {
+      return { ...base, ...parsedRef.current };
+    }
+    return base;
+  };
+
+  const handleDeploy = async () => {
+      setSubmitting(true);
+      try {
+          const finalValues = buildFinalValues();
+          const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
+          const params = new URLSearchParams();
+          if (installValues.repoId) params.set('repoId', installValues.repoId as string);
+          if ((def as any)?.version) params.set('version', String((def as any).version));
+
+          const { id } = await submitHelmDeploy({
+              chart: chartRef,
+              releaseName: installValues.releaseName,
+              namespace: installValues.namespace,
+              values: finalValues, 
+              // Send Step 3 data to backend
+              stackConfigOverrides: configOverrides,
+              // Required to trigger the Config Materialize step
+              serviceKey: serviceName,
+              // Pass image pull secret if defined by the service definition or form
+              secretName: (def as any)?.secretName || (installValues as any)?.secretName || undefined,
+              endpoints: (def as any)?.endpoints || undefined,
+              mounts: (installValues as any)?.mounts || (def as any)?.mounts || null,
+              dependencies: (def as any)?.dependencies || null,
+              ranger: (def as any)?.ranger || null,
+              requiredConfigMaps: (def as any)?.requiredConfigMaps || null,
+              dynamicValues: (def as any)?.dynamicValues || null,
+              securityProfile: (installValues as any)?.securityProfile || securityProfiles.defaultProfile || undefined,
+              deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
+              git: (installValues as any)?.git || undefined,
+          }, params);
+      message.success('Deployment request submitted');
+      setLastCommandId(id);
+      setShowOpsModal(true);
+  } catch(e: any) {
+      message.error("Deploy failed: " + e.message);
+      } finally {
+          setSubmitting(false);
+      }
+  };
+
+  const steps = React.useMemo(() => {
+    if (!def) return [];
+    return [
+      { title: 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} /> },
+      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} /> },
+      { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} /> },
+      { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} /> },
+    ];
+  }, [def, installValues, repos, configs, configOverrides]);
+
+  // Disable Next if any required password in overrides is empty or mismatched
+  const hasInvalidPasswords = React.useMemo(() => {
+    let invalid = false;
+    configs.forEach(cfg => {
+      (cfg.properties || []).forEach((prop: any) => {
+        if (prop.type === 'password' && prop.required) {
+          const key = `${cfg.name}/${prop.name}`;
+          const val = configOverrides[key];
+          // In PropertyRenderer we enforce confirm match; here just ensure present
+          if (!val || val === '') {
+            invalid = true;
+          }
+        }
+      });
+    });
+    return invalid;
+  }, [configs, configOverrides]);
+
+  return (
+    <>
+    <Layout style={{ padding: '24px', background: '#fff', maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', position: 'relative' }}>
+      {(loading || !def) && (
+        <>
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }}>
+            <Progress percent={60} status="active" showInfo={false} strokeColor="#1677ff" />
+          </div>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.65)', zIndex: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spin size="large" />
+          </div>
+        </>
+      )}
+      <Row gutter={16}>
+        <Col span={16}>
+          {(loading || !def) ? (
+            <div style={{textAlign:'center', marginTop: 100}}><Spin size="large"/></div>
+          ) : (
+          <>
+          <Card bordered style={{ marginBottom: 12, padding: '8px 12px' }} bodyStyle={{ padding: 0 }}>
+            <Steps
+              size="small"
+              current={current}
+              onChange={(v) => setCurrent(v)}
+              items={steps.map(s => ({ title: s.title }))}
+            />
+          </Card>
+          <div style={{ minHeight: 440, border: `1px solid ${token.colorBorderSecondary}`, padding: 16, borderRadius: 8 }}>
+            {steps[current].content}
+          </div>
+
+          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
+      {current < steps.length - 1 && 
+       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
+            {current === steps.length - 1 && 
+             <Button type="primary" onClick={handleDeploy} loading={submitting}>Deploy</Button>}
+          </div>
+          </>
+          )}
+        </Col>
+
+        <Col span={8}>
+          <Card
+            title={<span>values.yaml preview</span>}
+            extra={<Button size="small" onClick={() => setPreviewModalOpen(true)}>Open large view</Button>}
+          >
+            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Segmented
+                value={view}
+                onChange={(v) => setView(v as 'preview' | 'editor')}
+                options={[{ label: 'Preview', value: 'preview' }, { label: 'Editor', value: 'editor' }]}
+              />
+              <Space>
+                <Text type="secondary">Editable</Text>
+                <Switch checked={editMode} onChange={(v) => { setEditMode(v); if (!v) { setParseError(null); isDirtyRef.current = false; } }} />
+              </Space>
+            </div>
+            {view === 'preview' && (
+              <Editor
+                height="420px"
+                language="yaml"
+                value={previewYaml}
+                options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false }}
+              />
+            )}
+            {view === 'editor' && (
+              <>
+                <Editor
+                  height="420px"
+                  language="yaml"
+                  value={editorYaml || previewYaml}
+                  onChange={onEditorChange}
+                  options={{ readOnly: !editMode, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+                />
+                {parseError && (
+                  <Alert style={{ marginTop: 8 }} type="error" showIcon message="YAML error" description={<pre style={{ margin: 0 }}>{parseError}</pre>} />
+                )}
+              </>
+            )}
+          </Card>
+        </Col>
+      </Row>
+    </Layout>
+    <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 1000, display: 'flex', gap: 8 }}>
+      {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
+      {current < steps.length - 1 && 
+       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
+      {current === steps.length - 1 && 
+       <Button type="primary" onClick={handleDeploy} loading={submitting}>Deploy</Button>}
+    </div>
+    <Button
+      style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}
+      onClick={() => setShowOpsModal(true)}
+    >
+      Background operations
+    </Button>
+    <Modal
+      open={previewModalOpen}
+      onCancel={() => setPreviewModalOpen(false)}
+      footer={null}
+      width="90%"
+      bodyStyle={{ height: '80vh' }}
+      title="values.yaml preview (full view)"
+      destroyOnClose={false}
+    >
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Segmented
+          value={view}
+          onChange={(v) => setView(v as 'preview' | 'editor')}
+          options={[{ label: 'Preview', value: 'preview' }, { label: 'Editor', value: 'editor' }]}
+        />
+        <Space>
+          <Text type="secondary">Editable</Text>
+          <Switch checked={editMode} onChange={(v) => { setEditMode(v); if (!v) { setParseError(null); isDirtyRef.current = false; } }} />
+        </Space>
+      </div>
+      {view === 'preview' && (
+        <Editor
+          height="68vh"
+          language="yaml"
+          value={previewYaml}
+          options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false }}
+        />
+      )}
+      {view === 'editor' && (
+        <>
+          <Editor
+            height="68vh"
+            language="yaml"
+            value={editorYaml || previewYaml}
+            onChange={onEditorChange}
+            options={{ readOnly: !editMode, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+          />
+          {parseError && (
+            <Alert style={{ marginTop: 8 }} type="error" showIcon message="YAML error" description={<pre style={{ margin: 0 }}>{parseError}</pre>} />
+          )}
+        </>
+      )}
+    </Modal>
+    <BackgroundOperationsModal
+      open={showOpsModal}
+      onClose={() => setShowOpsModal(false)}
+      watchCommandId={lastCommandId}
+      onAutoClose={() => {
+        setShowOpsModal(false);
+        refreshCluster();
+        navigate('/helm');
+      }}
+    />
+    </>
+  );
+};
+export default ServiceWizardPage;

@@ -13,11 +13,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
 
   const condition = (field as any).condition;
-  let isVisible = true;
-  if (condition) {
-    const watchedValue = Form.useWatch(condition.field.split('.'), form);
-    isVisible = watchedValue === condition.value;
-  }
+  // Always call useWatch in the same order; pass undefined when no condition
+  const watchedValue = Form.useWatch(condition ? condition.field.split('.') : undefined, form);
+  const isVisible = condition ? watchedValue === condition.value : true;
   if (!isVisible) return null;
 
   switch (field.type) {
@@ -30,6 +28,30 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Card>
       );
     case 'service-select':
+    case 'hadoop-discovery':
+      return <ServiceSelect field={field as any} />;
+    case 'monitoring-discovery':
+      return (
+        <ServiceSelect
+          field={field as any}
+          onValueSelect={(val) => {
+            try {
+              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+              if (parsed?.namespace || parsed?.release) {
+                form.setFieldsValue({
+                  monitoring: {
+                    namespace: parsed.namespace,
+                    release: parsed.release,
+                  },
+                });
+              }
+            } catch (e) {
+              // ignore parse errors
+            }
+          }}
+        />
+      );
+    case 'k8s-discovery': // Add this case
       return <ServiceSelect field={field as any} />;
     case 'select':
       return (
@@ -59,7 +81,15 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     default:
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
-          <Input disabled={disabledProp} />
+          <Input
+            disabled={disabledProp}
+            onChange={(e) => {
+              // For Hive override, also populate the base metastore field so bindings pick it up.
+              if (field.name === 'ui_hive_metastore_uri_override') {
+                form.setFieldsValue({ ui_hive_metastore_uri: e.target.value });
+              }
+            }}
+          />
         </Form.Item>
       );
   }

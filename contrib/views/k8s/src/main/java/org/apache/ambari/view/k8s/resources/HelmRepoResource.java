@@ -29,6 +29,12 @@ public class HelmRepoResource {
   @GET
   public List<HelmRepoDTO> list() {
     var svc = new HelmRepositoryService(viewContext);
+    var repos = svc.list().stream().map(HelmRepoDTO::fromEntity).collect(Collectors.toList());
+    LOG.info("found repos: {}", repos.size());
+    for(HelmRepoDTO helmRepoDTO : repos){
+      LOG.info("repoinfo: id: {}, imageProject: {},  url:{}, name:{}, " +
+              "", helmRepoDTO.id, helmRepoDTO.imageProject, helmRepoDTO.url, helmRepoDTO.name);
+    }
     return svc.list().stream().map(HelmRepoDTO::fromEntity).collect(Collectors.toList());
   }
 

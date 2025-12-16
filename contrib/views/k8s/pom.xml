@@ -11,12 +11,15 @@
 
     <groupId>org.apache.ambari.views</groupId>
     <artifactId>k8s-view</artifactId>
-    <version>1.0.0.1</version>
+    <version>1.0.0.3</version>
     <name>K8S View</name>
     <description>An Ambari View to interact with a Kubernetes cluster.</description>
     <packaging>jar</packaging>
 
     <properties>
+        <odp.release.stack>1.2.2.0</odp.release.stack>
+        <odp.release.number>155</odp.release.number>
+        <hadoop.version>3.3.6.${odp.release.stack}-${odp.release.number}</hadoop.version>
         <ambari.dir>${project.parent.parent.parent.basedir}</ambari.dir>
         <ambari.version>${project.parent.version}</ambari.version>
         <java.version>17</java.version>
@@ -40,15 +43,16 @@
         <docker.image.registry>registry.clemlab.com</docker.image.registry>
         <docker.image.repo>clemlabprojects</docker.image.repo>
         <docker.image.name>kerberos-keytab-mutating-webhook</docker.image.name>
-        <docker.image.arch>arm64</docker.image.arch>
-        <docker.image.tag>1.0.0.1-${docker.image.arch}</docker.image.tag>
-        <docker.platforms>linux/${docker.image.arch}</docker.platforms>
+        <docker.image.arch>multi</docker.image.arch>
+        <docker.image.tag>${project.version}</docker.image.tag>
 
-        <!-- push is skipped by default; enable with -Ddocker.push=true (profile below) -->
+        <!-- Default platforms (override with -Ddocker.platforms=... if needed) -->
+        <docker.platforms>linux/amd64,linux/arm64</docker.platforms>
+
+        <!-- Docker steps ON by default during package/deploy (flip to true/false as you wish) -->
+        <docker.skip>false</docker.skip>
         <docker.skip.push>false</docker.skip.push>
-
         <!-- set platforms at the command line; e.g. -Ddocker.platforms=linux/amd64,linux/arm64 -->
-        <docker.platforms></docker.platforms>
 
         <!-- Paths inside this module -->
         <webhook.go.dir>${project.basedir}/src/main/go/webhooks/kerberos-keytab-mutating-webhook</webhook.go.dir>
@@ -64,6 +68,9 @@
         <!-- Package metadata -->
         <package-version>${project.version}</package-version>
         <package-release>1</package-release>
+
+        <!-- RPM: default to skip; -Prpm toggles to false -->
+        <rpm.skip>true</rpm.skip>
     </properties>
 
     <dependencies>
@@ -74,10 +81,23 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.ambari.contrib.views</groupId>
             <artifactId>ambari-views-utils</artifactId>
             <version>${ambari.version}</version>
             <exclusions>
+                <exclusion>
+                    <groupId>com.google.protobuf</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>log4j</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
                 <exclusion>
                     <groupId>junit</groupId>
                     <artifactId>junit</artifactId>
@@ -129,6 +149,22 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-core</artifactId>
             <version>5.3.31</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>tomcat</groupId>
+                    <artifactId>jasper-runtime</artifactId>
+                </exclusion>
+                <!--removed for security bugs in version : 9.3.19.v20170502-->
+                <exclusion>
+                    <groupId>org.eclipse.jetty</groupId>
+                    <artifactId>jetty-util</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.marcnuri.helm-java</groupId>
@@ -254,7 +290,7 @@
 
     <build>
         <plugins>
-            <!-- (your existing plugins kept as-is) -->
+            <!-- Clean -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-clean-plugin</artifactId>
@@ -275,6 +311,7 @@
                 </configuration>
             </plugin>
 
+            <!-- Java compile -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -285,6 +322,7 @@
                 </configuration>
             </plugin>
 
+            <!-- Frontend (Node/Yarn) -->
             <plugin>
                 <groupId>com.github.eirslett</groupId>
                 <artifactId>frontend-maven-plugin</artifactId>
@@ -329,6 +367,7 @@
                 </executions>
             </plugin>
 
+            <!-- ITs -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
@@ -348,6 +387,7 @@
                 </executions>
             </plugin>
 
+            <!-- Copy runtime deps & artifact -->
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
                 <executions>
@@ -388,44 +428,94 @@
             <plugin>
                 <groupId>io.fabric8</groupId>
                 <artifactId>docker-maven-plugin</artifactId>
-                <version>0.45.0</version>
+                <version>0.46.0</version>
                 <configuration>
+                    <skip>${docker.skip}</skip>
                     <images>
-                        <image>
-                            <name>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</name>
-                            <registry>${docker.image.registry}</registry>
-                            <build>
-                                <dockerFile>${webhook.go.dir}/Dockerfile</dockerFile>
-                                <contextDir>${webhook.go.dir}</contextDir>
-                                <buildx>
-                                    <platforms>
-                                        <platform>${docker.platforms}</platform>
-                                    </platforms>
-                                </buildx>
-                                <tags>
-                                    <tag>${docker.image.tag}</tag>
-                                </tags>
-                            </build>
-                        </image>
+                    <image>
+                        <name>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</name>
+                        <registry>${docker.image.registry}</registry>
+                        <build>
+                        <dockerFile>${webhook.go.dir}/Dockerfile</dockerFile>
+                        <contextDir>${webhook.go.dir}</contextDir>
+
+                        <!-- Buildx configuration -->
+                        <buildx>
+                            <!-- Use the builder the daemon is currently using; you can also pin a builder name -->
+                            <platforms>
+                            <!-- Split by comma from property -->
+                            <!-- The plugin accepts CSV; if not, duplicate <platform> lines -->
+                            <platform>${docker.platforms}</platform>
+                            </platforms>
+                            <!-- Optional hardening to reduce provenance/SBOM if you want smaller manifests -->
+                            <!-- <provenance>false</provenance> -->
+                            <!-- <sbom>false</sbom> -->
+                        </buildx>
+
+                        <tags>
+                            <tag>${docker.image.tag}</tag>
+                        </tags>
+                        </build>
+                    </image>
                     </images>
                 </configuration>
+
                 <executions>
                     <execution>
-                        <id>build-webhook-image</id>
-                        <phase>package</phase>
-                        <goals><goal>build</goal></goals>
+                    <id>build-webhook-image</id>
+                    <phase>package</phase>
+                    <goals><goal>build</goal></goals>
                     </execution>
+
+                    <!-- Keep push execution if you also want a traditional push step for non-buildx builds.
+                        With <buildx><push>true</push> above, this is redundant; you can remove it or keep it no-op. -->
                     <execution>
-                        <id>push-webhook-image</id>
-                        <phase>deploy</phase>
-                        <goals><goal>push</goal></goals>
-                        <configuration>
-                            <skipPush>${docker.skip.push}</skipPush>
-                        </configuration>
+                    <id>push-webhook-image</id>
+                    <phase>deploy</phase>
+                    <goals><goal>push</goal></goals>
+                    <configuration>
+                        <skipPush>${docker.skip.push}</skipPush>
+                    </configuration>
                     </execution>
                 </executions>
-            </plugin>
+                </plugin>
+            <!-- use exec plugin to run buildx directly for pushing images, so push is tied to the buildx context and done just after build -->
+                <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                    <id>buildx-multiarch</id>
+                    <phase>package</phase>
+                    <goals><goal>exec</goal></goals>
+                    <configuration>
+                        <executable>bash</executable>
+                        <environmentVariables>
+                        <IMAGE>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</IMAGE>
+                        </environmentVariables>
+                        <arguments>
+                        <argument>-euo</argument><argument>pipefail</argument>
+                        <argument>-c</argument>
+                        <argument>
+                            <![CDATA[
+        docker buildx use clem
+        docker buildx inspect --bootstrap >/dev/null
 
+        # Make sure you’re logged in beforehand
+        docker buildx build \
+        --builder clem \
+        --platform "${docker.platforms}" \
+        -t "${IMAGE}" \
+        --push \
+        "${webhook.go.dir}"
+        ]]>
+                        </argument>
+                        </arguments>
+                    </configuration>
+                    </execution>
+                </executions>
+                </plugin>
             <!-- =========================== -->
             <!--  WEBHOOK: stage files (YAML) -->
             <!-- =========================== -->
@@ -438,6 +528,7 @@
                         <phase>prepare-package</phase>
                         <goals><goal>copy-resources</goal></goals>
                         <configuration>
+                            <skip>${docker.skip}</skip>
                             <outputDirectory>${staged.dir}</outputDirectory>
                             <resources>
                                 <resource>
@@ -458,12 +549,12 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <executions>
-                    <!-- keep your existing 'write-webhook-image-ref' execution -->
                     <execution>
                         <id>save-webhook-image-tar</id>
                         <phase>package</phase>
                         <goals><goal>exec</goal></goals>
                         <configuration>
+                            <skip>${docker.skip}</skip>
                             <executable>bash</executable>
                             <environmentVariables>
                                 <IMAGE>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</IMAGE>
@@ -504,46 +595,47 @@ chmod +x "${OUT_DIR}/load.sh"
                 </executions>
             </plugin>
 
-
             <!-- ============== -->
             <!--  RPM packaging -->
-            <!-- ============== -->
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>rpm-maven-plugin</artifactId>
-                <version>2.1.5</version>
-                <executions>
-                    <execution>
-                        <id>rpm-webhook</id>
-                        <phase>package</phase>
-                        <goals><goal>rpm</goal></goals>
-                        <configuration>
-                            <name>${webhook.package.name}</name>
-                            <group>Development</group>
-                            <license>Apache-2.0</license>
-                            <autoRequires>false</autoRequires>
-                            <needarch>noarch</needarch>
-                            <targetOS>linux</targetOS>
-                            <version>${package-version}</version>
-                            <release>${package-release}</release>
-                            <mappings>
-                                <mapping>
-                                    <directory>${webhook.mapping.path}</directory>
-                                    <filemode>0644</filemode>
-                                    <sources>
-                                        <source>
-                                            <location>${staged.dir}</location>
-                                        </source>
-                                    </sources>
-                                </mapping>
-                            </mappings>
-                            <postinstallScriptlet>
-                                <scriptFile>${project.basedir}/src/main/package/rpm/webhook/postinstall.sh</scriptFile>
-                                <fileEncoding>utf-8</fileEncoding>
-                            </postinstallScriptlet>
-                        </configuration>
-                    </execution>
-                </executions>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>rpm-maven-plugin</artifactId>
+            <version>2.1.5</version>
+            <executions>
+                <execution>
+                <!-- Unbinds RPM creation from the Maven lifecycle -->
+                <id>rpm-webhook</id>
+                <phase>none</phase>
+                <goals>
+                    <goal>rpm</goal>
+                </goals>
+                <configuration>
+                    <name>${webhook.package.name}</name>
+                    <group>Development</group>
+                    <license>Apache-2.0</license>
+                    <autoRequires>false</autoRequires>
+                    <needarch>noarch</needarch>
+                    <targetOS>linux</targetOS>
+                    <version>${package-version}</version>
+                    <release>${package-release}</release>
+                    <mappings>
+                    <mapping>
+                        <directory>${webhook.mapping.path}</directory>
+                        <filemode>0644</filemode>
+                        <sources>
+                        <source>
+                            <location>${staged.dir}</location>
+                        </source>
+                        </sources>
+                    </mapping>
+                    </mappings>
+                    <postinstallScriptlet>
+                    <scriptFile>${project.basedir}/src/main/package/rpm/webhook/postinstall.sh</scriptFile>
+                    <fileEncoding>utf-8</fileEncoding>
+                    </postinstallScriptlet>
+                </configuration>
+                </execution>
+            </executions>
             </plugin>
 
             <!-- ============= -->
@@ -596,10 +688,15 @@ chmod +x "${OUT_DIR}/load.sh"
                 <filtering>false</filtering>
                 <includes>
                     <include>keda-2.17.2-crds.yaml</include>
+                    <include>keda-2.18.0-crds.yaml</include>
                     <include>kube-prometheus-stack-77.5.0-crds.yaml</include>
+                    <include>kube-prometheus-stack-78.3.2-crds.yaml</include>
                     <include>view.xml</include>
                     <include>view.log4j.properties</include>
                     <include>webhooks</include>
+                    <include>*.json</include>
+                    <include>KDPS/**</include>
+                    <include>KDPS**</include>
                 </includes>
             </resource>
             <resource>
@@ -697,10 +794,14 @@ chmod +x "${OUT_DIR}/load.sh"
             </build>
         </profile>
 
-        <!-- Enable RPM build when -Prpm -->
+        <!-- Toggle RPM on via profile -->
         <profile>
             <id>rpm</id>
             <activation><activeByDefault>false</activeByDefault></activation>
+            <properties>
+                <!-- When -Prpm is set, un-skip the rpm plugin -->
+                <rpm.skip>false</rpm.skip>
+            </properties>
         </profile>
 
         <!-- Map -Ddocker.push=true to enabling push at deploy -->

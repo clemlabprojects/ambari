@@ -12,14 +12,20 @@ export interface StandardFormField extends FormFieldBase {
   options?: Array<{ label: string; value: string; }>;
 }
 export interface ServiceSelectFormField extends FormFieldBase {
-    type: 'service-select';
-    serviceType: string;
+    type: 'service-select' | 'hadoop-discovery' | 'monitoring-discovery';
+    serviceType?: string;
+}
+
+
+export interface K8sDiscoveryFormField extends FormFieldBase {
+    type: 'k8s-discovery';
+    lookupLabel: string;
 }
 export interface GroupFormField extends FormFieldBase {
     type: 'group';
     fields: FormField[];
 }
-export type FormField = StandardFormField | ServiceSelectFormField | GroupFormField;
+export type FormField = StandardFormField | ServiceSelectFormField | K8sDiscoveryFormField | GroupFormField;
 
 export interface ServiceDefinition {
   label: string;

@@ -416,6 +416,9 @@ public class ControllerModule extends AbstractModule {
             .annotatedWith(Names.named(Resource.Type.ADHOC_KEYTAB.name()))
             .to(AdhocKeytabResourceProvider.class);
 
+    bind(ResourceProvider.class)
+            .annotatedWith(Names.named(Resource.Type.ADHOC_KEYTAB.name()))
+            .to(AdhocKeytabResourceProvider.class);
     InternalAuthenticationInterceptor ambariAuthenticationInterceptor = new InternalAuthenticationInterceptor();
     requestInjection(ambariAuthenticationInterceptor);
     bindInterceptor(any(), annotatedWith(RunWithInternalSecurityContext.class), ambariAuthenticationInterceptor);

@@ -2,56 +2,75 @@ package org.apache.ambari.view.k8s.model;
 
 import com.marcnuri.helm.Release;
 
-/**
- * Thin JSON-safe DTO for Helm releases.
- * Keep only simple types (String/Integer) to avoid Gson + JDK 17 reflection issues.
- */
+import java.util.List;
+
 public class HelmReleaseDTO {
-    // Keep these public to make Gson serialization trivial
-    public String id;        // namespace/name
+    public String id;
     public String name;
     public String namespace;
-    public String chart;     // e.g. "prometheus-community/prometheus"
-    public String version;   // appVersion if available
-    public String status;    // deployed/failed/pending, etc.
-    public Integer revision; // parsed from helm "revision"
-    public String created;   // keep null (or set ISO-8601 string yourself)
-    public String updated;   // keep null (or set ISO-8601 string yourself)
+    public String chart;
+    public String version;
+    public String appVersion;
+    public String status;
+    public String updated;
 
-    public Boolean managedByUi; // null/false if unknown
-    public String serviceKey;   // ex: "trino"
+    public boolean managedByUi;
+    public String serviceKey;
     public String repoId;
-    public String chartRef;     // ex: "prometheus-community/prometheus"
-    
-    public HelmReleaseDTO() {
-        // no-arg ctor for Gson
+    public String chartRef;
+    public boolean restartRequired;
+    public String securityProfile;
+    public boolean securityProfileStale;
+    public String message;
+    public String lastAppliedRevision;
+    public String lastAttemptedRevision;
+    public String lastHandledReconcileAt;
+    public String deploymentMode; // DIRECT_HELM (default) or FLUX_GITOPS
+    public String gitCommitSha;
+    public String gitBranch;
+    public String gitPath;
+    public String gitRepoUrl;
+    public String gitPrUrl;
+    public String gitPrNumber;
+    public String gitPrState;
+    public String sourceStatus;
+    public String sourceMessage;
+    public String sourceName;
+    public String sourceNamespace;
+    public String reconcileState;
+    public String reconcileMessage;
+    public String observedGeneration;
+    public String desiredGeneration;
+    public boolean staleGeneration;
+    public String lastTransitionTime;
+    public java.util.List<java.util.Map<String, String>> conditions;
+    public java.util.List<java.util.Map<String, String>> sourceConditions;
+    public List<ReleaseEndpointDTO> endpoints;
+
+    private static String parseVersionFromChart(String chart) {
+        if (chart == null || chart.isBlank()) return null;
+        // Common helm string: "<name>-<version>" optionally with repo prefix already stripped.
+        int idx = chart.lastIndexOf('-');
+        if (idx > 0 && idx < chart.length() - 1) {
+            String maybeVersion = chart.substring(idx + 1);
+            // crude semver-ish check
+            if (maybeVersion.matches("\\d+\\.\\d+.*")) {
+                return maybeVersion;
+            }
+        }
+        return null;
     }
 
-    /** Map from helm-java Release to our DTO (no java.time surfaces). */
     public static HelmReleaseDTO from(Release r) {
-        HelmReleaseDTO d = new HelmReleaseDTO();
-        d.name = r.getName();
-        d.namespace = r.getNamespace();
-        d.chart = r.getChart();
-        d.version = r.getAppVersion();
-        d.status = r.getStatus();
-
-        // Build a stable row key for the UI
-        d.id = (d.namespace != null ? d.namespace : "") + "/" + d.name;
-
-        // Normalize revision (helm-java may return Integer/String depending on version)
-        try {
-            Object rawRev = r.getRevision();
-            if (rawRev != null) {
-                d.revision = Integer.valueOf(String.valueOf(rawRev));
-            }
-        } catch (Exception ignore) {
-            d.revision = null;
-        }
-
-        // Don't expose java.time to Gson/Ambari; keep as null or set string yourself later
-        d.created = null;
-        d.updated = null;
-        return d;
+        HelmReleaseDTO dto = new HelmReleaseDTO();
+        dto.id = r.getName();
+        dto.name = r.getName();
+        dto.namespace = r.getNamespace();
+        dto.chart = r.getChart();
+        dto.version = parseVersionFromChart(r.getChart()); // best-effort from chart string
+        dto.appVersion = r.getAppVersion();
+        dto.status = String.valueOf(r.getStatus());
+        dto.updated = null;
+        return dto;
     }
 }

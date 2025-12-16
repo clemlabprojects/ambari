@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, Modal, Form, Input, Select, message, Spin, Alert, Checkbox, Card, Progress, Radio, Segmented, Space, Steps, Switch, Tabs, Tooltip, Typography,
-Upload} from 'antd';
+Upload, Tag
+} from 'antd'; // Added Tag import
 
-import { InfoCircleOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, UploadOutlined, LinkOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 import debounce from 'lodash.debounce';
@@ -13,7 +14,6 @@ import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
 
-import { UploadOutlined, LinkOutlined } from '@ant-design/icons';
 import * as pako from 'pako';
 import { untar } from 'js-untar';
 
@@ -22,11 +22,14 @@ import DynamicFormField from './DynamicFormField';
 import type { BindingSpec } from './types';
 import {
   makeTargetsPatch,
+  deleteAtStr,
   deepMerge,
   toPath, getAt, setAt,
   applyBindingTargets, interpolate, interpolateStr,
   buildVarContext,
 } from './bindings';
+
+import type { UploadFile } from 'antd/es/upload/interface';
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -52,6 +55,23 @@ const confirmMismatch = (chart: string, currentRepo: string, suggestedRepo: stri
     });
   });
 
+
+/* Helper to gather all field names that have excludeFromValues: true */
+const getExcludedPaths = (fields: FormField[]): string[] => {
+  let paths: string[] = [];
+  fields.forEach(f => {
+    // Check if this specific field is marked to be excluded
+    if ((f as any).excludeFromValues) {
+      paths.push(f.name);
+    }
+    // Recurse if it is a group
+    if (f.type === 'group' && (f as any).fields) {
+      paths = [...paths, ...getExcludedPaths((f as any).fields)];
+    }
+  });
+  return paths;
+};
+
 /* ---------------------------------- props ----------------------------------- */
 
 type ServiceInstallationModalProps = {
@@ -59,7 +79,19 @@ type ServiceInstallationModalProps = {
   onClose: () => void;
   onDeploy: () => void;
   mode?: 'deploy' | 'upgrade';
-  initialRelease?: { name: string; namespace: string; chart?: string };
+  initialRelease?: {
+    name: string;
+    namespace: string;
+    chart?: string;
+    repoId?: string;
+    currentValues?: any;
+    version?: string;
+    deploymentMode?: string;
+    gitRepoUrl?: string;
+    gitBranch?: string;
+    gitPath?: string;
+    gitPrNumber?: string;
+  };
 };
 
 /* =============================== main component ============================== */
@@ -80,11 +112,16 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [repoLoading, setRepoLoading] = useState(false);
   const [installMode, setInstallMode] = useState<'repo' | 'direct'>('repo');
   const [overrideChart, setOverrideChart] = useState(false);
+  const [securityProfiles, setSecurityProfiles] = useState<{ defaultProfile?: string; profiles: Record<string, any> }>({ profiles: {} });
 
   const [step, setStep] = useState(0);
   const [percent, setPct] = useState(0);
   const [stepTitles, setStepTitles] = useState<string[]>([]);
+  const [statusMsg, setStatusMsg] = useState<string>();
   const [showProgress, setShowProgress] = useState(false);
+
+  // New state for upgrade mode raw values
+  const [upgradeValues, setUpgradeValues] = useState('');
 
   const lockChart = mode === 'upgrade';
   const releaseChartRef = initialRelease?.chart || '';
@@ -113,12 +150,41 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   useEffect(() => {
     if (!visible) return;
 
-    setStep(0); setPct(0); setStepTitles([]); setShowProgress(false);
+    setStep(0); setPct(0); setStepTitles([]); setStatusMsg(undefined); setShowProgress(false);
 
+    // --- UPGRADE MODE INIT ---
     if (mode === 'upgrade' && initialRelease) {
       form.setFieldsValue({ releaseName: initialRelease.name, namespace: initialRelease.namespace });
+      form.setFieldsValue({ deploymentMode: initialRelease?.deploymentMode || 'DIRECT_HELM' });
+      const gitDefaults = initialRelease.gitRepoUrl ? {
+        repoUrl: initialRelease.gitRepoUrl,
+        branch: initialRelease.gitBranch,
+        commitMode: initialRelease.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT'
+      } : {};
+      form.setFieldsValue({
+        git: { ...(form.getFieldValue('git') || {}), ...gitDefaults },
+        repoId: initialRelease.repoId,
+        version: initialRelease.version
+      });
+      
+      // If we have current values (fetched by the parent component), switch to YAML view and populate
+      if (initialRelease.currentValues) {
+        setView('yaml');
+        const rawYaml = yaml.stringify(initialRelease.currentValues);
+        setEditorYaml(rawYaml);
+        setUpgradeValues(rawYaml);
+        
+        // Ensure form has basic metadata even if we don't use the form fields for values
+        form.setFieldsValue({
+            chart: initialRelease.chart,
+            repoId: initialRelease.repoId,
+            version: initialRelease.version
+        });
+      }
+      return; // Skip the rest of init for upgrade mode
     }
 
+    // --- DEPLOY MODE INIT ---
     let cancelled = false;
     setIsLoading(true);
     setRepoLoading(true);
@@ -126,11 +192,12 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
     (async () => {
       try {
-        const [services, reposList] = await Promise.all([getAvailableServices(), getHelmRepos()]);
+        const [services, reposList, secProfiles] = await Promise.all([getAvailableServices(), getHelmRepos(), getSecurityConfig()]);
         if (cancelled) return;
 
         setAvailableServices(services);
         setRepos(reposList);
+        setSecurityProfiles(secProfiles);
 
         let deducedKey = '';
         if (mode === 'upgrade' && initialRelease?.chart) {
@@ -157,16 +224,18 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           }
         }
 
-        if (svcKey) {
-          setSelectedServiceKey(svcKey);
-          const initialValues: any = {};
-          if ((services as any)[svcKey]?.form) setInitialValues((services as any)[svcKey].form, initialValues);
-          form.setFieldsValue({
-            svcKey,
-            ...initialValues,
-            ...(mode === 'upgrade' && initialRelease ? { releaseName: initialRelease.name, namespace: initialRelease.namespace } : {}),
-          });
-        }
+          if (svcKey) {
+            setSelectedServiceKey(svcKey);
+            const initialValues: any = {};
+            if ((services as any)[svcKey]?.form) setInitialValues((services as any)[svcKey].form, initialValues);
+            form.setFieldsValue({
+              svcKey,
+              deploymentMode: 'DIRECT_HELM',
+              ...initialValues,
+              ...(mode === 'upgrade' && initialRelease ? { releaseName: initialRelease.name, namespace: initialRelease.namespace } : {}),
+              securityProfile: secProfiles.defaultProfile,
+            });
+          }
 
          // Post-process: if serviceMonitor.labels.release is a templated string, resolve it now
          const cur = form.getFieldsValue(true);
@@ -197,24 +266,44 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, mode, initialRelease]);
+  }, [visible, mode, initialRelease]); // initialRelease dependency is key for upgrade re-init
 
   useEffect(() => { if (selectedServiceKey) form.setFieldsValue({ svcKey: selectedServiceKey }); }, [selectedServiceKey]);
 
   useEffect(() => {
-    if (installMode === 'direct') {
-      setView('yaml');          // show YAML editor
-    } else {
-      setView('form');          // show configuration form
+    // Only switch views automatically in DEPLOY mode. Upgrade mode forces YAML.
+    if (mode === 'deploy') {
+        if (installMode === 'direct') {
+        setView('yaml');          // show YAML editor
+        } else {
+        setView('form');          // show configuration form
+        }
     }
-  }, [installMode]);
+  }, [installMode, mode]);
+
+  useEffect(() => {
+    if (deploymentModeWatch === 'FLUX_GITOPS') {
+      const currentGit = form.getFieldValue('git') || {};
+      form.setFieldsValue({
+        git: {
+          baseBranch: currentGit.baseBranch || 'main',
+          pathPrefix: currentGit.pathPrefix || 'clusters/default',
+          commitMode: currentGit.commitMode || 'DIRECT_COMMIT',
+          ...currentGit
+        }
+      });
+    }
+  }, [deploymentModeWatch, form]);
+
   useEffect(() => {
     if (!visible) {
       form.resetFields();
       setSelectedServiceKey('');
       setInstallMode('repo');
       setOverrideChart(false);
-      setStep(0); setPct(0); setStepTitles([]); setShowProgress(false);
+      setStep(0); setPct(0); setStepTitles([]); setStatusMsg(undefined); setShowProgress(false);
+      setEditorYaml(''); // Clear editor
+      setUpgradeValues('');
     }
   }, [visible]);
 
@@ -231,28 +320,39 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     }
   }, [Form.useWatch(['monitoring', 'release'], form)]);
 
-  const handleServiceChange = (value: string) => {
+
+const handleServiceChange = (value: string) => {
     if (!availableServices) return;
+    
+    // 1. Capture "Sticky" values we want to preserve across service switches
+    const currentValues = form.getFieldsValue(['namespace', 'installMode', 'repoId', 'version']);
+    
     setSelectedServiceKey(value);
     prevMountsRef.current = null;
 
-    const { installMode, repoId: prevRepoId, version } = form.getFieldsValue(['installMode', 'repoId', 'version']);
+    // 2. Wipe the form state completely
+    form.resetFields(); 
+
+    // 3. Prepare defaults for the NEW service
     const initialValues: any = {};
     setInitialValues((availableServices as any)[value].form, initialValues);
 
-    let nextRepoId = prevRepoId;
+    let nextRepoId = currentValues.repoId;
     const preferred = (availableServices as any)[value]?.defaultRepo;
+    // Only switch repo if the user hasn't manually selected one, or if we want to enforce preference
     if (preferred && repos.find(r => r.id === preferred)) nextRepoId = preferred;
 
+    // 4. Set the new clean state
     form.setFieldsValue({
       svcKey: value,
-      installMode: installMode ?? 'repo',
+      installMode: currentValues.installMode ?? 'repo',
       repoId: nextRepoId,
-      version,
+      version: currentValues.version,
+      namespace: currentValues.namespace, // Keep the namespace the user typed
+      mounts: undefined, // reset mounts
       ...initialValues,
     });
   };
-
   /* -------- mounts ↔ form sync using bindings -------- */
 
   const mountsSpec = useMemo<MountSpec[]>(() => {
@@ -267,44 +367,64 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
   const watchedMounts = Form.useWatch(['mounts'], form);
   const releaseNameWatch = Form.useWatch(['releaseName'], form);
+  const deploymentModeWatch = Form.useWatch(['deploymentMode'], form);
 
   const allValues = Form.useWatch([], form); // watch the whole form
 
   // --- Live values.yaml preview (form values + targets applied) ---
   const previewYaml = useMemo(() => {
+    // Only generate preview from form in DEPLOY mode. In UPGRADE mode, the editor IS the source of truth.
+    if (mode === 'upgrade') return '';
+
     try {
       const raw = form.getFieldsValue(true) || {};
       const mounts = raw.mounts || {};
-      const mergedValues = { ...raw };
-      // NEW: resolve charts.json variables + templates before applying targets
+      // const mergedValues = { ...raw };
+      // need to deep clone to avoid mutating form values
+      const mergedValues = JSON.parse(JSON.stringify(raw));
+
       const svcAny = (availableServices as any)?.[selectedServiceKey] as any;
+      
+      // 1. Build context
       const varCtx = buildVarContext(svcAny?.variables, raw, mounts);
+      
+      // 2. Apply Bindings
       applyBindingTargets(mergedValues, bindings, mounts, raw, raw.releaseName || '', varCtx);
+      
+      // 3. Remove standard internal keys
       delete mergedValues.installMode;
       delete mergedValues.chartDirect;
       delete mergedValues.chartOverride;
       delete mergedValues.repoId;
       delete mergedValues.version;
       delete mergedValues.svcKey;
+
+      // 4. Remove fields marked as excludeFromValues in charts.json
+      if (svcAny?.form) {
+        const excluded = getExcludedPaths(svcAny.form);
+        excluded.forEach(path => deleteAtStr(mergedValues, path));
+      }
+
       return yaml.stringify(mergedValues, { aliasDuplicateObjects: false });
     } catch (e) {
       return '# (preview unavailable)';
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allValues, JSON.stringify(form.getFieldsValue(true)), JSON.stringify(bindings), JSON.stringify(watchedMounts)]);
+  }, [allValues, JSON.stringify(form.getFieldsValue(true)), JSON.stringify(bindings), JSON.stringify(watchedMounts), mode]);
 
   // --- 2) Local editor state
   const [editMode, setEditMode] = useState(false);
-  const [editorYaml, setEditorYaml] = useState(previewYaml);
+  const [editorYaml, setEditorYaml] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const isDirtyRef = useRef(false);
 
   useEffect(() => {
-    if (!isDirtyRef.current) {
+    // In Deploy mode, sync preview to editor unless user is typing
+    if (mode === 'deploy' && !isDirtyRef.current) {
       setEditorYaml(previewYaml);
       setParseError(null);
     }
-  }, [previewYaml]);
+  }, [previewYaml, mode]);
 
   const parsedRef = useRef<Record<string, any> | null>(null);
   const applyYamlDebounced = useRef(
@@ -326,7 +446,70 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     applyYamlDebounced(value ?? '');
   };
 
+  /**
+   * Build a lightweight Flux manifest preview (HelmRepository + HelmRelease) so users
+   * can see what will be committed when using GitOps mode. This is client-side only.
+   */
+  const fluxManifestsYaml = useMemo(() => {
+    if (deploymentModeWatch !== 'FLUX_GITOPS') return '';
+    try {
+      const rawValues = (mode === 'upgrade') ? (parsedRef.current || yaml.parse(editorYaml || '') || {}) : (previewYaml ? yaml.parse(previewYaml) : {});
+      const formValues = form.getFieldsValue(true) || {};
+      const releaseName = formValues.releaseName || initialRelease?.name || 'release';
+      const ns = formValues.namespace || initialRelease?.namespace || 'default';
+      const repoName = formValues.repoId || 'repo';
+      const chartRef = formValues.chartOverride || formValues.chartDirect || defaultChartName || formValues.chart || 'chart';
+      const selectedRepo = repos.find(r => r.id === (formValues.repoId || initialRelease?.repoId));
+      const helmRepoUrl = formValues?.git?.repoUrl || selectedRepo?.url || 'resolved-by-backend';
+      const pathPrefix = formValues?.git?.pathPrefix || 'clusters/default';
+      const branch = formValues?.git?.branch || formValues?.git?.baseBranch || 'main';
+      const targetPath = `${pathPrefix}/${ns}/${releaseName}`;
+      const hr: any = {
+        apiVersion: 'source.toolkit.fluxcd.io/v1',
+        kind: 'HelmRepository',
+        metadata: { name: repoName, namespace: 'flux-system' },
+        spec: {
+          interval: '5m',
+          url: helmRepoUrl
+        }
+      };
+      const release: any = {
+        apiVersion: 'helm.toolkit.fluxcd.io/v2',
+        kind: 'HelmRelease',
+        metadata: { name: releaseName, namespace: ns },
+        spec: {
+          interval: '5m',
+          chart: {
+            spec: {
+              chart: chartRef,
+              sourceRef: {
+                kind: 'HelmRepository',
+                name: repoName,
+                namespace: 'flux-system'
+              }
+            }
+          },
+          values: rawValues || {}
+        }
+      };
+      const docs = [
+        `# Path: ${targetPath} (branch ${branch})`,
+        yaml.stringify(hr, { aliasDuplicateObjects: false }).trim(),
+        yaml.stringify(release, { aliasDuplicateObjects: false }).trim()
+      ].join('\n---\n');
+      return docs;
+    } catch (e) {
+      return '# Flux manifest preview unavailable';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deploymentModeWatch, previewYaml, editorYaml, defaultChartName, repos, initialRelease]);
+
   const buildFinalValues = () => {
+    if (mode === 'upgrade') {
+        // In upgrade mode, what's in the editor is final
+        return parsedRef.current || {};
+    }
+
     const raw = form.getFieldsValue(true) || {};
     if (editMode && !parseError && parsedRef.current) {
       return { ...raw, ...parsedRef.current };
@@ -335,6 +518,9 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   };
 
   useEffect(() => {
+    // Skip bindings logic in Upgrade mode
+    if (mode === 'upgrade') return;
+
     if (!bindings.length || !watchedMounts) {
       prevMountsRef.current = watchedMounts || prevMountsRef.current;
       return;
@@ -381,7 +567,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     if (changed) form.setFieldsValue(nextValues);
     prevMountsRef.current = watchedMounts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(watchedMounts), JSON.stringify(bindings), JSON.stringify(mountsSpec), releaseNameWatch]);
+  }, [JSON.stringify(watchedMounts), JSON.stringify(bindings), JSON.stringify(mountsSpec), releaseNameWatch, mode]);
 
   /* -------- status/progress wiring -------- */
 
@@ -391,6 +577,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       (Array.isArray(s?.progress?.steps) && s.progress.steps.length > 0 && (s.progress.steps as string[])) ||
       null;
     if (titles) setStepTitles(titles || []);
+    if (typeof s?.message === 'string' && s.message) setStatusMsg(s.message);
 
     let idx: number | undefined;
     if (typeof s?.step === 'number') idx = s.step;
@@ -408,19 +595,24 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     }
     if (typeof pct === 'number' && Number.isFinite(pct)) setPct(Math.max(0, Math.min(100, pct)));
 
-    if (titles && typeof pct === 'number' && !showProgress) setShowProgress(true);
+    if (typeof pct === 'number' && !showProgress) setShowProgress(true);
     if (s?.state === 'SUCCEEDED') {
       setPct(100);
-      if (titles && !showProgress) setShowProgress(true);
+      if (!showProgress) setShowProgress(true);
     }
   };
 
   const pollStatus = async (id: string, onTick: (s: CommandStatus) => void) => {
     for (;;) {
-      const s = await getCommandStatus(id);
-      onTick(s);
-      applyStatusToProgress(s as any);
-      if (s.state === 'SUCCEEDED' || s.state === 'FAILED' || s.state === 'CANCELLED') return s;
+      try {
+        const s = await getCommandStatus(id);
+        onTick(s);
+        applyStatusToProgress(s as any);
+        if (s.state === 'SUCCEEDED' || s.state === 'FAILED' || s.state === 'CANCELLED' || s.state === 'CANCELED') return s;
+      } catch (err) {
+        // keep polling even if one tick fails
+        console.error('status poll failed', err);
+      }
       await new Promise(r => setTimeout(r, 1300));
     }
   };
@@ -428,101 +620,135 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   /* -------- submit -------- */
 
   const handleDeploy = async () => {
-    if (!availableServices) return;
     try {
-      // Validate visible fields, but read ALL values (including unmounted)
-      await form.validateFields();
-      const allValues = form.getFieldsValue(true) || {};
       setIsDeploying(true);
-
-      const {
-        svcKey,
-        version,
-        chartDirect,
-        repoId: repoIdRaw,
-        ...configValues
-      } = allValues;
-
-      let repoId = repoIdRaw ?? form.getFieldValue('repoId');
-
-      const currentService = (availableServices as any)[svcKey ?? selectedServiceKey] as any;
-      if (!currentService) {
-        message.error('Please choose a service to install.');
-        return;
-      }
-
-      message.loading({ content: `Deploying ${currentService.label} in progress...`, key: 'deploy' });
-
-      // --- repo sanity helper (works even if repoId field is unmounted) ---
-      const defaultRepo = (availableServices as any)[svcKey]?.defaultRepo;
-      if (
-        installMode === 'repo' &&
-        defaultRepo &&
-        repoId !== defaultRepo &&
-        !overrideChart &&
-        !chartDirect &&
-        !(form.getFieldValue('chartOverride') || '').includes('/')
-      ) {
-        const ok = await confirmMismatch(allValues.chart ?? defaultChartName, repoId, defaultRepo);
-        if (!ok) return;
-        form.setFieldsValue({ repoId: defaultRepo });
-        repoId = defaultRepo; // keep local copy in sync
-      }
-
-      // --- resolve chart reference ---
-      let chartRef: string;
-      if (installMode === 'repo') {
-        if (lockChart && releaseChartRef) {
-          chartRef = releaseChartRef;
-        } else {
-          const override = (form.getFieldValue('chartOverride') || '').trim();
-          chartRef = overrideChart && override ? override : defaultChartName;
+      let payload: any = {};
+      let params = new URLSearchParams();
+      const modeFlag = form.getFieldValue('deploymentMode') || 'DIRECT_HELM';
+      if (modeFlag === 'FLUX_GITOPS') {
+        const gitCfg = form.getFieldValue('git') || {};
+        if (!gitCfg.repoUrl) {
+          throw new Error('Git repository is required for Flux GitOps.');
         }
-        if (!chartRef) throw new Error('Chart not found: check charts.json or enter an override.');
+      }
+
+      if (mode === 'upgrade') {
+        // --- UPGRADE MODE: Trust the YAML editor ---
+        if (!editorYaml) {
+            throw new Error("Configuration YAML is empty.");
+        }
+        const parsedValues = yaml.parse(editorYaml);
+
+        // Basic payload for upgrade - null out the heavy automation parts
+        payload = {
+            chart: initialRelease?.chart,
+            releaseName: initialRelease?.name,
+            namespace: initialRelease?.namespace,
+            values: parsedValues,
+            mounts: null,        // Don't recreate mounts/secrets on upgrade
+            dependencies: null,  // Don't redeploy dependencies on upgrade
+            ranger: null,        // Don't re-run Ranger logic
+            serviceKey: undefined,
+            repoId: initialRelease?.repoId || form.getFieldValue('repoId'),
+            deploymentMode: form.getFieldValue('deploymentMode') || 'DIRECT_HELM',
+            git: form.getFieldValue('git') || undefined
+        };
+
+        if (initialRelease?.version) {
+            params.set('version', initialRelease.version);
+        }
+        if (initialRelease?.repoId) {
+            params.set('repoId', initialRelease.repoId);
+        }
+
       } else {
-        const direct = (chartDirect || '').trim();
-        if (direct) chartRef = direct;
-        else if (
-          currentService.chart &&
-          (currentService.chart.startsWith('oci://') ||
-            currentService.chart.endsWith('.tgz') ||
-            currentService.chart.includes('/'))
-        ) {
-          chartRef = currentService.chart;
-        } else {
-          throw new Error('Direct reference required (oci://, URL .tgz, or repo/chart).');
+        // --- DEPLOY MODE: Use Form + Automation ---
+        if (!availableServices) return;
+
+        // Validate visible fields, but read ALL values (including unmounted)
+        await form.validateFields();
+        const allValues = form.getFieldsValue(true) || {};
+
+        const {
+            svcKey,
+            version,
+            chartDirect,
+            repoId: repoIdRaw,
+            ...configValues
+        } = allValues;
+
+        let repoId = repoIdRaw ?? form.getFieldValue('repoId');
+
+        const currentService = (availableServices as any)[svcKey ?? selectedServiceKey] as any;
+        if (!currentService) {
+            message.error('Please choose a service to install.');
+            return;
         }
-      }
 
-      // --- query params ---
-      const params = new URLSearchParams();
-      if (installMode === 'repo' && repoId) params.set('repoId', String(repoId));
-      if (version) params.set('version', String(version));
+        message.loading({ content: `Deploying ${currentService.label} in progress...`, key: 'deploy' });
 
-      const dependencies = currentService.dependencies || null;
-      const secretName = currentService.secretName || null;
+        // Repo sanity check logic...
+        const defaultRepo = (availableServices as any)[svcKey]?.defaultRepo;
+        if (installMode === 'repo' && defaultRepo && repoId !== defaultRepo && !overrideChart && !chartDirect && !(form.getFieldValue('chartOverride') || '').includes('/')) {
+            const ok = await confirmMismatch(allValues.chart ?? defaultChartName, repoId, defaultRepo);
+            if (!ok) return;
+            form.setFieldsValue({ repoId: defaultRepo });
+            repoId = defaultRepo;
+        }
 
-      // --- values merging (bindings.targets) ---
-      const mergedValues = { ...configValues };
-      const mounts = allValues.mounts || {};
-      const bindingList = (currentService?.bindings || []) as BindingSpec[];
-      // NEW: build var context from charts.json service.variables (generic)
-      const varCtx = buildVarContext((currentService as any)?.variables, allValues, mounts);
+        let chartRef: string;
+        if (installMode === 'repo') {
+            const override = (form.getFieldValue('chartOverride') || '').trim();
+            chartRef = overrideChart && override ? override : defaultChartName;
+            if (!chartRef) throw new Error('Chart not found.');
+        } else {
+            const direct = (chartDirect || '').trim();
+            if (direct) chartRef = direct;
+            else if (currentService.chart) chartRef = currentService.chart;
+            else throw new Error('Direct reference required.');
+        }
 
-      const finalPatch = makeTargetsPatch(bindingList, mounts, allValues, allValues.releaseName, varCtx);
-      if (Object.keys(finalPatch).length > 0) deepMerge(mergedValues, finalPatch);
+        if (installMode === 'repo' && repoId) params.set('repoId', String(repoId));
+        if (version) {
+            params.set('version', String(version));
+        } else {
+            params.set('version', String(currentService.version));
+        }
 
-      const payload = {
-        chart: chartRef,
-        releaseName: allValues.releaseName,
-        namespace: allValues.namespace,
-        values: mergedValues,
-        mounts,
-        serviceKey: (allValues.svcKey ?? selectedServiceKey) || undefined,
-        dependencies,
-        secretName,
-      };
+        const mergedValues = JSON.parse(JSON.stringify(configValues));
+        const mounts = allValues.mounts || {};
+        const bindingList = (currentService?.bindings || []) as BindingSpec[];
+        const varCtx = buildVarContext((currentService as any)?.variables, allValues, mounts);
+        const finalPatch = makeTargetsPatch(bindingList, mounts, allValues, allValues.releaseName, varCtx);
+        
+        if (Object.keys(finalPatch).length > 0) deepMerge(mergedValues, finalPatch);
 
+        if (currentService?.form) {
+            const excluded = getExcludedPaths(currentService.form);
+            excluded.forEach(path => deleteAtStr(mergedValues, path));
+        }
+
+        payload = {
+            chart: chartRef,
+            releaseName: allValues.releaseName,
+            namespace: allValues.namespace,
+            values: mergedValues,
+            mounts,
+            serviceKey: (allValues.svcKey ?? selectedServiceKey) || undefined,
+            repoId: repoId || undefined,
+            dependencies: currentService.dependencies || null,
+            imageGlobalRegistryProperty: currentService.imageGlobalRegistryProperty || null,
+            ranger: currentService.ranger || null,
+            endpoints: currentService.endpoints || null,
+            requiredConfigMaps: currentService.requiredConfigMaps || null,
+            secretName: currentService.secretName || null,
+            securityProfile: allValues.securityProfile || securityProfiles.defaultProfile || undefined,
+            deploymentMode: allValues.deploymentMode || 'DIRECT_HELM',
+            git: allValues.git || undefined,
+        };
+      } // End Deploy Mode Logic
+
+      // --- Common Submit Logic ---
       const { id } = await (await import('../../api/client')).submitHelmDeploy(payload, params);
 
       const final = await pollStatus(id, s => {
@@ -530,16 +756,16 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       });
 
       if (final.state === 'SUCCEEDED') {
-        message.success({ content: 'Deployment completed', key: 'deploy', duration: 3 });
+        message.success({ content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`, key: 'deploy', duration: 3 });
         onDeploy();
         onClose();
         form.resetFields();
       } else {
-        message.error(final.error || 'Deployment failed');
+        message.error(final.error || 'Operation failed');
       }
     } catch (e: any) {
       console.error(e);
-      message.error(e?.message ?? 'Deployment failed');
+      message.error(e?.message ?? 'Operation failed');
     } finally {
       setIsDeploying(false);
     }
@@ -626,8 +852,23 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     }
   };
   const renderForm = () => {
-    if (repoLoading) return <Spin tip="Loading repositories..." />;
-    if (isLoading) return <div style={{ textAlign: 'center', padding: '40px 0' }}><Spin tip="Loading services..." /></div>;
+    const showLoading = repoLoading || isLoading;
+    const backdrop = showLoading ? (
+      <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: '100%', position: 'absolute', top: 0, left: 0 }}>
+          <Progress percent={70} status="active" showInfo={false} strokeColor="#1677ff" />
+        </div>
+        <Spin size="large" tip={repoLoading ? 'Loading repositories...' : 'Loading services...'} />
+      </div>
+    ) : null;
+
+    if (repoLoading || isLoading) {
+      return (
+        <div style={{ position: 'relative', minHeight: 300 }}>
+          {backdrop}
+        </div>
+      );
+    }
     if (error) return <Alert message="Error" description={error} type="error" showIcon />;
     if (!availableServices || !selectedServiceKey) {
       return (
@@ -661,8 +902,8 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     style={{ marginBottom: 8 }}
   />
 
-  {view === 'form' ? (
-    <>
+      {view === 'form' ? (
+        <>
       <Form.Item
         name="installMode"
         label={
@@ -681,6 +922,59 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
           <Radio value="direct">Direct reference</Radio>
         </Radio.Group>
       </Form.Item>
+
+      <Form.Item
+        name="deploymentMode"
+        label="Deployment mode"
+        initialValue="DIRECT_HELM"
+        tooltip="Choose Direct Helm (default) or Flux GitOps (commit manifests to Git)"
+        rules={[{ required: true }]}
+      >
+        <Radio.Group>
+          <Radio value="DIRECT_HELM">Direct Helm</Radio>
+          <Radio value="FLUX_GITOPS">Flux GitOps</Radio>
+        </Radio.Group>
+      </Form.Item>
+
+      {deploymentModeWatch === 'FLUX_GITOPS' && (
+        <Card size="small" title="Flux / GitOps settings" style={{ marginBottom: 12 }}>
+          <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Git repository is required in GitOps mode' }]}>
+            <Input placeholder="https://git.example.com/org/cluster-config.git" />
+          </Form.Item>
+          <Form.Item name={['git','baseBranch']} label="Base branch" tooltip="Branch to base commits/PRs on">
+            <Input placeholder="main" />
+          </Form.Item>
+          <Form.Item
+            name={['git','pathPrefix']}
+            label="Path prefix"
+            tooltip="Directory under the repo for Flux manifests (relative, no leading / or ..)"
+            rules={[
+              { required: true, message: 'Path prefix is required' },
+              { pattern: /^(?!\/)(?!.*\.\.)(?!.*\s).*$/, message: 'Use a relative path without \"..\"' }
+            ]}
+          >
+            <Input placeholder="clusters/default" />
+          </Form.Item>
+          <Form.Item name={['git','branch']} label="Working branch" tooltip="If empty, a branch will be generated automatically">
+            <Input placeholder="feature/ambari-flux" />
+          </Form.Item>
+          <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
+            <Select>
+              <Option value="DIRECT_COMMIT">Direct commit</Option>
+              <Option value="PR_MODE">Open PR (token required)</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name={['git','credentialAlias']} label="Saved credential alias" tooltip="Reuse a previously stored token/SSH key (optional)">
+            <Input placeholder="alias from credential store" />
+          </Form.Item>
+          <Form.Item name={['git','authToken']} label="Auth token" tooltip="HTTPS personal access token (stored securely)" >
+            <Input.Password placeholder="Token (optional if using SSH key)" />
+          </Form.Item>
+          <Form.Item name={['git','sshKey']} label="SSH private key" tooltip="PEM private key (optional)" >
+            <Input.TextArea rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+          </Form.Item>
+        </Card>
+      )}
 
       {installMode === 'repo' ? (
         <>
@@ -730,6 +1024,14 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
           <Form.Item name="version" label="Version (optional)">
             <Input placeholder="1.2.3" />
+          </Form.Item>
+
+          <Form.Item name="securityProfile" label="Security Profile" tooltip="Apply a global security profile (LDAP/AD/OIDC truststore wiring)">
+            <Select allowClear placeholder="Default profile">
+              {Object.keys(securityProfiles.profiles || {}).map(key => (
+                <Option key={key} value={key}>{key}</Option>
+              ))}
+            </Select>
           </Form.Item>
 
           <Form.Item name="svcKey" label={serviceLabel} rules={[{ required: true, message: 'Please choose a service' }]}>
@@ -805,69 +1107,91 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
         </>
       )}
     </>
-  ) : (
-    // view === 'yaml'
-    <Card
-      title={
-        <Space split={<span style={{ opacity: 0.4 }}>|</span>}>
-          <Text strong>values.yaml</Text>
-          <Space>
-            <Text type="secondary">Edit mode</Text>
-            <Switch
-              checked={editMode}
-              onChange={(on) => {
-                setEditMode(on);
-                isDirtyRef.current = false;
-                if (!on) setParseError(null);
-              }}
-            />
-          </Space>
-        </Space>
-      }
-      size="small"
-      style={{ marginTop: 8, marginBottom: 16 }}
-    >
-      {loadingChart ? (
-        <div style={{ textAlign: 'center', padding: 24 }}><Spin tip="Loading chart..." /></div>
-      ) : !editMode ? (
-        <Editor
-          height="360px"
-          language="yaml"
-          value={editorYaml || previewYaml}
-          options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false }}
-        />
       ) : (
-        <>
+    // view === 'yaml'
+    <>
+      <Card
+        title={
+          <Space split={<span style={{ opacity: 0.4 }}>|</span>}>
+            <Text strong>values.yaml</Text>
+            <Space>
+              <Text type="secondary">Edit mode</Text>
+              {mode !== 'upgrade' && (
+                  <Switch
+                  checked={editMode}
+                  onChange={(on) => {
+                      setEditMode(on);
+                      isDirtyRef.current = false;
+                      if (!on) setParseError(null);
+                  }}
+                  />
+              )}
+              {mode === 'upgrade' && <Tag color="warning">Editable</Tag>}
+            </Space>
+          </Space>
+        }
+        size="small"
+        style={{ marginTop: 8, marginBottom: 16 }}
+      >
+        {loadingChart ? (
+          <div style={{ textAlign: 'center', padding: 24 }}><Spin tip="Loading chart..." /></div>
+        ) : !editMode && mode !== 'upgrade' ? (
           <Editor
             height="360px"
             language="yaml"
             value={editorYaml || previewYaml}
-            onChange={onEditorChange}
-            options={{ readOnly: false, automaticLayout: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+            options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false }}
           />
-          {parseError && (
-            <Alert
-              style={{ marginTop: 8 }}
-              type="error"
-              message="YAML error"
-              description={<pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{parseError}</pre>}
-              showIcon
+        ) : (
+          <>
+            <Editor
+              height="360px"
+              language="yaml"
+              value={editorYaml || previewYaml}
+              onChange={onEditorChange}
+              options={{ readOnly: false, automaticLayout: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
             />
-          )}
-        </>
+            {parseError && (
+              <Alert
+                style={{ marginTop: 8 }}
+                type="error"
+                message="YAML error"
+                description={<pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{parseError}</pre>}
+                showIcon
+              />
+            )}
+          </>
+        )}
+      </Card>
+
+      {deploymentModeWatch === 'FLUX_GITOPS' && (
+        <Card size="small" title="Flux manifests preview" style={{ marginBottom: 16 }}>
+          <Typography.Paragraph>
+            <Text type="secondary">HelmRepository and HelmRelease that will be committed when using GitOps.</Text>
+          </Typography.Paragraph>
+          <Editor
+            height="280px"
+            language="yaml"
+            value={fluxManifestsYaml}
+            options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+          />
+        </Card>
       )}
-    </Card>
+    </>
   )}
 </Space>
 
 
-    {showProgress && stepTitles.length > 0 && (
+    {showProgress && (
       <>
-        <Steps current={Math.min(step, Math.max(0, stepTitles.length - 1))} size="small" style={{ marginBottom: 16 }}>
-          {stepTitles.map((t: string, i: number) => (
-            <Step key={`${i}-${t}`} title={t} />
-          ))}
-        </Steps>
+        {stepTitles.length > 0 && (
+          <Steps current={Math.min(step, Math.max(0, stepTitles.length - 1))} size="small" style={{ marginBottom: 12 }}>
+            {stepTitles.map((t: string, i: number) => (
+              <Step key={`${i}-${t}`} title={t} />
+            ))}
+          </Steps>
+        )}
+        {statusMsg && <div style={{ marginBottom: 8, fontWeight: 500 }}>{statusMsg}</div>}
         <Progress percent={percent} status={percent < 100 ? 'active' : 'success'} />
       </>
     )}
@@ -878,16 +1202,17 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
   return (
     <Modal
-      title={mode === 'upgrade' ? `Update ${initialRelease?.name ?? ''}` : 'Install a Service via Helm'}
+      title={mode === 'upgrade' ? `Upgrade ${initialRelease?.name ?? ''}` : 'Install a Service via Helm'}
       open={visible}
       onCancel={onClose}
-      width={700}
-      okText="Deploy"
+      width={900}
+      okText={mode === 'upgrade' ? 'Update Release' : 'Deploy'}
       okButtonProps={{
-        form: 'install_form',
-        htmlType: 'submit',
+        form: 'install_form', // Use form submit for deploy (handled by onFinish)
+        htmlType: mode === 'upgrade' ? 'button' : 'submit', // Button for upgrade (manual click)
+        onClick: mode === 'upgrade' ? handleDeploy : undefined, // Hook manual click only for upgrade
         loading: isDeploying || isLoading,
-        disabled: installMode === 'direct' && !editorYaml, // <— add this
+        disabled: (installMode === 'direct' && !editorYaml) || (mode === 'upgrade' && !editorYaml),
       }}
       maskClosable={false}
     >
@@ -897,7 +1222,5 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
   
 };
-
-
 
 export default ServiceInstallationModal;

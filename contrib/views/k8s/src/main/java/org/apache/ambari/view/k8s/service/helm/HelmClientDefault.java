@@ -200,4 +200,61 @@ public class HelmClientDefault implements HelmClient {
         }
         return 0;
     }
+    /**
+     * Return the *rendered* default values.yaml for a chart as a Map.
+     *
+     * This is basically `helm show values <chart> --version <v> --repository-config <repo>` wired
+     * through helm-java, then parsed from YAML into a Java Map.
+     *
+     * @param chartRef          Fully resolved chart reference:
+     *                          - HTTP repo: "bitnami/trino"
+     *                          - OCI repo:  "oci://registry.example.com/trino"
+     * @param versionOpt      Optional chart version. If null/blank, Helm will pick latest.
+     * @param repoConfigPath Path to repositories.yaml (same one you already use elsewhere).
+     * @return Parsed values as a Map<String,Object>. Empty map on error.
+     */
+    @Override
+    public String showValues(String chartRef, String versionOpt, Path repoConfigPath) {
+        try {
+            // For 0.0.15:
+            // - Use Helm.show(String chartRef) for repo/OCI references
+            // - Then .values() to target "helm show values"
+            ShowCommand showCommand = Helm.show(chartRef);
+
+            ShowCommand.ShowSubcommand valuesCmd = showCommand.values();
+
+            // Version is optional, same semantics as CLI's --version
+            if (versionOpt != null && !versionOpt.isBlank()) {
+                valuesCmd = valuesCmd.withVersion(versionOpt.trim());
+            }
+
+            // helm-java returns the YAML as a String, like "helm show values" would
+            String yaml = valuesCmd.call();
+            if (yaml == null) {
+                LOG.warn("helm show values returned null for chartRef={} version={}", chartRef, versionOpt);
+                return "";
+            }
+            return yaml;
+        } catch (Exception e) {
+            LOG.warn("Failed to run 'helm show values' for chartRef={} version={}: {}",
+                    chartRef, versionOpt, e.toString(), e);
+            return "";
+        }
+    }
+
+    @Override
+    public String showChart(String chartRef, String versionOpt, Path repoConfigPath) {
+        try {
+            ShowCommand showCommand = Helm.show(chartRef);
+            ShowCommand.ShowSubcommand chartCmd = showCommand.chart();
+            if (versionOpt != null && !versionOpt.isBlank()) {
+                chartCmd = chartCmd.withVersion(versionOpt.trim());
+            }
+            return chartCmd.call();
+        } catch (Exception e) {
+            LOG.warn("Failed to run 'helm show chart' for chartRef={} version={}: {}",
+                    chartRef, versionOpt, e.toString(), e);
+            return "";
+        }
+    }
 }

@@ -28,6 +28,30 @@ html, body {
   background-color: #f0f0f0;
 }
 
+// When embedding a contrib view, let the inner app own scrolling and width.
+html.contribview,
+body.contribview {
+  overflow: hidden;
+  height: 100%;
+}
+#main.contribview,
+.contribview #main {
+  min-width: 0;
+  padding-bottom: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.contribview #wrapper {
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+.contribview #content,
+.contribview .page-content {
+  height: 100%;
+  overflow: hidden;
+}
+
 .form-text {
   line-height: 34px;
 }
@@ -1910,13 +1934,13 @@ i.glyphicon-asterisks {
     padding: 0 15px;
   }
 
-  .contribview .main-container {
-    width: auto;
-  }
-
+  .contribview .main-container,
   .contribview .navbar .main-container {
-    width: 940px;
-    margin: 0 auto;
+    width: 100%;
+    max-width: none;
+    padding-left: 0;
+    padding-right: 0;
+    margin: 0;
   }
 }
 

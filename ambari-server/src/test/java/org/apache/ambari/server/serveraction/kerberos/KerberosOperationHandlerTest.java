@@ -527,6 +527,11 @@ public abstract class KerberosOperationHandlerTest extends EasyMockSupport {
       public boolean removePrincipal(String principal, boolean service) throws KerberosOperationException {
         return false;
       }
+
+      @Override
+      public void ensureHostExists(String hostname) throws KerberosOperationException {
+          return; // nothing to do
+      }
     };
 
     handler.open(new PrincipalKeyCredential("admin/admin", "hadoop"), "EXAMPLE.COM", null);

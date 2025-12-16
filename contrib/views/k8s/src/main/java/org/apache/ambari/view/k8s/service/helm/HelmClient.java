@@ -56,4 +56,18 @@ public interface HelmClient {
     default void rollback(String releaseName, String namespace, int revision, String kubeconfigContents) {
         throw new UnsupportedOperationException("Rollback not supported by helm-java yet.");
     }
+
+    /**
+     * Run `helm show values` on the given chartRef (optionally with version)
+     * and return the raw YAML as a String.
+     */
+    String showValues(String chartRef, String versionOpt, java.nio.file.Path repoConfigPath);
+
+    /**
+     * Run `helm show chart` on the given chartRef (optionally with version)
+     * and return the raw YAML as a String.
+     */
+    default String showChart(String chartRef, String versionOpt, java.nio.file.Path repoConfigPath) {
+        throw new UnsupportedOperationException("showChart not implemented");
+    }
 }

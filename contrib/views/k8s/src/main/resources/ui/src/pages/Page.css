@@ -1,7 +1,7 @@
 /* ui/src/pages/Page.css */
 /* Styles communs pour les pages */
 .page-header {
-  margin-bottom: 24px;
+  margin-bottom: 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
