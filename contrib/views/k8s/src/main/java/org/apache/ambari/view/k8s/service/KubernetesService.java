@@ -143,10 +143,9 @@ public class KubernetesService {
     private static final String DEFAULT_MONITORING_RELEASE = "kube-prometheus-stack";
     private static final String DEFAULT_MONITORING_NAMESPACE = "monitoring";
     private static final String DEFAULT_MONITORING_CHART = "kube-prometheus-stack";
-    private static final String DEFAULT_MONITORING_REPO_ID = "clemlab";
-    private static final String DEFAULT_MONITORING_REPO_NAME = "clemlab";
-    private static final String DEFAULT_MONITORING_REPO_URL = "registry.clemlab.com/clemlabprojects/charts";
-    private static final String DEFAULT_MONITORING_REPO_IMAGE_PROJECT = "clemlabprojects";
+    private static final String MONITORING_DEFAULT_REPO_FALLBACK_ID = "monitoring-default";
+    private static final String MONITORING_DEFAULT_REPO_FALLBACK_NAME = "Monitoring repository";
+    private static final String MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP = "monitoring.defaultRepo.autoCreate";
     private static final String SETTINGS_KEY = "view.settings.json";
     private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
 
@@ -485,7 +484,11 @@ public class KubernetesService {
                 String st = "";
                 try {
                     st = String.valueOf(r.getStatus()).toLowerCase(Locale.ROOT);
-                } catch (Exception ignore) { }
+                } catch (Exception e) {
+                    // Expected: Release status may be null or unreadable in some edge cases
+                    // Default to empty string and continue processing other releases
+                    LOG.debug("Could not read status for release {}: {}", r.getName(), e.getMessage());
+                }
                 if (st.contains("fail")) {
                     failed++;
                 } else if (st.contains("pending")) {
@@ -743,47 +746,60 @@ public class KubernetesService {
     }
 
     /**
-     * Ensure a repo exists for monitoring bootstrap. If none are configured, create a default.
+     * Ensure a repo exists for monitoring bootstrap. Auto-creation is only triggered when explicitly enabled.
      */
     private void ensureMonitoringRepoPresent() {
         Collection<HelmRepoEntity> repos = repositoryService.list();
         if (repos != null && !repos.isEmpty()) {
             return;
         }
-        String repoId = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.id"))
-                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_ID);
-        String repoName = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.name"))
-                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_NAME);
+        boolean autoCreate = Boolean.parseBoolean(viewContext.getAmbariProperty(MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP));
+        if (!autoCreate) {
+            LOG.debug("Monitoring repository auto-creation disabled ({} not set to true)", MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP);
+            return;
+        }
+
         String repoUrl = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.url"))
-                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_URL);
+                .filter(s -> !s.isBlank()).orElse(null);
+        if (repoUrl == null) {
+            LOG.warn("Auto-creation requested but monitoring.defaultRepo.url is missing");
+            return;
+        }
+        String repoId = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.id"))
+                .filter(s -> !s.isBlank()).orElse(MONITORING_DEFAULT_REPO_FALLBACK_ID);
+        String repoName = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.name"))
+                .filter(s -> !s.isBlank()).orElse(MONITORING_DEFAULT_REPO_FALLBACK_NAME);
+        String repoType = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.type"))
+                .filter(s -> !s.isBlank()).orElse("OCI");
         String imageProject = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.imageProject"))
-                .filter(s -> !s.isBlank()).orElse(DEFAULT_MONITORING_REPO_IMAGE_PROJECT);
+                .filter(s -> !s.isBlank()).orElse(null);
         String username = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.username"))
                 .filter(s -> !s.isBlank()).orElse(null);
         String password = Optional.ofNullable(viewContext.getAmbariProperty("monitoring.defaultRepo.password"))
                 .filter(s -> !s.isBlank()).orElse(null);
 
-        if (repoUrl == null || repoUrl.isBlank()) {
-            LOG.warn("Cannot create default monitoring repo: monitoring.defaultRepo.url is empty");
-            return;
+        if (repoType == null || repoType.isBlank()) {
+            repoType = "OCI";
         }
 
         try {
-        HelmRepoEntity entity = new HelmRepoEntity();
-        entity.setId(repoId);
-        entity.setName(repoName);
-        entity.setType("OCI");
-        entity.setUrl(repoUrl);
-        entity.setImageProject(imageProject);
-        entity.setAuthMode(username != null ? "basic" : "anonymous");
-        entity.setUsername(username);
-        if (username != null) {
-            LOG.info("Default monitoring repo will use basic auth for user {}", username);
-        }
-        repositoryService.save(entity, password);
-        LOG.info("Created default monitoring repository id={} url={}", repoId, repoUrl);
-    } catch (Exception e) {
-        LOG.warn("Failed to create default monitoring repository: {}", e.getMessage());
+            HelmRepoEntity entity = new HelmRepoEntity();
+            entity.setId(repoId);
+            entity.setName(repoName);
+            entity.setType(repoType);
+            entity.setUrl(repoUrl);
+            if (imageProject != null) {
+                entity.setImageProject(imageProject);
+            }
+            entity.setAuthMode(username != null ? "basic" : "anonymous");
+            entity.setUsername(username);
+            if (username != null) {
+                LOG.info("Monitoring repo auto-create will use basic auth for user {}", username);
+            }
+            repositoryService.save(entity, password);
+            LOG.info("Created monitoring repository id={} url={}", repoId, repoUrl);
+        } catch (Exception e) {
+            LOG.warn("Failed to create monitoring repository: {}", e.getMessage());
         }
     }
 
@@ -2662,5 +2678,41 @@ public class KubernetesService {
             }
             return Collections.emptyMap();
         }
+    }
+
+    /**
+     * Shutdown static executor services gracefully.
+     * Should be called during application shutdown.
+     */
+    public static void shutdownStaticExecutors() {
+        LOG.info("Shutting down KubernetesService static executor pools");
+        
+        if (METRICS_POOL != null) {
+            METRICS_POOL.shutdown();
+            try {
+                if (!METRICS_POOL.awaitTermination(5, TimeUnit.SECONDS)) {
+                    METRICS_POOL.shutdownNow();
+                    LOG.warn("METRICS_POOL did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                METRICS_POOL.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        if (BOOTSTRAP_POOL != null) {
+            BOOTSTRAP_POOL.shutdown();
+            try {
+                if (!BOOTSTRAP_POOL.awaitTermination(5, TimeUnit.SECONDS)) {
+                    BOOTSTRAP_POOL.shutdownNow();
+                    LOG.warn("BOOTSTRAP_POOL did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                BOOTSTRAP_POOL.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        LOG.info("KubernetesService static executor pools shutdown complete");
     }
 }

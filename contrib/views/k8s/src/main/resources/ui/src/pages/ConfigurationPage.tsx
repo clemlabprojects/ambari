@@ -7,7 +7,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, getMonitoringDiscovery, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, API_BASE_URL } from '../api/client';
+import { installMonitoring, getMonitoringDiscovery, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -35,13 +35,31 @@ const ConfigurationPage: React.FC = () => {
     const [monitoringLoading, setMonitoringLoading] = React.useState(false);
     const [repoModalOpen, setRepoModalOpen] = React.useState(false);
     const [repoSaving, setRepoSaving] = React.useState(false);
+    const [repoTesting, setRepoTesting] = React.useState(false);
     const [currentStep, setCurrentStep] = React.useState<number>(0);
     const [step1Done, setStep1Done] = React.useState(status !== 'unconfigured');
     const [step2Saved, setStep2Saved] = React.useState(false); // bootstrap
     const [step3Saved, setStep3Saved] = React.useState(false); // storage
     const [goDashLoading, setGoDashLoading] = React.useState(false);
 
-  const navButtons = (
+    const repoSelectOptions = React.useMemo(() => {
+        const options = [...repos];
+        options.push({
+            value: '__add_repo__',
+            label: '+ Add repository',
+        });
+        return options;
+    }, [repos]);
+
+    const handleMonitoringRepoChange = (value: string | undefined) => {
+        if (value === '__add_repo__') {
+            const current = form.getFieldValue('monitoring') || {};
+            form.setFieldsValue({ monitoring: { ...current, repoId: undefined } });
+            setRepoModalOpen(true);
+        }
+    };
+
+    const navButtons = (
     <Space>
       {currentStep > 0 && <Button onClick={() => setCurrentStep(currentStep - 1)}>Back</Button>}
       {currentStep < 2 && (
@@ -121,6 +139,18 @@ const ConfigurationPage: React.FC = () => {
       </Space>
     );
 
+    const refreshRepos = React.useCallback(async () => {
+        setLoadingRepos(true);
+        try {
+            const r = await getHelmRepos();
+            setRepos(r.map((x:any) => ({ value: x.id, label: `${x.name || x.id} (${x.type})` })));
+        } catch (err) {
+            console.error('Failed to load Helm repositories', err);
+        } finally {
+            setLoadingRepos(false);
+        }
+    }, []);
+
     const handleCustomRequest = (options: RcCustomRequestOptions) => {
         const { onSuccess, onError, file, onProgress } = options;
 
@@ -152,18 +182,7 @@ const ConfigurationPage: React.FC = () => {
     };
 
     React.useEffect(() => {
-        const loadRepos = async () => {
-            try {
-                setLoadingRepos(true);
-                const r = await getHelmRepos();
-                setRepos(r.map((x:any) => ({ value: x.id, label: `${x.name || x.id} (${x.type})` })));
-            } catch (e:any) {
-                // ignore
-            } finally {
-                setLoadingRepos(false);
-            }
-        };
-        loadRepos();
+        void refreshRepos();
         const loadSettings = async () => {
             try {
                 const s = await getViewSettings();
@@ -199,7 +218,45 @@ const ConfigurationPage: React.FC = () => {
             }
         };
         loadSettings();
-    }, [form]);
+    }, [form, refreshRepos]);
+
+    const handleSaveRepo = React.useCallback(async () => {
+        try {
+            const vals = await repoForm.validateFields();
+            const { secret, ...entity } = vals;
+            setRepoSaving(true);
+            await saveHelmRepo(entity, secret || undefined);
+            message.success('Repository saved');
+            setRepoModalOpen(false);
+            repoForm.resetFields();
+            await refreshRepos();
+        } catch (e:any) {
+            if (e?.errorFields) return;
+            message.error(e?.message || 'Save failed');
+        } finally {
+            setRepoSaving(false);
+        }
+    }, [refreshRepos, repoForm]);
+
+    const handleTestRepo = React.useCallback(async () => {
+        try {
+            const vals = await repoForm.validateFields();
+            const { secret, ...entity } = vals;
+            if (!entity.id) {
+                throw new Error('Repository ID is required to test connectivity.');
+            }
+            setRepoTesting(true);
+            await saveHelmRepo(entity, secret || undefined);
+            await loginHelmRepo(entity.id);
+            message.success('Repository saved and login verified');
+            await refreshRepos();
+        } catch (e:any) {
+            if (e?.errorFields) return;
+            message.error(e?.message || 'Test failed');
+        } finally {
+            setRepoTesting(false);
+        }
+    }, [refreshRepos, repoForm]);
 
     let navigate = useNavigate();
     const uploadProps = {
@@ -370,7 +427,8 @@ const ConfigurationPage: React.FC = () => {
                                       allowClear
                                       loading={loadingRepos}
                                       placeholder="Use configured/default repo"
-                                      options={repos}
+                                      options={repoSelectOptions}
+                                      onChange={handleMonitoringRepoChange}
                                     />
                                 </Form.Item>
                               </Col>
@@ -575,25 +633,13 @@ const ConfigurationPage: React.FC = () => {
           title="Add Helm Repository"
           open={repoModalOpen}
           onCancel={() => setRepoModalOpen(false)}
-          onOk={async () => {
-            try {
-              const vals = await repoForm.validateFields();
-              const { secret, ...entity } = vals;
-              setRepoSaving(true);
-              await saveHelmRepo(entity, secret || undefined);
-              message.success('Repository saved');
-              setRepoModalOpen(false);
-              repoForm.resetFields();
-              const r = await getHelmRepos();
-              setRepos(r.map((x:any) => ({ value: x.id, label: `${x.name || x.id} (${x.type})` })));
-            } catch (e:any) {
-              if (e?.errorFields) return;
-              message.error(e?.message || 'Save failed');
-            } finally {
-              setRepoSaving(false);
-            }
-          }}
-          confirmLoading={repoSaving}
+          footer={
+            <Space>
+              <Button onClick={() => setRepoModalOpen(false)}>Cancel</Button>
+              <Button loading={repoTesting} onClick={handleTestRepo}>Test & login</Button>
+              <Button type="primary" loading={repoSaving} onClick={handleSaveRepo}>Save repository</Button>
+            </Space>
+          }
         >
           <Form
             layout="vertical"
@@ -603,12 +649,12 @@ const ConfigurationPage: React.FC = () => {
             <Row gutter={[12, 0]}>
               <Col span={12}>
                 <Form.Item name="id" label="ID" rules={[required("id is required"), slug]}>
-                  <Input placeholder="clemlab" getValueFromEvent={trim} />
+                  <Input placeholder="repo-id" getValueFromEvent={trim} />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item name="name" label="Name" rules={[required("name is required")]}>
-                  <Input placeholder="Clemlab Repo" />
+                  <Input placeholder="Monitoring repository" />
                 </Form.Item>
               </Col>
             </Row>
@@ -645,14 +691,14 @@ const ConfigurationPage: React.FC = () => {
                     }),
                   ]}
                 >
-                  <Input placeholder="registry.clemlab.com/clemlabprojects/charts" />
+                  <Input placeholder="registry.example.com/project/charts" />
                 </Form.Item>
               </Col>
             </Row>
             <Row gutter={[12, 0]}>
               <Col span={12}>
                 <Form.Item name="imageProject" label="Image project">
-                  <Input placeholder="clemlabprojects" />
+                  <Input placeholder="image-project" />
                 </Form.Item>
               </Col>
               <Col span={12}>

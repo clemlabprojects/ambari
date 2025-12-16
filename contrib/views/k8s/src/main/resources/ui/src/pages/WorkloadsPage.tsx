@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Select, Space, Table, Tag, Typography, Button, Modal, Spin, Input, Dropdown, message, Tabs, Tooltip } from 'antd';
+import { Select, Space, Table, Tag, Typography, Button, Modal, Spin, Input, Dropdown, message, Tabs, Tooltip, Switch } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { MenuProps } from 'antd';
 import {
@@ -51,6 +51,7 @@ const WorkloadsPage: React.FC = () => {
   const [podEventsVisible, setPodEventsVisible] = useState(false);
   const [podEventsFor, setPodEventsFor] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<string>('pods');
+  const [autoRefreshWorkloads, setAutoRefreshWorkloads] = useState(true);
 
   useEffect(() => {
     // Initial namespace fetch and default selection (use nav state/query if present)
@@ -94,6 +95,14 @@ const WorkloadsPage: React.FC = () => {
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  useEffect(() => {
+    if (!autoRefreshWorkloads) return undefined;
+    const interval = setInterval(() => {
+      refreshAll();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [autoRefreshWorkloads, refreshAll]);
 
   const showDescribe = async (kind: 'pod' | 'service', name: string) => {
     if (!namespace) return;
@@ -264,45 +273,48 @@ const WorkloadsPage: React.FC = () => {
     {
       key: 'pods',
       label: <Space size={4}>Pods <Tag color="geekblue">{pods.length}</Tag></Space>,
-      children: (
-        <Table<KubePod>
-          rowKey="name"
-          size="small"
-          loading={loadingPods}
-          dataSource={pods}
-          columns={podColumns as any}
-          pagination={false}
-          bordered={false}
-        />
-      )
+        children: (
+          <Table<KubePod>
+            rowKey="name"
+            size="small"
+            loading={loadingPods}
+            dataSource={pods}
+            columns={podColumns as any}
+            pagination={false}
+            bordered={false}
+            locale={{ emptyText: namespace ? 'No pods match the current namespace/selector.' : 'Select a namespace to view pods.' }}
+          />
+        )
     },
     {
       key: 'services',
       label: <Space size={4}>Services <Tag color="geekblue">{services.length}</Tag></Space>,
-      children: (
-        <Table<KubeService>
-          rowKey="name"
-          size="small"
-          loading={loadingSvc}
-          dataSource={services}
-          columns={serviceColumns as any}
-          pagination={false}
-          bordered={false}
-        />
-      )
+        children: (
+          <Table<KubeService>
+            rowKey="name"
+            size="small"
+            loading={loadingSvc}
+            dataSource={services}
+            columns={serviceColumns as any}
+            pagination={false}
+            bordered={false}
+            locale={{ emptyText: namespace ? 'No services found for this namespace.' : 'Select a namespace to view services.' }}
+          />
+        )
     },
     {
       key: 'events',
       label: <Space size={4}>Namespace Events <Tag color="geekblue">{namespaceEvents.length}</Tag></Space>,
-      children: (
-        <Table<KubeEvent>
-          rowKey={(row) => `${row.involvedName}-${row.lastTimestamp}-${row.reason}`}
-          size="small"
-          loading={namespaceEventsLoading}
-          dataSource={namespaceEvents}
-          pagination={false}
-          bordered={false}
-          columns={[
+        children: (
+          <Table<KubeEvent>
+            rowKey={(row) => `${row.involvedName}-${row.lastTimestamp}-${row.reason}`}
+            size="small"
+            loading={namespaceEventsLoading}
+            dataSource={namespaceEvents}
+            pagination={false}
+            bordered={false}
+            locale={{ emptyText: namespace ? 'No events recorded for this namespace yet.' : 'Select a namespace to see events.' }}
+            columns={[
             { title: 'Reason', dataIndex: 'reason' },
             { title: 'Type', dataIndex: 'type' },
             { title: 'Last', dataIndex: 'lastTimestamp' },
@@ -363,7 +375,13 @@ const WorkloadsPage: React.FC = () => {
         onChange={setActiveTab}
         items={tabItems}
         type="card"
-        tabBarExtraContent={<Button onClick={refreshAll} size="small" icon={<ReloadOutlined />}>Refresh</Button>}
+        tabBarExtraContent={
+          <Space align="center" size="small">
+            <Switch size="small" checked={autoRefreshWorkloads} onChange={setAutoRefreshWorkloads} />
+            <span>Auto refresh</span>
+            <Button onClick={refreshAll} size="small" icon={<ReloadOutlined />}>Refresh</Button>
+          </Space>
+        }
       />
 
       <Modal

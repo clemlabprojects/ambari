@@ -9,7 +9,7 @@ import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 import debounce from 'lodash.debounce';
 
-import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus, type CommandStatus } from '../../api/client';
+import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus, getSecurityConfig, type CommandStatus } from '../../api/client';
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
@@ -122,6 +122,13 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
   // New state for upgrade mode raw values
   const [upgradeValues, setUpgradeValues] = useState('');
+
+  // View and editor state - must be declared before useEffects that use them
+  const [view, setView] = useState<'form' | 'yaml'>('form');
+  const [editorYaml, setEditorYaml] = useState('');
+  const [editMode, setEditMode] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [loadingChart, setLoadingChart] = useState(false);
 
   const lockChart = mode === 'upgrade';
   const releaseChartRef = initialRelease?.chart || '';
@@ -270,6 +277,12 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
   useEffect(() => { if (selectedServiceKey) form.setFieldsValue({ svcKey: selectedServiceKey }); }, [selectedServiceKey]);
 
+  // Form watchers - must be declared before useEffects that use them
+  const watchedMounts = Form.useWatch(['mounts'], form);
+  const releaseNameWatch = Form.useWatch(['releaseName'], form);
+  const deploymentModeWatch = Form.useWatch(['deploymentMode'], form);
+  const allValues = Form.useWatch([], form); // watch the whole form
+
   useEffect(() => {
     // Only switch views automatically in DEPLOY mode. Upgrade mode forces YAML.
     if (mode === 'deploy') {
@@ -365,12 +378,6 @@ const handleServiceChange = (value: string) => {
     return Array.isArray(svc?.bindings) ? (svc.bindings as BindingSpec[]) : [];
   }, [availableServices, selectedServiceKey]);
 
-  const watchedMounts = Form.useWatch(['mounts'], form);
-  const releaseNameWatch = Form.useWatch(['releaseName'], form);
-  const deploymentModeWatch = Form.useWatch(['deploymentMode'], form);
-
-  const allValues = Form.useWatch([], form); // watch the whole form
-
   // --- Live values.yaml preview (form values + targets applied) ---
   const previewYaml = useMemo(() => {
     // Only generate preview from form in DEPLOY mode. In UPGRADE mode, the editor IS the source of truth.
@@ -412,10 +419,7 @@ const handleServiceChange = (value: string) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allValues, JSON.stringify(form.getFieldsValue(true)), JSON.stringify(bindings), JSON.stringify(watchedMounts), mode]);
 
-  // --- 2) Local editor state
-  const [editMode, setEditMode] = useState(false);
-  const [editorYaml, setEditorYaml] = useState('');
-  const [parseError, setParseError] = useState<string | null>(null);
+  // --- 2) Local editor state (already declared above)
   const isDirtyRef = useRef(false);
 
   useEffect(() => {
@@ -787,8 +791,7 @@ const handleServiceChange = (value: string) => {
     ),
   };
 
-  const [view, setView] = useState<'form' | 'yaml'>('form');
-  const [loadingChart, setLoadingChart] = useState(false);
+  // view and loadingChart already declared above
 
 
   // try to find "values.yaml" in common locations within a chart tarball

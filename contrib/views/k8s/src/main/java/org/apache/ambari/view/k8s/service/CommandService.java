@@ -3036,4 +3036,87 @@ public class CommandService {
         }
         return current;
     }
+
+    /**
+     * Shutdown all executor services gracefully.
+     * Should be called when the view instance is being destroyed.
+     */
+    public void shutdown() {
+        LOG.info("Shutting down CommandService for instance: {}", ctx.getInstanceName());
+        
+        // Shutdown heartbeat scheduler
+        if (heartbeatScheduler != null) {
+            heartbeatScheduler.shutdown();
+            try {
+                if (!heartbeatScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    heartbeatScheduler.shutdownNow();
+                    LOG.warn("Heartbeat scheduler did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                heartbeatScheduler.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // Shutdown helm executor
+        if (helmExecutor != null) {
+            helmExecutor.shutdown();
+            try {
+                if (!helmExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    helmExecutor.shutdownNow();
+                    LOG.warn("Helm executor did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                helmExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // Shutdown timer
+        if (timer != null) {
+            timer.shutdown();
+            try {
+                if (!timer.awaitTermination(5, TimeUnit.SECONDS)) {
+                    timer.shutdownNow();
+                    LOG.warn("Timer executor did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                timer.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // Shutdown workers
+        if (workers != null) {
+            workers.shutdown();
+            try {
+                if (!workers.awaitTermination(10, TimeUnit.SECONDS)) {
+                    workers.shutdownNow();
+                    LOG.warn("Worker executor did not terminate gracefully");
+                }
+            } catch (InterruptedException e) {
+                workers.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // Remove from instances map
+        INSTANCES.remove(ctx.getInstanceName());
+        LOG.info("CommandService shutdown complete for instance: {}", ctx.getInstanceName());
+    }
+
+    /**
+     * Shutdown all CommandService instances (for application shutdown).
+     */
+    public static void shutdownAll() {
+        LOG.info("Shutting down all CommandService instances");
+        for (CommandService service : INSTANCES.values()) {
+            try {
+                service.shutdown();
+            } catch (Exception e) {
+                LOG.error("Error shutting down CommandService instance", e);
+            }
+        }
+        INSTANCES.clear();
+    }
 }

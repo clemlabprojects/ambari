@@ -23,17 +23,21 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
@@ -51,22 +55,36 @@ import org.slf4j.LoggerFactory;
 public class FluxGitOpsBackend implements DeploymentBackend {
     private static final Logger LOG = LoggerFactory.getLogger(FluxGitOpsBackend.class);
 
+    // Retry configuration constants
+    private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final long RETRY_BASE_DELAY_MS = 500L;
+    private static final long HTTP_RETRY_BASE_DELAY_MS = 250L;
+
     private final Path fluxRoot;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final KubernetesService kubernetesService;
     private final ViewContext viewContext;
     private final GitCredentialService gitCredentialService;
     private final ReleaseMetadataService releaseMetadataService;
+    private final HttpClient httpClient;
+    private final Duration httpTimeout = Duration.ofSeconds(10);
 
     /**
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
      */
     public FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext) {
+        this(fluxRoot, kubernetesService, viewContext, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+    }
+
+    FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext, HttpClient httpClient) {
         this.fluxRoot = fluxRoot;
         this.kubernetesService = kubernetesService;
         this.viewContext = viewContext;
         this.gitCredentialService = new GitCredentialService(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
+        this.httpClient = httpClient == null
+                ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+                : httpClient;
     }
 
     @Override
@@ -86,6 +104,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String repoUrl = git.getRepoUrl().trim();
         boolean isHttps = repoUrl.startsWith("https://");
         boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
+
+        logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
         String baseBranch = firstNonBlank(git.getBaseBranch(), "main");
         String repoName = firstNonBlank(request.getRepoId(), existingMeta != null ? existingMeta.getRepoId() : null, "default-repo");
@@ -325,37 +345,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 dto.gitPrUrl = meta.getGitPrUrl();
                 dto.gitPrNumber = meta.getGitPrNumber();
             }
-            // Fetch PR state if we have a number + token.
-            try {
-                if (hasPr) {
-                    String token = resolveToken(meta.getGitCredentialAlias());
-                    if (token != null) {
-                        PullRequestInfo prInfo = fetchPullRequestState(meta.getGitRepoUrl(), meta.getGitPrNumber(), token);
-                        if (prInfo != null) {
-                            dto.gitPrState = firstNonBlank(prInfo.state, dto.gitPrState);
-                            if (prInfo.url != null && (dto.gitPrUrl == null || dto.gitPrUrl.isBlank())) {
-                                dto.gitPrUrl = prInfo.url;
-                            }
-                            releaseMetadataService.updatePrState(namespace, releaseName, dto.gitPrState);
-                            String prMsg = "PR state: " + dto.gitPrState + (prInfo.message != null ? " (" + prInfo.message + ")" : "");
-                            dto.message = (dto.message == null) ? prMsg : dto.message + " | " + prMsg;
-                            // If PR is merged/closed and HR is not yet present, reflect that state.
-                            if (hrNotAvailable(namespace, releaseName) && "merged".equalsIgnoreCase(dto.gitPrState)) {
-                                dto.status = "PROGRESSING";
-                                dto.message = "PR merged; waiting for Flux reconciliation";
-                            } else if (hrNotAvailable(namespace, releaseName) && "closed".equalsIgnoreCase(dto.gitPrState)) {
-                                dto.status = "FAILED";
-                                dto.message = "PR closed without merge";
-                            }
-                        } else if (dto.gitPrState == null) {
-                            dto.gitPrState = "unknown";
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                LOG.debug("PR state check failed for {}/{}: {}", namespace, releaseName, e.toString());
-            }
-        } catch (Exception ignored) { }
+            refreshPrState(meta, dto);
+        } catch (Exception e) {
+            // Expected: PR state refresh may fail if Git provider API is unavailable or rate-limited
+            // This is non-critical, so we continue with the rest of the status check
+            LOG.debug("Failed to refresh PR state for {}/{}: {}", dto.namespace, dto.name, e.getMessage());
+        }
 
         if (kubernetesService == null || kubernetesService.getClient() == null) {
             dto.message = "Flux status unavailable (no k8s client)";
@@ -429,14 +424,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             try {
                 long desired = dto.desiredGeneration != null ? Long.parseLong(dto.desiredGeneration) : -1L;
                 long observed = dto.observedGeneration != null ? Long.parseLong(dto.observedGeneration) : -1L;
-                if (desired >= 0 && observed >= 0 && observed < desired) {
-                    dto.staleGeneration = true;
-                    if (dto.status == null || dto.status.isBlank() || "UNKNOWN".equalsIgnoreCase(dto.status)) {
-                        dto.status = "PROGRESSING";
-                    }
-                    dto.message = appendMessage(dto.message, "Waiting for generation " + desired + " (observed " + observed + ")");
-                }
-            } catch (NumberFormatException ignored) { }
+                evaluateGenerationStaleness(dto, desired, observed);
+            } catch (NumberFormatException e) {
+                // Expected: Generation values may be non-numeric or malformed in some edge cases
+                // This is non-critical for status display, so we continue without staleness evaluation
+                LOG.debug("Could not parse generation values for {}/{}: desired={}, observed={}", 
+                    dto.namespace, dto.name, dto.desiredGeneration, dto.observedGeneration);
+            }
             if (dto.status == null || dto.status.isBlank()) {
                 dto.status = "UNKNOWN";
             }
@@ -508,7 +502,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /**
      * Simple holder for PR/MR info.
      */
-    private static class PullRequestInfo {
+    static class PullRequestInfo {
         final String url;
         final String id;
         final String state;
@@ -519,6 +513,61 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             this.id = id;
             this.state = state;
             this.message = message;
+        }
+    }
+
+    static final class PullRequestParser {
+        private static final Gson PARSER = new GsonBuilder().create();
+
+        static PullRequestInfo parseGithub(String body, String defaultId) {
+            if (body == null) {
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = PARSER.fromJson(body, Map.class);
+            if (parsed == null) {
+                return null;
+            }
+            Object url = parsed.get("html_url");
+            Object state = parsed.get("state");
+            Object merged = parsed.get("merged");
+            Object draft = parsed.get("draft");
+            String stateStr = state != null ? state.toString() : null;
+            if (Boolean.TRUE.equals(merged)) {
+                stateStr = "merged";
+            } else if (Boolean.TRUE.equals(draft) && stateStr != null && "open".equalsIgnoreCase(stateStr)) {
+                stateStr = "draft";
+            }
+            String message = Optional.ofNullable(parsed.get("mergeable_state")).map(Object::toString).orElse(null);
+            String id = formatId(parsed.get("number"), defaultId);
+            return new PullRequestInfo(url != null ? url.toString() : null, id, stateStr, message);
+        }
+
+        static PullRequestInfo parseGitlab(String body, String defaultId) {
+            if (body == null) {
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = PARSER.fromJson(body, Map.class);
+            if (parsed == null) {
+                return null;
+            }
+            Object url = parsed.get("web_url");
+            Object state = parsed.get("state");
+            String stateStr = state != null ? state.toString() : null;
+            if (parsed.containsKey("merged_at") && parsed.get("merged_at") != null) {
+                stateStr = "merged";
+            }
+            String message = Optional.ofNullable(parsed.get("detailed_merge_status")).map(Object::toString).orElse(null);
+            String id = formatId(parsed.get("iid"), defaultId);
+            return new PullRequestInfo(url != null ? url.toString() : null, id, stateStr, message);
+        }
+
+        private static String formatId(Object value, String fallback) {
+            if (value instanceof Number) {
+                return String.valueOf(((Number) value).longValue());
+            }
+            return value != null ? value.toString() : fallback;
         }
     }
 
@@ -537,12 +586,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Skipping PR creation because token or repoUrl is missing");
             return null;
         }
-        // Normalize URL
-        String trimmed = repoUrl.replace(".git", "");
-        if (trimmed.startsWith("git@")) {
-            // git@host:owner/repo
-            trimmed = "https://" + trimmed.substring(4).replace(":", "/");
-        }
+        String trimmed = normalizeRepoUrl(repoUrl);
         java.net.URI uri = java.net.URI.create(trimmed);
         String host = uri.getHost();
         if (host == null) {
@@ -550,9 +594,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         String path = uri.getPath();
         if (path.startsWith("/")) path = path.substring(1);
-
         if (host.contains("github")) {
-            // GitHub API: POST /repos/{owner}/{repo}/pulls
             String[] parts = path.split("/");
             if (parts.length < 2) return null;
             String owner = parts[0];
@@ -565,45 +607,38 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                       "base": "%s"
                     }
                     """.formatted(title, headBranch, baseBranch);
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(apiUrl))
+                    .timeout(httpTimeout)
                     .header("Authorization", "Bearer " + token)
                     .header("Accept", "application/vnd.github+json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = sendHttpWithRetry(req, "create-pr-github");
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                // naive parse
-                String url = extractJsonField(resp.body(), "html_url");
-                String number = extractJsonField(resp.body(), "number");
-                return new PullRequestInfo(url, number, "open", null);
-            } else {
-                LOG.warn("GitHub PR creation failed: status {} body {}", resp.statusCode(), resp.body());
+                PullRequestInfo info = PullRequestParser.parseGithub(resp.body(), headBranch);
+                return info != null ? info : new PullRequestInfo(extractJsonField(resp.body(), "html_url"), extractJsonField(resp.body(), "number"), "open", null);
             }
+            logFluxWarn("createPR", repoUrl, "CREATE", "GitHub PR creation failed (status %d)", resp.statusCode());
         } else {
-            // Assume GitLab style: POST /api/v4/projects/{project}/merge_requests
-            // project path must be URL-encoded with slashes as %2F
             String project = java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8);
             String apiUrl = uri.getScheme() + "://" + host + "/api/v4/projects/" + project + "/merge_requests";
             String body = "title=" + java.net.URLEncoder.encode(title, java.nio.charset.StandardCharsets.UTF_8)
                     + "&source_branch=" + java.net.URLEncoder.encode(headBranch, java.nio.charset.StandardCharsets.UTF_8)
                     + "&target_branch=" + java.net.URLEncoder.encode(baseBranch, java.nio.charset.StandardCharsets.UTF_8);
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(apiUrl))
+                    .timeout(httpTimeout)
                     .header("PRIVATE-TOKEN", token)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = sendHttpWithRetry(req, "create-pr-gitlab");
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                String url = extractJsonField(resp.body(), "web_url");
-                String iid = extractJsonField(resp.body(), "iid");
-                return new PullRequestInfo(url, iid, "opened", null);
-            } else {
-                LOG.warn("GitLab MR creation failed: status {} body {}", resp.statusCode(), resp.body());
+                PullRequestInfo info = PullRequestParser.parseGitlab(resp.body(), headBranch);
+                return info != null ? info : new PullRequestInfo(extractJsonField(resp.body(), "web_url"), extractJsonField(resp.body(), "iid"), "opened", null);
             }
+            logFluxWarn("createPR", repoUrl, "CREATE", "GitLab MR creation failed (status %d)", resp.statusCode());
         }
         return null;
     }
@@ -620,10 +655,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (repoUrl == null || prNumber == null || token == null) {
             return null;
         }
-        String trimmed = repoUrl.replace(".git", "");
-        if (trimmed.startsWith("git@")) {
-            trimmed = "https://" + trimmed.substring(4).replace(":", "/");
-        }
+        String trimmed = normalizeRepoUrl(repoUrl);
         java.net.URI uri = java.net.URI.create(trimmed);
         String host = uri.getHost();
         String path = uri.getPath();
@@ -631,7 +663,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (host == null || path.isBlank()) {
             return null;
         }
-        HttpClient client = HttpClient.newHttpClient();
         if (host.contains("github")) {
             String[] parts = path.split("/");
             if (parts.length < 2) return null;
@@ -640,57 +671,30 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/pulls/" + prNumber;
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(apiUrl))
+                    .timeout(httpTimeout)
                     .header("Authorization", "Bearer " + token)
                     .header("Accept", "application/vnd.github+json")
                     .GET()
                     .build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = sendHttpWithRetry(req, "fetch-pr-github");
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                @SuppressWarnings("unchecked")
-                java.util.Map<String, Object> parsed = gson.fromJson(resp.body(), java.util.Map.class);
-                if (parsed != null) {
-                    Object state = parsed.get("state");
-                    Object merged = parsed.get("merged");
-                    Object draft = parsed.get("draft");
-                    Object url = parsed.get("html_url");
-                    String stateStr = state != null ? state.toString() : null;
-                    if (Boolean.TRUE.equals(merged)) {
-                        stateStr = "merged";
-                    } else if (Boolean.TRUE.equals(draft) && stateStr != null && "open".equalsIgnoreCase(stateStr)) {
-                        stateStr = "draft";
-                    }
-                    String message = Optional.ofNullable(parsed.get("mergeable_state")).map(Object::toString).orElse(null);
-                    return new PullRequestInfo(url != null ? url.toString() : null, prNumber, stateStr, message);
-                }
-            } else {
-                LOG.debug("GitHub PR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
+                return PullRequestParser.parseGithub(resp.body(), prNumber);
             }
+            LOG.debug("GitHub PR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
         } else {
             String project = java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8);
             String apiUrl = uri.getScheme() + "://" + host + "/api/v4/projects/" + project + "/merge_requests/" + prNumber;
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(apiUrl))
+                    .timeout(httpTimeout)
                     .header("PRIVATE-TOKEN", token)
                     .GET()
                     .build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = sendHttpWithRetry(req, "fetch-pr-gitlab");
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                @SuppressWarnings("unchecked")
-                java.util.Map<String, Object> parsed = gson.fromJson(resp.body(), java.util.Map.class);
-                if (parsed != null) {
-                    Object state = parsed.get("state");
-                    String url = Optional.ofNullable(parsed.get("web_url")).map(Object::toString).orElse(null);
-                    String stateStr = state != null ? state.toString() : null;
-                    // GitLab uses "merged" state or a separate merged_at flag
-                    if (parsed.containsKey("merged_at") && parsed.get("merged_at") != null) {
-                        stateStr = "merged";
-                    }
-                    String message = Optional.ofNullable(parsed.get("detailed_merge_status")).map(Object::toString).orElse(null);
-                    return new PullRequestInfo(url, prNumber, stateStr, message);
-                }
-            } else {
-                LOG.debug("GitLab MR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
+                return PullRequestParser.parseGitlab(resp.body(), prNumber);
             }
+            LOG.debug("GitLab MR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
         }
         return null;
     }
@@ -708,6 +712,43 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.debug("Failed to resolve token for alias {}: {}", credentialAlias, ex.toString());
         }
         return null;
+    }
+
+    private void refreshPrState(K8sReleaseEntity meta, HelmReleaseDTO dto) {
+        if (meta == null || meta.getGitPrNumber() == null || meta.getGitPrNumber().isBlank()) {
+            return;
+        }
+        String token = resolveToken(meta.getGitCredentialAlias());
+        if (token == null) {
+            return;
+        }
+        try {
+            PullRequestInfo info = fetchPullRequestState(meta.getGitRepoUrl(), meta.getGitPrNumber(), token);
+            if (info == null) {
+                return;
+            }
+            dto.gitPrState = firstNonBlank(info.state, dto.gitPrState);
+            dto.gitPrUrl = firstNonBlank(info.url, dto.gitPrUrl);
+            releaseMetadataService.updatePrInfo(meta.getNamespace(), meta.getReleaseName(), dto.gitPrUrl, info.id, dto.gitPrState);
+            String prMessage = "PR state: " + dto.gitPrState;
+            if (info.message != null && !info.message.isBlank()) {
+                prMessage += " (" + info.message + ")";
+            }
+            dto.message = appendMessage(dto.message, prMessage);
+            if (dto.gitPrState != null) {
+                boolean hrMissing = hrNotAvailable(meta.getNamespace(), meta.getReleaseName());
+                if ("merged".equalsIgnoreCase(dto.gitPrState) && hrMissing) {
+                    dto.status = "PROGRESSING";
+                    dto.message = appendMessage(dto.message, "PR merged; waiting for Flux reconciliation");
+                } else if ("closed".equalsIgnoreCase(dto.gitPrState) && hrMissing) {
+                    dto.status = "FAILED";
+                    dto.message = appendMessage(dto.message, "PR closed without merge");
+                }
+            }
+        } catch (Exception ex) {
+            logFluxWarn(meta != null ? meta.getNamespace() : null, meta != null ? meta.getReleaseName() : null,
+                    "pr-poll", "PR polling failed: %s", ex.toString());
+        }
     }
 
     /**
@@ -733,6 +774,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.info("Flux destroy skipped for {}/{} because deploymentMode is not FLUX_GITOPS or metadata missing", namespace, releaseName);
             return;
         }
+        logFluxInfo(namespace, releaseName, "destroy", "Destroy requested for repo=%s branch=%s path=%s", meta.getGitRepoUrl(), meta.getGitBranch(), meta.getGitPath());
         List<String> errors = new ArrayList<>();
         boolean gitDeleted = false;
         String repoUrl = meta.getGitRepoUrl();
@@ -802,6 +844,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         Path deletePath = validateRelative((repoPath == null || repoPath.isBlank())
                 ? Path.of("clusters/default")
                 : Path.of(repoPath));
+        logFluxInfo("-", deletePath.toString(), "destroy", "Removing path %s", deletePath);
         gitClient.deletePath(deletePath);
         if (gitClient.hasChanges()) {
             String sha = withGitRetry(() -> gitClient.commitAndPush("Flux GitOps delete " + deletePath), "destroy-commit");
@@ -823,7 +866,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return validateRelative(Path.of(pathPrefix).resolve(namespace).resolve(release));
     }
 
-    private List<java.util.Map<String, String>> mapConditions(java.util.List<java.util.Map<String, Object>> conds) {
+    static List<java.util.Map<String, String>> mapConditions(java.util.List<java.util.Map<String, Object>> conds) {
         List<java.util.Map<String, String>> list = new ArrayList<>();
         for (java.util.Map<String, Object> c : conds) {
             java.util.Map<String, String> mapped = new LinkedHashMap<>();
@@ -837,7 +880,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return list;
     }
 
-    private Path validateRelative(Path path) {
+    static Path validateRelative(Path path) {
         Path normalized = path.normalize();
         if (normalized.isAbsolute()) {
             throw new IllegalArgumentException("Flux GitOps path must be relative to repo: " + path);
@@ -860,7 +903,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return null;
     }
 
-    private String appendMessage(String existing, String addition) {
+    private static String appendMessage(String existing, String addition) {
         if (addition == null || addition.isBlank()) {
             return existing;
         }
@@ -874,7 +917,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @param dto    target DTO to update
      * @param conds  list of condition maps from HelmRelease.status.conditions
      */
-    private void evaluateConditions(HelmReleaseDTO dto, java.util.List<java.util.Map<String, Object>> conds) {
+    static void evaluateConditions(HelmReleaseDTO dto, java.util.List<java.util.Map<String, Object>> conds) {
         dto.conditions = mapConditions(conds);
         // Ready drives primary state
         java.util.Map<String, Object> ready = conds.stream()
@@ -949,16 +992,27 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (summary.length() > 0) {
             dto.message = appendMessage(dto.message, summary.toString());
         }
+        dto.conditionSummary = summary.length() > 0 ? summary.toString() : null;
 
         if (dto.status == null || dto.status.isBlank()) {
             dto.status = "UNKNOWN";
         }
     }
 
+    static void evaluateGenerationStaleness(HelmReleaseDTO dto, long desired, long observed) {
+        if (desired >= 0 && observed >= 0 && observed < desired) {
+            dto.staleGeneration = true;
+            if (dto.status == null || dto.status.isBlank() || "UNKNOWN".equalsIgnoreCase(dto.status)) {
+                dto.status = "PROGRESSING";
+            }
+            dto.message = appendMessage(dto.message, "Waiting for generation " + desired + " (observed " + observed + ")");
+        }
+    }
+
     /**
      * Evaluate HelmRepository conditions to expose source health.
      */
-    private void evaluateSourceConditions(HelmReleaseDTO dto, java.util.List<java.util.Map<String, Object>> conds) {
+    static void evaluateSourceConditions(HelmReleaseDTO dto, java.util.List<java.util.Map<String, Object>> conds) {
         dto.sourceConditions = mapConditions(conds);
         java.util.Map<String, Object> ready = conds.stream()
                 .filter(c -> "Ready".equalsIgnoreCase(Objects.toString(c.get("type"), "")))
@@ -975,6 +1029,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (dto.reconcileMessage == null && dto.sourceMessage != null) {
             dto.reconcileMessage = dto.sourceMessage;
         }
+        StringBuilder summary = new StringBuilder();
+        for (java.util.Map<String, Object> c : conds) {
+            String type = Objects.toString(c.get("type"), "");
+            String st = Objects.toString(c.get("status"), "");
+            String reason = Objects.toString(c.get("reason"), "");
+            if (summary.length() > 0) {
+                summary.append(" | ");
+            }
+            summary.append(type).append("=").append(st);
+            if (!reason.isBlank()) {
+                summary.append(" (").append(reason).append(")");
+            }
+        }
+        dto.sourceConditionSummary = summary.length() > 0 ? summary.toString() : null;
     }
 
     /**
@@ -1035,21 +1103,84 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     private <T> T withGitRetry(Callable<T> op, String label) throws Exception {
         IOException lastIo = null;
-        for (int attempt = 1; attempt <= 3; attempt++) {
+        for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
             try {
                 return op.call();
             } catch (IOException io) {
                 lastIo = io;
-                LOG.warn("Git operation {} failed (attempt {}/3): {}", label, attempt, io.getMessage());
-                if (attempt >= 3) {
+                LOG.warn("Git operation {} failed (attempt {}/{}): {}", label, attempt, MAX_RETRY_ATTEMPTS, io.getMessage());
+                if (attempt >= MAX_RETRY_ATTEMPTS) {
                     throw io;
                 }
-                Thread.sleep(500L * attempt);
+                // Exponential backoff: base delay * attempt number
+                long backoffDelayMs = RETRY_BASE_DELAY_MS * attempt;
+                Thread.sleep(backoffDelayMs);
             }
         }
         if (lastIo != null) {
             throw lastIo;
         }
         return op.call();
+    }
+
+    private HttpResponse<String> sendHttpWithRetry(HttpRequest request, String label) throws InterruptedException, IOException {
+        IOException lastIo = null;
+        for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() >= 500 && attempt < MAX_RETRY_ATTEMPTS) {
+                    lastIo = new IOException("HTTP " + response.statusCode());
+                    logFluxWarn(null, label, "http", "Request returned %d, retrying", response.statusCode());
+                    Thread.sleep(HTTP_RETRY_BASE_DELAY_MS * attempt);
+                    continue;
+                }
+                return response;
+            } catch (SocketTimeoutException toe) {
+                lastIo = toe;
+                logFluxWarn(null, label, "http-timeout", "Timeout on attempt %d: %s", attempt, toe.getMessage());
+                if (attempt >= MAX_RETRY_ATTEMPTS) {
+                    throw toe;
+                }
+                Thread.sleep(HTTP_RETRY_BASE_DELAY_MS * attempt);
+            } catch (IOException io) {
+                lastIo = io;
+                logFluxWarn(null, label, "http", "HTTP request failed on attempt %d: %s", attempt, io.getMessage());
+                if (attempt >= 3) {
+                    throw io;
+                }
+                Thread.sleep(250L * attempt);
+            }
+        }
+        if (lastIo != null) {
+            throw lastIo;
+        }
+        throw new IOException("Failed to execute HTTP request for " + label);
+    }
+
+    private void logFluxInfo(String namespace, String release, String phase, String message, Object... args) {
+        String context = buildContext(namespace, release);
+        String formatted = (args == null || args.length == 0) ? message : String.format(message, args);
+        LOG.info("[FluxGitOps:%s][%s] %s", context, phase, formatted);
+    }
+
+    private void logFluxWarn(String namespace, String release, String phase, String message, Object... args) {
+        String context = buildContext(namespace, release);
+        String formatted = (args == null || args.length == 0) ? message : String.format(message, args);
+        LOG.warn("[FluxGitOps:%s][%s] %s", context, phase, formatted);
+    }
+
+    private String buildContext(String namespace, String release) {
+        String ns = (namespace == null || namespace.isBlank()) ? "-" : namespace;
+        String rel = (release == null || release.isBlank()) ? "-" : release;
+        return ns + "/" + rel;
+    }
+
+    private String normalizeRepoUrl(String repoUrl) {
+        if (repoUrl == null) return null;
+        String trimmed = repoUrl.replace(".git", "");
+        if (trimmed.startsWith("git@")) {
+            trimmed = "https://" + trimmed.substring(4).replace(":", "/");
+        }
+        return trimmed;
     }
 }

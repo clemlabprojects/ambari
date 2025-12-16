@@ -1,5 +1,5 @@
 // ui/src/api/client.ts
-import { getMockClusterStats, getMockComponentStatuses, getMockClusterEvents, getMockNodes, getMockHelmReleases, getChartsJSON, getMockHelmRepos } from './mock';
+import { getMockClusterStats, getMockComponentStatuses, getMockClusterEvents, getMockNodes, getMockHelmReleases, getChartsJSON, getMockHelmRepos, getMockCommandStatus, getMockCommands } from './mock';
 import { getMockSecurityConfig } from './mock';
 import type {ClusterService} from '../types/ServiceTypes';
 import type {HelmRepo} from '../types';
@@ -392,6 +392,9 @@ export const getClusterStats = async (forceRefresh = false) => {
 };
 
 export async function getCommandStatus(id: string) {
+  if (import.meta.env.DEV) {
+    return getMockCommandStatus(id);
+  }
   // Explicit fetch keeps polling simple and avoids any header/caching surprises
   const response = await fetch(`${API_BASE_URL}/commands/${id}`, {
     credentials: 'include',
@@ -402,6 +405,9 @@ export async function getCommandStatus(id: string) {
 }
 
 export async function listCommands(limit = 10, offset = 0) {
+  if (import.meta.env.DEV) {
+    return getMockCommands(limit, offset);
+  }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const response = await fetch(`${API_BASE_URL}/commands?${params.toString()}`, {
     credentials: 'include',
@@ -466,6 +472,17 @@ export const getHelmReleases = async (limit = 20, offset = 0) => {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     const response = await fetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
     return handleApiResponse(response);
+};
+
+/**
+ * Fetches the latest backend-aggregated status for a release via Flux/Helm backends.
+ */
+export const getReleaseStatus = async (namespace: string, releaseName: string): Promise<HelmRelease> => {
+  const response = await fetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
+    credentials: 'include',
+    cache: 'no-store'
+  });
+  return handleApiResponse(response);
 };
 
 export const getHelmRepos = () => {

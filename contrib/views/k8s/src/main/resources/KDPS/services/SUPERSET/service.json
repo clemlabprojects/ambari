@@ -119,7 +119,7 @@
         "name": "superset-openstreetmap-server-url",
         "skipIfVarEmpty": "supersetOpenStreetMapServerUrl",
         "targets": [
-          { "path": "extraEnv.OPENSTREETMAP_SERVER_URL", "from": { "type": "var", "name": "supersetOpenStreetMapServerUrl" } },
+          { "path": "extraEnv.OPENSTREETMAP_SERVER_URL", "from": { "type": "var", "name": "supersetOpenStreetMapServerUrl" } }
         ]
       },
       {

@@ -45,6 +45,8 @@ public class HelmReleaseDTO {
     public String lastTransitionTime;
     public java.util.List<java.util.Map<String, String>> conditions;
     public java.util.List<java.util.Map<String, String>> sourceConditions;
+    public String conditionSummary;
+    public String sourceConditionSummary;
     public List<ReleaseEndpointDTO> endpoints;
 
     private static String parseVersionFromChart(String chart) {

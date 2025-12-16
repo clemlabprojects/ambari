@@ -9,7 +9,7 @@ interface StatusTagProps {
   status: StatusType;
 }
 
-const StatusTag: React.FC<StatusTagProps> = ({ status }) => {
+const StatusTag: React.FC<StatusTagProps> = React.memo(({ status }) => {
   switch (status) {
     case 'deployed':
     case 'Ready':
@@ -26,7 +26,9 @@ const StatusTag: React.FC<StatusTagProps> = ({ status }) => {
     default:
       return <Tag>{status}</Tag>;
   }
-};
+});
+
+StatusTag.displayName = 'StatusTag';
 
 export default StatusTag;
 
