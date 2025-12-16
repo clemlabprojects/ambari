@@ -19,12 +19,25 @@
 package org.apache.ambari.view.k8s.security;
 
 public class EncryptionResult {
-  public byte[] salt;
-  public byte[] iv;
-  public byte[] cipher;
+  private final byte[] salt;
+  private final byte[] iv;
+  private final byte[] cipher;
+  
   public EncryptionResult(byte[] salt, byte[] iv, byte[] cipher) {
     this.salt = salt;
     this.iv = iv;
     this.cipher = cipher;
+  }
+  
+  public byte[] getSalt() {
+    return salt;
+  }
+  
+  public byte[] getIv() {
+    return iv;
+  }
+  
+  public byte[] getCipher() {
+    return cipher;
   }
 }

@@ -52,6 +52,7 @@ public class HelmResource {
     private final KubernetesService kubernetesService;
     private final FluxGitOpsBackend fluxGitOpsBackend;
     private final CommandService commandService;
+    private final ReleaseMetadataService releaseMetadataService;
 
     // Lightweight in-memory cache for releases to avoid hammering Helm/K8s on frequent polls
     private static final Map<String, CachedReleases> RELEASE_CACHE = new ConcurrentHashMap<>();
@@ -64,6 +65,7 @@ public class HelmResource {
         this.kubernetesService = KubernetesService.get(viewContext);
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
         this.commandService = new CommandService(viewContext);
+        this.releaseMetadataService = new ReleaseMetadataService(viewContext);
     }
 
     /**
@@ -108,7 +110,6 @@ public class HelmResource {
                                      @QueryParam("offset") @DefaultValue("0") int offset) {
         final String kubeconfigContent = getKubeconfigContents();
         final HelmService helmService = new HelmService(viewContext);
-        final ReleaseMetadataService metadataService = new ReleaseMetadataService(viewContext);
         final GlobalConfigService globalConfigService = new GlobalConfigService();
         final String currentGlobalFingerprint = globalConfigService.fingerprint();
         final SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
@@ -128,7 +129,7 @@ public class HelmResource {
 
             List<ReleaseEndpointDTO> allEndpoints = new ArrayList<>();
 
-            K8sReleaseEntity metadata = metadataService.find(releaseDto.namespace, releaseDto.name);
+            K8sReleaseEntity metadata = releaseMetadataService.find(releaseDto.namespace, releaseDto.name);
             if (metadata != null) {
                 releaseDto.managedByUi = metadata.isManagedByUi();
                 releaseDto.serviceKey = metadata.getServiceKey();
@@ -228,7 +229,7 @@ public class HelmResource {
             }
 
             allEndpoints.addAll(
-                    metadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
+                    releaseMetadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
             );
 
             if (!allEndpoints.isEmpty()) {
@@ -255,6 +256,40 @@ public class HelmResource {
         }
 
         return new HelmReleasesResponse(releaseList, total);
+    }
+
+    @GET
+    @Path("/releases/{namespace}/{release}/status")
+    public Response releaseStatus(@PathParam("namespace") String namespace,
+                                  @PathParam("release") String releaseName) {
+        try {
+            K8sReleaseEntity metadata = releaseMetadataService.find(namespace, releaseName);
+            String deploymentMode = metadata != null ? metadata.getDeploymentMode() : null;
+            HelmReleaseDTO status = commandService.statusViaBackend(namespace, releaseName, deploymentMode);
+            if (status == null) {
+                status = new HelmReleaseDTO();
+                status.name = releaseName;
+                status.namespace = namespace;
+                status.status = "UNKNOWN";
+            }
+            if (metadata != null) {
+                status.managedByUi = metadata.isManagedByUi();
+                status.repoId = metadata.getRepoId();
+                status.serviceKey = metadata.getServiceKey();
+                status.deploymentMode = metadata.getDeploymentMode();
+                status.gitCommitSha = metadata.getGitCommitSha();
+                status.gitBranch = metadata.getGitBranch();
+                status.gitPath = metadata.getGitPath();
+                status.gitRepoUrl = metadata.getGitRepoUrl();
+                status.gitPrUrl = metadata.getGitPrUrl();
+                status.gitPrNumber = metadata.getGitPrNumber();
+                status.gitPrState = metadata.getGitPrState();
+                status.securityProfile = metadata.getSecurityProfile();
+            }
+            return Response.ok(status).build();
+        } catch (Exception ex) {
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
     }
 
     @POST
@@ -379,9 +414,7 @@ public class HelmResource {
                              @QueryParam("gitAuthToken") String gitAuthToken,
                              @QueryParam("gitSshKey") String gitSshKey,
                              @QueryParam("gitBranch") String gitBranch) {
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(viewContext);
-        K8sReleaseEntity meta = metadataService.find(namespace, releaseName);
-        CommandService commandService = new CommandService(viewContext);
+        K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
             if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
@@ -419,7 +452,7 @@ public class HelmResource {
         } finally {
             try {
                 if (meta != null) {
-                    metadataService.delete(namespace, releaseName);
+                    releaseMetadataService.delete(namespace, releaseName);
                 }
             } catch (Exception ex) {
                 LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());

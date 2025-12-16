@@ -10,7 +10,7 @@ interface PermissionGuardProps {
   fallback?: React.ReactNode; // Élément à afficher si l'utilisateur n'a pas les droits
 }
 
-const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, requires, fallback = null }) => {
+const PermissionGuard: React.FC<PermissionGuardProps> = React.memo(({ children, requires, fallback = null }) => {
   const { permissions, loading } = usePermissions();
 
   if (loading) {
@@ -22,6 +22,8 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({ children, requires, f
   }
 
   return <>{fallback}</>;
-};
+});
+
+PermissionGuard.displayName = 'PermissionGuard';
 
 export default PermissionGuard;

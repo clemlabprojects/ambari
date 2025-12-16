@@ -1,12 +1,12 @@
 // ui/src/pages/HelmReleasesPage.tsx
-import React, { useEffect, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, Progress, List, Switch } from 'antd';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getCommandStatus, listCommands, getHelmReleases, type CommandStatus, submitHelmDeploy } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getCommandStatus, listCommands, getHelmReleases, getReleaseStatus, type CommandStatus, submitHelmDeploy } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
@@ -34,19 +34,65 @@ const HelmReleasesPage: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [statusMap, setStatusMap] = useState<Record<string, HelmRelease>>({});
+  const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
 
   useEffect(() => {
       getAvailableServices().then(setServiceDefinitions).catch(() => {});
   }, []);
 
-  const gitOptsFor = (record: HelmRelease) => {
+  const gitOptsFor = useCallback((record: HelmRelease) => {
     if (record.deploymentMode !== 'FLUX_GITOPS') return undefined;
     return {
       repoUrl: record.gitRepoUrl,
       branch: record.gitBranch,
       commitMode: record.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT'
     };
-  };
+  }, []);
+
+  const releaseKey = useCallback((record: HelmRelease) => `${record.namespace}/${record.name}`, []);
+  const mergeReleaseStatus = useCallback((record: HelmRelease) => {
+    const key = releaseKey(record);
+    const status = statusMap[key];
+    return status ? { ...record, ...status } : record;
+  }, [releaseKey, statusMap]);
+
+  const refreshReleaseStatus = useCallback(async (record: HelmRelease, options?: { notifyOnError?: boolean }) => {
+    const key = releaseKey(record);
+    setStatusRefreshing(prev => ({ ...prev, [key]: true }));
+    try {
+      const latestStatus = await getReleaseStatus(record.namespace, record.name);
+      setStatusMap(prev => ({ ...prev, [key]: latestStatus }));
+    } catch (err: any) {
+      if (options?.notifyOnError) {
+        message.error(err?.message || `Unable to refresh status for ${record.name}`);
+      }
+    } finally {
+      setStatusRefreshing(prev => ({ ...prev, [key]: false }));
+    }
+  }, [releaseKey]);
+
+  const refreshAllStatuses = useCallback(() => {
+    if (releases.length === 0) return;
+    releases
+      .filter(r => r.deploymentMode === 'FLUX_GITOPS' || r.managedByUi)
+      .forEach(r => { void refreshReleaseStatus(r); });
+  }, [releases, refreshReleaseStatus]);
+
+  useEffect(() => {
+    if (!releases.length) return;
+    refreshAllStatuses();
+  }, [releases, refreshAllStatuses]);
+
+  useEffect(() => {
+    if (!autoRefreshEnabled) return undefined;
+    const interval = setInterval(() => {
+      refreshAllStatuses();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [autoRefreshEnabled, refreshAllStatuses]);
 
   const fetchReleases = React.useCallback(async (pageNum = page, size = pageSize) => {
     setLoading(true);
@@ -58,7 +104,12 @@ const HelmReleasesPage: React.FC = () => {
       setPage(pageNum);
       setPageSize(size);
     } catch (e: any) {
-      message.error(e?.message || 'Failed to load releases');
+      const errorMessage = e?.message || 'Failed to load releases';
+      console.error('Failed to fetch Helm releases:', e);
+      message.error(errorMessage);
+      // Set empty state on error to prevent showing stale data
+      setReleases([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -150,6 +201,9 @@ const HelmReleasesPage: React.FC = () => {
             </Space>
         );
     };
+
+    // All hooks must be called before any early returns
+    const displayed = useMemo(() => (showAll ? releases : releases.filter(r => r.managedByUi)), [releases, showAll]);
 
     if (status === 'error') {
         return <Result status="warning" title="Helm releases data not available." subTitle="Unable to retrieve cluster information." />;
@@ -293,65 +347,91 @@ const HelmReleasesPage: React.FC = () => {
             {r.securityProfileStale ? <Tag color="orange">Stale</Tag> : null}
           </Space>
         ) },
-        { title: 'Status', dataIndex: 'status', key: 'status', width: 170, render: (_: any, r: any) => {
-            const fluxTip = r.deploymentMode === 'FLUX_GITOPS'
+        { title: 'Status', dataIndex: 'status', key: 'status', width: 220, render: (_: any, record: HelmRelease) => {
+            const key = releaseKey(record);
+            const combined = mergeReleaseStatus(record);
+            const fluxTip = combined.deploymentMode === 'FLUX_GITOPS'
               ? [
-                  r.gitRepoUrl ? `Repo: ${r.gitRepoUrl}` : null,
-                  r.gitBranch ? `Branch: ${r.gitBranch}` : null,
-                  r.gitPath ? `Path: ${r.gitPath}` : null,
-                  r.gitCommitSha ? `Commit: ${r.gitCommitSha}` : null,
-                  r.gitPrNumber ? `PR: ${r.gitPrNumber}` : null,
-                  r.gitPrUrl ? `PR URL: ${r.gitPrUrl}` : null,
-                  r.gitPrState ? `PR State: ${r.gitPrState}` : null,
-                  r.sourceName ? `Source: ${r.sourceNamespace || 'flux-system'}/${r.sourceName}` : null,
-                  r.sourceStatus ? `Source status: ${r.sourceStatus}` : null,
-                  r.sourceMessage ? `Source msg: ${r.sourceMessage}` : null,
-                  r.reconcileState ? `Reconcile: ${r.reconcileState}` : null,
-                  r.reconcileMessage ? `Reconcile msg: ${r.reconcileMessage}` : null,
-                  r.observedGeneration ? `ObservedGeneration=${r.observedGeneration}` : null,
-                  r.desiredGeneration ? `DesiredGeneration=${r.desiredGeneration}` : null,
-                  r.staleGeneration ? `Reconciling generation (observed ${r.observedGeneration || '?'})` : null,
-                  r.lastTransitionTime ? `Last transition: ${r.lastTransitionTime}` : null,
-                  r.conditions && r.conditions.length ? `Conditions: ${r.conditions.map((c: any) => `${c.type || '?'}=${c.status || '?'}`).join('; ')}` : null,
-                  r.sourceConditions && r.sourceConditions.length ? `Repo: ${r.sourceConditions.map((c: any) => `${c.type || '?'}=${c.status || '?'}`).join('; ')}` : null,
-                  r.lastAppliedRevision ? `LastApplied: ${r.lastAppliedRevision}` : null,
-                  r.lastAttemptedRevision ? `LastAttempted: ${r.lastAttemptedRevision}` : null,
-                  r.lastHandledReconcileAt ? `ReconciledAt: ${r.lastHandledReconcileAt}` : null,
-                  r.message ? `Message: ${r.message}` : null
+                  combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
+                  combined.gitPath ? `Path: ${combined.gitPath}` : null,
+                  combined.gitCommitSha ? `Commit: ${combined.gitCommitSha}` : null,
+                  combined.gitPrNumber ? `PR: ${combined.gitPrNumber}` : null,
+                  combined.gitPrUrl ? `PR URL: ${combined.gitPrUrl}` : null,
+                  combined.gitPrState ? `PR State: ${combined.gitPrState}` : null,
+                  combined.sourceName ? `Source: ${combined.sourceNamespace || 'flux-system'}/${combined.sourceName}` : null,
+                  combined.sourceStatus ? `Source status: ${combined.sourceStatus}` : null,
+                  combined.sourceMessage ? `Source msg: ${combined.sourceMessage}` : null,
+                  combined.reconcileState ? `Reconcile: ${combined.reconcileState}` : null,
+                  combined.reconcileMessage ? `Reconcile msg: ${combined.reconcileMessage}` : null,
+                  combined.observedGeneration ? `ObservedGeneration=${combined.observedGeneration}` : null,
+                  combined.desiredGeneration ? `DesiredGeneration=${combined.desiredGeneration}` : null,
+                  combined.staleGeneration ? `Reconciling generation (observed ${combined.observedGeneration || '?'})` : null,
+                  combined.lastTransitionTime ? `Last transition: ${combined.lastTransitionTime}` : null,
+                  combined.conditions && combined.conditions.length ? `Conditions: ${combined.conditions.map((c: any) => `${c.type || '?'}=${c.status || '?'}`).join('; ')}` : null,
+                  combined.sourceConditions && combined.sourceConditions.length ? `Repo: ${combined.sourceConditions.map((c: any) => `${c.type || '?'}=${c.status || '?'}`).join('; ')}` : null,
+                  combined.lastAppliedRevision ? `LastApplied: ${combined.lastAppliedRevision}` : null,
+                  combined.lastAttemptedRevision ? `LastAttempted: ${combined.lastAttemptedRevision}` : null,
+                  combined.lastHandledReconcileAt ? `ReconciledAt: ${combined.lastHandledReconcileAt}` : null,
+                  combined.message ? `Message: ${combined.message}` : null
                 ].filter(Boolean).join(' · ')
+              : undefined;
+            const gitTooltip = combined.deploymentMode === 'FLUX_GITOPS'
+              ? [
+                  combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
+                  combined.gitPath ? `Path: ${combined.gitPath}` : null
+                ].filter(Boolean).join('\n')
               : undefined;
 
             return (
               <Space size={4} direction="vertical" align="start">
-                <Tooltip title={r.message || fluxTip}>
-                  <StatusTag status={r.status} />
-                </Tooltip>
-                {r.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
-                {r.restartRequired && r.serviceKey ? <Tag color="orange">Restart required</Tag> : null}
-                {r.securityProfileStale ? <Tag color="orange">Security refresh</Tag> : null}
-                {r.deploymentMode === 'FLUX_GITOPS' ? (
+                <Space size={4}>
+                  <Tooltip title={combined.message || fluxTip || 'Release status'}>
+                    <StatusTag status={combined.status} />
+                  </Tooltip>
+                  <Button type="link" size="small" onClick={() => setStatusModalRelease(combined)}>Details</Button>
+                  <Tooltip title="Refresh status">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<SyncOutlined />}
+                      loading={!!statusRefreshing[key]}
+                      onClick={() => refreshReleaseStatus(record, { notifyOnError: true })}
+                    />
+                  </Tooltip>
+                  {gitTooltip ? (
+                    <Tooltip title={gitTooltip}>
+                      <InfoCircleOutlined style={{ color: '#8c8c8c' }} />
+                    </Tooltip>
+                  ) : null}
+                </Space>
+                {combined.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
+                {combined.restartRequired && combined.serviceKey ? <Tag color="orange">Restart required</Tag> : null}
+                {combined.securityProfileStale ? <Tag color="orange">Security refresh</Tag> : null}
+                {combined.deploymentMode === 'FLUX_GITOPS' ? (
                   <Tooltip title={fluxTip || 'Flux GitOps'}>
                     <Tag color="blue">GitOps</Tag>
                   </Tooltip>
                 ) : null}
-                {r.deploymentMode === 'FLUX_GITOPS' && r.sourceStatus ? (
-                  <Tooltip title={r.sourceMessage || 'HelmRepository status'}>
-                    <Tag color={r.sourceStatus?.toLowerCase() === 'true' || r.sourceStatus?.toLowerCase() === 'ready' ? 'green' : 'orange'}>
-                      Repo {r.sourceStatus}
+                {combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus ? (
+                  <Tooltip title={combined.sourceMessage || 'HelmRepository status'}>
+                    <Tag color={combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready' ? 'green' : 'orange'}>
+                      Repo {combined.sourceStatus}
                     </Tag>
                   </Tooltip>
                 ) : null}
-                {r.gitPrUrl ? (
-                  <Tooltip title={r.gitPrUrl}>
-                    <Tag color={r.gitPrState === 'merged' ? 'green' : r.gitPrState === 'closed' ? 'red' : 'purple'}>
-                      <a href={r.gitPrUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
-                        PR {r.gitPrNumber || ''}{r.gitPrState ? ` (${r.gitPrState})` : ''}
+                {combined.gitPrUrl ? (
+                  <Tooltip title={combined.gitPrUrl}>
+                    <Tag color={combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple'}>
+                      <a href={combined.gitPrUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+                        PR {combined.gitPrNumber || ''}{combined.gitPrState ? ` (${combined.gitPrState})` : ''}
                       </a>
                     </Tag>
                   </Tooltip>
-                ) : r.gitPrState ? (
-                  <Tag color={r.gitPrState === 'merged' ? 'green' : r.gitPrState === 'closed' ? 'red' : 'purple'}>
-                    PR {r.gitPrState}
+                ) : combined.gitPrState ? (
+                  <Tag color={combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple'}>
+                    PR {combined.gitPrState}
                   </Tag>
                 ) : null}
               </Space>
@@ -375,8 +455,6 @@ const HelmReleasesPage: React.FC = () => {
         },
     ];
 
-    const displayed = showAll ? releases : releases.filter(r => r.managedByUi);
-
     return (
         <div style={{ minHeight: '720px' }}>
             <div className="page-header">
@@ -386,6 +464,10 @@ const HelmReleasesPage: React.FC = () => {
                     <Space>
                       <span>Show all</span>
                       <Switch size="small" checked={showAll} onChange={setShowAll} />
+                    </Space>
+                    <Space align="center" size={4}>
+                      <Switch size="small" checked={autoRefreshEnabled} onChange={setAutoRefreshEnabled} />
+                      <span>Auto status refresh</span>
                     </Space>
                     <Button onClick={() => { setCommandDrawerOpen(true); }}>
                         Background operations
@@ -424,6 +506,67 @@ const HelmReleasesPage: React.FC = () => {
                 // Pass the full object (including currentValues) to the modal
                 initialRelease={upgradeTarget}
             />
+
+            <Modal
+              title={`Release status — ${statusModalRelease?.namespace || ''}/${statusModalRelease?.name || ''}`}
+              open={!!statusModalRelease}
+              onCancel={() => setStatusModalRelease(null)}
+              footer={<Button onClick={() => setStatusModalRelease(null)}>Close</Button>}
+              width={640}
+            >
+              <Descriptions column={1} size="small" bordered>
+                <Descriptions.Item label="Status">
+                  <Space>
+                    <StatusTag status={statusModalRelease?.status || 'unknown'} />
+                    <span>{statusModalRelease?.message || 'No status message'}</span>
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="GitOps">
+                  {statusModalRelease?.deploymentMode === 'FLUX_GITOPS' ? (
+                    <Space direction="vertical" size="small">
+                      <span>Repo: {statusModalRelease.gitRepoUrl || '—'}</span>
+                      <span>Branch: {statusModalRelease.gitBranch || '—'}</span>
+                      <span>Path: {statusModalRelease.gitPath || '—'}</span>
+                      {statusModalRelease.gitPrState ? (
+                        <span>
+                          PR {statusModalRelease.gitPrNumber || ''} — {statusModalRelease.gitPrState}
+                          {statusModalRelease.gitPrUrl ? (
+                            <a href={statusModalRelease.gitPrUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>
+                              View
+                            </a>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </Space>
+                  ) : (
+                    'Direct Helm deployment'
+                  )}
+                </Descriptions.Item>
+                <Descriptions.Item label="Reconcile">
+                  <Space direction="vertical" size="small">
+                    <span>Observed generation: {statusModalRelease?.observedGeneration || '—'}</span>
+                    <span>Desired generation: {statusModalRelease?.desiredGeneration || '—'}</span>
+                    <span>Last reconcile: {statusModalRelease?.lastHandledReconcileAt || '—'}</span>
+                    <span>Last transition: {statusModalRelease?.lastTransitionTime || '—'}</span>
+                    {statusModalRelease?.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="Conditions">
+                  {statusModalRelease?.conditions?.length ? statusModalRelease.conditions.map((cond, idx) => (
+                    <div key={`${idx}-${cond.type}`}>
+                      <strong>{cond.type || 'Condition'}</strong> – {cond.status || 'Unknown'} {cond.message ? `· ${cond.message}` : ''}
+                    </div>
+                  )) : '—'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Repo health">
+                  {statusModalRelease?.sourceConditions?.length ? statusModalRelease.sourceConditions.map((cond, idx) => (
+                    <div key={`source-${idx}-${cond.type}`}>
+                      <strong>{cond.type || 'Source'}</strong> – {cond.status || 'Unknown'} {cond.message ? `· ${cond.message}` : ''}
+                    </div>
+                  )) : '—'}
+                </Descriptions.Item>
+              </Descriptions>
+            </Modal>
 
             <Modal
               title="Select a service to install"

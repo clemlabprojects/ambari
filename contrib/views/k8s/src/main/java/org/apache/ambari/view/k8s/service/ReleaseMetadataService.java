@@ -83,6 +83,32 @@ public class ReleaseMetadataService {
         }
     }
 
+    public void updatePrInfo(String namespace, String name, String prUrl, String prNumber, String prState) {
+        if ((prUrl == null || prUrl.isBlank()) && (prNumber == null || prNumber.isBlank()) && (prState == null || prState.isBlank())) {
+            return;
+        }
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        if (entity == null) {
+            return;
+        }
+        boolean dirty = false;
+        if (prUrl != null && !prUrl.isBlank() && !prUrl.equals(entity.getGitPrUrl())) {
+            entity.setGitPrUrl(prUrl);
+            dirty = true;
+        }
+        if (prNumber != null && !prNumber.isBlank() && !prNumber.equals(entity.getGitPrNumber())) {
+            entity.setGitPrNumber(prNumber);
+            dirty = true;
+        }
+        if (prState != null && !prState.isBlank() && !prState.equals(entity.getGitPrState())) {
+            entity.setGitPrState(prState);
+            dirty = true;
+        }
+        if (dirty) {
+            releaseRepository.update(entity);
+        }
+    }
+
     /**
      * Return all managed releases recorded in the datastore.
      */

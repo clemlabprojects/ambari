@@ -58,7 +58,10 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         const cmds = await listCommands(10, 0);
         const running = (cmds || []).filter((c: any) => c.state === 'RUNNING' || c.state === 'PENDING').length;
         setOpsCount(running);
-      } catch {
+      } catch (err) {
+        // Non-critical: Background operations count is informational only
+        // Log error but don't show user notification for this
+        console.error('Failed to load background operations count:', err);
         setOpsCount(0);
       }
     };

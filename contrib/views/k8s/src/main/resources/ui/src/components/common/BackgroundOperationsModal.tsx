@@ -324,8 +324,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       footer={null}
       width="95vw"
       style={{ top: 20 }}
-      bodyStyle={{ maxHeight: '80vh', overflow: 'auto' }}
-      destroyOnClose
+      styles={{ body: { maxHeight: '80vh', overflow: 'auto' } }}
+      destroyOnHidden
     >
       <Table
         size="small"

@@ -1107,3 +1107,65 @@ export const getChartsJSON = (): any => {
   }
 };
 };
+
+export const getMockCommandStatus = (id: string): any => {
+  console.log(`API CALL: Fetching mock command status for ${id}...`);
+  return {
+    id,
+    state: 'SUCCEEDED',
+    percent: 100,
+    step: 3,
+    message: 'Deployment completed successfully',
+    type: 'helm-deploy',
+    createdAt: new Date(Date.now() - 300000).toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+export const getMockCommands = (limit = 10, offset = 0): any[] => {
+  console.log(`API CALL: Fetching mock commands (limit=${limit}, offset=${offset})...`);
+  const commands = [
+    {
+      id: 'cmd-1',
+      state: 'SUCCEEDED',
+      percent: 100,
+      step: 3,
+      message: 'Helm release trino-prod deployed successfully',
+      type: 'helm-deploy',
+      createdAt: new Date(Date.now() - 3600000).toISOString(),
+      updatedAt: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: 'cmd-2',
+      state: 'RUNNING',
+      percent: 45,
+      step: 1,
+      message: 'Installing dependencies...',
+      type: 'helm-deploy',
+      createdAt: new Date(Date.now() - 120000).toISOString(),
+      updatedAt: new Date(Date.now() - 5000).toISOString(),
+    },
+    {
+      id: 'cmd-3',
+      state: 'FAILED',
+      percent: 30,
+      step: 2,
+      message: 'Chart validation failed',
+      type: 'helm-deploy',
+      error: 'Chart not found in repository',
+      createdAt: new Date(Date.now() - 1800000).toISOString(),
+      updatedAt: new Date(Date.now() - 1800000).toISOString(),
+    },
+    {
+      id: 'cmd-4',
+      state: 'PENDING',
+      percent: 0,
+      step: 0,
+      message: 'Waiting to start...',
+      type: 'helm-deploy',
+      createdAt: new Date(Date.now() - 10000).toISOString(),
+      updatedAt: new Date(Date.now() - 10000).toISOString(),
+    },
+  ];
+  return commands.slice(offset, offset + limit);
+};
