@@ -476,7 +476,14 @@ export default function RepositoriesPage() {
 
       {/* ---- table ---- */}
       <Spin spinning={loading} tip="Loading...">
-        <Table rowKey="id" columns={columns} dataSource={repos} pagination={false} style={{ marginTop: 24 }} />
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={repos}
+          pagination={false}
+          size="small"
+          style={{ marginTop: 16 }}
+        />
       </Spin>
 
       <Button type="link" icon={<ReloadOutlined />} onClick={fetchRepos} style={{ marginTop: 16 }}>

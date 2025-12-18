@@ -185,11 +185,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             {/* <Tag color="blue">{permissions.role}</Tag> */}
             {status === 'connected' && <Tag color="green">CONNECTED</Tag>}
             {status === 'error' && <Tag color="red">CONNECTION ERROR</Tag>}
-            <Space size={8} style={{ marginLeft: '12px' }}>
-              <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
-                Background Ops {operationsCount > 0 && <Badge count={operationsCount} offset={[8, -2]} />}
-              </Button>
-            </Space>
         </div>
       </Header>
       {/* Slim stats bar UNDER navigation menu to prevent overflow */}
@@ -211,6 +206,9 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           whiteSpace: 'nowrap'
         }}>
           <Space size={6} style={{ marginLeft: 'auto' }}>
+            <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
+              Background Ops {operationsCount > 0 && <Badge count={operationsCount} offset={[4, -2]} />}
+            </Button>
             {clusterStats?.nodes && <Tag icon={<CloudServerOutlined />} color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.nodes.used || 0}/${clusterStats.nodes.total} nodes`}</Tag>}
             {clusterStats?.pods && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.pods.used}/${clusterStats.pods.total} pods`}</Tag>}
             {clusterStats?.cpu && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{formatUsageLabel(clusterStats.cpu.used, clusterStats.cpu.total, 'cores')}</Tag>}

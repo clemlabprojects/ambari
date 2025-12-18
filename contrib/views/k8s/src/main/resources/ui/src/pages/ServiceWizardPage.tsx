@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Select, Progress, Modal } from 'antd';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal } from 'antd';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, type HelmRepo, getSecurityConfig, type SecurityProfiles } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues } from '../api/client';
+import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
@@ -12,12 +13,11 @@ import { applyBindingTargets, buildVarContext, deleteAtStr } from '../components
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
-const { Title, Text } = Typography;
-
-const { Content } = Layout;
+const { Text } = Typography;
 
 const ServiceWizardPage: React.FC = () => {
   const { serviceName } = useParams<{ serviceName: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { token } = theme.useToken();
   const [current, setCurrent] = useState(0);
@@ -48,6 +48,9 @@ const ServiceWizardPage: React.FC = () => {
   const [lastCommandId, setLastCommandId] = useState<string | undefined>(undefined);
   const { refresh: refreshCluster } = useClusterStatus();
 
+  const upgradeState = (location.state as any)?.mode === 'upgrade' ? (location.state as any) : undefined;
+  const isUpgrade = !!upgradeState;
+
   useEffect(() => {
     if (!serviceName) return;
     const load = async () => {
@@ -70,16 +73,30 @@ const ServiceWizardPage: React.FC = () => {
             // Load security profiles
             try {
               const sec = await getSecurityConfig();
-              setSecurityProfiles(sec);
-              if (sec.defaultProfile) {
-                setInstallValues((prev: any) => ({ ...prev, securityProfile: prev.securityProfile || sec.defaultProfile }));
-              }
+            setSecurityProfiles(sec);
+            if (sec.defaultProfile) {
+              setInstallValues((prev: any) => ({ ...prev, securityProfile: prev.securityProfile || sec.defaultProfile }));
+            }
             } catch (e: any) {
               console.warn('Security profiles load failed', e);
             }
 
             // Initialize defaults
             const initial: any = { releaseName: serviceName.toLowerCase(), namespace: 'dashboarding', deploymentMode: 'DIRECT_HELM' };
+            if (upgradeState) {
+              initial.releaseName = upgradeState.releaseName || initial.releaseName;
+              initial.namespace = upgradeState.namespace || initial.namespace;
+              initial.deploymentMode = upgradeState.deploymentMode || 'DIRECT_HELM';
+              if (upgradeState.repoId) {
+                initial.repoId = upgradeState.repoId;
+              }
+              if (upgradeState.git) {
+                initial.git = upgradeState.git;
+              }
+              if (upgradeState.securityProfile) {
+                initial.securityProfile = upgradeState.securityProfile;
+              }
+            }
             const applyDefaults = (fields: any[], target: any) => {
               fields.forEach(f => {
                 if (f.type === 'group' && Array.isArray((f as any).fields)) {
@@ -114,6 +131,24 @@ const ServiceWizardPage: React.FC = () => {
     };
     load();
   }, [serviceName]);
+
+  // When launched in upgrade mode, pre-load current values from the existing release
+  useEffect(() => {
+    if (!isUpgrade || !upgradeState || !upgradeState.releaseName || !upgradeState.namespace) return;
+    void (async () => {
+      try {
+        const currentValues = await getReleaseValues(upgradeState.namespace, upgradeState.releaseName);
+        const rawYaml = yaml.stringify(currentValues || {});
+        parsedRef.current = currentValues || {};
+        setEditorYaml(rawYaml);
+        setView('editor');
+        setEditMode(true);
+        setParseError(null);
+      } catch (e: any) {
+        message.error(e?.message || 'Failed to load current values for upgrade');
+      }
+    })();
+  }, [isUpgrade, upgradeState]);
 
   // --- helpers ---
   const getExcludedPaths = (fields: any[]): string[] => {
@@ -209,11 +244,11 @@ const ServiceWizardPage: React.FC = () => {
               // Pass image pull secret if defined by the service definition or form
               secretName: (def as any)?.secretName || (installValues as any)?.secretName || undefined,
               endpoints: (def as any)?.endpoints || undefined,
-              mounts: (installValues as any)?.mounts || (def as any)?.mounts || null,
-              dependencies: (def as any)?.dependencies || null,
-              ranger: (def as any)?.ranger || null,
-              requiredConfigMaps: (def as any)?.requiredConfigMaps || null,
-              dynamicValues: (def as any)?.dynamicValues || null,
+              mounts: isUpgrade ? null : ((installValues as any)?.mounts || (def as any)?.mounts || null),
+              dependencies: isUpgrade ? null : ((def as any)?.dependencies || null),
+              ranger: isUpgrade ? null : ((def as any)?.ranger || null),
+              requiredConfigMaps: isUpgrade ? null : ((def as any)?.requiredConfigMaps || null),
+              dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
               securityProfile: (installValues as any)?.securityProfile || securityProfiles.defaultProfile || undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
@@ -231,7 +266,7 @@ const ServiceWizardPage: React.FC = () => {
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
-      { title: 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} /> },
       { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} /> },

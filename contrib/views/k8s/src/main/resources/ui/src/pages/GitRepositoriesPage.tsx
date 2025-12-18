@@ -268,7 +268,8 @@ export default function GitRepositoriesPage() {
           columns={columns}
           dataSource={repos}
           pagination={false}
-          style={{ marginTop: 24 }}
+          size="small"
+          style={{ marginTop: 16 }}
         />
       </Spin>
 

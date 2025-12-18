@@ -189,6 +189,7 @@ const GlobalConfigurationsPage: React.FC = () => {
                 rowKey={(r) => r.namespace + '/' + r.name}
                 loading={loading}
                 pagination={{ pageSize: 10 }}
+                size="small"
             />
 
             <Modal

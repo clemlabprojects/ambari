@@ -3,7 +3,16 @@ import React from 'react';
 import { Tag } from 'antd';
 import { CheckCircleTwoTone, CloseCircleTwoTone, SyncOutlined, WarningTwoTone } from '@ant-design/icons';
 
-type StatusType = 'deployed' | 'pending_upgrade' | 'failed' | 'uninstalling' | 'Ready' | 'NotReady' | 'SchedulingDisabled';
+type StatusType =
+  | 'deployed'
+  | 'pending_upgrade'
+  | 'failed'
+  | 'uninstalling'
+  | 'Ready'
+  | 'NotReady'
+  | 'SchedulingDisabled'
+  | 'unknown'
+  | 'UNKNOWN';
 
 interface StatusTagProps {
   status: StatusType;
