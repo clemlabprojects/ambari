@@ -7,7 +7,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, getMonitoringDiscovery, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getMonitoringDiscovery, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -30,35 +30,52 @@ const ConfigurationPage: React.FC = () => {
     const { status, fetchData, setClusterStatus, monitoringState } = useClusterStatus();
     const [form] = Form.useForm();
     const [repoForm] = Form.useForm();
-    const [repos, setRepos] = React.useState<{ value: string; label: string }[]>([]);
-    const [loadingRepos, setLoadingRepos] = React.useState(false);
-    const [monitoringLoading, setMonitoringLoading] = React.useState(false);
-    const [repoModalOpen, setRepoModalOpen] = React.useState(false);
-    const [repoSaving, setRepoSaving] = React.useState(false);
-    const [repoTesting, setRepoTesting] = React.useState(false);
+    const [helmRepositoryOptions, setHelmRepositoryOptions] = React.useState<{ value: string; label: string }[]>([]);
+    const [loadingHelmRepositories, setLoadingHelmRepositories] = React.useState(false);
+    const [monitoringBootstrapLoading, setMonitoringBootstrapLoading] = React.useState(false);
+    const [repositoryModalOpen, setRepositoryModalOpen] = React.useState(false);
+    const [repositorySaving, setRepositorySaving] = React.useState(false);
+    const [repositoryTesting, setRepositoryTesting] = React.useState(false);
     const [currentStep, setCurrentStep] = React.useState<number>(0);
-    const [step1Done, setStep1Done] = React.useState(status !== 'unconfigured');
-    const [step2Saved, setStep2Saved] = React.useState(false); // bootstrap
-    const [step3Saved, setStep3Saved] = React.useState(false); // storage
-    const [goDashLoading, setGoDashLoading] = React.useState(false);
+    const [clusterStepCompleted, setClusterStepCompleted] = React.useState(status !== 'unconfigured');
+    const [monitoringStepSaved, setMonitoringStepSaved] = React.useState(false); // bootstrap
+    const [storageStepSaved, setStorageStepSaved] = React.useState(false); // storage
+    const [goToDashboardLoading, setGoToDashboardLoading] = React.useState(false);
+    const navigate = useNavigate();
 
-    const repoSelectOptions = React.useMemo(() => {
-        const options = [...repos];
+    /**
+     * Build the select options for monitoring repo drop-down and append a
+     * convenience entry that opens the add-repository modal. This memo is
+     * isolated so re-renders only happen when the options list changes.
+     */
+    const monitoringRepoSelectOptions = React.useMemo(() => {
+        const options = [...helmRepositoryOptions];
         options.push({
             value: '__add_repo__',
             label: '+ Add repository',
         });
         return options;
-    }, [repos]);
+    }, [helmRepositoryOptions]);
 
-    const handleMonitoringRepoChange = (value: string | undefined) => {
-        if (value === '__add_repo__') {
-            const current = form.getFieldValue('monitoring') || {};
-            form.setFieldsValue({ monitoring: { ...current, repoId: undefined } });
-            setRepoModalOpen(true);
+    /**
+     * When the user chooses the “add repo” sentinel option, clear the repoId
+     * field and surface the modal so they can create a new entry without losing
+     * other monitoring form values. This keeps the UX inline with Helm repo
+     * management elsewhere in the view.
+     */
+    const handleMonitoringRepoChange = (selectedRepoId: string | undefined) => {
+        if (selectedRepoId === '__add_repo__') {
+            const currentMonitoringSettings = form.getFieldValue('monitoring') || {};
+            form.setFieldsValue({ monitoring: { ...currentMonitoringSettings, repoId: undefined } });
+            setRepositoryModalOpen(true);
         }
     };
 
+    /**
+     * Navigation buttons for the wizard. The "Next" button validates and saves
+     * monitoring settings on step 2 before advancing. The dashboard button
+     * redirects immediately to avoid unnecessary background refreshes here.
+     */
     const navButtons = (
     <Space>
       {currentStep > 0 && <Button onClick={() => setCurrentStep(currentStep - 1)}>Back</Button>}
@@ -68,33 +85,33 @@ const ConfigurationPage: React.FC = () => {
           onClick={async () => {
             if (currentStep === 1) {
               try {
-                const vals = await form.validateFields();
+                const formValues = await form.validateFields();
                 await saveViewSettings({
                   monitoring: {
-                    autoBootstrap: vals.monitoring?.autoBootstrap,
-                    preferPrometheus: vals.monitoring?.preferPrometheus,
-                    skipOnOpenShift: vals.monitoring?.skipOnOpenShift,
-                    preferOpenShiftMonitoring: vals.monitoring?.preferOpenShiftMonitoring,
-                    repoId: vals.monitoring?.repoId,
-                    prometheusHost: vals.monitoring?.prometheusHost,
-                    prometheusIngressClass: vals.monitoring?.prometheusIngressClass,
-                    prometheusNodePort: vals.monitoring?.prometheusNodePort,
+                    autoBootstrap: formValues.monitoring?.autoBootstrap,
+                    preferPrometheus: formValues.monitoring?.preferPrometheus,
+                    skipOnOpenShift: formValues.monitoring?.skipOnOpenShift,
+                    preferOpenShiftMonitoring: formValues.monitoring?.preferOpenShiftMonitoring,
+                    repoId: formValues.monitoring?.repoId,
+                    prometheusHost: formValues.monitoring?.prometheusHost,
+                    prometheusIngressClass: formValues.monitoring?.prometheusIngressClass,
+                    prometheusNodePort: formValues.monitoring?.prometheusNodePort,
                     thanos: {
-                      enabled: vals.monitoring?.thanosEnabled,
-                      bucket: vals.monitoring?.thanosBucket,
-                      endpoint: vals.monitoring?.thanosEndpoint,
-                      region: vals.monitoring?.thanosRegion,
-                      accessKey: vals.monitoring?.thanosAccessKey,
-                      secretKey: vals.monitoring?.thanosSecretKey,
-                      insecure: vals.monitoring?.thanosInsecure
+                      enabled: formValues.monitoring?.thanosEnabled,
+                      bucket: formValues.monitoring?.thanosBucket,
+                      endpoint: formValues.monitoring?.thanosEndpoint,
+                      region: formValues.monitoring?.thanosRegion,
+                      accessKey: formValues.monitoring?.thanosAccessKey,
+                      secretKey: formValues.monitoring?.thanosSecretKey,
+                      insecure: formValues.monitoring?.thanosInsecure
                     },
-                    thanosHost: vals.monitoring?.thanosHost,
-                    thanosIngressClass: vals.monitoring?.thanosIngressClass,
-                    thanosNodePort: vals.monitoring?.thanosNodePort
+                    thanosHost: formValues.monitoring?.thanosHost,
+                    thanosIngressClass: formValues.monitoring?.thanosIngressClass,
+                    thanosNodePort: formValues.monitoring?.thanosNodePort
                   }
                 });
-                setStep2Saved(true);
-                setStep3Saved(!vals.monitoring?.thanosEnabled ? true : step3Saved);
+                setMonitoringStepSaved(true);
+                setStorageStepSaved(!formValues.monitoring?.thanosEnabled ? true : storageStepSaved);
                 setCurrentStep(currentStep + 1);
               } catch (e:any) {
                 Modal.confirm({
@@ -118,17 +135,21 @@ const ConfigurationPage: React.FC = () => {
           Next
         </Button>
       )}
-        {status === 'connected' && step1Done && step2Saved && step3Saved && (
+        {status === 'connected' && clusterStepCompleted && monitoringStepSaved && storageStepSaved && (
           <Button
             type="primary"
-            loading={goDashLoading}
+            loading={goToDashboardLoading}
             onClick={async () => {
-              setGoDashLoading(true);
+              setGoToDashboardLoading(true);
               try {
-                await fetchData(true);
+                // Navigate immediately without any background refresh
+                // The dashboard will refresh its own data when mounted
                 navigate('/');
               } finally {
-                setGoDashLoading(false);
+                // Reset loading state after a short delay to allow navigation
+                setTimeout(() => {
+                  setGoToDashboardLoading(false);
+                }, 100);
               }
             }}
             style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
@@ -139,26 +160,40 @@ const ConfigurationPage: React.FC = () => {
       </Space>
     );
 
-    const refreshRepos = React.useCallback(async () => {
-        setLoadingRepos(true);
+    /**
+     * Refresh the list of configured Helm repositories. The result is normalized
+     * into select options to avoid repeating mapping logic across the page.
+     * Errors are logged to the console so we do not block the UX on failures.
+     */
+    const refreshHelmRepositories = React.useCallback(async () => {
+        setLoadingHelmRepositories(true);
         try {
-            const r = await getHelmRepos();
-            setRepos(r.map((x:any) => ({ value: x.id, label: `${x.name || x.id} (${x.type})` })));
+            const repositories = await getHelmRepos();
+            setHelmRepositoryOptions(repositories.map((repo: any) => ({
+                value: repo.id,
+                label: `${repo.name || repo.id} (${repo.type})`
+            })));
         } catch (err) {
             console.error('Failed to load Helm repositories', err);
         } finally {
-            setLoadingRepos(false);
+            setLoadingHelmRepositories(false);
         }
     }, []);
 
-    const handleCustomRequest = (options: RcCustomRequestOptions) => {
-        const { onSuccess, onError, file, onProgress } = options;
+    /**
+     * Custom uploader for kubeconfig. We send the file as a raw octet-stream to
+     * the backend endpoint while surfacing progress and success/error callbacks
+     * that Ant Design expects. The handler remains intentionally minimal to
+     * avoid duplicating XMLHttpRequest plumbing across components.
+     */
+    const handleCustomRequest = (uploadOptions: RcCustomRequestOptions) => {
+        const { onSuccess, onError, file, onProgress } = uploadOptions;
 
         const xhr = new XMLHttpRequest();
 
-        xhr.upload.onprogress = event => {
-            if (event.lengthComputable && onProgress) {
-                const percent = Math.floor((event.loaded / event.total) * 100);
+        xhr.upload.onprogress = progressEvent => {
+            if (progressEvent.lengthComputable && onProgress) {
+                const percent = Math.floor((progressEvent.loaded / progressEvent.total) * 100);
                 onProgress({ percent });
             }
         };
@@ -182,98 +217,106 @@ const ConfigurationPage: React.FC = () => {
     };
 
     React.useEffect(() => {
-        void refreshRepos();
+        void refreshHelmRepositories();
         const loadSettings = async () => {
             try {
-                const s = await getViewSettings();
+                const settings = await getViewSettings();
                 form.setFieldsValue({
                     monitoring: {
-                        autoBootstrap: s?.monitoring?.autoBootstrap ?? true,
-                        preferPrometheus: s?.monitoring?.preferPrometheus ?? true,
-                        skipOnOpenShift: s?.monitoring?.skipOnOpenShift ?? false,
-                        repoId: s?.monitoring?.repoId,
-                        prometheusHost: s?.monitoring?.prometheusHost,
-                        prometheusIngressClass: s?.monitoring?.prometheusIngressClass ?? 'nginx',
-                        prometheusNodePort: s?.monitoring?.prometheusNodePort,
-                        thanosEnabled: s?.monitoring?.thanos?.enabled ?? false,
-                        thanosBucket: s?.monitoring?.thanos?.bucket,
-                        thanosEndpoint: s?.monitoring?.thanos?.endpoint,
-                        thanosRegion: s?.monitoring?.thanos?.region,
-                        thanosAccessKey: s?.monitoring?.thanos?.accessKey,
-                        thanosSecretKey: s?.monitoring?.thanos?.secretKey,
-                        thanosInsecure: s?.monitoring?.thanos?.insecure ?? false,
-                        thanosHost: s?.monitoring?.thanosHost,
-                        thanosIngressClass: s?.monitoring?.thanosIngressClass ?? 'nginx',
-                        thanosNodePort: s?.monitoring?.thanosNodePort
+                        autoBootstrap: settings?.monitoring?.autoBootstrap ?? true,
+                        preferPrometheus: settings?.monitoring?.preferPrometheus ?? true,
+                        skipOnOpenShift: settings?.monitoring?.skipOnOpenShift ?? false,
+                        repoId: settings?.monitoring?.repoId,
+                        prometheusHost: settings?.monitoring?.prometheusHost,
+                        prometheusIngressClass: settings?.monitoring?.prometheusIngressClass ?? 'nginx',
+                        prometheusNodePort: settings?.monitoring?.prometheusNodePort,
+                        thanosEnabled: settings?.monitoring?.thanos?.enabled ?? false,
+                        thanosBucket: settings?.monitoring?.thanos?.bucket,
+                        thanosEndpoint: settings?.monitoring?.thanos?.endpoint,
+                        thanosRegion: settings?.monitoring?.thanos?.region,
+                        thanosAccessKey: settings?.monitoring?.thanos?.accessKey,
+                        thanosSecretKey: settings?.monitoring?.thanos?.secretKey,
+                        thanosInsecure: settings?.monitoring?.thanos?.insecure ?? false,
+                        thanosHost: settings?.monitoring?.thanosHost,
+                        thanosIngressClass: settings?.monitoring?.thanosIngressClass ?? 'nginx',
+                        thanosNodePort: settings?.monitoring?.thanosNodePort
                     }
                 });
-                if (s?.monitoring) {
-                    setStep2Saved(true);
-                    const thanosEnabled = s?.monitoring?.thanos?.enabled;
-                    const hasThanosConfig = !!(s?.monitoring?.thanos?.bucket && s?.monitoring?.thanos?.endpoint);
-                    setStep3Saved(!thanosEnabled || hasThanosConfig);
+                if (settings?.monitoring) {
+                    setMonitoringStepSaved(true);
+                    const thanosEnabled = settings?.monitoring?.thanos?.enabled;
+                    const hasThanosConfig = !!(settings?.monitoring?.thanos?.bucket && settings?.monitoring?.thanos?.endpoint);
+                    setStorageStepSaved(!thanosEnabled || hasThanosConfig);
                 }
             } catch {
                 // ignore
             }
         };
         loadSettings();
-    }, [form, refreshRepos]);
+    }, [form, refreshHelmRepositories]);
 
+    /**
+     * Persist the repository from the modal form. Secrets are sent separately
+     * to avoid storing empty strings. On success the list is refreshed and the
+     * modal is closed to keep the user flow short.
+     */
     const handleSaveRepo = React.useCallback(async () => {
         try {
-            const vals = await repoForm.validateFields();
-            const { secret, ...entity } = vals;
-            setRepoSaving(true);
-            await saveHelmRepo(entity, secret || undefined);
+            const repoFormValues = await repoForm.validateFields();
+            const { secret, ...repositoryEntity } = repoFormValues;
+            setRepositorySaving(true);
+            await saveHelmRepo(repositoryEntity, secret || undefined);
             message.success('Repository saved');
-            setRepoModalOpen(false);
+            setRepositoryModalOpen(false);
             repoForm.resetFields();
-            await refreshRepos();
+            await refreshHelmRepositories();
         } catch (e:any) {
             if (e?.errorFields) return;
             message.error(e?.message || 'Save failed');
         } finally {
-            setRepoSaving(false);
+            setRepositorySaving(false);
         }
-    }, [refreshRepos, repoForm]);
+    }, [refreshHelmRepositories, repoForm]);
 
+    /**
+     * Save and test connectivity for the repository by performing a login.
+     * Validation ensures ID is set so the login can reference it immediately.
+     */
     const handleTestRepo = React.useCallback(async () => {
         try {
-            const vals = await repoForm.validateFields();
-            const { secret, ...entity } = vals;
-            if (!entity.id) {
+            const repoFormValues = await repoForm.validateFields();
+            const { secret, ...repositoryEntity } = repoFormValues;
+            if (!repositoryEntity.id) {
                 throw new Error('Repository ID is required to test connectivity.');
             }
-            setRepoTesting(true);
-            await saveHelmRepo(entity, secret || undefined);
-            await loginHelmRepo(entity.id);
+            setRepositoryTesting(true);
+            await saveHelmRepo(repositoryEntity, secret || undefined);
+            await loginHelmRepo(repositoryEntity.id);
             message.success('Repository saved and login verified');
-            await refreshRepos();
+            await refreshHelmRepositories();
         } catch (e:any) {
             if (e?.errorFields) return;
             message.error(e?.message || 'Test failed');
         } finally {
-            setRepoTesting(false);
+            setRepositoryTesting(false);
         }
-    }, [refreshRepos, repoForm]);
+    }, [refreshHelmRepositories, repoForm]);
 
-    let navigate = useNavigate();
     const uploadProps = {
         name: 'file',
         customRequest: handleCustomRequest,
         showUploadList: true,
-        onChange(info: any) {
-            if (info.file.status === 'done') {
-                message.success(`${info.file.name} successfully uploaded. Proceed to monitoring step or dashboard when ready.`);
+        onChange(uploadInfo: any) {
+            if (uploadInfo.file.status === 'done') {
+                message.success(`${uploadInfo.file.name} successfully uploaded. Proceed to monitoring step or dashboard when ready.`);
                 setClusterStatus('connected');
                 // Move to step 2 so the user can configure monitoring right after upload.
                 setCurrentStep(1);
-                setStep1Done(true);
+                setClusterStepCompleted(true);
                 // Kick off initial fetch so the dashboard has data on first visit
                 void fetchData(true);
-            } else if (info.file.status === 'error') {
-                message.error(`Failed to upload ${info.file.name}.`);
+            } else if (uploadInfo.file.status === 'error') {
+                message.error(`Failed to upload ${uploadInfo.file.name}.`);
             }
         },
     };
@@ -372,7 +415,7 @@ const ConfigurationPage: React.FC = () => {
                                 showIcon
                             />
                         )}
-                        {repos.length === 0 && (
+                        {helmRepositoryOptions.length === 0 && (
                             <Alert
                                 type="warning"
                                 showIcon
@@ -382,7 +425,7 @@ const ConfigurationPage: React.FC = () => {
                                         <span>Add a repository to bootstrap monitoring or install charts.</span>
                                         <Button
                                             icon={<PlusOutlined />}
-                                            onClick={() => setRepoModalOpen(true)}
+                                            onClick={() => setRepositoryModalOpen(true)}
                                             size="small"
                                         >
                                             Add repository
@@ -425,9 +468,9 @@ const ConfigurationPage: React.FC = () => {
                                 <Form.Item label="Helm repository for monitoring (optional override)" name={['monitoring','repoId']}>
                                     <Select
                                       allowClear
-                                      loading={loadingRepos}
+                                      loading={loadingHelmRepositories}
                                       placeholder="Use configured/default repo"
-                                      options={repoSelectOptions}
+                                      options={monitoringRepoSelectOptions}
                                       onChange={handleMonitoringRepoChange}
                                     />
                                 </Form.Item>
@@ -475,8 +518,8 @@ const ConfigurationPage: React.FC = () => {
                                           }
                                         });
                                         message.success('Monitoring settings saved');
-                                        setStep2Saved(true);
-                                        setStep3Saved(!vals.monitoring?.thanosEnabled ? true : step3Saved);
+                                        setMonitoringStepSaved(true);
+                                        setStorageStepSaved(!vals.monitoring?.thanosEnabled ? true : storageStepSaved);
                                       } catch (e:any) {
                                         message.error(e?.message || 'Save failed');
                                       }
@@ -485,10 +528,24 @@ const ConfigurationPage: React.FC = () => {
                                   Save settings
                                 </Button>
                                 <Button
-                                  icon={<PlayCircleOutlined />}
-                                  loading={monitoringLoading}
+                                  icon={<DisconnectOutlined />}
                                   onClick={async () => {
-                                    setMonitoringLoading(true);
+                                    try {
+                                      await resetMonitoringCache();
+                                      message.success('Monitoring cache cleared. Next bootstrap will reinstall.');
+                                      await fetchData(true);
+                                    } catch (e:any) {
+                                      message.error(e?.message || 'Reset failed');
+                                    }
+                                  }}
+                                >
+                                  Reset monitoring cache
+                                </Button>
+                                <Button
+                                  icon={<PlayCircleOutlined />}
+                                  loading={monitoringBootstrapLoading}
+                                  onClick={async () => {
+                                    setMonitoringBootstrapLoading(true);
                                     try {
                                         const repoId = form.getFieldValue(['monitoring','repoId']);
                                         await installMonitoring(repoId);
@@ -497,7 +554,7 @@ const ConfigurationPage: React.FC = () => {
                                       } catch (e:any) {
                                         message.error(e?.message || 'Bootstrap failed');
                                       } finally {
-                                        setMonitoringLoading(false);
+                                        setMonitoringBootstrapLoading(false);
                                       }
                                   }}
                                 >
@@ -607,8 +664,8 @@ const ConfigurationPage: React.FC = () => {
                                 }
                               });
                               message.success('Storage settings saved');
-                              setStep2Saved(true);
-                              setStep3Saved(!vals.monitoring?.thanosEnabled || !!(vals.monitoring?.thanosBucket && vals.monitoring?.thanosEndpoint));
+                              setMonitoringStepSaved(true);
+                              setStorageStepSaved(!vals.monitoring?.thanosEnabled || !!(vals.monitoring?.thanosBucket && vals.monitoring?.thanosEndpoint));
                             } catch (e:any) {
                               message.error(e?.message || 'Save failed');
                             }
@@ -631,13 +688,13 @@ const ConfigurationPage: React.FC = () => {
 
         <Modal
           title="Add Helm Repository"
-          open={repoModalOpen}
-          onCancel={() => setRepoModalOpen(false)}
+          open={repositoryModalOpen}
+          onCancel={() => setRepositoryModalOpen(false)}
           footer={
             <Space>
-              <Button onClick={() => setRepoModalOpen(false)}>Cancel</Button>
-              <Button loading={repoTesting} onClick={handleTestRepo}>Test & login</Button>
-              <Button type="primary" loading={repoSaving} onClick={handleSaveRepo}>Save repository</Button>
+              <Button onClick={() => setRepositoryModalOpen(false)}>Cancel</Button>
+              <Button loading={repositoryTesting} onClick={handleTestRepo}>Test & login</Button>
+              <Button type="primary" loading={repositorySaving} onClick={handleSaveRepo}>Save repository</Button>
             </Space>
           }
         >

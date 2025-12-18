@@ -74,23 +74,28 @@ public class EncryptionService {
         try {
             String combined = new String(encryptedData, StandardCharsets.UTF_8);
             String[] parts = combined.split(":", 3);
-            
+
             if (parts.length != 3) {
                 // Try to decode as legacy Base64-only format for backward compatibility
                 LOG.warn("Detected legacy Base64-only format, attempting backward-compatible decode");
                 return Base64.getDecoder().decode(encryptedData);
             }
-            
+
             byte[] salt = Base64.getDecoder().decode(parts[0]);
             byte[] iv = Base64.getDecoder().decode(parts[1]);
             byte[] cipher = Base64.getDecoder().decode(parts[2]);
-            
+
             return encryptor.decrypt(salt, iv, cipher);
+        } catch (IllegalArgumentException iae) {
+            // Preserve IllegalArgumentException for invalid Base64 to satisfy callers/tests
+            throw iae;
         } catch (Exception e) {
             LOG.error("Decryption failed. Attempting legacy Base64 decode for backward compatibility", e);
             // Fallback to Base64 decode for backward compatibility with old data
             try {
                 return Base64.getDecoder().decode(encryptedData);
+            } catch (IllegalArgumentException iae2) {
+                throw iae2;
             } catch (Exception e2) {
                 LOG.error("Both AES and Base64 decryption failed", e2);
                 throw new RuntimeException("Failed to decrypt data", e2);
