@@ -770,6 +770,9 @@
       <component name="TEZ_CLIENT">
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_tez_harmonizegc_option" />
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig">
+            <summary>Update Tez JVM configuration to base/extra properties</summary>
+          </task>
         </pre-upgrade>
 
         <pre-downgrade/> <!--  no-op to prevent config changes on downgrade -->
@@ -785,16 +788,6 @@
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
-      </component>
-    </service>
-
-    <service name="TEZ">
-      <component name="TEZ_CLIENT">
-        <pre-upgrade>
-          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig">
-            <summary>Update Tez JVM configuration to base/extra properties</summary>
-          </task>
-        </pre-upgrade>
       </component>
     </service>
 

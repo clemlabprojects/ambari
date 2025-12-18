@@ -1156,6 +1156,8 @@
             <summary>Update Tez JVM configuration to base/extra properties</summary>
           </task>
         </pre-upgrade>
+        <!-- no-op pre-downgrade to satisfy upgrade pack requirements when pre-upgrade is present -->
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>
