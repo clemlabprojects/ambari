@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getCommandStatus, listCommands, getHelmReleases, getReleaseStatus, type CommandStatus, submitHelmDeploy } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
@@ -10,7 +10,6 @@ import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutline
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
-import ServiceInstallationModal from '../components/ServiceInstallationModal/index.tsx';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 
 import './Page.css';
@@ -21,13 +20,10 @@ const { Search } = Input;
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh } = useClusterStatus();
   const navigate = useNavigate();
-  const [isInstallationModalVisible, setIsInstallationModalVisible] = useState(false);
-  const [upgradeTargetRelease, setUpgradeTargetRelease] = useState<HelmRelease | null>(null);
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
   const [isCommandDrawerOpen, setIsCommandDrawerOpen] = useState(false);
   const [watchedCommandId, setWatchedCommandId] = useState<string | undefined>(undefined);
   const [isInstallPickerOpen, setIsInstallPickerOpen] = useState(false);
-  const [commandHistory, setCommandHistory] = useState<Array<{ id: string; label: string }>>([]);
   const [helmReleases, setHelmReleases] = useState<HelmRelease[]>([]);
   const [totalReleases, setTotalReleases] = useState(0);
   const [pageIndex, setPageIndex] = useState(1);
@@ -226,11 +222,6 @@ const HelmReleasesPage: React.FC = () => {
 
     // legacy commandHistory kept for label building; actual statuses fetched via shared modal
     
-    const handleDeploymentSuccess = () => {
-      fetchReleases(pageIndex, pageSize);
-      refresh(); 
-    };
-
     const renderServiceCell = (releaseRecord: HelmRelease) => {
         const serviceKey = releaseRecord.serviceKey;
         const serviceLabel = serviceKey && serviceDefinitions[serviceKey]?.label ? serviceDefinitions[serviceKey].label : (serviceKey || '—');
@@ -258,31 +249,27 @@ const HelmReleasesPage: React.FC = () => {
       return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
     }
 
-    const buildMenuItems = (record: any): MenuProps['items'] => ([
+    const buildMenuItems = (record: HelmRelease): MenuProps['items'] => ([
     {
         key: 'update',
         icon: <SyncOutlined />,
         label: 'Upgrade / Config',
-        onClick: async () => {
-          const hideLoading = message.loading("Fetching current configuration...", 0);
-          try {
-            // 1. Fetch current values from backend (returns JSON object)
-            const currentValues = await getReleaseValues(record.namespace, record.name);
-            
-            // 2. Prepare target object with all necessary metadata + values
-            setUpgradeTargetRelease({
-              ...record, // includes name, namespace, chart, version, repoId
-              currentValues: currentValues 
-            });
-
-            // 3. Open Modal
-            setIsInstallationModalVisible(true);
-          } catch (e: any) {
-            console.error(e);
-            message.error(e.message || "Failed to load current configuration");
-          } finally {
-            hideLoading();
+        disabled: !record.serviceKey,
+        onClick: () => {
+          if (!record.serviceKey) {
+            message.warning('Upgrade wizard is only available for UI-managed services.');
+            return;
           }
+          navigate(`/services/${record.serviceKey}`, {
+            state: {
+              mode: 'upgrade',
+              releaseName: record.name,
+              namespace: record.namespace,
+              repoId: record.repoId,
+              deploymentMode: record.deploymentMode,
+              git: gitOptionsForRelease(record),
+            },
+          });
         }
     },
     ...(record.securityProfile ? [{
@@ -348,7 +335,7 @@ const HelmReleasesPage: React.FC = () => {
             )}
 
             {ep.internal && (
-                <Tag size="small" style={{ marginLeft: 4 }} color="default">
+                <Tag style={{ marginLeft: 4 }} color="default">
                 internal
                 </Tag>
             )}
@@ -532,6 +519,7 @@ const HelmReleasesPage: React.FC = () => {
               dataSource={displayed}
               rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}
               loading={isLoading || status === 'loading'}
+              size="small"
               pagination={{
                 current: pageIndex,
                 pageSize,
@@ -540,16 +528,6 @@ const HelmReleasesPage: React.FC = () => {
                 showSizeChanger: true,
                 showTotal: (t, range) => `${range[0]}-${range[1]} of ${t}`
               }}
-            />
-
-            <ServiceInstallationModal
-                visible={isInstallationModalVisible}
-                onClose={() => { setIsInstallationModalVisible(false); setUpgradeTargetRelease(null); }}
-                onDeploy={() => { setIsInstallationModalVisible(false); setUpgradeTargetRelease(null); handleDeploymentSuccess(); }}
-                // Determine mode based on whether we clicked "Upgrade" (upgradeTarget exists) or "Install"
-                mode={upgradeTargetRelease ? 'upgrade' : 'deploy'}
-                // Pass the full object (including currentValues) to the modal
-                initialRelease={upgradeTargetRelease}
             />
 
             <Modal

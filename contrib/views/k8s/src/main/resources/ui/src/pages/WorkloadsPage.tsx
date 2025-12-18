@@ -14,7 +14,7 @@ import {
   deletePod,
   restartPod
 } from '../api/client';
-import type { KubeNamespace, KubePod, KubeService, KubePodContainerStatus, KubeEvent } from '../types/KubeTypes';
+import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 import { DownloadOutlined } from '@ant-design/icons';
 import { ReloadOutlined } from '@ant-design/icons';
 
@@ -54,21 +54,37 @@ const WorkloadsPage: React.FC = () => {
   const [autoRefreshWorkloads, setAutoRefreshWorkloads] = useState(true);
 
   useEffect(() => {
-    // Initial namespace fetch and default selection (use nav state/query if present)
+    // Initial namespace fetch and default selection (prefer nav state/query when present)
     const stateNs = (location.state as any)?.namespace as string | undefined;
     const stateSelector = (location.state as any)?.labelSelector as string | undefined;
     const query = new URLSearchParams(location.search);
     const qsNs = query.get('namespace') || undefined;
     const qsSelector = query.get('labelSelector') || undefined;
-    const initialNs = stateNs || qsNs;
+    const requestedNs = stateNs || qsNs;
     const initialSelector = stateSelector || qsSelector;
-    if (initialSelector) setLabelSelector(initialSelector);
+    if (initialSelector) {
+      setLabelSelector(initialSelector);
+    }
     void (async () => {
       try {
         const ns = await getNamespaces();
         setNamespaces(ns);
-        const first = initialNs || ns[0]?.name;
-        if (first) setNamespace(first);
+        if (!ns || ns.length === 0) {
+          setNamespace(undefined);
+          return;
+        }
+        setNamespace(prev => {
+          // 1) If a namespace was explicitly requested (via navigation or query) and exists, honor it.
+          if (requestedNs && ns.some(n => n.name === requestedNs)) {
+            return requestedNs;
+          }
+          // 2) Otherwise, keep the currently selected namespace if it is still valid.
+          if (prev && ns.some(n => n.name === prev)) {
+            return prev;
+          }
+          // 3) Fallback to the first namespace from the API.
+          return ns[0].name;
+        });
       } catch (err) {
         console.error(err);
       }

@@ -615,6 +615,14 @@ export async function submitHelmDeploy(payload: {
   repoId?: string;
   deploymentMode?: string;
   git?: any;
+  stackConfigOverrides?: Record<string, any>;
+  secretName?: string;
+  endpoints?: any;
+  mounts?: any;
+  dependencies?: any;
+  ranger?: any;
+  requiredConfigMaps?: any;
+  dynamicValues?: any;
 }, params: URLSearchParams = new URLSearchParams()) {
   // always propagate repoId as a query param to help the backend resolve the repository deterministically
   if (payload.repoId && !params.has('repoId')) {
