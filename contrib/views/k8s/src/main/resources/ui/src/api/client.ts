@@ -260,6 +260,14 @@ export async function installMonitoring(repoId?: string) {
   return handleApiResponse(response);
 }
 
+export async function resetMonitoringCache() {
+  const response = await fetch(`${API_BASE_URL}/helm/monitoring/reset`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  return handleApiResponse(response);
+}
+
 
 export const getClusterEvents = async () => {
   if (import.meta.env.DEV) {

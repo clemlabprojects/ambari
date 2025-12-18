@@ -22,6 +22,7 @@ import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.net.URI;
@@ -39,11 +40,18 @@ class KubernetesServiceTest {
   static KubernetesMockServer server;
 
   private KubernetesService svc;
+  private ViewContext mockCtx;
+  private HelmClient mockHelm;
 
   @BeforeEach
   void setUp() {
-    // Constructeur de test : (KubernetesClient, boolean isConfigured)
-    svc = new KubernetesService(client, /*isConfigured=*/true);
+    mockCtx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
+    when(mockCtx.getInstanceName()).thenReturn("test-instance");
+    when(mockCtx.getUsername()).thenReturn("tester");
+    String tmp = System.getProperty("java.io.tmpdir") + "/k8s-ut";
+    when(mockCtx.getProperties()).thenReturn(Map.of("k8s.view.working.dir", tmp));
+    mockHelm = mock(HelmClient.class);
+    svc = new KubernetesService(mockCtx, client, mockHelm, /*isConfigured=*/true);
   }
 
   @Test
@@ -127,5 +135,39 @@ class KubernetesServiceTest {
     assertNotNull(stats.getNodes(), "Nodes stat ne doit pas être null");
     assertEquals(1.0, stats.getNodes().getTotal(), 0.0001,
         "Le total de nœuds doit être 1.0");
+  }
+
+  @Test
+  void buildPrometheusExposure_enablesIngressWhenHostProvided() throws Exception {
+    // Given: monitoring settings with an ingress host
+    KubernetesService.MonitoringSettings settings = new KubernetesService.MonitoringSettings();
+    settings.prometheusHost = "prometheus.example.com";
+    settings.prometheusIngressClass = "nginx";
+    Map<String, Object> overrides = new HashMap<>();
+
+    // Use reflection to invoke the private helper
+    Method m = KubernetesService.class.getDeclaredMethod(
+        "buildPrometheusExposureOverrides", KubernetesService.MonitoringSettings.class, String.class, Map.class);
+    m.setAccessible(true);
+
+    Object exposure = m.invoke(svc, settings, "monitoring", overrides);
+
+    // Then: ingress overrides should be present and URL resolved
+    assertTrue((Boolean) overrides.get("prometheus.ingress.enabled"),
+        "Ingress must be enabled when a host is provided");
+    assertEquals("nginx", overrides.get("prometheus.ingress.ingressClassName"),
+        "Ingress class must be set from settings");
+    assertNotNull(exposure, "Exposure object should not be null when host is set");
+    var hosts = (java.util.List<?>) overrides.get("prometheus.ingress.hosts");
+    assertEquals(1, hosts.size(), "Ingress hosts must carry the configured host");
+    assertEquals("prometheus.example.com", hosts.get(0));
+    var paths = (java.util.List<?>) overrides.get("prometheus.ingress.paths");
+    assertEquals(1, paths.size(), "Ingress paths should default to root");
+    assertEquals("/", paths.get(0));
+    assertEquals("Prefix", overrides.get("prometheus.ingress.pathType"));
+    // Access record method url() reflectively
+    Method urlMethod = exposure.getClass().getMethod("url");
+    String url = (String) urlMethod.invoke(exposure);
+    assertTrue(url.contains("prometheus.example.com"), "Exposure URL must include the configured host");
   }
 }

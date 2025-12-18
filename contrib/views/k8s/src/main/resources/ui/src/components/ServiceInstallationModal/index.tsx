@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, Modal, Form, Input, Select, message, Spin, Alert, Checkbox, Card, Progress, Radio, Segmented, Space, Steps, Switch, Tabs, Tooltip, Typography,
-Upload, Tag
-} from 'antd'; // Added Tag import
+Upload, Tag, Divider
+} from 'antd'; // Added Tag and Divider imports
 
 import { InfoCircleOutlined, UploadOutlined, LinkOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
@@ -13,6 +13,7 @@ import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus,
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
+import { getGitRepos } from '../../pages/GitRepositoriesPage';
 
 import * as pako from 'pako';
 import { untar } from 'js-untar';
@@ -109,6 +110,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [selectedServiceKey, setSelectedServiceKey] = useState<string>('');
 
   const [repos, setRepos] = useState<HelmRepo[]>([]);
+  const [gitRepos, setGitRepos] = useState<Array<{ id: string; name: string; url: string; credentialAlias?: string }>>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [installMode, setInstallMode] = useState<'repo' | 'direct'>('repo');
   const [overrideChart, setOverrideChart] = useState(false);
@@ -205,6 +207,18 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
         setAvailableServices(services);
         setRepos(reposList);
         setSecurityProfiles(secProfiles);
+        
+        // Load Git repositories
+        try {
+          const gitReposList = getGitRepos();
+          setGitRepos(gitReposList);
+          // Update global reference for compatibility
+          if (typeof window !== 'undefined') {
+            (window as any).__gitRepos = gitReposList;
+          }
+        } catch (e) {
+          console.warn('Failed to load Git repositories:', e);
+        }
 
         let deducedKey = '';
         if (mode === 'upgrade' && initialRelease?.chart) {
@@ -941,6 +955,60 @@ const handleServiceChange = (value: string) => {
 
       {deploymentModeWatch === 'FLUX_GITOPS' && (
         <Card size="small" title="Flux / GitOps settings" style={{ marginBottom: 12 }}>
+          <Form.Item name={['git','repoId']} label="Git repository" tooltip="Select a saved Git repository or enter URL manually">
+            <Select
+              placeholder="Select Git repository or enter URL manually"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              dropdownRender={(menu) => (
+                <>
+                  {menu}
+                  <Divider style={{ margin: '8px 0' }} />
+                  <Space style={{ padding: '0 8px 4px' }}>
+                    <Button
+                      type="link"
+                      icon={<LinkOutlined />}
+                      onClick={() => window.open('/#/git-repositories', '_blank')}
+                      size="small"
+                    >
+                      Manage Git Repositories
+                    </Button>
+                  </Space>
+                </>
+              )}
+              onChange={(value) => {
+                if (value && typeof value === 'string' && value !== '__manual__') {
+                  // Load repo details and populate form
+                  const repo = gitRepos.find((r) => r.id === value);
+                  if (repo) {
+                    form.setFieldsValue({
+                      git: {
+                        ...form.getFieldValue('git'),
+                        repoUrl: repo.url,
+                        credentialAlias: repo.credentialAlias,
+                      }
+                    });
+                  }
+                } else if (value === '__manual__') {
+                  // Clear repo selection to allow manual input
+                  form.setFieldsValue({
+                    git: {
+                      ...form.getFieldValue('git'),
+                      repoId: undefined,
+                    }
+                  });
+                }
+              }}
+            >
+              <Option value="__manual__">Enter URL manually</Option>
+              {gitRepos.map((repo) => (
+                <Option key={repo.id} value={repo.id} label={`${repo.name} (${repo.url})`}>
+                  {repo.name} - {repo.url}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
           <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Git repository is required in GitOps mode' }]}>
             <Input placeholder="https://git.example.com/org/cluster-config.git" />
           </Form.Item>

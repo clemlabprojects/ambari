@@ -1,4 +1,12 @@
 /* ui/src/components/layout/AppLayout.css */
+:global(html.k8s-view-no-scroll, body.k8s-view-no-scroll) {
+  overflow: hidden !important;
+}
+
+:global(html, body, #root) {
+  height: 100%;
+}
+
 .app-layout {
   --header-height: 64px;
   height: 100vh;
@@ -27,6 +35,7 @@
   top: 0;
   z-index: 20;
   border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .header-left, .header-right {
@@ -61,9 +70,15 @@
   padding: 6px 6px 8px 6px;
 }
 
+.stats-bar {
+  /* Ensure stats bar doesn't overlap menu */
+  position: relative;
+  z-index: 10;
+}
+
 .content-shell {
   display: flex;
-  height: calc(100vh - var(--header-height));
+  height: calc(100vh - var(--header-height) - var(--stats-bar-height, 28px));
   min-height: 0;
 }
 

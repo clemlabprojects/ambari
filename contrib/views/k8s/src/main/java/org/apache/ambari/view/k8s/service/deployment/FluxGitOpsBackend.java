@@ -42,9 +42,21 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.GitCredentialService;
+import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.service.SecurityProfileService;
+import org.apache.ambari.view.k8s.service.SecurityMappingService;
+import org.apache.ambari.view.k8s.service.ConfigResolutionService;
+import org.apache.ambari.view.k8s.service.GlobalConfigService;
+import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
+import org.apache.ambari.view.k8s.requests.HelmDeployRequest.ConfigInstantiation;
+import org.apache.ambari.view.k8s.model.stack.StackConfig;
+import org.apache.ambari.view.k8s.model.stack.StackProperty;
+import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -68,6 +80,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final ReleaseMetadataService releaseMetadataService;
     private final HttpClient httpClient;
     private final Duration httpTimeout = Duration.ofSeconds(10);
+    private final CommandUtils commandUtils;
+    private final HelmService helmService;
+    private final ConfigResolutionService configResolutionService = new ConfigResolutionService();
+    private final SecurityProfileService securityProfileService;
+    private final GlobalConfigService globalConfigService = new GlobalConfigService();
 
     /**
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
@@ -85,6 +102,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.httpClient = httpClient == null
                 ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
                 : httpClient;
+        this.commandUtils = new CommandUtils(viewContext, kubernetesService);
+        this.helmService = new HelmService(viewContext);
+        this.securityProfileService = new SecurityProfileService(viewContext);
     }
 
     @Override
@@ -158,8 +178,349 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         Files.createDirectories(repoDir.resolve(targetDir));
 
+        // ============================================================
+        // AUTOMATION: Pre-deployment setup (mounts, ConfigMaps, secrets)
+        // ============================================================
+        logFluxInfo(namespace, release, "automation", "Starting pre-deployment automation steps");
+
+        // 1. Ensure namespace exists and is webhook-enabled
+        try {
+            kubernetesService.createNamespace(namespace);
+            kubernetesService.ensureWebhookEnabledNamespace(namespace);
+            LOG.info("Ensured namespace {} exists and is webhook-enabled", namespace);
+        } catch (Exception ex) {
+            LOG.warn("Failed to ensure namespace {}: {}", namespace, ex.getMessage());
+            // Continue - namespace might already exist
+        }
+
+        // 2. Create mounts/PVCs if specified
+        if (request.getMounts() != null) {
+            try {
+                Map<String, Object> normalizedMounts = CommandUtils.normalizeMountsObject(request.getMounts());
+                if (!normalizedMounts.isEmpty()) {
+                    kubernetesService.createMounts(namespace, release, normalizedMounts);
+                    logFluxInfo(namespace, release, "automation", "Created {} mount(s)", normalizedMounts.size());
+                }
+            } catch (Exception ex) {
+                LOG.warn("Failed to create mounts for {}/{}: {}", namespace, release, ex.getMessage());
+                // Continue - mounts might be optional or already exist
+            }
+        }
+
+        // 3. Create required ConfigMaps if specified
+        if (request.getRequiredConfigMaps() != null && !request.getRequiredConfigMaps().isEmpty()) {
+            try {
+                for (Map<String, Object> cmSpec : request.getRequiredConfigMaps()) {
+                    String cmName = (String) cmSpec.get("name");
+                    if (cmName == null || cmName.isBlank()) {
+                        LOG.warn("Skipping ConfigMap with missing name in {}/{}", namespace, release);
+                        continue;
+                    }
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> data = cmSpec.containsKey("data") && cmSpec.get("data") instanceof Map
+                            ? (Map<String, String>) cmSpec.get("data")
+                            : new LinkedHashMap<>();
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> labels = cmSpec.containsKey("labels") && cmSpec.get("labels") instanceof Map
+                            ? (Map<String, String>) cmSpec.get("labels")
+                            : Map.of("managed-by", "ambari-k8s-view");
+                    kubernetesService.createOrUpdateConfigMap(namespace, cmName, data, labels, Map.of());
+                    logFluxInfo(namespace, release, "automation", "Created ConfigMap {}/{}", namespace, cmName);
+                }
+            } catch (Exception ex) {
+                LOG.warn("Failed to create required ConfigMaps for {}/{}: {}", namespace, release, ex.getMessage());
+                // Continue - ConfigMaps might be optional
+            }
+        }
+
+        // 4. Ensure image pull secret exists and inject into values
+        if (request.getSecretName() != null && !request.getSecretName().isBlank()) {
+            try {
+                String effectiveRepoId = firstNonBlank(request.getRepoId(), repoName);
+                helmService.ensureImagePullSecretFromRepo(effectiveRepoId, namespace, request.getSecretName(), null);
+                
+                // Inject image pull secret into values
+                if (request.getValues() == null) {
+                    request.setValues(new LinkedHashMap<>());
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> values = (Map<String, Object>) request.getValues();
+                
+                // Add imagePullSecrets array if not present
+                if (!values.containsKey("imagePullSecrets")) {
+                    values.put("imagePullSecrets", new ArrayList<>());
+                }
+                @SuppressWarnings("unchecked")
+                List<Object> imagePullSecrets = (List<Object>) values.get("imagePullSecrets");
+                boolean hasSecret = imagePullSecrets.stream()
+                        .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
+                if (!hasSecret) {
+                    imagePullSecrets.add(Map.of("name", request.getSecretName()));
+                }
+                
+                // Also add to global.imagePullSecrets for compatibility
+                if (!values.containsKey("global")) {
+                    values.put("global", new LinkedHashMap<>());
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> global = (Map<String, Object>) values.get("global");
+                if (!global.containsKey("imagePullSecrets")) {
+                    global.put("imagePullSecrets", new ArrayList<>());
+                }
+                @SuppressWarnings("unchecked")
+                List<Object> globalImagePullSecrets = (List<Object>) global.get("imagePullSecrets");
+                boolean hasGlobalSecret = globalImagePullSecrets.stream()
+                        .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
+                if (!hasGlobalSecret) {
+                    globalImagePullSecrets.add(Map.of("name", request.getSecretName()));
+                }
+                
+                logFluxInfo(namespace, release, "automation", "Ensured image pull secret {}/{}", namespace, request.getSecretName());
+            } catch (Exception ex) {
+                LOG.warn("Failed to ensure image pull secret {}/{}: {}", namespace, request.getSecretName(), ex.getMessage());
+                // Continue - secret might already exist
+            }
+        }
+
+        // 5. Handle dependencies: create HelmRelease YAMLs for each dependency
+        // Dependencies are committed to Git alongside the main HelmRelease
+        // Note: Flux will reconcile them in parallel (no explicit ordering)
+        List<DepRef> depRefs = new ArrayList<>();
+        if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
+            try {
+                logFluxInfo(namespace, release, "automation", "Processing {} dependencies", request.getDependencies().size());
+                Path depDir = targetDir.resolve("dependencies");
+                Files.createDirectories(repoDir.resolve(depDir));
+                
+                for (Map.Entry<String, Object> depEntry : request.getDependencies().entrySet()) {
+                    String depKey = depEntry.getKey();
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> depSpec = depEntry.getValue() instanceof Map
+                            ? (Map<String, Object>) depEntry.getValue()
+                            : new LinkedHashMap<>();
+                    
+                    String depChart = (String) depSpec.get("chart");
+                    if (depChart == null || depChart.isBlank()) {
+                        LOG.warn("Skipping dependency {} with missing chart name", depKey);
+                        continue;
+                    }
+                    
+                    String depVersion = firstNonBlank((String) depSpec.get("version"), version, "latest");
+                    String depReleaseName = firstNonBlank((String) depSpec.get("releaseName"), depKey);
+                    String depNamespace = firstNonBlank((String) depSpec.get("namespace"), namespace);
+                    depRefs.add(new DepRef(depReleaseName, depNamespace));
+                    
+                    // Create namespace for dependency if different
+                    if (!depNamespace.equals(namespace)) {
+                        try {
+                            kubernetesService.createNamespace(depNamespace);
+                            kubernetesService.ensureWebhookEnabledNamespace(depNamespace);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to create namespace {} for dependency {}: {}", depNamespace, depKey, ex.getMessage());
+                        }
+                    }
+                    
+                    // Build dependency values
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> depValues = depSpec.containsKey("values") && depSpec.get("values") instanceof Map
+                            ? (Map<String, Object>) depSpec.get("values")
+                            : new LinkedHashMap<>();
+                    
+                    // Handle webhook-specific configurations
+                    Object isWebhookObj = depSpec.get("isWebhook");
+                    boolean isWebhook = Boolean.TRUE.equals(isWebhookObj) || "true".equalsIgnoreCase(String.valueOf(isWebhookObj));
+                    if (isWebhook) {
+                        // Inject webhook CA bundle if available (simplified - full webhook setup is complex)
+                        // Note: Full webhook configuration would require WebHookConfigurationService
+                        // For now, we rely on the dependency's own values to contain webhook config
+                        LOG.info("Dependency {} is a webhook - ensure webhook config is in values", depKey);
+                    }
+                    
+                    // Use dependency's repoId or fall back to main repo
+                    String depRepoName = firstNonBlank((String) depSpec.get("repoId"), repoName);
+                    
+                    // Inject image pull secret if specified
+                    if (request.getSecretName() != null && !request.getSecretName().isBlank()) {
+                        if (!depValues.containsKey("imagePullSecrets")) {
+                            depValues.put("imagePullSecrets", new ArrayList<>());
+                        }
+                        @SuppressWarnings("unchecked")
+                        List<Object> depImagePullSecrets = (List<Object>) depValues.get("imagePullSecrets");
+                        boolean hasDepSecret = depImagePullSecrets.stream()
+                                .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
+                        if (!hasDepSecret) {
+                            depImagePullSecrets.add(Map.of("name", request.getSecretName()));
+                        }
+                    }
+                    
+                    String depValuesJson = gson.toJson(depValues);
+                    
+                    // Create dependency HelmRelease YAML
+                    String depHrYaml = """
+                            apiVersion: helm.toolkit.fluxcd.io/v2beta2
+                            kind: HelmRelease
+                            metadata:
+                              name: %s
+                              namespace: %s
+                            spec:
+                              interval: 5m
+                              chart:
+                                spec:
+                                  chart: %s
+                                  version: %s
+                                  sourceRef:
+                                    kind: HelmRepository
+                                    name: %s
+                                    namespace: flux-system
+                              values: %s
+                            """.formatted(depReleaseName, depNamespace, depChart, depVersion, depRepoName, depValuesJson);
+                    
+                    // Write dependency HelmRelease to Git
+                    gitClient.writeFile(depDir.resolve(depReleaseName + "-helmrelease.yaml"), depHrYaml);
+                    
+                    logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease {}/{} (chart={}, version={})",
+                            depNamespace, depReleaseName, depChart, depVersion);
+                }
+            logFluxInfo(namespace, release, "automation", "Generated {} dependency HelmReleases and dependsOn", depRefs.size());
+            } catch (Exception ex) {
+                LOG.warn("Failed to process dependencies for {}/{}: {}", namespace, release, ex.getMessage(), ex);
+                // Continue - dependencies might be optional or can be added manually
+            }
+        }
+
+        logFluxInfo(namespace, release, "automation", "Completed pre-deployment automation steps");
+        // ============================================================
+
+        // --- Apply security profile, ranger, dynamic overrides, stack globals before rendering values ---
+        Map<String, Object> mergedValues = request.getValues() == null
+                ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(request.getValues());
+        Map<String, String> explicitOverrides = new LinkedHashMap<>();
+        // Honor existing _ov if present
+        Object existingOv = mergedValues.get("_ov");
+        if (existingOv instanceof Map<?, ?> ovMap) {
+            for (Map.Entry<?, ?> e : ovMap.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) {
+                    explicitOverrides.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
+                }
+            }
+        }
+        // Ranger block
+        if (request.getRanger() != null && !request.getRanger().isEmpty() && !mergedValues.containsKey("ranger")) {
+            mergedValues.put("ranger", request.getRanger());
+        }
+        // Security profile
+        String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
+        if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
+            request.setSecurityProfile(resolvedSecurityProfile);
+        }
+        SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
+        applySecurityOverrides(securityCfg, explicitOverrides);
+        // Kerberos wiring if security mode indicates it
+        if (securityCfg != null && securityCfg.mode != null && securityCfg.mode.toLowerCase().contains("kerberos")) {
+            String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
+            try {
+                commandUtils.ensureKrb5ConfConfigMap(namespace, krb5ConfigMapName);
+                addOverride(explicitOverrides, "global.security.kerberos.enabled", "true");
+                addOverride(explicitOverrides, "global.security.kerberos.configMapName", krb5ConfigMapName);
+            } catch (Exception ex) {
+                LOG.warn("Failed to prepare Kerberos config map for {}/{}: {}", namespace, release, ex.getMessage());
+            }
+        }
+        // Truststore from Ambari truststore
+        try {
+            String truststorePath = viewContext.getAmbariProperty("ssl.trustStore.path");
+            if (truststorePath != null && !truststorePath.isBlank()) {
+                String truststoreType = Optional.ofNullable(viewContext.getAmbariProperty("ssl.trustStore.type"))
+                        .filter(s -> !s.isBlank()).orElse("JKS");
+                String truststorePasswordProp = Optional.ofNullable(viewContext.getAmbariProperty("ssl.trustStore.password")).orElse("");
+                char[] truststorePasswordChars = truststorePasswordProp.toCharArray();
+
+                byte[] truststoreBytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(truststorePath));
+                String truststoreSecretName = release + "-truststore";
+                Map<String, byte[]> truststoreData = new LinkedHashMap<>();
+                truststoreData.put("truststore.jks", truststoreBytes);
+                truststoreData.put("truststore.password", new String(truststorePasswordChars).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                // Optional PEM bundle
+                try {
+                    java.security.KeyStore keyStore = org.apache.ambari.view.k8s.service.WebHookConfigurationService.loadKeyStore(java.nio.file.Paths.get(truststorePath), truststorePasswordChars, truststoreType);
+                    StringBuilder pemBuilder = new StringBuilder();
+                    var aliasesEnum = keyStore.aliases();
+                    while (aliasesEnum.hasMoreElements()) {
+                        String certificateAlias = aliasesEnum.nextElement();
+                        java.security.cert.Certificate certificate = keyStore.getCertificate(certificateAlias);
+                        if (certificate instanceof java.security.cert.X509Certificate x509Certificate) {
+                            pemBuilder.append("-----BEGIN CERTIFICATE-----\n")
+                                    .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
+                                            .encodeToString(x509Certificate.getEncoded()))
+                                    .append("\n-----END CERTIFICATE-----\n");
+                        }
+                    }
+                    if (pemBuilder.length() > 0) {
+                        truststoreData.put("ca.crt", pemBuilder.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                } catch (Exception certificateEx) {
+                    LOG.warn("Failed to build PEM bundle from Ambari truststore: {}", certificateEx.toString());
+                }
+                kubernetesService.createOrUpdateOpaqueSecret(
+                        namespace,
+                        truststoreSecretName,
+                        truststoreData
+                );
+                addOverride(explicitOverrides, "global.security.tls.enabled", "true");
+                addOverride(explicitOverrides, "global.security.tls.truststore.enabled", "true");
+                addOverride(explicitOverrides, "global.security.tls.truststoreSecret", truststoreSecretName);
+                addOverride(explicitOverrides, "global.security.tls.truststoreKey", "truststore.jks");
+                addOverride(explicitOverrides, "global.security.tls.truststorePasswordKey", "truststore.password");
+                LOG.info("Provisioned truststore Secret '{}' in namespace '{}' from Ambari truststore {}", truststoreSecretName, namespace, truststorePath);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to provision truststore Secret from Ambari truststore: {}", ex.toString());
+        }
+        // Global stack configs / config instantiations
+        try {
+            // Apply bundled global configs (e.g., security-env) into values._ov via overrides
+            List<StackConfig> globals = globalConfigService.listGlobalConfigs();
+            if (globals != null) {
+                for (StackConfig cfg : globals) {
+                    if (cfg.properties == null) continue;
+                    for (StackProperty p : cfg.properties) {
+                        if (p.name == null || p.name.isBlank()) continue;
+                        if (p.value == null || String.valueOf(p.value).isBlank()) continue;
+                        addOverride(explicitOverrides, p.name, String.valueOf(p.value));
+                    }
+                }
+            }
+            // Apply per-request stackConfigOverrides
+            if (request.getStackConfigOverrides() != null && !request.getStackConfigOverrides().isEmpty()) {
+                request.getStackConfigOverrides().forEach((k, v) -> {
+                    if (k != null && v != null && !k.isBlank()) {
+                        addOverride(explicitOverrides, k, String.valueOf(v));
+                    }
+                });
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to apply global or stack config instantiations: {}", ex.toString());
+        }
+        // Dynamic overrides (pre-resolved) in values._dynamicOverrides
+        ConfigResolutionService.mergeDynamicOverrides(mergedValues, explicitOverrides);
+        // Resolve dynamic tokens via Ambari if provided in _dynamicTokens
+        try {
+            Map<String, String> resolvedTokens = resolveDynamicTokens(mergedValues, release);
+            if (resolvedTokens != null) {
+                resolvedTokens.forEach((k, v) -> addOverride(explicitOverrides, k, v));
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve dynamic tokens for {}: {}", release, ex.toString());
+        }
+        // Apply all overrides into the values map
+        applyOverridesToValues(mergedValues, explicitOverrides);
+        // Drop helper _ov to avoid leaking into chart values
+        mergedValues.remove("_ov");
+        request.setValues(mergedValues);
+
         // Compose YAML (JSON-in-YAML is allowed; JSON is a subset of YAML)
-        String valuesJson = request.getValues() == null ? "{}" : gson.toJson(request.getValues());
+        String valuesJson = gson.toJson(mergedValues);
 
         String repoYaml = """
                 apiVersion: source.toolkit.fluxcd.io/v1beta2
@@ -172,7 +533,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                   url: %s
                 """.formatted(repoName, repoUrl);
 
-        String hrYaml = """
+        String dependsYaml = buildDependsOnYaml(depRefs);
+        String hrYaml = ("""
                 apiVersion: helm.toolkit.fluxcd.io/v2beta2
                 kind: HelmRelease
                 metadata:
@@ -180,6 +542,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                   namespace: %s
                 spec:
                   interval: 5m
+                """ + (dependsYaml.isEmpty() ? "" : dependsYaml) + """
                   chart:
                     spec:
                       chart: %s
@@ -189,7 +552,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         name: %s
                         namespace: flux-system
                   values: %s
-                """.formatted(release, namespace, chart, version, repoName, valuesJson);
+                """).formatted(release, namespace, chart, version, repoName, valuesJson);
 
         gitClient.writeFile(targetDir.resolve("helmrepository.yaml"), repoYaml);
         gitClient.writeFile(targetDir.resolve("helmrelease.yaml"), hrYaml);
@@ -1155,6 +1518,208 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw lastIo;
         }
         throw new IOException("Failed to execute HTTP request for " + label);
+    }
+
+    /* ------------------------ Security + overrides helpers ------------------------ */
+
+    private String resolveSecurityProfileName(String requestedProfile) {
+        try {
+            var profiles = securityProfileService.loadProfiles();
+            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
+                return null;
+            }
+            if (requestedProfile != null && profiles.profiles.containsKey(requestedProfile)) {
+                return requestedProfile;
+            }
+            if (profiles.defaultProfile != null && profiles.profiles.containsKey(profiles.defaultProfile)) {
+                return profiles.defaultProfile;
+            }
+            return profiles.profiles.keySet().stream().findFirst().orElse(null);
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve security profile name: {}", ex.toString());
+            return null;
+        }
+    }
+
+    private SecurityConfigDTO loadSecurityConfig(String requestedProfile) {
+        try {
+            return securityProfileService.resolveProfile(requestedProfile);
+        } catch (Exception ex) {
+            LOG.warn("Could not load security profile {}: {}", requestedProfile, ex.toString());
+            return null;
+        }
+    }
+
+    private void applySecurityOverrides(SecurityConfigDTO cfg, Map<String, String> overrides) {
+        if (cfg == null || cfg.mode == null || cfg.mode.isBlank()) {
+            return;
+        }
+        SecurityMappingService mappingService = new SecurityMappingService(viewContext);
+        Map<String, String> modeMapping = mappingService.mappingForMode(cfg.mode.toLowerCase());
+        Map<String, String> tlsMapping = mappingService.mappingForMode("tls");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> asMap = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(cfg, Map.class);
+
+        // Auth-mode specific mappings
+        for (Map.Entry<String, String> entry : modeMapping.entrySet()) {
+            Object val = getByPath(asMap, entry.getKey());
+            if (val == null) continue;
+            String strVal = String.valueOf(val);
+            if (strVal.isBlank()) continue;
+            addOverride(overrides, entry.getValue(), strVal);
+        }
+        // TLS mappings
+        for (Map.Entry<String, String> entry : tlsMapping.entrySet()) {
+            Object val = getByPath(asMap, entry.getKey());
+            if (val == null) continue;
+            String strVal = String.valueOf(val);
+            if (strVal.isBlank()) continue;
+            addOverride(overrides, entry.getValue(), strVal);
+        }
+        // Extra properties
+        if (cfg.extraProperties != null) {
+            cfg.extraProperties.forEach((k, v) -> {
+                if (k != null && v != null && !k.isBlank() && !String.valueOf(v).isBlank()) {
+                    addOverride(overrides, k, String.valueOf(v));
+                }
+            });
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object getByPath(Map<String, Object> root, String path) {
+        if (root == null || path == null || path.isBlank()) return null;
+        String[] parts = path.split("\\.");
+        Object current = root;
+        for (String p : parts) {
+            if (!(current instanceof Map)) return null;
+            current = ((Map<String, Object>) current).get(p);
+            if (current == null) return null;
+        }
+        return current;
+    }
+
+    private void addOverride(Map<String, String> overrides, String helmPath, String value) {
+        if (helmPath == null || helmPath.isBlank() || value == null) return;
+        overrides.put(helmPath, value);
+    }
+
+    /**
+     * Resolve dynamic tokens from Ambari configs, similar to CommandService.resolveDynamicOverrides.
+     * Looks for _dynamicTokens in the values map: list of strings "SOURCE:helm.path".
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> resolveDynamicTokens(Map<String, Object> values, String release) {
+        if (values == null) return null;
+        Object tokensObj = values.get("_dynamicTokens");
+        if (!(tokensObj instanceof List)) return null;
+
+        List<String> tokens = new ArrayList<>();
+        for (Object o : (List<?>) tokensObj) {
+            if (o != null) {
+                String s = String.valueOf(o).trim();
+                if (!s.isBlank()) tokens.add(s);
+            }
+        }
+        if (tokens.isEmpty()) return null;
+
+        Map<String, String> resolved = new LinkedHashMap<>();
+        try {
+            String cluster = viewContext.getAmbariProperty("cluster.name");
+            String ambariUrl = viewContext.getAmbariProperty("ambari.server.url");
+            Map<String, String> callerHeaders = Map.of();
+            AmbariActionClient ambariActionClient = new AmbariActionClient(viewContext, ambariUrl, cluster, callerHeaders);
+
+            for (String token : tokens) {
+                String[] parts = token.split(":", 2);
+                if (parts.length != 2) {
+                    LOG.warn("Invalid dynamic token '{}', expected 'SOURCE:helm.path'", token);
+                    continue;
+                }
+                String sourceKey = parts[0].trim();
+                String helmPath = parts[1].trim();
+                if (helmPath.isEmpty()) {
+                    LOG.warn("Empty helm path in token '{}', skipping", token);
+                    continue;
+                }
+                AmbariConfigRef ref = CommandUtils.DYNAMIC_SOURCE_MAP.get(sourceKey);
+                if (ref == null) {
+                    LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
+                    continue;
+                }
+                try {
+                    String value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                    if (value == null || value.isBlank()) {
+                        LOG.warn("Resolved empty value for token '{}' (type={}, key={})", token, ref.type, ref.key);
+                        continue;
+                    }
+                    resolved.put(helmPath, value);
+                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, value);
+                } catch (Exception ex) {
+                    LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve dynamic overrides for release {}: {}", release, ex.toString());
+        }
+        return resolved.isEmpty() ? null : resolved;
+    }
+
+    /**
+     * Apply dotted-path overrides into the values map, creating intermediate maps/arrays as needed.
+     * @param values target values map (mutated)
+     * @param overrides helm-style dotted path -> string value
+     */
+    @SuppressWarnings("unchecked")
+    static void applyOverridesToValues(Map<String, Object> values, Map<String, String> overrides) {
+        if (overrides == null || overrides.isEmpty()) return;
+        for (Map.Entry<String, String> e : overrides.entrySet()) {
+            String path = e.getKey();
+            String val = e.getValue();
+            if (path == null || path.isBlank()) continue;
+            setAtPath(values, path, val);
+        }
+    }
+
+    /**
+     * Set a value at a dotted path, creating nested maps as needed.
+     */
+    @SuppressWarnings("unchecked")
+    static void setAtPath(Map<String, Object> root, String dottedPath, Object value) {
+        String[] parts = dottedPath.split("\\.");
+        Map<String, Object> current = root;
+        for (int i = 0; i < parts.length; i++) {
+            String p = parts[i];
+            boolean last = (i == parts.length - 1);
+            if (last) {
+                current.put(p, value);
+            } else {
+                Object next = current.get(p);
+                if (!(next instanceof Map)) {
+                    next = new LinkedHashMap<String, Object>();
+                    current.put(p, next);
+                }
+                current = (Map<String, Object>) next;
+            }
+        }
+    }
+
+    /* ------------------------ DependsOn helper ------------------------ */
+    /** Lightweight holder for dependency references in Flux HelmReleases. */
+    record DepRef(String name, String namespace) {}
+
+    /**
+     * Render a dependsOn block for Flux HelmRelease spec.
+     */
+    static String buildDependsOnYaml(List<DepRef> deps) {
+        if (deps == null || deps.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("  dependsOn:\n");
+        for (DepRef d : deps) {
+            sb.append("  - name: ").append(d.name).append("\n");
+            sb.append("    namespace: ").append(d.namespace).append("\n");
+        }
+        return sb.toString();
     }
 
     private void logFluxInfo(String namespace, String release, String phase, String message, Object... args) {

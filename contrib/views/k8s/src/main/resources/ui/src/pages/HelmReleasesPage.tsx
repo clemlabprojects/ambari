@@ -19,72 +19,101 @@ const { Title, Text } = Typography;
 const { Search } = Input;
 
 const HelmReleasesPage: React.FC = () => {
-    const { status, refresh } = useClusterStatus();
-    const navigate = useNavigate();
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [upgradeTarget, setUpgradeTarget] = useState<any | null>(null);
+  const { status, refresh } = useClusterStatus();
+  const navigate = useNavigate();
+  const [isInstallationModalVisible, setIsInstallationModalVisible] = useState(false);
+  const [upgradeTargetRelease, setUpgradeTargetRelease] = useState<HelmRelease | null>(null);
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
-  const [commandDrawerOpen, setCommandDrawerOpen] = useState(false);
+  const [isCommandDrawerOpen, setIsCommandDrawerOpen] = useState(false);
   const [watchedCommandId, setWatchedCommandId] = useState<string | undefined>(undefined);
-  const [installPickerOpen, setInstallPickerOpen] = useState(false);
-  const [commandHistory, setCommandHistory] = useState<Array<{id: string; label: string}>>([]);
-  const [releases, setReleases] = useState<HelmRelease[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [isInstallPickerOpen, setIsInstallPickerOpen] = useState(false);
+  const [commandHistory, setCommandHistory] = useState<Array<{ id: string; label: string }>>([]);
+  const [helmReleases, setHelmReleases] = useState<HelmRelease[]>([]);
+  const [totalReleases, setTotalReleases] = useState(0);
+  const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [loading, setLoading] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-  const [statusMap, setStatusMap] = useState<Record<string, HelmRelease>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [showAllReleases, setShowAllReleases] = useState(false);
+  const [statusByRelease, setStatusByRelease] = useState<Record<string, HelmRelease>>({});
   const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
 
   useEffect(() => {
-      getAvailableServices().then(setServiceDefinitions).catch(() => {});
+    /**
+     * Fetch service definitions once so we can render friendly labels and
+     * service metadata (including managed-by-UI hints). Errors are swallowed
+     * because the page can still render releases without this data; we avoid
+     * blocking the UI on non-critical metadata.
+     */
+    getAvailableServices().then(setServiceDefinitions).catch(() => {});
   }, []);
 
-  const gitOptsFor = useCallback((record: HelmRelease) => {
-    if (record.deploymentMode !== 'FLUX_GITOPS') return undefined;
+  /**
+   * Build GitOps options for a release when it is managed by Flux. This keeps
+   * submit payloads consistent across refresh/resync actions. Returns undefined
+   * for non-GitOps releases so callers can merge cleanly.
+   */
+  const gitOptionsForRelease = useCallback((release: HelmRelease) => {
+    if (release.deploymentMode !== 'FLUX_GITOPS') return undefined;
     return {
-      repoUrl: record.gitRepoUrl,
-      branch: record.gitBranch,
-      commitMode: record.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT'
+      repoUrl: release.gitRepoUrl,
+      branch: release.gitBranch,
+      commitMode: release.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT',
     };
   }, []);
 
-  const releaseKey = useCallback((record: HelmRelease) => `${record.namespace}/${record.name}`, []);
-  const mergeReleaseStatus = useCallback((record: HelmRelease) => {
-    const key = releaseKey(record);
-    const status = statusMap[key];
-    return status ? { ...record, ...status } : record;
-  }, [releaseKey, statusMap]);
+  const releaseKey = useCallback((release: HelmRelease) => `${release.namespace}/${release.name}`, []);
 
-  const refreshReleaseStatus = useCallback(async (record: HelmRelease, options?: { notifyOnError?: boolean }) => {
-    const key = releaseKey(record);
-    setStatusRefreshing(prev => ({ ...prev, [key]: true }));
+  /**
+   * Merge live status (queried separately) into a base release record without
+   * mutating originals. This allows us to cache statuses by key and keep the
+   * table source stable while refreshing statuses in the background.
+   */
+  const mergeReleaseStatus = useCallback((release: HelmRelease) => {
+    const key = releaseKey(release);
+    const liveStatus = statusByRelease[key];
+    return liveStatus ? { ...release, ...liveStatus } : release;
+  }, [releaseKey, statusByRelease]);
+
+  /**
+   * Refresh a single release status from the backend and merge it into the
+   * cached map. Caller can request toast on failure. Status-refresh state is
+   * tracked per release to drive inline spinners for the action buttons.
+   */
+  const refreshReleaseStatus = useCallback(async (release: HelmRelease, options?: { notifyOnError?: boolean }) => {
+    const key = releaseKey(release);
+    setStatusRefreshing((previous) => ({ ...previous, [key]: true }));
     try {
-      const latestStatus = await getReleaseStatus(record.namespace, record.name);
-      setStatusMap(prev => ({ ...prev, [key]: latestStatus }));
+      const latestStatus = await getReleaseStatus(release.namespace, release.name);
+      setStatusByRelease((previous) => ({ ...previous, [key]: latestStatus }));
     } catch (err: any) {
       if (options?.notifyOnError) {
-        message.error(err?.message || `Unable to refresh status for ${record.name}`);
+        message.error(err?.message || `Unable to refresh status for ${release.name}`);
       }
     } finally {
-      setStatusRefreshing(prev => ({ ...prev, [key]: false }));
+      setStatusRefreshing((previous) => ({ ...previous, [key]: false }));
     }
   }, [releaseKey]);
 
+  /**
+   * Batch-refresh statuses for releases that we manage (UI-installed) or that
+   * are GitOps-managed. This avoids spamming the API for releases the user
+   * might not care about while keeping visible items fresh. The calls are
+   * fire-and-forget to avoid blocking the UI; individual refresh handles its
+   * own spinner state per row.
+   */
   const refreshAllStatuses = useCallback(() => {
-    if (releases.length === 0) return;
-    releases
-      .filter(r => r.deploymentMode === 'FLUX_GITOPS' || r.managedByUi)
-      .forEach(r => { void refreshReleaseStatus(r); });
-  }, [releases, refreshReleaseStatus]);
+    if (helmReleases.length === 0) return;
+    helmReleases
+      .filter((release) => release.deploymentMode === 'FLUX_GITOPS' || release.managedByUi)
+      .forEach((release) => { void refreshReleaseStatus(release); });
+  }, [helmReleases, refreshReleaseStatus]);
 
   useEffect(() => {
-    if (!releases.length) return;
+    if (!helmReleases.length) return;
     refreshAllStatuses();
-  }, [releases, refreshAllStatuses]);
+  }, [helmReleases, refreshAllStatuses]);
 
   useEffect(() => {
     if (!autoRefreshEnabled) return undefined;
@@ -94,80 +123,96 @@ const HelmReleasesPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [autoRefreshEnabled, refreshAllStatuses]);
 
-  const fetchReleases = React.useCallback(async (pageNum = page, size = pageSize) => {
-    setLoading(true);
+  /**
+   * Retrieve releases from the backend with paging, update the table source,
+   * and reset pagination state. Errors are surfaced to the user and we clear
+   * stale data on failure to avoid displaying outdated rows.
+   */
+  const fetchReleases = React.useCallback(async (pageNum = pageIndex, size = pageSize) => {
+    setIsLoading(true);
     try {
       const offset = (pageNum - 1) * size;
-      const res = await getHelmReleases(size, offset);
-      setReleases(res.items || []);
-      setTotal(res.total || 0);
-      setPage(pageNum);
+      const releasesResponse = await getHelmReleases(size, offset);
+      setHelmReleases(releasesResponse.items || []);
+      setTotalReleases(releasesResponse.total || 0);
+      setPageIndex(pageNum);
       setPageSize(size);
     } catch (e: any) {
       const errorMessage = e?.message || 'Failed to load releases';
       console.error('Failed to fetch Helm releases:', e);
       message.error(errorMessage);
       // Set empty state on error to prevent showing stale data
-      setReleases([]);
-      setTotal(0);
+      setHelmReleases([]);
+      setTotalReleases(0);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  }, [page, pageSize]);
+  }, [pageIndex, pageSize]);
 
   useEffect(() => {
     void fetchReleases(1, pageSize);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const refreshSecurityProfile = async (record: HelmRelease) => {
+    /**
+     * Re-apply the security profile for a release by re-submitting its current
+     * values. This triggers backend logic to regenerate secrets/config required
+     * by the selected profile. Command is tracked via the background ops modal
+     * when an ID is returned.
+     */
+    const refreshSecurityProfile = async (release: HelmRelease) => {
       const hide = message.loading('Refreshing security profile...', 0);
       try {
-        const currentValues = await getReleaseValues(record.namespace, record.name);
+        const currentValues = await getReleaseValues(release.namespace, release.name);
         const payload = {
-        chart: record.chartRef || record.chart,
-        releaseName: record.name,
-        namespace: record.namespace,
-        values: currentValues,
-        serviceKey: record.serviceKey,
-        securityProfile: record.securityProfile,
-        repoId: record.repoId,
-        deploymentMode: record.deploymentMode,
-        git: gitOptsFor(record)
-      };
-      const res = await submitHelmDeploy(payload as any);
-      if (res?.id) {
-        setWatchedCommandId(res.id);
-        setCommandDrawerOpen(true);
-        message.success('Security refresh started');
-      } else {
-        message.success('Security refresh submitted');
+          chart: release.chartRef || release.chart,
+          releaseName: release.name,
+          namespace: release.namespace,
+          values: currentValues,
+          serviceKey: release.serviceKey,
+          securityProfile: release.securityProfile,
+          repoId: release.repoId,
+          deploymentMode: release.deploymentMode,
+          git: gitOptionsForRelease(release)
+        };
+        const response = await submitHelmDeploy(payload as any);
+        if (response?.id) {
+          setWatchedCommandId(response.id);
+          setIsCommandDrawerOpen(true);
+          message.success('Security refresh started');
+        } else {
+          message.success('Security refresh submitted');
+        }
+      } catch (e: any) {
+        message.error(e?.message || 'Failed to refresh security profile');
+      } finally {
+        hide();
       }
-    } catch (e: any) {
-      message.error(e?.message || 'Failed to refresh security profile');
-    } finally {
-      hide();
-    }
-  };
+    };
 
-  const resyncRelease = async (record: HelmRelease, reason: string) => {
+  /**
+   * Re-sync a release (or trigger a restart) by re-submitting current values.
+   * This is used when restartRequired or securityProfileStale flags are set.
+   * The request is tracked in the background ops modal when an ID is returned.
+   */
+  const resyncRelease = async (release: HelmRelease, reason: string) => {
     const hide = message.loading(reason, 0);
     try {
-      const currentValues = await getReleaseValues(record.namespace, record.name);
+      const currentValues = await getReleaseValues(release.namespace, release.name);
       const payload = {
-        chart: record.chartRef || record.chart,
-        releaseName: record.name,
-        namespace: record.namespace,
+        chart: release.chartRef || release.chart,
+        releaseName: release.name,
+        namespace: release.namespace,
         values: currentValues,
-        serviceKey: record.serviceKey,
-        securityProfile: record.securityProfile,
-        repoId: record.repoId,
-        deploymentMode: record.deploymentMode,
-        git: gitOptsFor(record)
+        serviceKey: release.serviceKey,
+        securityProfile: release.securityProfile,
+        repoId: release.repoId,
+        deploymentMode: release.deploymentMode,
+        git: gitOptionsForRelease(release)
       };
-      const res = await submitHelmDeploy(payload as any);
-      if (res?.id) {
-        setWatchedCommandId(res.id);
-        setCommandDrawerOpen(true);
+      const response = await submitHelmDeploy(payload as any);
+      if (response?.id) {
+        setWatchedCommandId(response.id);
+        setIsCommandDrawerOpen(true);
         message.success('Resync started');
       } else {
         message.success('Resync submitted');
@@ -182,7 +227,7 @@ const HelmReleasesPage: React.FC = () => {
     // legacy commandHistory kept for label building; actual statuses fetched via shared modal
     
     const handleDeploymentSuccess = () => {
-      fetchReleases(page, pageSize);
+      fetchReleases(pageIndex, pageSize);
       refresh(); 
     };
 
@@ -203,13 +248,13 @@ const HelmReleasesPage: React.FC = () => {
     };
 
     // All hooks must be called before any early returns
-    const displayed = useMemo(() => (showAll ? releases : releases.filter(r => r.managedByUi)), [releases, showAll]);
+    const displayed = useMemo(() => (showAllReleases ? helmReleases : helmReleases.filter(r => r.managedByUi)), [helmReleases, showAllReleases]);
 
     if (status === 'error') {
         return <Result status="warning" title="Helm releases data not available." subTitle="Unable to retrieve cluster information." />;
     }
 
-    if (loading && releases.length === 0) {
+    if (isLoading && helmReleases.length === 0) {
       return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
     }
 
@@ -225,13 +270,13 @@ const HelmReleasesPage: React.FC = () => {
             const currentValues = await getReleaseValues(record.namespace, record.name);
             
             // 2. Prepare target object with all necessary metadata + values
-            setUpgradeTarget({
+            setUpgradeTargetRelease({
               ...record, // includes name, namespace, chart, version, repoId
               currentValues: currentValues 
             });
 
             // 3. Open Modal
-            setIsModalVisible(true);
+            setIsInstallationModalVisible(true);
           } catch (e: any) {
             console.error(e);
             message.error(e.message || "Failed to load current configuration");
@@ -463,21 +508,21 @@ const HelmReleasesPage: React.FC = () => {
                     <Search placeholder="Search for a release..." style={{ width: 250 }} />
                     <Space>
                       <span>Show all</span>
-                      <Switch size="small" checked={showAll} onChange={setShowAll} />
+                      <Switch size="small" checked={showAllReleases} onChange={setShowAllReleases} />
                     </Space>
                     <Space align="center" size={4}>
                       <Switch size="small" checked={autoRefreshEnabled} onChange={setAutoRefreshEnabled} />
                       <span>Auto status refresh</span>
                     </Space>
-                    <Button onClick={() => { setCommandDrawerOpen(true); }}>
+                    <Button onClick={() => { setIsCommandDrawerOpen(true); }}>
                         Background operations
                     </Button>
                     <PermissionGuard requires="canWrite">
-                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setInstallPickerOpen(true)}>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsInstallPickerOpen(true)}>
                           Install Service
                       </Button>
                     </PermissionGuard>
-                    <Button icon={<ReloadOutlined />} onClick={() => { fetchReleases(page, pageSize); refresh(); }}>
+                    <Button icon={<ReloadOutlined />} onClick={() => { fetchReleases(pageIndex, pageSize); refresh(); }}>
                         Refresh
                     </Button>
                 </Space>
@@ -486,11 +531,11 @@ const HelmReleasesPage: React.FC = () => {
               columns={columns}
               dataSource={displayed}
               rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}
-              loading={loading || status === 'loading'}
+              loading={isLoading || status === 'loading'}
               pagination={{
-                current: page,
+                current: pageIndex,
                 pageSize,
-                total: showAll ? total : displayed.length,
+                total: showAllReleases ? totalReleases : displayed.length,
                 onChange: (p, ps) => fetchReleases(p, ps),
                 showSizeChanger: true,
                 showTotal: (t, range) => `${range[0]}-${range[1]} of ${t}`
@@ -498,13 +543,13 @@ const HelmReleasesPage: React.FC = () => {
             />
 
             <ServiceInstallationModal
-                visible={isModalVisible}
-                onClose={() => { setIsModalVisible(false); setUpgradeTarget(null); }}
-                onDeploy={() => { setIsModalVisible(false); setUpgradeTarget(null); handleDeploymentSuccess(); }}
+                visible={isInstallationModalVisible}
+                onClose={() => { setIsInstallationModalVisible(false); setUpgradeTargetRelease(null); }}
+                onDeploy={() => { setIsInstallationModalVisible(false); setUpgradeTargetRelease(null); handleDeploymentSuccess(); }}
                 // Determine mode based on whether we clicked "Upgrade" (upgradeTarget exists) or "Install"
-                mode={upgradeTarget ? 'upgrade' : 'deploy'}
+                mode={upgradeTargetRelease ? 'upgrade' : 'deploy'}
                 // Pass the full object (including currentValues) to the modal
-                initialRelease={upgradeTarget}
+                initialRelease={upgradeTargetRelease}
             />
 
             <Modal
@@ -570,8 +615,8 @@ const HelmReleasesPage: React.FC = () => {
 
             <Modal
               title="Select a service to install"
-              open={installPickerOpen}
-              onCancel={() => setInstallPickerOpen(false)}
+              open={isInstallPickerOpen}
+              onCancel={() => setIsInstallPickerOpen(false)}
               footer={null}
               width={520}
             >
@@ -584,7 +629,7 @@ const HelmReleasesPage: React.FC = () => {
                       block
                       type="default"
                       onClick={() => {
-                        setInstallPickerOpen(false);
+                        setIsInstallPickerOpen(false);
                         navigate(`/services/${key}`);
                       }}
                     >
@@ -597,19 +642,19 @@ const HelmReleasesPage: React.FC = () => {
 
             <Button
               style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}
-              onClick={() => setCommandDrawerOpen(true)}
+              onClick={() => setIsCommandDrawerOpen(true)}
             >
               Background operations
             </Button>
             <BackgroundOperationsModal
-              open={commandDrawerOpen}
+              open={isCommandDrawerOpen}
               onClose={() => {
-                setCommandDrawerOpen(false);
+                setIsCommandDrawerOpen(false);
                 setWatchedCommandId(undefined);
               }}
               watchCommandId={watchedCommandId}
               onAutoClose={() => {
-                fetchReleases(page, pageSize);
+                fetchReleases(pageIndex, pageSize);
                 setWatchedCommandId(undefined);
               }}
             />

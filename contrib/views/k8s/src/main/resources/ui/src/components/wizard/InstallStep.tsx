@@ -3,30 +3,79 @@ import { Form, Input, Typography, Divider, Select, Radio, Card } from 'antd';
 import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 
-const InstallStep: React.FC<any> = ({ definition, data, onChange, mode, repos = [], securityProfiles = {} }) => {
+interface InstallStepProps {
+  definition: any;
+  data: any;
+  onChange: (updated: any) => void;
+  mode: string;
+  repos?: any[];
+  securityProfiles?: Record<string, any>;
+}
+
+const InstallStep: React.FC<InstallStepProps> = ({
+  definition,
+  data,
+  onChange,
+  mode,
+  repos = [],
+  securityProfiles = {},
+}) => {
   const [form] = Form.useForm();
 
-  const deepMerge = (dst: any, src: any) => {
-    Object.keys(src || {}).forEach(k => {
-      const sv = src[k];
-      if (sv && typeof sv === 'object' && !Array.isArray(sv)) {
-        dst[k] = deepMerge({ ...(dst[k] || {}) }, sv);
+  /**
+   * Merge source object into destination deeply, preserving nested objects and
+   * overriding primitive leaves. This keeps previously entered fields from
+   * other wizard steps while updating only the subset modified in the current
+   * view. We avoid mutating caller objects by cloning before recursion.
+   * The function intentionally treats arrays as leaf values to prevent
+   * unexpected structural merges on ordered collections.
+   * Returns the combined object so callers can chain or assign directly.
+   * This helper is shared by the wizard to keep form state cohesive across
+   * steps without losing the values already set by the user.
+   * It deliberately remains tolerant of undefined/null inputs so calling code
+   * can be concise when wiring Ant Design change handlers.
+   * Think of this as a safe "update in place" that still respects immutability
+   * for the props passed into the wizard.
+   */
+  const deepMerge = (destination: any, source: any) => {
+    Object.keys(source || {}).forEach((key) => {
+      const sourceValue = source[key];
+      const isObject = sourceValue && typeof sourceValue === 'object' && !Array.isArray(sourceValue);
+      if (isObject) {
+        destination[key] = deepMerge({ ...(destination[key] || {}) }, sourceValue);
       } else {
-        dst[k] = sv;
+        destination[key] = sourceValue;
       }
     });
-    return dst;
+    return destination;
   };
 
-  // Sync data
-  React.useEffect(() => { form.setFieldsValue(data); }, [data]);
+  /**
+   * Keep the form in sync with external data changes (e.g., navigating back
+   * or loading defaults). We set all field values rather than mutating
+   * individual items to ensure Ant Design validation state stays consistent.
+   */
+  React.useEffect(() => {
+    form.setFieldsValue(data);
+  }, [data, form]);
 
+  /**
+   * Capture live form edits, merge them with existing wizard data from
+   * previous steps, and notify the parent component. This prevents overwriting
+   * release/namespace selections made earlier while still reflecting edits
+   * in the current tab. A deep clone is used to avoid mutating props and to
+   * keep Ant Design form state decoupled from parent state.
+   * The handler is intentionally synchronous to provide immediate feedback
+   * to downstream consumers (e.g., YAML preview or validation).
+   * If a field is removed in the form definition, the merge logic will
+   * preserve any existing value unless explicitly cleared by the user.
+   * This mirrors the multi-step wizard expectation where each step is additive
+   * and can be revisited without losing edits.
+   */
   const onValuesChange = () => {
-    // Take a fresh snapshot of all current form values (chart step fields only)
-    const current = form.getFieldsValue(true) || {};
-    // Merge into existing data to retain releaseName/namespace set in step 1
-    const merged = deepMerge(JSON.parse(JSON.stringify(data || {})), current);
-    onChange(merged);
+    const currentFormValues = form.getFieldsValue(true) || {};
+    const mergedValues = deepMerge(JSON.parse(JSON.stringify(data || {})), currentFormValues);
+    onChange(mergedValues);
   };
 
   if (mode === 'general') {
@@ -71,6 +120,47 @@ const InstallStep: React.FC<any> = ({ definition, data, onChange, mode, repos = 
             </Form.Item>
             {form.getFieldValue('deploymentMode') === 'FLUX_GITOPS' && (
               <Card size="small" title="Flux / GitOps settings">
+                <Form.Item name={['git','repoId']} label="Git repository" tooltip="Select a saved Git repository">
+                  <Select
+                    placeholder="Select Git repository or enter URL manually"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={(value) => {
+                      if (value && typeof value === 'string' && value !== '__manual__') {
+                        try {
+                          const gitRepos = (window as any).__gitRepos || [];
+                          const repo = gitRepos.find((r: any) => r.id === value);
+                          if (repo) {
+                            form.setFieldsValue({
+                              git: {
+                                ...form.getFieldValue('git'),
+                                repoUrl: repo.url,
+                                credentialAlias: repo.credentialAlias,
+                              }
+                            });
+                          }
+                        } catch (e) {
+                          console.error('Failed to load Git repo', e);
+                        }
+                      }
+                    }}
+                  >
+                    <Select.Option value="__manual__">Enter URL manually</Select.Option>
+                    {(() => {
+                      try {
+                        const gitRepos = (window as any).__gitRepos || [];
+                        return gitRepos.map((repo: any) => (
+                          <Select.Option key={repo.id} value={repo.id} label={`${repo.name} (${repo.url})`}>
+                            {repo.name} - {repo.url}
+                          </Select.Option>
+                        ));
+                      } catch {
+                        return null;
+                      }
+                    })()}
+                  </Select>
+                </Form.Item>
                 <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Repository is required for GitOps' }]}>
                   <Input placeholder="https://git.example.com/org/cluster-config.git" />
                 </Form.Item>

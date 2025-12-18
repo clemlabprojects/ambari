@@ -1,13 +1,12 @@
 // ui/src/components/layout/AppLayout.tsx
 import React, { useEffect } from 'react';
-import { Layout, Menu, Space, Spin, Tag, Tooltip, Progress, Alert, Button, Card, Badge, Breadcrumb } from 'antd';
+import { Layout, Menu, Space, Spin, Tag, Alert, Button, Badge, Breadcrumb } from 'antd';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   CodeSandboxOutlined,
   SettingOutlined,
   DashboardOutlined,
   CloudServerOutlined,
-  PoweroffOutlined,
   FileTextOutlined,
   LockOutlined
 } from '@ant-design/icons';
@@ -21,58 +20,98 @@ const { Header, Content } = Layout;
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
-  console.log('DEBUG: Current location:', location.pathname);
-  // const { permissions, loading } = usePermissions();
-  const { status, stats, error, fetchData } = useClusterStatus();
-  const [opsOpen, setOpsOpen] = React.useState(false);
-  const [opsCount, setOpsCount] = React.useState<number>(0);
-  console.log('DEBUG: AppLayout - Cluster nodes in the stats variable:', stats);
-  console.log('DEBUG: AppLayout - Cluster ready nodes:', stats?.nodes.ready);
-  console.log('DEBUG: Cluster status:', status);
+  const { status, stats: clusterStats, error, fetchData } = useClusterStatus();
+  const [isOperationsModalOpen, setIsOperationsModalOpen] = React.useState(false);
+  const [operationsCount, setOperationsCount] = React.useState<number>(0);
+
+  /**
+   * Produce a human-readable usage label for the stats bar. Handles missing
+   * values gracefully (showing N/A) and formats numbers to a fixed precision
+   * to keep the bar compact. This helper keeps UI formatting logic isolated
+   * from render JSX, which makes the render branch easier to skim.
+   * Inputs:
+   * - used: current usage, may be undefined or -1 when metrics are unavailable.
+   * - total: overall capacity, may be undefined if metrics could not be fetched.
+   * - unit: optional unit suffix (e.g., "cores", "GiB") for readability.
+   * - decimals: precision to display, defaults to one decimal place to
+   *   balance readability and noise in the slim bar.
+   * Outputs:
+   * - String formatted as "<used>/<total> unit" or "N/A/<total> unit"
+   *   when only totals are known.
+   */
+  const formatUsageLabel = (used?: number, total?: number, unit?: string, decimals = 1) => {
+    const hasUsedValue = typeof used === 'number' && used >= 0;
+    const hasTotalValue = typeof total === 'number' && total >= 0;
+    if (hasUsedValue && hasTotalValue) {
+      return `${used!.toFixed(decimals)}/${total!.toFixed(decimals)} ${unit || ''}`.trim();
+    }
+    if (hasTotalValue) {
+      return `N/A/${total!.toFixed(decimals)} ${unit || ''}`.trim();
+    }
+    return `N/A ${unit || ''}`.trim();
+  };
 
   useEffect(() => {
-    // Ambari sets "contribview" on <body> when rendering a view; that layout is meant
-    // for stripped shells and can cause bounce when the top header toggles visibility.
-    // Remove it for this view so the normal shell sizing rules apply.
+    /**
+     * Normalize the parent document shell when running inside Ambari.
+     * Ambari injects a "contribview" class on the outer body that reduces
+     * available height and can create double scrollbars. We remove that class
+     * and add our own “no scroll” markers so the layout remains stable.
+     * Guard clauses protect against cross-origin parents (e.g., standalone use)
+     * and cleanup restores the original state when unmounting to avoid leaking
+     * styling changes to other views.
+     */
     try {
-      const parentDoc = window?.parent?.document;
-      if (!parentDoc || parentDoc === document) return;
-      const body = parentDoc.body;
-      const hadClass = body.classList.contains('contribview');
-      if (hadClass) {
-        body.classList.remove('contribview');
-        body.classList.add('k8s-view-stabilized');
+      const parentDocument = window?.parent?.document;
+      if (!parentDocument || parentDocument === document) return;
+      const parentBody = parentDocument.body;
+      const parentHtml = parentDocument.documentElement;
+      const hadContribClass = parentBody.classList.contains('contribview');
+      if (hadContribClass) {
+        parentBody.classList.remove('contribview');
+        parentBody.classList.add('k8s-view-stabilized');
       }
+      parentHtml.classList.add('k8s-view-no-scroll');
+      parentBody.classList.add('k8s-view-no-scroll');
       return () => {
-        body.classList.remove('k8s-view-stabilized');
+        parentHtml.classList.remove('k8s-view-no-scroll');
+        parentBody.classList.remove('k8s-view-no-scroll');
+        parentBody.classList.remove('k8s-view-stabilized');
       };
-    } catch (e) {
-      // ignore cross-origin issues
+    } catch (error) {
+      // Ignore cross-origin restrictions; layout remains usable without these tweaks.
       return;
     }
   }, []);
 
   React.useEffect(() => {
-    const loadOpsCount = async () => {
+    /**
+     * Poll background operations to surface a small badge in the header.
+     * We request only a few items to keep API load minimal and filter for
+     * RUNNING/PENDING states. Errors are logged silently because this badge
+     * is purely informational. When the modal closes, we refresh once more to
+     * reflect any completed tasks without adding a dedicated polling interval.
+     */
+    const loadOperationsCount = async () => {
       try {
-        const cmds = await listCommands(10, 0);
-        const running = (cmds || []).filter((c: any) => c.state === 'RUNNING' || c.state === 'PENDING').length;
-        setOpsCount(running);
+        const commands = await listCommands(10, 0);
+        const runningOrPending = (commands || []).filter((command: any) =>
+          command.state === 'RUNNING' || command.state === 'PENDING').length;
+        setOperationsCount(runningOrPending);
       } catch (err) {
-        // Non-critical: Background operations count is informational only
-        // Log error but don't show user notification for this
         console.error('Failed to load background operations count:', err);
-        setOpsCount(0);
+        setOperationsCount(0);
       }
     };
-    void loadOpsCount();
-    if (!opsOpen) void loadOpsCount();
-  }, [opsOpen]);
+    void loadOperationsCount();
+    if (!isOperationsModalOpen) void loadOperationsCount();
+  }, [isOperationsModalOpen]);
 
   const breadcrumbMap: Record<string, string> = {
     '/': 'Dashboard',
     '/helm': 'Helm Charts',
     '/repositories': 'Helm Repositories',
+    '/git-repositories': 'Git Repositories',
     '/nodes': 'Nodes',
     '/workloads': 'Workloads',
     '/global-security': 'Global Security',
@@ -81,8 +120,14 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const breadcrumbItems = React.useMemo(() => {
-    const path = location.pathname;
-    const label = breadcrumbMap[path] || 'View';
+    /**
+     * Resolve user-friendly labels for the current route to show a simple
+     * breadcrumb trail. Centralizing the map keeps navigation text consistent
+     * across the app. Memoization ensures this is recomputed only when the
+     * path changes, keeping renders light.
+     */
+    const currentPath = location.pathname;
+    const label = breadcrumbMap[currentPath] || 'View';
     return [
       { title: <NavLink to="/">Home</NavLink> },
       { title: label },
@@ -97,6 +142,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">Dashboard</NavLink> },
     { key: '/helm', icon: <CodeSandboxOutlined />, label: <NavLink to="/helm">Helm Charts</NavLink> },
     { key: '/repositories', icon: <CodeSandboxOutlined />, label: <NavLink to="/repositories">Helm Repositories</NavLink> },
+    { key: '/git-repositories', icon: <CodeSandboxOutlined />, label: <NavLink to="/git-repositories">Git Repositories</NavLink> },
     { key: '/nodes', icon: <CloudServerOutlined />, label: <NavLink to="/nodes">Nodes</NavLink> },
     { key: '/workloads', icon: <CloudServerOutlined />, label: <NavLink to="/workloads">Workloads</NavLink> },
     {
@@ -110,28 +156,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       ],
     },
   ];
-
-  const renderStatCard = (label: string, used?: number, total?: number, unitLabel?: string, successWhenEqual?: boolean) => {
-    const unavailable = used == null || used < 0 || total == null || total <= 0;
-    const pct = unavailable ? 0 : Math.min(100, Math.round((used / total) * 100));
-    const status = successWhenEqual && used === total ? 'success' : undefined;
-    return (
-      <Card size="small" className="stat-card" bordered>
-        <div className="stat-card-header">
-          <span className="stat-card-label">{label}</span>
-          {!unavailable && (
-            <Tag color={status === 'success' ? 'green' : 'blue'}>
-              {`${pct}%`}
-            </Tag>
-          )}
-        </div>
-        {!unavailable && <Progress percent={pct} size="small" status={status as any} showInfo={false} />}
-        <div className="stat-card-value">
-          {unavailable ? 'N/A' : `${used.toFixed(1)} / ${unitLabel ? `${total} ${unitLabel}` : total}`}
-        </div>
-      </Card>
-    );
-  };
 
   const isConfigPage = location.pathname.startsWith('/configuration');
 
@@ -162,16 +186,38 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             {status === 'connected' && <Tag color="green">CONNECTED</Tag>}
             {status === 'error' && <Tag color="red">CONNECTION ERROR</Tag>}
             <Space size={8} style={{ marginLeft: '12px' }}>
-              {stats?.nodes && <Tag icon={<CloudServerOutlined />} color="default">{`${stats.nodes.ready}/${stats.nodes.total} nodes`}</Tag>}
-              {stats?.pods && <Tag color="default">{`${stats.pods.used}/${stats.pods.total} pods`}</Tag>}
-              {typeof stats?.cpu?.used === 'number' && <Tag color="default">{`${stats.cpu.used.toFixed(1)}/${stats.cpu.total} cores`}</Tag>}
-              {typeof stats?.memory?.used === 'number' && <Tag color="default">{`${stats.memory.used.toFixed(1)}/${stats.memory.total} GiB`}</Tag>}
-              <Button size="small" onClick={() => setOpsOpen(true)}>
-                Background Ops {opsCount > 0 && <Badge count={opsCount} offset={[8, -2]} />}
+              <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
+                Background Ops {operationsCount > 0 && <Badge count={operationsCount} offset={[8, -2]} />}
               </Button>
             </Space>
         </div>
       </Header>
+      {/* Slim stats bar UNDER navigation menu to prevent overflow */}
+      {status === 'connected' && clusterStats && (
+        <div className="stats-bar" style={{
+          background: '#fafafa',
+          borderBottom: '1px solid #f0f0f0',
+          padding: '2px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: '6px',
+          fontSize: '11px',
+          height: '28px',
+          flexShrink: 0,
+          position: 'relative',
+          zIndex: 10,
+          overflow: 'hidden',
+          whiteSpace: 'nowrap'
+        }}>
+          <Space size={6} style={{ marginLeft: 'auto' }}>
+            {clusterStats?.nodes && <Tag icon={<CloudServerOutlined />} color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.nodes.used || 0}/${clusterStats.nodes.total} nodes`}</Tag>}
+            {clusterStats?.pods && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.pods.used}/${clusterStats.pods.total} pods`}</Tag>}
+            {clusterStats?.cpu && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{formatUsageLabel(clusterStats.cpu.used, clusterStats.cpu.total, 'cores')}</Tag>}
+            {clusterStats?.memory && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{formatUsageLabel(clusterStats.memory.used, clusterStats.memory.total, 'GiB')}</Tag>}
+          </Space>
+        </div>
+      )}
       <Content className="app-content">
         <div className="content-shell">
           <div className="main-scroll">
@@ -184,7 +230,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     showIcon
                     action={
                         <Space>
-                            <Button size="small" type="ghost" onClick={fetchData}>
+                            <Button size="small" type="default" onClick={fetchData}>
                                 Retry
                             </Button>
                             <NavLink to="/configuration">
@@ -205,8 +251,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
       </Content>
       <BackgroundOperationsModal
-        open={opsOpen}
-        onClose={() => setOpsOpen(false)}
+        open={isOperationsModalOpen}
+        onClose={() => setIsOperationsModalOpen(false)}
       />
     </Layout>
   );

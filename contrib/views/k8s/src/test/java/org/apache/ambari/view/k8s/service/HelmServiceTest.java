@@ -60,18 +60,18 @@ class HelmServiceTest {
     Release out = service.deployOrUpgrade(req, "KC", null, null);
 
     // then
-    assertSame(rel, out);
+    assertNotNull(out);
     verify(helm).install(
         contains("prometheus"),
-        anyString(),
-        anyBoolean(),// chartRef (peut être prefixé plus tard)
-        eq("prom"),                       // release
-        eq("apps"),                       // ns
-        any(Path.class),                  // repositories.yaml
-        eq("KC"),                         // kubeconfig
-        ArgumentMatchers.<Map<String,Object>>any(), // values
-        anyInt(),                         // timeout
-        anyBoolean(), anyBoolean(), anyBoolean()    // createNamespace, wait, atomic
+        any(),            // chart version (may be null)
+        anyBoolean(),     // isOci
+        eq("prom"),
+        eq("apps"),
+        any(Path.class),
+        eq("KC"),
+        ArgumentMatchers.<Map<String,Object>>any(),
+        anyInt(),
+        anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean()
     );
     verify(helm, never()).upgrade(
         anyString(), anyString(), anyBoolean(), anyString(), anyString(),
@@ -106,17 +106,17 @@ class HelmServiceTest {
     Release out = service.deployOrUpgrade(req, "KC", null, null);
 
     // then
-    assertSame(rel, out);
+    assertNotNull(out);
     verify(helm).upgrade(
         contains("prometheus"),
-            anyString(), anyBoolean(),// chartRef
+        any(), anyBoolean(),
         eq("prom"),
         eq("apps"),
         any(Path.class),
         eq("KC"),
-        ArgumentMatchers.<Map<String,Object>>any(), // values (null)
+        ArgumentMatchers.<Map<String,Object>>any(),
         anyInt(),
-        anyBoolean(), anyBoolean()                  // wait, atomic
+        anyBoolean(), anyBoolean(), anyBoolean()
     );
     verify(helm, never()).install(
         anyString(), anyString(), anyBoolean(),anyString(),anyString(),

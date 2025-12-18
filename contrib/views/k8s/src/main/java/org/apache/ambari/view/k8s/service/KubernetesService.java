@@ -941,6 +941,22 @@ public class KubernetesService {
         String chart = viewContext.getAmbariProperty("monitoring.chart");
         if (chart == null || chart.isBlank()) chart = DEFAULT_MONITORING_CHART;
         String version = viewContext.getAmbariProperty("monitoring.version");
+        LOG.info("Monitoring bootstrap: resolved settings ns={}, release={}, repoId={}, chart={}, version={}, host={}, ingressClass={}, nodePort={}",
+                ns, release, repoId, chart, version,
+                settings.prometheusHost, settings.prometheusIngressClass, settings.prometheusNodePort);
+
+        // If a prior run cached a URL but the release/service is gone, clear cached data to allow re-bootstrap
+        try {
+            String promServiceName = release + "-prometheus";
+            var promSvc = client.services().inNamespace(ns).withName(promServiceName).get();
+            if (promSvc == null) {
+                LOG.info("Monitoring service {} not found in namespace {}. Clearing cached monitoring instance data to allow re-bootstrap.", promServiceName, ns);
+                viewContext.removeInstanceData("monitoring.prometheus.url");
+                viewContext.removeInstanceData("monitoring.repoId");
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to verify monitoring service existence, proceeding anyway: {}", ex.toString());
+        }
 
         if (repoId == null || repoId.isBlank()) {
             // best-effort: use first available repo
@@ -1001,6 +1017,17 @@ public class KubernetesService {
                 overrides.put("prometheus.prometheusSpec.thanos.objectStorageConfig.secret.config.insecure", settings.thanos.insecure);
                 applyThanosExposureOverrides(settings, ns, overrides);
             }
+            // Ensure image pull secret for private registries and inject into values
+            try {
+                String pullSecretName = "monitoring-image-pull";
+                this.helmService.ensureImagePullSecretFromRepo(repoId, ns, pullSecretName, null);
+                overrides.put("imagePullSecrets", List.of(Map.of("name", pullSecretName)));
+                Map<String, Object> global = (Map<String, Object>) overrides.computeIfAbsent("global", k -> new LinkedHashMap<String, Object>());
+                global.put("imagePullSecrets", List.of(Map.of("name", pullSecretName)));
+                LOG.info("Injected imagePullSecrets override for monitoring bootstrap repoId={} secret={}", repoId, pullSecretName);
+            } catch (Exception ex) {
+                LOG.warn("Failed to ensure image pull secret for monitoring repoId {}: {}", repoId, ex.getMessage());
+            }
             // Keep service account defaults; users can override via view properties later.
             // Install without waiting to avoid long blocks
             helmService.deployOrUpgrade(
@@ -1030,7 +1057,14 @@ public class KubernetesService {
         } catch (Exception ex) {
             LOG.warn("Failed to persist monitoring.repoId: {}", ex.toString());
         }
-        return discoverMonitoringPrometheus();
+        MonitoringInfo discovered = discoverMonitoringPrometheus();
+        if (discovered != null) {
+            updateMonitoringBootstrapState("COMPLETED",
+                    "Monitoring present: " + discovered.release() + " in " + discovered.namespace());
+        } else {
+            updateMonitoringBootstrapState("FAILED", "Monitoring stack not found after install attempt");
+        }
+        return discovered;
     }
 
     /**
@@ -1064,17 +1098,9 @@ public class KubernetesService {
             LOG.info("Configuring Prometheus ingress for host {}", desiredHost);
             overrides.put("prometheus.ingress.enabled", true);
             overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
-            Map<String, Object> hostEntry = new HashMap<>();
-            hostEntry.put("host", desiredHost);
-            Map<String, Object> pathEntry = new HashMap<>();
-            pathEntry.put("path", "/");
-            pathEntry.put("pathType", "Prefix");
-            List<Map<String, Object>> paths = new ArrayList<>();
-            paths.add(pathEntry);
-            hostEntry.put("paths", paths);
-            List<Map<String, Object>> hosts = new ArrayList<>();
-            hosts.add(hostEntry);
-            overrides.put("prometheus.ingress.hosts", hosts);
+            overrides.put("prometheus.ingress.hosts", List.of(desiredHost));
+            overrides.put("prometheus.ingress.paths", List.of("/"));
+            overrides.put("prometheus.ingress.pathType", "Prefix");
 
             String externalUrl = desiredHost.startsWith("http") ? desiredHost : "http://" + desiredHost;
             overrides.put("prometheus.prometheusSpec.externalUrl", externalUrl);
@@ -1099,16 +1125,8 @@ public class KubernetesService {
         LOG.info("Enabling Prometheus ingress with default class {} (no host provided)", effectiveIngressClass);
         overrides.put("prometheus.ingress.enabled", true);
         overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
-        Map<String, Object> pathEntry = new HashMap<>();
-        pathEntry.put("path", "/");
-        pathEntry.put("pathType", "Prefix");
-        List<Map<String, Object>> paths = new ArrayList<>();
-        paths.add(pathEntry);
-        Map<String, Object> hostEntry = new HashMap<>();
-        hostEntry.put("paths", paths);
-        List<Map<String, Object>> hosts = new ArrayList<>();
-        hosts.add(hostEntry);
-        overrides.put("prometheus.ingress.hosts", hosts);
+        overrides.put("prometheus.ingress.paths", List.of("/"));
+        overrides.put("prometheus.ingress.pathType", "Prefix");
         LOG.warn("Could not compute Prometheus NodePort URL (missing node IP or nodePort); ingress created with catch-all rule.");
         return null;
     }
@@ -1141,17 +1159,9 @@ public class KubernetesService {
             LOG.info("Configuring Thanos sidecar ingress for host {}", desiredHost);
             overrides.put("prometheus.thanosIngress.enabled", true);
             overrides.put("prometheus.thanosIngress.ingressClassName", effectiveIngressClass);
-            Map<String, Object> hostEntry = new HashMap<>();
-            hostEntry.put("host", desiredHost);
-            Map<String, Object> pathEntry = new HashMap<>();
-            pathEntry.put("path", "/");
-            pathEntry.put("pathType", "Prefix");
-            List<Map<String, Object>> paths = new ArrayList<>();
-            paths.add(pathEntry);
-            hostEntry.put("paths", paths);
-            List<Map<String, Object>> hosts = new ArrayList<>();
-            hosts.add(hostEntry);
-            overrides.put("prometheus.thanosIngress.hosts", hosts);
+            overrides.put("prometheus.thanosIngress.hosts", List.of(desiredHost));
+            overrides.put("prometheus.thanosIngress.paths", List.of("/"));
+            overrides.put("prometheus.thanosIngress.pathType", "Prefix");
         } else {
             LOG.info("Configuring Thanos sidecar service as NodePort (no ingress host configured)");
             overrides.put("prometheus.thanosService.type", "NodePort");
@@ -1163,17 +1173,24 @@ public class KubernetesService {
             if (desiredNodePort == null) {
                 overrides.put("prometheus.thanosIngress.enabled", true);
                 overrides.put("prometheus.thanosIngress.ingressClassName", effectiveIngressClass);
-                Map<String, Object> pathEntry = new HashMap<>();
-                pathEntry.put("path", "/");
-                pathEntry.put("pathType", "Prefix");
-                List<Map<String, Object>> paths = new ArrayList<>();
-                paths.add(pathEntry);
-                Map<String, Object> hostEntry = new HashMap<>();
-                hostEntry.put("paths", paths);
-                List<Map<String, Object>> hosts = new ArrayList<>();
-                hosts.add(hostEntry);
-                overrides.put("prometheus.thanosIngress.hosts", hosts);
+                overrides.put("prometheus.thanosIngress.paths", List.of("/"));
+                overrides.put("prometheus.thanosIngress.pathType", "Prefix");
             }
+        }
+    }
+
+    /**
+     * Clears cached monitoring instance data so that a subsequent bootstrap is forced.
+     */
+    public void resetMonitoringCache() {
+        try {
+            viewContext.removeInstanceData("monitoring.prometheus.url");
+            viewContext.removeInstanceData("monitoring.repoId");
+            updateMonitoringBootstrapState("RESET", "Monitoring cache cleared; next install will bootstrap");
+            LOG.info("Monitoring cache cleared (prometheus.url and repoId).");
+        } catch (Exception ex) {
+            LOG.warn("Failed to clear monitoring cache: {}", ex.toString());
+            throw ex;
         }
     }
 

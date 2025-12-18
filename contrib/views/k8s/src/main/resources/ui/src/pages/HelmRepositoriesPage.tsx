@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type { ColumnsType } from "antd/es/table";
 import { Col, Form,  Input, Select, Button, Table, Space, Popconfirm, Row, Tooltip, Spin, message, Alert, Tag } from "antd";
-import { CheckCircleTwoTone, DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckCircleTwoTone, DeleteOutlined, ReloadOutlined, EditOutlined } from "@ant-design/icons";
 import { getHelmRepos, saveHelmRepo, deleteHelmRepo, loginHelmRepo, checkHelmRepo, installMonitoring, getMonitoringDiscovery} from '../api/client';
 import type HelmRepo from '../types';
 import { required, url, slug, trim, domain } from "../utils/formRules"; 
@@ -68,6 +68,7 @@ export default function RepositoriesPage() {
       message.success("Repository saved");
       fetchRepos();
       form.resetFields();
+      setSelectedRepo(entity.id);
     } catch (err: any) {
       message.error(`Save error: ${err}`);
     } finally {
@@ -194,6 +195,30 @@ export default function RepositoriesPage() {
       width: 130,
       render: (_: any, r) => (
         <Space>
+          <Tooltip title="Edit">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => {
+                form.setFieldsValue({
+                  id: r.id,
+                  name: r.name,
+                  type: r.type,
+                  url: r.url,
+                  imageProject: r.imageProject,
+                  imageRegistryHostOverride: r.imageRegistryHostOverride,
+                  authMode: r.authMode,
+                  username: r.username,
+                  secret: '', // Clear secret field for security
+                  // Note: secret is not populated for security reasons
+                });
+                // Scroll to form
+                setTimeout(() => {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }, 100);
+              }}
+            />
+          </Tooltip>
           <Tooltip title="Login / Sync">
             <Button
               size="small"

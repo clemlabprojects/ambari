@@ -5,6 +5,7 @@ import { PermissionsProvider } from './context/PermissionsContext';
 import { useClusterStatus } from './context/ClusterStatusContext';
 import AppLayout from './components/layout/AppLayout';
 import RepositoriesPage from './pages/HelmRepositoriesPage';
+import GitRepositoriesPage from './pages/GitRepositoriesPage';
 import DashboardPage from './pages/DashboardPage';
 import NodesPage from './pages/NodesPage';
 import HelmReleasesPage from './pages/HelmReleasesPage';
@@ -55,6 +56,7 @@ const AppRouter: React.FC = () => {
         <Route path="/managed-configs" element={<React.Suspense fallback={<Spin />}><GlobalConfigurationsPage /></React.Suspense>} />
         <Route path="/workloads" element={<WorkloadsPage />} />
         <Route path="/repositories" element={<RepositoriesPage />} />
+        <Route path="/git-repositories" element={<GitRepositoriesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>

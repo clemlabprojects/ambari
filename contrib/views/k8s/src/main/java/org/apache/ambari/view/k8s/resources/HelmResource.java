@@ -99,6 +99,20 @@ public class HelmResource {
     }
   }
 
+    /**
+     * Reset cached monitoring state (prometheus URL/repoId/bootstrap state) to force re-bootstrap.
+     */
+    @POST
+    @Path("/monitoring/reset")
+    public Response resetMonitoring() {
+        try {
+            KubernetesService.get(viewContext).resetMonitoringCache();
+            return Response.ok(Map.of("status", "reset")).build();
+        } catch (Exception e) {
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+    }
+
     private String getKubeconfigContents() {
         return configService.getKubeconfigContents();
     }
