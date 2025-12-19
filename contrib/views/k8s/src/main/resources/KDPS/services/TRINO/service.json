@@ -374,6 +374,13 @@
       }
     },
     {
+      "name": "webUiEnabled",
+      "from": {
+        "type": "form",
+        "field": "webUi.enabled"
+      }
+    },
+    {
       "name": "hiveMetastoreUri",
       "from": {
         "type": "form",
@@ -798,6 +805,19 @@
       ]
     },
     {
+      "name": "web-ui-enable",
+      "targets": [
+        {
+          "path": "server.coordinatorExtraConfig",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "web-ui.enabled=${webUiEnabled}"
+          }
+        }
+      ]
+    },
+    {
       "name": "internal-shared-secret",
       "skipIfVarEmpty": "internalSharedSecret",
       "targets": [
@@ -962,6 +982,20 @@
           "label": "Shared secret interne",
           "type": "password",
           "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
+        }
+      ]
+    },
+    {
+      "name": "uiSettings",
+      "label": "Interface Web",
+      "type": "group",
+      "fields": [
+        {
+          "name": "webUi.enabled",
+          "label": "Activer l'interface Web",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par d\u00e9faut)."
         }
       ]
     },

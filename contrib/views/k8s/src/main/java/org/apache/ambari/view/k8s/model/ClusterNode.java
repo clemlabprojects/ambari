@@ -64,6 +64,14 @@ public class ClusterNode {
 
     @JsonProperty("memoryUsage")
     public double getMemoryUsagePercent() { return memoryUsagePercent; }
+
+    public void setCpuUsagePercent(double cpuUsagePercent) {
+        this.cpuUsagePercent = cpuUsagePercent;
+    }
+
+    public void setMemoryUsagePercent(double memoryUsagePercent) {
+        this.memoryUsagePercent = memoryUsagePercent;
+    }
     
     @Override
     public String toString() {

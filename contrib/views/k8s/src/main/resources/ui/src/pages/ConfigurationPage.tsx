@@ -225,6 +225,7 @@ const ConfigurationPage: React.FC = () => {
                     monitoring: {
                         autoBootstrap: settings?.monitoring?.autoBootstrap ?? true,
                         preferPrometheus: settings?.monitoring?.preferPrometheus ?? true,
+                        allowMetricsServerFallback: settings?.monitoring?.allowMetricsServerFallback ?? false,
                         skipOnOpenShift: settings?.monitoring?.skipOnOpenShift ?? false,
                         repoId: settings?.monitoring?.repoId,
                         prometheusHost: settings?.monitoring?.prometheusHost,
@@ -441,6 +442,7 @@ const ConfigurationPage: React.FC = () => {
                             monitoring: {
                               autoBootstrap: true,
                               preferPrometheus: true,
+                              allowMetricsServerFallback: false,
                               skipOnOpenShift: false,
                               thanosEnabled: false,
                               thanosInsecure: false
@@ -457,6 +459,9 @@ const ConfigurationPage: React.FC = () => {
                                     <Switch />
                                 </Form.Item>
                                 <Form.Item label="Force Prometheus over metrics-server when available" name={['monitoring','preferPrometheus']} valuePropName="checked">
+                                    <Switch />
+                                </Form.Item>
+                                <Form.Item label="Allow metrics-server fallback when Prometheus is unavailable" name={['monitoring','allowMetricsServerFallback']} valuePropName="checked">
                                     <Switch />
                                 </Form.Item>
                                 <Form.Item label="Skip bootstrap on OpenShift (use built-in monitoring)" name={['monitoring','skipOnOpenShift']} valuePropName="checked">
@@ -497,6 +502,7 @@ const ConfigurationPage: React.FC = () => {
                                           monitoring: {
                                             autoBootstrap: vals.monitoring?.autoBootstrap,
                                             preferPrometheus: vals.monitoring?.preferPrometheus,
+                                            allowMetricsServerFallback: vals.monitoring?.allowMetricsServerFallback,
                                             skipOnOpenShift: vals.monitoring?.skipOnOpenShift,
                                             preferOpenShiftMonitoring: vals.monitoring?.preferOpenShiftMonitoring,
                                             repoId: vals.monitoring?.repoId,
