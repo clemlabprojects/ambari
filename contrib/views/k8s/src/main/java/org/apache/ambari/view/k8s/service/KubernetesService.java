@@ -1030,6 +1030,7 @@ public class KubernetesService {
             }
             // Keep service account defaults; users can override via view properties later.
             // Install without waiting to avoid long blocks
+            LOG.info("Installing/upgrading monitoring stack via Helm... and using overrides: {}", overrides.keySet());
             helmService.deployOrUpgrade(
                     chart,
                     release,
@@ -1084,6 +1085,8 @@ public class KubernetesService {
         String ingressClassName = settings.prometheusIngressClass != null ? settings.prometheusIngressClass : viewContext.getAmbariProperty("monitoring.ingress.class");
         String desiredNodePortString = settings.prometheusNodePort != null ? String.valueOf(settings.prometheusNodePort) : viewContext.getAmbariProperty("monitoring.prometheus.nodePort");
         Integer desiredNodePort = null;
+        LOG.info("Prometheus exposure config: host='{}', ingressClass='{}', nodePort='{}'",
+                desiredHost, ingressClassName, desiredNodePortString);
         if (desiredNodePortString != null && !desiredNodePortString.isBlank()) {
             try {
                 desiredNodePort = Integer.parseInt(desiredNodePortString.trim());
@@ -1099,7 +1102,7 @@ public class KubernetesService {
             overrides.put("prometheus.ingress.enabled", true);
             overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
             overrides.put("prometheus.ingress.hosts", List.of(desiredHost));
-            overrides.put("prometheus.ingress.paths", List.of("/"));
+            overrides.put("prometheus.ingress.path", "/");
             overrides.put("prometheus.ingress.pathType", "Prefix");
 
             String externalUrl = desiredHost.startsWith("http") ? desiredHost : "http://" + desiredHost;
@@ -1125,7 +1128,8 @@ public class KubernetesService {
         LOG.info("Enabling Prometheus ingress with default class {} (no host provided)", effectiveIngressClass);
         overrides.put("prometheus.ingress.enabled", true);
         overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
-        overrides.put("prometheus.ingress.paths", List.of("/"));
+        overrides.put("prometheus.ingress.hosts", List.of(""));
+        overrides.put("prometheus.ingress.path", "/");
         overrides.put("prometheus.ingress.pathType", "Prefix");
         LOG.warn("Could not compute Prometheus NodePort URL (missing node IP or nodePort); ingress created with catch-all rule.");
         return null;

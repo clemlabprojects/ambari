@@ -379,10 +379,17 @@
         "type": "form",
         "field": "ui_hive_metastore_uri"
       }
-    }
-  ],
-  "bindings": [
+    },
     {
+      "name": "internalSharedSecret",
+      "from": {
+        "type": "form",
+        "field": "internalSharedSecret"
+      }
+    }
+    ],
+    "bindings": [
+      {
       "role": "coordinator",
       "field": "coordinator.config.nodeProperties.node\\.data-dir",
       "mountKey": "data",
@@ -777,6 +784,32 @@
         }
       ]
     },
+    {
+      "name": "ldap-group-auth-pattern",
+      "skipIfVarEmpty": "ldapGroupAuthPattern",
+      "targets": [
+        {
+          "path": "global.security.auth.ldap.groupAuthPattern",
+          "from": {
+            "type": "variable",
+            "name": "ldapGroupAuthPattern"
+          }
+        }
+      ]
+    },
+    {
+      "name": "internal-shared-secret",
+      "skipIfVarEmpty": "internalSharedSecret",
+      "targets": [
+        {
+          "path": "additionalConfigProperties[]",
+          "from": {
+            "type": "template",
+            "template": "internal-communication.shared-secret=${internalSharedSecret}"
+          }
+        }
+      ]
+    },
       {
         "name": "hive-catalog",
         "skipIfVarEmpty": "hiveMetastoreUri",
@@ -916,6 +949,19 @@
             "field": "nodePort.enabled",
             "value": true
           }
+        }
+      ]
+    },
+    {
+      "name": "security",
+      "label": "Sécurité interne",
+      "type": "group",
+      "fields": [
+        {
+          "name": "internalSharedSecret",
+          "label": "Shared secret interne",
+          "type": "password",
+          "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
         }
       ]
     },

@@ -383,12 +383,6 @@ const ServiceWizardPage: React.FC = () => {
       {current === steps.length - 1 && 
        <Button type="primary" onClick={handleDeploy} loading={submitting}>Deploy</Button>}
     </div>
-    <Button
-      style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}
-      onClick={() => setShowOpsModal(true)}
-    >
-      Background operations
-    </Button>
     <Modal
       open={previewModalOpen}
       onCancel={() => setPreviewModalOpen(false)}

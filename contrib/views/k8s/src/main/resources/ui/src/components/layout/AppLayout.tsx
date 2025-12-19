@@ -189,30 +189,67 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       </Header>
       {/* Slim stats bar UNDER navigation menu to prevent overflow */}
       {status === 'connected' && clusterStats && (
-        <div className="stats-bar" style={{
-          background: '#fafafa',
-          borderBottom: '1px solid #f0f0f0',
-          padding: '2px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          gap: '6px',
-          fontSize: '11px',
-          height: '28px',
-          flexShrink: 0,
-          position: 'relative',
-          zIndex: 10,
-          overflow: 'hidden',
-          whiteSpace: 'nowrap'
-        }}>
+        <div
+          className="stats-bar"
+          style={{
+            background: '#fafafa',
+            borderBottom: '1px solid #f0f0f0',
+            padding: '2px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: '6px',
+            fontSize: '11px',
+            height: '28px',
+            flexShrink: 0,
+            position: 'relative',
+            zIndex: 10,
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+          }}
+        >
           <Space size={6} style={{ marginLeft: 'auto' }}>
-            <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
-              Background Ops {operationsCount > 0 && <Badge count={operationsCount} offset={[4, -2]} />}
-            </Button>
-            {clusterStats?.nodes && <Tag icon={<CloudServerOutlined />} color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.nodes.used || 0}/${clusterStats.nodes.total} nodes`}</Tag>}
-            {clusterStats?.pods && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{`${clusterStats.pods.used}/${clusterStats.pods.total} pods`}</Tag>}
-            {clusterStats?.cpu && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{formatUsageLabel(clusterStats.cpu.used, clusterStats.cpu.total, 'cores')}</Tag>}
-            {clusterStats?.memory && <Tag color="default" style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}>{formatUsageLabel(clusterStats.memory.used, clusterStats.memory.total, 'GiB')}</Tag>}
+            <Space size={4}>
+              <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
+                Background Ops
+              </Button>
+              {operationsCount > 0 && (
+                <Badge
+                  count={operationsCount}
+                  size="small"
+                  style={{ backgroundColor: '#1677ff' }}
+                />
+              )}
+            </Space>
+            {clusterStats?.nodes && (
+              <Tag
+                icon={<CloudServerOutlined />}
+                color="default"
+                style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}
+              >{`${clusterStats.nodes.used || 0}/${clusterStats.nodes.total} nodes`}</Tag>
+            )}
+            {clusterStats?.pods && (
+              <Tag
+                color="default"
+                style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}
+              >{`${clusterStats.pods.used}/${clusterStats.pods.total} pods`}</Tag>
+            )}
+            {clusterStats?.cpu && (
+              <Tag
+                color="default"
+                style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}
+              >
+                {formatUsageLabel(clusterStats.cpu.used, clusterStats.cpu.total, 'cores')}
+              </Tag>
+            )}
+            {clusterStats?.memory && (
+              <Tag
+                color="default"
+                style={{ margin: 0, fontSize: '11px', lineHeight: '20px' }}
+              >
+                {formatUsageLabel(clusterStats.memory.used, clusterStats.memory.total, 'GiB')}
+              </Tag>
+            )}
           </Space>
         </div>
       )}

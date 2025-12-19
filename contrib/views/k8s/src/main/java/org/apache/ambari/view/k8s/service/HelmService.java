@@ -162,7 +162,7 @@ public class HelmService {
                 chartName, releaseName, namespace, repoIdOpt, versionOpt, timeoutSec, wait, atomic, dryRun);
         final RepoResolution rr = resolveChartRef(chartName, repoIdOpt);
         LOG.info("Resolved chart reference: {}", rr.chartRef);
-        Map<String, Object> finalValues = applyOverrides(values, overrideOptions);
+        Map<String, Object> finalValues = applyOverrides(expandDotPaths(values), overrideOptions);
 
         final String chartRef = rr.chartRef; // never ":version" for OCI
         final String chartWithVersionArg = appendVersionArg(chartRef, versionOpt);
@@ -437,6 +437,63 @@ public class HelmService {
         }
         LOG.info("Applied {} override option(s) to values (lists supported).", overrideOptions.size());
         return result;
+    }
+
+    /**
+     * Normalize a map that may contain dot-delimited keys into a proper tree of nested maps.
+     * This allows existing override helpers to continue using strings like
+     * "prometheus.ingress.enabled" while still shipping the structured YAML the Helm chart expects.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> expandDotPaths(Map<String, Object> source) {
+        if (source == null || source.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : source.entrySet()) {
+            // Each dot-path is inserted into the nested map tree so Helm sees a proper structure.
+            insertNested(result, entry.getKey(), entry.getValue());
+        }
+        return result;
+    }
+
+    /**
+     * Insert a single dot-delimited key/value pair into the nested target map.
+     * Intermediate nodes are created as {@link LinkedHashMap} instances.
+     */
+    @SuppressWarnings("unchecked")
+    private void insertNested(Map<String, Object> target, String key, Object value) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String[] parts = key.split("\\.");
+        Map<String, Object> cursor = target;
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.isBlank()) {
+                continue;
+            }
+            boolean last = (i == parts.length - 1);
+            if (last) {
+                cursor.put(part, expandIfNeeded(value));
+            } else {
+                Object next = cursor.get(part);
+                if (!(next instanceof Map)) {
+                    // Initialize intermediate node as a linked map to preserve insertion order.
+                    next = new LinkedHashMap<String, Object>();
+                    cursor.put(part, next);
+                }
+                cursor = (Map<String, Object>) next;
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object expandIfNeeded(Object value) {
+        if (value instanceof Map) {
+            return expandDotPaths((Map<String, Object>) value);
+        }
+        return value;
     }
 
 

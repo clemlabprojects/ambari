@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Form, Input, Select, Space, Switch, Typography, message, Tooltip } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Typography, message, Tooltip } from 'antd';
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
-import { getSecurityConfig, getSecuritySchema, saveSecurityConfig } from '../api/client';
+import { getSecurityConfig, getSecurityProfileUsage, getSecuritySchema, saveSecurityConfig, deleteSecurityProfile } from '../api/client';
 import type { SecurityConfig, SecurityProfiles } from '../api/client';
 
 const { Title, Text } = Typography;
@@ -20,6 +20,11 @@ const GlobalSecurityPage: React.FC = () => {
     schema?.properties?.find((p: any) => p.name === 'mode')?.default ||
     schema?.sections?.find((s: any) => s.name === 'mode')?.default ||
     'none';
+
+  const [deleteProfileLoading, setDeleteProfileLoading] = useState(false);
+  const [usageModalVisible, setUsageModalVisible] = useState(false);
+  const [usageReleases, setUsageReleases] = useState<string[]>([]);
+  const [usageProfileLabel, setUsageProfileLabel] = useState('');
 
   const lookupHelmPath = (fieldPath: string, modeValue?: string) => {
     const search = (list?: any[]) => {
@@ -118,6 +123,61 @@ const GlobalSecurityPage: React.FC = () => {
     }
   };
 
+  const handleDeleteProfile = async () => {
+    if (!currentProfile || isNewProfile || !profiles[currentProfile]) {
+      message.warning('Select an existing profile before attempting to delete.');
+      return;
+    }
+    const profileToDelete = currentProfile;
+    setDeleteProfileLoading(true);
+    try {
+      const usage = await getSecurityProfileUsage(profileToDelete);
+      if (usage.releases?.length) {
+        setUsageProfileLabel(profileToDelete);
+        setUsageReleases(usage.releases);
+        setUsageModalVisible(true);
+        return;
+      }
+      Modal.confirm({
+        title: `Delete security profile "${profileToDelete}"?`,
+        content: (
+          <span>
+            This action will remove the profile permanently. Any releases tied to it will require
+            a new security profile before future deploys.
+          </span>
+        ),
+        okText: 'Delete',
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          setDeleteProfileLoading(true);
+          try {
+            await deleteSecurityProfile(profileToDelete);
+            message.success('Security profile deleted');
+            setIsNewProfile(false);
+            await load();
+          } catch (error: any) {
+            message.error(error?.message || 'Failed to delete security profile');
+          } finally {
+            setDeleteProfileLoading(false);
+          }
+        }
+      });
+    } catch (error: any) {
+      message.error(error?.message || 'Unable to evaluate profile usage');
+    } finally {
+      setDeleteProfileLoading(false);
+    }
+  };
+
+  const closeUsageModal = () => {
+    setUsageModalVisible(false);
+    setUsageReleases([]);
+    setUsageProfileLabel('');
+  };
+
+  const canDeleteProfile = Boolean(currentProfile && !isNewProfile && profiles[currentProfile]);
+  const usageModalTitle = usageProfileLabel ? `Profile "${usageProfileLabel}" is in use` : 'Profile in use';
+
   const mode = Form.useWatch('mode', form);
 
   return (
@@ -127,6 +187,15 @@ const GlobalSecurityPage: React.FC = () => {
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={loading}>Save</Button>
+          <Button
+            icon={<DeleteOutlined />}
+            danger
+            loading={deleteProfileLoading}
+            onClick={handleDeleteProfile}
+            disabled={!canDeleteProfile}
+          >
+            Delete profile
+          </Button>
         </Space>
       </div>
 
@@ -456,6 +525,30 @@ const GlobalSecurityPage: React.FC = () => {
             </Form.List>
           </div>
         </Form>
+        <Modal
+          title={usageModalTitle}
+          open={usageModalVisible}
+          onCancel={closeUsageModal}
+          footer={[
+            <Button key="close" onClick={closeUsageModal}>
+              Close
+            </Button>
+          ]}
+          destroyOnClose
+        >
+          <Alert
+            type="warning"
+            showIcon
+            message={`The profile "${usageProfileLabel || 'selected'}" is still referenced.`}
+            description="Please reassign those releases before removing the profile."
+            style={{ marginBottom: 16 }}
+          />
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {usageReleases.map((release) => (
+              <li key={release}>{release}</li>
+            ))}
+          </ul>
+        </Modal>
     </div>
   );
 };

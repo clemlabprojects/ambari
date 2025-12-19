@@ -116,6 +116,25 @@ public class ReleaseMetadataService {
         return new java.util.ArrayList<>(releaseRepository.findAll());
     }
 
+    /**
+     * Returns the logical identifiers of Helm releases wired to the provided security profile.
+     *
+     * @param profileName security profile name
+     * @return list of namespace/release strings
+     */
+    public List<String> findReleasesUsingProfile(String profileName) {
+        if (profileName == null || profileName.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        List<String> results = new java.util.ArrayList<>();
+        for (K8sReleaseEntity entity : releaseRepository.findAll()) {
+            if (profileName.equals(entity.getSecurityProfile())) {
+                results.add(entity.getNamespace() + "/" + entity.getReleaseName());
+            }
+        }
+        return results;
+    }
+
     public void recordInstallOrUpgrade(
             String namespace,
             String releaseName,

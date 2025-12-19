@@ -351,6 +351,10 @@ export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> =
   }
 };
 
+export interface SecurityProfileUsage {
+  releases: string[];
+}
+
 export const getSecuritySchema = async (): Promise<any> => {
   if (import.meta.env.DEV) {
     const { getMockSecuritySchema } = await import('./mock');
@@ -362,6 +366,40 @@ export const getSecuritySchema = async (): Promise<any> => {
     throw new Error(txt || 'Failed to load security schema');
   }
   return res.json();
+};
+
+export const getSecurityProfileUsage = async (profile: string): Promise<SecurityProfileUsage> => {
+  if (!profile) {
+    throw new Error('Profile name is required');
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load profile usage');
+  }
+  return res.json();
+};
+
+export const deleteSecurityProfile = async (profile: string): Promise<void> => {
+  if (!profile) {
+    throw new Error('Profile name is required');
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}`, {
+    method: 'DELETE',
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    let payload: any = null;
+    try {
+      payload = await res.json();
+    } catch {
+      payload = null;
+    }
+    const err = new Error(payload?.error || 'Failed to delete security profile');
+    (err as any).status = res.status;
+    (err as any).releases = payload?.releases || [];
+    throw err;
+  }
 };
 
 
