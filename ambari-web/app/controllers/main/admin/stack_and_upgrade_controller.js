@@ -135,6 +135,12 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   isUpgradeTypesLoaded: false,
 
   /**
+   * Reference to the "preparing upgrade" modal so it can be explicitly closed.
+   * @type {Em.View|null}
+   */
+  preparingUpgradePopup: null,
+
+  /**
    * @type {string}
    */
   getSupportedUpgradeError: '',
@@ -881,13 +887,18 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       error: 'upgradeErrorCallback',
       callback: function() {
         this.sender.set('requestInProgress', false);
+        var popup = this.sender.get('preparingUpgradePopup');
+        if (popup) {
+          popup.hide();
+          this.sender.set('preparingUpgradePopup', null);
+        }
       }
     });
     this.setDBProperty('currentVersion', this.get('currentVersion'));
 
     // Show a "preparing the upgrade..." dialog in case the api call returns too slow
     if (App.router.get('currentState.name') != 'stackUpgrade') {
-      this.showPreparingUpgradeIndicator();
+      this.set('preparingUpgradePopup', this.showPreparingUpgradeIndicator());
     }
   },
 
@@ -952,6 +963,12 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @param {object} data
    */
   upgradeSuccessCallback: function (data, opt, params) {
+    // Ensure the loading popup is closed if it is still visible
+    var popup = this.get('preparingUpgradePopup');
+    if (popup) {
+      popup.hide();
+      this.set('preparingUpgradePopup', null);
+    }
     this.set('upgradeData', null);
     this.set('upgradeId', data.resources[0].Upgrade.request_id);
     this.set('toVersion', params.value);
