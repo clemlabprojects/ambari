@@ -4,6 +4,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -23,6 +24,7 @@ import javax.ws.rs.core.Response;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -191,6 +193,62 @@ public class ConfigurationResource {
             LOG.error("Failed to save security config", e);
             return Response.serverError().entity(Map.of("error", e.getMessage())).build();
         }
+    }
+
+    /**
+     * Return namespace/release identifiers for the given security profile.
+     * This helps the UI warn before deleting a profile that is still in active use.
+     */
+    @GET
+    @Path("/security/{profile}/usage")
+    public Response getSecurityProfileUsage(@PathParam("profile") String profile) {
+        if (profile == null || profile.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "Profile name is required")).build();
+        }
+
+        SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
+        SecurityProfilesDTO profiles = securityProfileService.loadProfiles();
+        if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
+            return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
+        }
+
+        ReleaseMetadataService releaseMetadataService = new ReleaseMetadataService(viewContext);
+        List<String> releases = releaseMetadataService.findReleasesUsingProfile(profile);
+        return Response.ok(Map.of("releases", releases)).build();
+    }
+
+    /**
+     * Delete a security profile if no releases are currently using it.
+     */
+    @DELETE
+    @Path("/security/{profile}")
+    public Response deleteSecurityProfile(@PathParam("profile") String profile) {
+        if (profile == null || profile.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "Profile name is required")).build();
+        }
+
+        SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
+        SecurityProfilesDTO profiles = securityProfileService.loadProfiles();
+        if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
+            return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
+        }
+
+        ReleaseMetadataService releaseMetadataService = new ReleaseMetadataService(viewContext);
+        List<String> releases = releaseMetadataService.findReleasesUsingProfile(profile);
+        if (!releases.isEmpty()) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", "Profile is referenced by active releases", "releases", releases))
+                    .build();
+        }
+
+        try {
+            securityProfileService.deleteProfile(profile);
+            return Response.ok().build();
+        } catch (Exception e) {
+            LOG.error("Failed to delete security profile {}", profile, e);
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+
     }
 
     @GET

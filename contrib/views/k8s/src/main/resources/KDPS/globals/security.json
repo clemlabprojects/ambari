@@ -27,6 +27,15 @@
     { "name": "ldap.baseDn", "displayName": "Base DN", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.baseDn" },
     { "name": "ldap.groupSearchBase", "displayName": "Group Search Base", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchBase" },
     { "name": "ldap.groupSearchFilter", "displayName": "Group Search Filter", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchFilter" },
+    {
+      "name": "ldap.groupAuthPattern",
+      "displayName": "LDAP Group Auth Pattern",
+      "description": "Group-based authorization query (e.g. `(&(objectClass=person)(uid={0})(memberof=CN=TrinoUsers,OU=Groups,DC=example,DC=com))`). Required when bind DN is used.",
+      "type": "string",
+      "modes": ["ldap", "ad"],
+      "helmPath": "global.security.auth.ldap.groupAuthPattern",
+      "default": "(&(objectClass=person)(uid={0})(memberof=CN=TrinoUsers,OU=Groups,DC=example,DC=com))"
+    },
     { "name": "ldap.referral", "displayName": "Referral Handling", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.referral" },
     { "name": "ldap.startTls", "displayName": "StartTLS", "type": "boolean", "default": false, "modes": ["ldap"], "helmPath": "global.security.auth.ldap.startTls" },
     { "name": "ldap.adUrl", "displayName": "AD URL", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.url" },

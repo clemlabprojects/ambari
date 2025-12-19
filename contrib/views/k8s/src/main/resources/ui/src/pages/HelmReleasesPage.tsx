@@ -618,12 +618,6 @@ const HelmReleasesPage: React.FC = () => {
               />
             </Modal>
 
-            <Button
-              style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}
-              onClick={() => setIsCommandDrawerOpen(true)}
-            >
-              Background operations
-            </Button>
             <BackgroundOperationsModal
               open={isCommandDrawerOpen}
               onClose={() => {

@@ -1,6 +1,7 @@
 package org.apache.ambari.view.k8s.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ambari.view.PersistenceException;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
@@ -135,6 +136,27 @@ public class SecurityProfileService {
         } catch (Exception ex) {
             LOG.warn("Failed to fingerprint security profile: {}", ex.toString());
             return null;
+        }
+    }
+
+    /**
+     * Remove a profile for the current view instance.
+     *
+     * @param profileName logical profile identifier
+     */
+    public void deleteProfile(String profileName) {
+        if (profileName == null || profileName.isBlank()) {
+            return;
+        }
+        try {
+            SecurityProfileEntity entity = viewContext.getDataStore().find(SecurityProfileEntity.class, profileName);
+            if (entity == null || !viewContext.getInstanceName().equals(entity.getViewInstance())) {
+                return;
+            }
+            viewContext.getDataStore().remove(entity);
+        } catch (PersistenceException ex) {
+            LOG.warn("Failed to delete security profile {}: {}", profileName, ex.toString());
+            throw new RuntimeException("Unable to delete security profile", ex);
         }
     }
 }
