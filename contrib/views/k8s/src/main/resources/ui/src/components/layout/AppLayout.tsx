@@ -43,7 +43,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const hasUsedValue = typeof used === 'number' && used >= 0;
     const hasTotalValue = typeof total === 'number' && total >= 0;
     if (hasUsedValue && hasTotalValue) {
-      return `${used!.toFixed(decimals)}/${total!.toFixed(decimals)} ${unit || ''}`.trim();
+      return `avg ${used!.toFixed(decimals)}/${total!.toFixed(decimals)} ${unit || ''}`.trim();
     }
     if (hasTotalValue) {
       return `N/A/${total!.toFixed(decimals)} ${unit || ''}`.trim();

@@ -1,5 +1,6 @@
 package org.apache.ambari.view.k8s.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
@@ -64,10 +65,16 @@ import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.springframework.util.FileCopyUtils;
 
 import java.io.*;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.HashMap;
@@ -311,9 +318,27 @@ public class KubernetesService {
         var items = client.nodes().list().getItems();
         int from = Math.min(Math.max(offset, 0), items.size());
         int to = Math.min(from + Math.max(limit, 1), items.size());
-        return items.subList(from, to).stream()
-                .map(this::toClusterNode)
+        List<Node> pageNodes = items.subList(from, to);
+        Map<String, NodeCapacity> capacities = new LinkedHashMap<>();
+        List<ClusterNode> nodes = pageNodes.stream()
+                .map(node -> {
+                    ClusterNode cn = toClusterNode(node);
+                    capacities.put(node.getMetadata().getName(), new NodeCapacity(
+                            capacityQuantity(node, "cpu"),
+                            capacityQuantity(node, "memory") / (1024 * 1024 * 1024)
+                    ));
+                    return cn;
+                })
                 .collect(Collectors.toList());
+        Map<String, ClusterMetrics> metrics = fetchNodeMetrics(pageNodes, capacities);
+        nodes.forEach(node -> {
+            ClusterMetrics m = metrics.get(node.getNodeName());
+            if (m != null) {
+                node.setCpuUsagePercent(m.cpuUsagePercent);
+                node.setMemoryUsagePercent(m.memoryUsagePercent);
+            }
+        });
+        return nodes;
     }
 
     public int countNodes() {
@@ -686,6 +711,7 @@ public class KubernetesService {
     public static class MonitoringSettings {
         public boolean autoBootstrap = true;
         public boolean preferPrometheus = true;
+        public boolean allowMetricsServerFallback = false;
         public boolean skipOnOpenShift = false;
         public String repoId;
         public ThanosSettings thanos = new ThanosSettings();
@@ -731,6 +757,7 @@ public class KubernetesService {
         MonitoringSettings defaults = new MonitoringSettings();
         defaults.prometheusIngressClass = "nginx";
         defaults.thanosIngressClass = "nginx";
+        defaults.allowMetricsServerFallback = false;
         return defaults;
     }
 
@@ -1243,6 +1270,118 @@ public class KubernetesService {
         return new ClusterNode(node.getMetadata().getUid(), node.getMetadata().getName(), nodeStatus, nodeRoles, 0.0, 0.0);
     }
     
+    /**
+     * Return node metrics for the provided page nodes, preferring Prometheus and falling back to metrics-server.
+     */
+    private Map<String, ClusterMetrics> fetchNodeMetrics(List<Node> nodes, Map<String, NodeCapacity> capacities) {
+        MonitoringSettings monitoringSettings = loadMonitoringSettings();
+        String promUrl = resolvePrometheusUrl();
+        if (promUrl != null) {
+            LOG.info("Collecting node metrics from Prometheus at {}", promUrl);
+            Map<String, ClusterMetrics> prom = queryPrometheusNodeUsage(promUrl, nodes, capacities);
+            if (!prom.isEmpty()) {
+                metricsSource.set("prometheus");
+                return prom;
+            }
+            LOG.warn("Prometheus node metrics query returned no data{}", monitoringSettings.allowMetricsServerFallback ? ", falling back to metrics-server" : " and metrics-server fallback disabled");
+        }
+        if (!monitoringSettings.allowMetricsServerFallback) {
+            LOG.info("Metrics-server fallback is disabled; returning empty node metrics.");
+            return Collections.emptyMap();
+        }
+        LOG.info("Collecting node metrics from metrics-server for {} nodes", nodes.size());
+        Map<String, ClusterMetrics> metricsServer = loadMetricsServerMetrics(nodes, capacities);
+        if (!metricsServer.isEmpty()) {
+            metricsSource.set("metrics-server");
+        }
+        return metricsServer;
+    }
+
+    /**
+     * Fall back to metrics-server when Prometheus is unavailable.
+     */
+    private Map<String, ClusterMetrics> loadMetricsServerMetrics(List<Node> nodes, Map<String, NodeCapacity> capacities) {
+        Map<String, ClusterMetrics> result = new LinkedHashMap<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (Node node : nodes) {
+            String nodeName = node.getMetadata().getName();
+            if (nodeName == null || nodeName.isBlank()) continue;
+            futures.add(CompletableFuture.runAsync(() -> {
+                try {
+                    var nodeMetrics = client.top().nodes().metrics(nodeName);
+                    if (nodeMetrics == null || nodeMetrics.getUsage() == null) return;
+                    double cpuUsage = quantityToDouble(nodeMetrics.getUsage().get("cpu"));
+                    double memoryUsageBytes = quantityToDouble(nodeMetrics.getUsage().get("memory"));
+                    NodeCapacity cap = capacities.get(nodeName);
+                    if (cap == null) return;
+                    double cpuPercent = cap.cpuCores > 0 ? Math.min(1.0, cpuUsage / cap.cpuCores) : 0.0;
+                    double memUsedGiB = memoryUsageBytes / (1024 * 1024 * 1024);
+                    double memoryPercent = cap.memoryGiB > 0 ? Math.min(1.0, memUsedGiB / cap.memoryGiB) : 0.0;
+                    synchronized (result) {
+                        result.put(nodeName, new ClusterMetrics(cpuPercent, memoryPercent));
+                    }
+                } catch (Exception ex) {
+                    LOG.warn("Unable to fetch metrics for node {}: {}", nodeName, ex.getMessage());
+                }
+            }, METRICS_POOL));
+        }
+        for (CompletableFuture<Void> future : futures) {
+            try {
+                future.get(2, TimeUnit.SECONDS);
+            } catch (Exception ignore) {
+                // best effort
+            }
+        }
+        LOG.info("Loaded {} node metrics via metrics-server", result.size());
+        return result;
+    }
+
+    private double capacityQuantity(Node node, String key) {
+        if (node.getStatus() == null || node.getStatus().getCapacity() == null) {
+            return 0;
+        }
+        Quantity quantity = node.getStatus().getCapacity().get(key);
+        return quantityToDouble(quantity);
+    }
+
+    private double quantityToDouble(Quantity q) {
+        if (q == null) {
+            return 0.0;
+        }
+        try {
+            return q.getNumericalAmount().doubleValue();
+        } catch (Exception e) {
+            LOG.debug("Failed to convert Quantity {}: {}", q, e.getMessage());
+            return 0.0;
+        }
+    }
+
+    /**
+     * Simple holder for node-level CPU/memory usage percentages.
+     */
+    private static final class ClusterMetrics {
+        final double cpuUsagePercent;
+        final double memoryUsagePercent;
+
+        ClusterMetrics(double cpuUsagePercent, double memoryUsagePercent) {
+            this.cpuUsagePercent = cpuUsagePercent;
+            this.memoryUsagePercent = memoryUsagePercent;
+        }
+    }
+
+    /**
+     * Captures node capacity values needed to compute utilization percentages.
+     */
+    private static final class NodeCapacity {
+        final double cpuCores;
+        final double memoryGiB;
+
+        NodeCapacity(double cpuCores, double memoryGiB) {
+            this.cpuCores = cpuCores;
+            this.memoryGiB = memoryGiB;
+        }
+    }
+
     private ComponentStatus toComponentStatus(io.fabric8.kubernetes.api.model.ComponentStatus componentStatus) {
         String healthStatus = "Unhealthy";
         ComponentCondition healthCondition = componentStatus.getConditions().stream()
@@ -1384,6 +1523,182 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Resolve the monitoring Prometheus/Thanos URL used by the view while honoring the
+     * {@link MonitoringSettings#preferPrometheus} flag and handling OpenShift defaults.
+     *
+     * @return the resolved URL string or {@code null} if Prometheus should be skipped or cannot be determined
+     */
+    private String resolvePrometheusUrl() {
+        try {
+            MonitoringSettings settings = loadMonitoringSettings();
+            if (!settings.preferPrometheus) {
+                LOG.info("Prometheus usage disabled in monitoring settings, skipping Prometheus sampling");
+                return null;
+            }
+            String promUrl;
+            if (isOpenShift(client)) {
+                promUrl = viewContext.getAmbariProperty("openshift.thanos.url");
+                if (promUrl == null || promUrl.isBlank()) {
+                    promUrl = OPENSHIFT_THANOS_URL_DEFAULT;
+                }
+            } else {
+                MonitoringInfo info = discoverMonitoringPrometheus();
+                promUrl = info != null ? info.url() : null;
+            }
+            return (promUrl != null && !promUrl.isBlank()) ? promUrl : null;
+        } catch (Exception e) {
+            LOG.warn("Could not resolve Prometheus URL for node metrics: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Query Prometheus for per-node CPU/memory usage and convert to percentages based on node capacities.
+     */
+    private Map<String, ClusterMetrics> queryPrometheusNodeUsage(String promUrl, List<Node> nodes, Map<String, NodeCapacity> capacities) {
+        if (promUrl == null || promUrl.isBlank()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Double> cpuVector = queryPrometheusVector(promUrl, "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m])) by (instance)");
+        Map<String, Double> memVector = queryPrometheusVector(promUrl, "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) by (instance)");
+        if (cpuVector.isEmpty() && memVector.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, List<String>> metricKeys = buildInstanceKeys(nodes);
+        Map<String, ClusterMetrics> result = new LinkedHashMap<>();
+        for (Node node : nodes) {
+            String nodeName = node.getMetadata().getName();
+            if (nodeName == null || nodeName.isBlank()) continue;
+            NodeCapacity cap = capacities.get(nodeName);
+            if (cap == null) continue;
+            List<String> keys = metricKeys.getOrDefault(nodeName, Collections.singletonList(nodeName));
+            double cpuValue = resolveMetricForNode(cpuVector, keys);
+            double memValue = resolveMetricForNode(memVector, keys);
+            if (Double.isNaN(cpuValue) && Double.isNaN(memValue)) continue;
+            double cpuPercent = cap.cpuCores > 0 && !Double.isNaN(cpuValue) ? Math.min(1.0, cpuValue / cap.cpuCores) : 0.0;
+            double memoryGiB = cap.memoryGiB;
+            double memoryPercent = memoryGiB > 0 && !Double.isNaN(memValue) ? Math.min(1.0, (memValue / (1024 * 1024 * 1024)) / memoryGiB) : 0.0;
+            LOG.info("Prometheus node metrics: {} cpuPercent={} memoryPercent={}", nodeName, cpuPercent, memoryPercent);
+            result.put(nodeName, new ClusterMetrics(cpuPercent, memoryPercent));
+        }
+        return result;
+    }
+
+    /**
+     * Run a Prometheus vector query and index the results by instance label (plus normalized host).
+     */
+    private Map<String, Double> queryPrometheusVector(String promUrl, String query) {
+        try {
+            HttpClient http = buildPrometheusHttpClient(promUrl);
+            String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .GET()
+                    .uri(URI.create(promUrl + "/api/v1/query?query=" + encoded))
+                    .timeout(Duration.ofSeconds(8));
+            applyPrometheusAuth(builder);
+            HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 300) {
+                LOG.warn("Prometheus vector query failed ({}): {}", response.statusCode(), response.body());
+                return Collections.emptyMap();
+            }
+            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode results = root.path("data").path("result");
+            if (!results.isArray()) {
+                return Collections.emptyMap();
+            }
+            Map<String, Double> map = new LinkedHashMap<>();
+            for (JsonNode item : results) {
+                String instance = item.path("metric").path("instance").asText(null);
+                if (instance == null || instance.isBlank()) continue;
+                JsonNode valueArray = item.path("value");
+                if (!valueArray.isArray() || valueArray.size() < 2) continue;
+                double val = valueArray.get(1).asDouble(Double.NaN);
+                if (Double.isNaN(val)) continue;
+                map.put(instance, val);
+                map.put(normalizeInstanceKey(instance), val);
+            }
+            LOG.info("Prometheus vector query '{}' returned {} entries", query, map.size());
+            return map;
+        } catch (Exception e) {
+            LOG.warn("Prometheus vector query failed for {}: {}", promUrl, e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
+     * Construct an HTTP client that can optionally trust the Kubernetes cluster CA for HTTPS endpoints.
+     */
+    private HttpClient buildPrometheusHttpClient(String promUrl) throws Exception {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5));
+        if (promUrl.startsWith("https")) {
+            String caData = client.getConfiguration().getCaCertData();
+            if (caData != null && !caData.isBlank()) {
+                builder.sslContext(buildSslContextFromCaData(caData));
+            }
+        }
+        return builder.build();
+    }
+
+    /**
+     * Apply bearer tokens to Prometheus requests if the kubeconfig provides one.
+     */
+    private void applyPrometheusAuth(HttpRequest.Builder builder) {
+        String token = client.getConfiguration().getOauthToken();
+        if (token != null && !token.isBlank()) {
+            builder.header("Authorization", "Bearer " + token);
+        }
+    }
+
+    /**
+     * Build candidate Prometheus instance keys for each node (name/IP and optional port).
+     */
+    private Map<String, List<String>> buildInstanceKeys(List<Node> nodes) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        for (Node node : nodes) {
+            String nodeName = node.getMetadata().getName();
+            if (nodeName == null || nodeName.isBlank()) continue;
+            List<String> keys = new ArrayList<>();
+            keys.add(nodeName);
+            if (node.getStatus() != null && node.getStatus().getAddresses() != null) {
+                for (NodeAddress addr : node.getStatus().getAddresses()) {
+                    if (addr.getAddress() != null && !addr.getAddress().isBlank()) {
+                        keys.add(addr.getAddress());
+                        keys.add(addr.getAddress() + ":9100");
+                    }
+                }
+            }
+            result.put(nodeName, keys);
+        }
+        return result;
+    }
+
+    /**
+     * Return the first matching metric value for the given keys, allowing normalized forms.
+     */
+    private double resolveMetricForNode(Map<String, Double> vector, List<String> keys) {
+        for (String key : keys) {
+            if (key == null) continue;
+            Double val = vector.get(key);
+            if (val != null) return val;
+            Double normalized = vector.get(normalizeInstanceKey(key));
+            if (normalized != null) return normalized;
+        }
+        return Double.NaN;
+    }
+
+    /**
+     * Strip the port portion from an instance identifier (e.g. 10.0.0.1:9100 -> 10.0.0.1).
+     */
+    private String normalizeInstanceKey(String instance) {
+        if (instance == null || instance.isBlank()) return "";
+        int colon = instance.lastIndexOf(':');
+        if (colon > 0) {
+            return instance.substring(0, colon);
+        }
+        return instance;
+    }
     private double parsePrometheusSingleValue(String body) {
         try {
             com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(body);

@@ -466,7 +466,17 @@ public class HelmService {
         if (key == null || key.isBlank()) {
             return;
         }
-        String[] parts = key.split("\\.");
+        String[] parts;
+        if (key.contains("/")) {
+            /*
+             * Labels and annotations often contain slashes (e.g. security.clemlab.com/needs-keytab)
+             * and must remain a single key. Avoid expanding dotted paths within keys that already
+             * use slash separators to prevent converting them into nested maps.
+             */
+            parts = new String[]{key};
+        } else {
+            parts = key.split("\\.");
+        }
         Map<String, Object> cursor = target;
         for (int i = 0; i < parts.length; i++) {
             String part = parts[i];

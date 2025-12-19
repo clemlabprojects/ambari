@@ -42,15 +42,26 @@ const NodesPage: React.FC = () => {
     }
 
     if (loading && nodes.length === 0) {
-      return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
+        return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
     }
+
+    /**
+     * Convert the raw usage fraction into a single-decimal percentage for display.
+     */
+    const clampPercent = (usage?: number) => {
+        if (typeof usage !== 'number' || Number.isNaN(usage)) {
+            return 0;
+        }
+        const pct = Math.min(100, Math.max(0, usage * 100));
+        return Number(pct.toFixed(1));
+    };
 
     const columns = [
         { title: 'Name', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
         { title: 'Status', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
         { title: 'Roles', dataIndex: 'roles', key: 'roles', render: (roles: string[]) => roles.map(role => <Tag key={role}>{role}</Tag>) },
-        { title: 'CPU', dataIndex: 'cpuUsage', key: 'cpuUsage', render: (usage: number) => <Progress percent={usage * 100} /> },
-        { title: 'Memory', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={usage * 100} status="success" /> },
+        { title: 'CPU', dataIndex: 'cpuUsage', key: 'cpuUsage', render: (usage: number) => <Progress percent={clampPercent(usage)} /> },
+        { title: 'Memory', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={clampPercent(usage)} status="success" /> },
     ];
     return (
         <div>
