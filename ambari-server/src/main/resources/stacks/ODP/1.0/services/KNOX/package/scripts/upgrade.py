@@ -29,12 +29,17 @@ from resource_management.libraries.functions import format
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.script.script import Script
-
+from resource_management.core.resources.system import File, Execute
 
 BACKUP_TEMP_DIR = "knox-upgrade-backup"
 BACKUP_DATA_ARCHIVE = "knox-data-backup.tar"
 STACK_ROOT_DEFAULT = Script.get_stack_root()
 
+
+from resource_management.core.resources.system import Execute
+from resource_management.core.exceptions import Fail
+import os
+import tempfile
 
 def backup_data():
   """
@@ -50,18 +55,35 @@ def backup_data():
   if not os.path.isdir(absolute_backup_dir):
     os.makedirs(absolute_backup_dir)
 
-  for directory in directoryMappings:
-    if not os.path.isdir(directory):
-      raise Fail("Unable to backup missing directory {0}".format(directory))
+  for source_path in directoryMappings:
+    # Use a separate variable for the physical path to avoid losing the dictionary key
+    target_path = source_path
 
-    archive = os.path.join(absolute_backup_dir, directoryMappings[directory])
-    Logger.info('Compressing {0} to {1}'.format(directory, archive))
+    # 1. Resolve symlink (Python is fine here as /usr is usually readable)
+    if os.path.islink(source_path):
+      target_path = os.path.realpath(source_path)
+      Logger.info("Resolved symlink {0} -> {1}".format(source_path, target_path))
+    
+    # 2. Check directory existence using 'test -d' as ROOT
+    # Python's os.path.isdir fails here because the ambari-agent user 
+    # cannot traverse /var/lib/knox (permission 750).
+    try:
+      Execute('test -d {0}'.format(target_path), user='root')
+    except Fail:
+      raise Fail("Unable to backup missing directory {0}".format(target_path))
+
+    # Lookup the archive name using the ORIGINAL source_path key
+    archive = os.path.join(absolute_backup_dir, directoryMappings[source_path])
+    Logger.info('Compressing {0} to {1}'.format(target_path, archive))
 
     if os.path.exists(archive):
       os.remove(archive)
 
-    # backup the directory, following symlinks instead of including them
-    tar_archive.archive_directory_dereference(archive, directory)
+    # 3. Create Tarball using 'tar' command as ROOT
+    # -c: create, -z: gzip, -h: dereference (follow symlinks), -f: filename
+    tar_cmd = "tar -czhf {0} {1}".format(archive, target_path)
+    
+    Execute(tar_cmd, user='root')
 
   return absolute_backup_dir
 
