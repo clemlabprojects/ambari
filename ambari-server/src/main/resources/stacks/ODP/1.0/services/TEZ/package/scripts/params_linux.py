@@ -67,6 +67,13 @@ if stack_version_formatted and check_stack_feature(StackFeature.CONFIG_VERSIONIN
   config_path = os.path.join(stack_root, "current/tez-client/conf")
   config_dir = os.path.realpath(config_path)
 
+# Determine if we are in an upgrade
+# Need to check both that the upgrade_type exists and that it is not None
+# starting with ODP 1.3, because of Hadoop 3.4+ support of JDK, we need to use the current binaries installed
+# so rolling upgrade smoke test will use the same binaries as the rest of the services before they are switched to the new version
+is_upgrade_running = 'upgrade_type' in config['commandParams']
+upgrade_type = default("/commandParams/upgrade_type", None)
+
 # Heap dump related
 heap_dump_enabled = default('/configurations/tez-env/enable_heap_dump', None)
 heap_dump_opts = "" # Empty if 'heap_dump_enabled' is False.

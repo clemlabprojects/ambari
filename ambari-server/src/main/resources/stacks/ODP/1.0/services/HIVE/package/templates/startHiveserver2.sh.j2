@@ -18,6 +18,8 @@
 # under the License.
 #
 #
-
-{{hive_bin}}/hiveserver2 > $1 2> $2 &
+{% if security_enabled %}
+  . {{hive_server_conf_dir}}/hive-env.sh
+{% endif %}
+export HIVE_CONF_DIR={{hive_server_conf_dir}}; {{hive_bin}}/hiveserver2 > $1 2> $2 &
 echo $!|cat>$3

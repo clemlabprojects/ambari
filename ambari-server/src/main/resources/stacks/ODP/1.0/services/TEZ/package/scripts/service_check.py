@@ -45,6 +45,8 @@ class TezServiceCheckLinux(TezServiceCheck):
     path_to_tez_jar = format(params.tez_examples_jar)
     wordcount_command = format("jar {path_to_tez_jar} orderedwordcount /tmp/tezsmokeinput/sample-tez-test /tmp/tezsmokeoutput/")
     test_command = format("fs -test -e /tmp/tezsmokeoutput/_SUCCESS")
+    # Dynamic hadoop conf dir rendering
+    hadoopconf_dir = params.hadoop_conf_dir
 
     File(format("{tmp_dir}/sample-tez-test"),
       content = "foo\nbar\nfoo\nbar\nfoo",
@@ -69,8 +71,15 @@ class TezServiceCheckLinux(TezServiceCheck):
     )
 
     if params.stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.stack_version_formatted):
+      Logger.info("Copying Tez tarball to HDFS")
       copy_to_hdfs("tez", params.user_group, params.hdfs_user, skip=params.sysprep_skip_copy_tarballs_hdfs)
 
+    # During a rolling upgrade, use the current binaries and configs as they are not yet switched to the new version
+    if params.is_upgrade_running and ('rolling' in params.upgrade_type.lower()):
+      stack_root = Script.get_stack_root()
+      config_path = os.path.join(stack_root, "current/hadoop-client/conf")
+      hadoopconf_dir = config_path
+      Logger.info("Using default hadoop conf dir '" + config_path + "'  and binaries during Rolling Upgrade.")
     params.HdfsResource(None, action = "execute")
 
     if params.security_enabled:
@@ -85,7 +94,7 @@ class TezServiceCheckLinux(TezServiceCheck):
       tries = 3,
       try_sleep = 5,
       user = params.smokeuser,
-      conf_dir = params.hadoop_conf_dir,
+      conf_dir = hadoopconf_dir,
       bin_dir = params.hadoop_bin_dir
     )
 
@@ -93,7 +102,7 @@ class TezServiceCheckLinux(TezServiceCheck):
       tries = 10,
       try_sleep = 6,
       user = params.smokeuser,
-      conf_dir = params.hadoop_conf_dir,
+      conf_dir = hadoopconf_dir,
       bin_dir = params.hadoop_bin_dir
     )
 

@@ -308,6 +308,11 @@ def setup_java_patch(stack_version=None):
   if params.db_flavor.lower() == 'sqla':
     env_dict = {'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME':params.java_home, 'LD_LIBRARY_PATH':params.ld_lib_path}
 
+  ## Modify Ranger Heap Size
+  ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+    properties = {'ranger_admin_max_heap_size': params.ranger_admin_max_heap_size},
+    owner = params.unix_user,
+  )
   setup_java_patch = format('ambari-python-wrap {ranger_home}/db_setup.py -javapatch')
   Execute(setup_java_patch,
           environment=env_dict,

@@ -29,6 +29,7 @@ from resource_management.libraries.functions.format import format
 from resource_management.core.resources.system import Execute, File
 from resource_management.core.signal_utils import TerminateStrategy
 import subprocess
+import time
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
 def service(componentName, action='start', serviceName='yarn'):
@@ -45,7 +46,10 @@ def service(componentName, action='start', serviceName='yarn'):
 def service(componentName, action='start', serviceName='yarn'):
   import params
   import status_params
-
+  hadoop_env_exports = {
+    'HADOOP_LIBEXEC_DIR': params.hadoop_libexec_dir,
+    'JAVA_HOME': params.java64_home,
+  }
   if serviceName == 'mapreduce' and componentName == 'historyserver':
     delete_pid_file = True
     daemon = format("{mapred_bin}/mapred")
@@ -58,6 +62,8 @@ def service(componentName, action='start', serviceName='yarn'):
     # may not work correctly when stopping the service
     delete_pid_file = False
     daemon = format("{yarn_bin}/yarn")
+    if serviceName == 'yarn' and componentName == 'nodemanager':
+      daemon = format("{yarn_nodemanager_bin}/yarn")
     if componentName == 'registrydns' and status_params.registry_dns_needs_privileged_access:
       pid_file = status_params.yarn_registry_dns_priv_pid_file
       usr = status_params.root_user

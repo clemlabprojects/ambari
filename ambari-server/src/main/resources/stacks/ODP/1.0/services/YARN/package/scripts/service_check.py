@@ -24,6 +24,7 @@ import ambari_simplejson as json # simplejson is much faster comparing to Python
 import re
 import os
 import subprocess
+from ambari_commons import constants
 from ambari_commons import os_utils
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -117,9 +118,21 @@ class ServiceCheckDefault(ServiceCheck):
     else:
       smoke_cmd = yarn_distrubuted_shell_check_cmd
 
-    os.environ['PATH'] = params.mapreduce_check_execute_path + os.pathsep + os.environ['PATH']
+    if params.is_upgrade_running and ('rolling' in params.upgrade_type.lower()):
+      stack_root = Script.get_stack_root()
+      config_path = os.path.join(stack_root, "current/hadoop-client/conf")
+      hadoopconf_dir = config_path
+      Logger.info("YARN Smoke Test: Using default hadoop conf dir '" + config_path + "'  and binaries during Rolling Upgrade.")
+      Logger.info("Using default PATH for Rolling Upgrade")
+      path = format('/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin')
+    else:
+      Logger.info("YARN Smoke Test: Using hadoop conf dir '" + params.mapreduce_check_execute_path + "'.")
+      Logger.info("Using Stack Version Repository PATH")
+      os.environ['PATH'] = params.mapreduce_check_execute_path + os.pathsep + os.environ['PATH']
+      path = format('{params.mapreduce_check_execute_path}:/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin')
+
     return_code, out = shell.checked_call(smoke_cmd,
-                                          path=format('{params.mapreduce_check_execute_path}:/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin'),
+                                          path=path,
                                           user=params.smokeuser,
                                           )
 

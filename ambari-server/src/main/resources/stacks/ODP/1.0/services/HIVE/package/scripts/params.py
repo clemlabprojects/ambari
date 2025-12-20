@@ -101,6 +101,9 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 
 # Upgrade direction
 upgrade_direction = default("/commandParams/upgrade_direction", None)
+is_upgrade_running = 'upgrade_type' in config['commandParams']
+upgrade_type = default("/commandParams/upgrade_type", None)
+
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_hive_jdbc_url_change = check_stack_feature(StackFeature.RANGER_HIVE_PLUGIN_JDBC_URL, version_for_stack_feature_checks)
@@ -110,6 +113,8 @@ stack_supports_atlas_hook_for_hive_interactive = check_stack_feature(StackFeatur
 component_directory = status_params.component_directory
 
 hadoop_home = format('{stack_root}/current/hadoop-client')
+if is_upgrade_running:
+  hadoop_home = format('{stack_root}/{version}/hadoop')
 hive_bin = format('{stack_root}/current/{component_directory}/bin')
 hive_schematool_ver_bin = format('{stack_root}/{version}/hive/bin')
 hive_schematool_bin = format('{stack_root}/current/{component_directory}/bin')
@@ -191,7 +196,6 @@ hive_client_conf_dir = status_params.hive_client_conf_dir
 hive_server_conf_dir = status_params.hive_server_conf_dir
 hive_metastore_conf_dir = status_params.hive_metastore_conf_dir
 tez_conf_dir = status_params.tez_conf_dir
-
 
 # --- Tarballs ---
 # DON'T CHANGE THESE VARIABLE NAMES

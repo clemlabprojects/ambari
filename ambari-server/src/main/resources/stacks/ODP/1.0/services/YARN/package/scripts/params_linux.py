@@ -83,6 +83,9 @@ major_stack_version = get_major_version(stack_version_formatted_major)
 stack_supports_ru = check_stack_feature(StackFeature.ROLLING_UPGRADE, version_for_stack_feature_checks)
 stack_supports_timeline_state_store = check_stack_feature(StackFeature.TIMELINE_STATE_STORE, version_for_stack_feature_checks)
 
+is_upgrade_running = 'upgrade_type' in config['commandParams']
+upgrade_type = default("/commandParams/upgrade_type", None)
+
 # New Cluster Stack Version that is defined during the RESTART of a Stack Upgrade.
 # It cannot be used during the initial Cluser Install because the version is not yet known.
 version = default("/commandParams/version", None)
@@ -173,6 +176,7 @@ if version is not None:
 hadoop_mapred2_jar_location = hadoop_mapr_home
 mapred_bin = format("{hadoop_mapr_home}/bin")
 yarn_bin = format("{hadoop_yarn_home}/bin")
+yarn_nodemanager_bin = format("{stack_root}/current/hadoop-yarn-nodemanager/bin")
 
 
 if stack_supports_timeline_state_store:

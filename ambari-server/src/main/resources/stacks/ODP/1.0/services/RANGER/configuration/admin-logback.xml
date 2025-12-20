@@ -41,8 +41,7 @@
     <name>content</name>
     <display-name>admin-logback-xml template</display-name>
     <description>Ranger admin logback.xml template</description>
-    <value>
-&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+    <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
 &lt;!--
   Licensed to the Apache Software Foundation (ASF) under one or more
   contributor license agreements...
