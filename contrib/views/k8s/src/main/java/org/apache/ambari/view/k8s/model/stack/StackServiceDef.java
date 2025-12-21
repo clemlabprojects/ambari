@@ -26,4 +26,5 @@ public class StackServiceDef {
     public Map<String, Map<String, Object>> ranger;
     public List<Map<String, Object>> requiredConfigMaps;
     public List<String> dynamicValues;
+    public List<Map<String, Object>> tls;
 }

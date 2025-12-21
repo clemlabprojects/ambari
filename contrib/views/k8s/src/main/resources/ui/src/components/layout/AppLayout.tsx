@@ -209,18 +209,16 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           }}
         >
           <Space size={6} style={{ marginLeft: 'auto' }}>
-            <Space size={4}>
+            <Badge
+              count={operationsCount}
+              size="small"
+              style={{ backgroundColor: '#1677ff' }}
+              offset={[6, -4]}
+            >
               <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
                 Background Ops
               </Button>
-              {operationsCount > 0 && (
-                <Badge
-                  count={operationsCount}
-                  size="small"
-                  style={{ backgroundColor: '#1677ff' }}
-                />
-              )}
-            </Space>
+            </Badge>
             {clusterStats?.nodes && (
               <Tag
                 icon={<CloudServerOutlined />}

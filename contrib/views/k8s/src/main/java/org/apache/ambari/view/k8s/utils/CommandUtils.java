@@ -224,6 +224,7 @@ public class CommandUtils {
             Object endpoints = p.get("endpoints");
             Object securityProfile = p.get("securityProfile");
             Object deploymentMode = p.get("deploymentMode");
+            Object tls = p.get("tls");
             Object git = p.get("git");
             Object configInstantiations = p.get("configInstantiations");
 
@@ -266,6 +267,9 @@ public class CommandUtils {
             }
             if (deploymentMode instanceof String) {
                 req.setDeploymentMode((String) deploymentMode);
+            }
+            if (tls != null) {
+                req.setTls(tls);
             }
             if (git instanceof Map<?, ?> gitMap) {
                 HelmDeployRequest.GitOptions opts = new HelmDeployRequest.GitOptions();
