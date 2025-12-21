@@ -158,6 +158,37 @@
       "namespace": "monitoring"
     }
   },
+  "tls": [
+    {
+      "key": "https",
+      "secretNameTemplate": "{{releaseName}}-https",
+      "keystoreKey": "keystore.p12",
+      "passwordKey": "truststore.password",
+      "keystoreType": "PKCS12",
+      "mountPath": "/etc/security/tls/https-keystore.p12",
+      "keystorePath": "/etc/security/tls/https-keystore.p12",
+      "defaultPort": 8443,
+      "autoGenerate": true,
+      "validityDays": 365,
+      "dnsTemplates": [
+        "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc",
+        "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc.cluster.local",
+        "{{ingress.host}}"
+      ],
+      "defaults": {
+        "enabled": false,
+        "autoGenerate": true,
+        "port": 8443,
+        "keystoreKey": "keystore.p12",
+        "passwordKey": "truststore.password",
+        "passwordSecretName": "",
+        "passwordMountPath": "/etc/trino/https-pass/password",
+        "keystoreType": "PKCS12",
+        "mountPath": "/etc/security/tls/https-keystore.p12",
+        "keystorePath": "/etc/security/tls/https-keystore.p12"
+      }
+    }
+  ],
   "endpoints": [
     {
       "id": "trino-ui",
@@ -372,6 +403,46 @@
         "type": "form",
         "field": "ingress.tlsHost"
       }
+    },
+    {
+      "name": "tlsHttpsEnabled",
+      "from": { "type": "form", "field": "tls.https.enabled" }
+    },
+    {
+      "name": "tlsHttpsAutoGenerate",
+      "from": { "type": "form", "field": "tls.https.autoGenerate" }
+    },
+    {
+      "name": "tlsHttpsPort",
+      "from": { "type": "form", "field": "tls.https.port" }
+    },
+    {
+      "name": "tlsHttpsSecretName",
+      "from": { "type": "form", "field": "tls.https.secretName" }
+    },
+    {
+      "name": "tlsHttpsPasswordSecretName",
+      "template": "${tlsHttpsSecretName}-pass"
+    },
+    {
+      "name": "tlsHttpsKeystoreKey",
+      "from": { "type": "form", "field": "tls.https.keystoreKey" }
+    },
+    {
+      "name": "tlsHttpsPassword",
+      "from": { "type": "form", "field": "tls.https.password" }
+    },
+    {
+      "name": "tlsHttpsMountPath",
+      "from": { "type": "form", "field": "tls.https.mountPath" }
+    },
+    {
+      "name": "tlsHttpsKeystorePath",
+      "from": { "type": "form", "field": "tls.https.keystorePath" }
+    },
+    {
+      "name": "tlsHttpsKeystoreType",
+      "from": { "type": "form", "field": "tls.https.keystoreType" }
     },
     {
       "name": "webUiEnabled",
@@ -783,6 +854,92 @@
       ]
     },
     {
+      "name": "https-config",
+      "targets": [
+        {
+          "path": "server.config.https.enabled",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+        },
+        {
+          "path": "server.config.https.port",
+          "skipIfVarEmpty": "tlsHttpsPort",
+          "from": { "type": "template", "template": "${tlsHttpsPort}" }
+        },
+        {
+          "path": "server.config.https.keystore.path",
+          "skipIfVarEmpty": "tlsHttpsKeystorePath",
+          "from": { "type": "template", "template": "${tlsHttpsKeystorePath}" }
+        },
+        {
+          "path": "server.config.https.keystore.secretName",
+          "skipIfVarEmpty": "tlsHttpsSecretName",
+          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+        },
+        {
+          "path": "server.config.https.keystore.key",
+          "skipIfVarEmpty": "tlsHttpsKeystoreKey",
+          "from": { "type": "template", "template": "${tlsHttpsKeystoreKey}" }
+        },
+        {
+          "path": "server.config.https.keystore.mountPath",
+          "skipIfVarEmpty": "tlsHttpsKeystorePath",
+          "from": { "type": "template", "template": "${tlsHttpsKeystorePath}" }
+        },
+        {
+          "path": "server.config.https.keystore.passwordSecretName",
+          "skipIfVarEmpty": "tlsHttpsPasswordSecretName",
+          "from": { "type": "template", "template": "${tlsHttpsPasswordSecretName}" }
+        },
+        {
+          "path": "server.config.https.keystore.passwordKey",
+          "skipIfVarEmpty": "tlsHttpsPassword",
+          "from": { "type": "template", "template": "truststore.password" }
+        },
+        {
+          "path": "server.config.https.keystore.passwordMountPath",
+          "skipIfVarEmpty": "tlsHttpsMountPath",
+          "from": { "type": "template", "template": "/etc/trino/https-pass/password" }
+        },
+        {
+          "path": "coordinator.additionalConfigProperties[]",
+          "skipIfVarEmpty": "tlsHttpsPassword",
+          "from": { "type": "template", "template": "http-server.https.keystore.key=${tlsHttpsPassword}" }
+        },
+        {
+          "path": "global.security.tls.enabled",
+          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+        },
+        {
+          "path": "global.security.tls.truststore.enabled",
+          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+        },
+        {
+          "path": "global.security.tls.truststoreSecret",
+          "skipIfVarEmpty": "tlsHttpsSecretName",
+          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+        },
+        {
+          "path": "global.security.tls.truststoreKey",
+          "skipIfVarEmpty": "tlsHttpsKeystoreKey",
+          "from": { "type": "template", "template": "${tlsHttpsKeystoreKey}" }
+        },
+        {
+          "path": "global.security.tls.truststorePasswordKey",
+          "from": { "type": "template", "template": "truststore.password" }
+        },
+        {
+          "path": "global.security.tls.truststore.format",
+          "skipIfVarEmpty": "tlsHttpsKeystoreType",
+          "from": { "type": "template", "template": "${tlsHttpsKeystoreType}" }
+        },
+        {
+          "path": "global.security.tls.truststore.pemKey",
+          "from": { "type": "template", "template": "ca.crt" }
+        }
+      ]
+    },
+    {
       "name": "trust-proxy-headers",
       "targets": [
         {
@@ -1061,6 +1218,94 @@
             "field": "ingress.enabled",
             "value": true
           }
+        }
+      ]
+    },
+    {
+      "name": "httpsInternal",
+      "label": "HTTPS interne (keystore auto)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "tls.https.enabled",
+          "label": "Activer HTTPS interne",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Active le serveur HTTPS de Trino. Génère un keystore signé par l'autorité interne si demandé."
+        },
+        {
+          "name": "tls.https.autoGenerate",
+          "label": "Auto-générer le keystore",
+          "type": "boolean",
+          "defaultValue": true,
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true },
+          "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
+        },
+        {
+          "name": "tls.https.port",
+          "label": "Port HTTPS",
+          "type": "number",
+          "defaultValue": 8443,
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.secretName",
+          "label": "Secret keystore (optionnel)",
+          "type": "string",
+          "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.keystoreKey",
+          "label": "Clé du keystore dans le Secret",
+          "type": "string",
+          "defaultValue": "truststore.jks",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.password",
+          "label": "Mot de passe keystore",
+          "type": "password",
+          "defaultValue": "",
+          "help": "Laisser vide pour génération aléatoire.",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.mountPath",
+          "label": "Chemin monté du keystore",
+          "type": "string",
+          "defaultValue": "/etc/security/tls/https-keystore.p12",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.keystorePath",
+          "label": "Chemin utilisé par Trino",
+          "type": "string",
+          "defaultValue": "/etc/security/tls/https-keystore.p12",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true },
+          "help": "Valeur injectée dans server.config.https.keystore.path."
+        },
+        {
+          "name": "tls.https.keystoreType",
+          "label": "Format du keystore (JKS/PKCS12/PEM)",
+          "type": "select",
+          "defaultValue": "PKCS12",
+          "options": [
+            { "label": "PKCS12", "value": "PKCS12" },
+            { "label": "JKS", "value": "JKS" },
+            { "label": "PEM (tls.crt/tls.key)", "value": "PEM" }
+          ],
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true },
+          "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
         }
       ]
     },

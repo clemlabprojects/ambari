@@ -657,6 +657,7 @@ export async function submitHelmDeploy(payload: {
   secretName?: string;
   endpoints?: any;
   mounts?: any;
+  tls?: any;
   dependencies?: any;
   ranger?: any;
   requiredConfigMaps?: any;

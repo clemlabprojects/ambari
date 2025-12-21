@@ -396,6 +396,9 @@ public class CommandService {
         if (request.getGit() != null) {
             params.put("git", request.getGit());
         }
+        if (request.getTls() != null && !request.getTls().isEmpty()) {
+            params.put("tls", request.getTls());
+        }
         LOG.info("recevied mounts are {} ", request.getMounts());
 
         String effectiveRepoId = repoId;
@@ -478,6 +481,10 @@ public class CommandService {
             LOG.warn("Could not fingerprint security profile {}: {}", resolvedSecurityProfile, ex.toString());
         }
         applySecurityOverrides(securityCfg, params);
+        if (request.getTls() != null && !request.getTls().isEmpty()) {
+            TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
+            tlsManager.applyTls(request.getTls(), request, params);
+        }
         if (baseUri != null) {
             params.put("_baseUri", baseUri.toString());
         }
@@ -553,42 +560,78 @@ public class CommandService {
             this.commandUtils.addOverride(params, "global.security.kerberos.configMapName", krb5ConfigMapName);
         }
 
-        // ---------- Truststore from Ambari truststore (for downstream TLS clients) ----------
+        // ---------- Truststore from Ambari truststore (for downstream TLS clients)
+        // This builds a Secret from the company CA truststore and also injects the Ambari internal CA cert
+        // so both can be trusted by downstream clients. Helm wiring uses global.security.tls.*. ----------
         try {
-            String tsPath = ctx.getAmbariProperty("ssl.trustStore.path");
-            if (tsPath != null && !tsPath.isBlank()) {
-                String tsType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
+            String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
+            if (truststorePath != null && !truststorePath.isBlank()) {
+                String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
                         .filter(s -> !s.isBlank()).orElse("JKS");
-                String tsPassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password")).orElse("");
-                char[] tsPass = ambariAliasResolver.resolve(ctx, tsPassProp);
+                String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password")).orElse("");
+                char[] truststorePassword = ambariAliasResolver.resolve(ctx, truststorePassProp);
 
-                byte[] tsBytes = Files.readAllBytes(Paths.get(tsPath));
+                byte[] truststoreBytes = Files.readAllBytes(Paths.get(truststorePath));
                 String truststoreSecretName = request.getReleaseName() + "-truststore";
                 Map<String, byte[]> data = new LinkedHashMap<>();
-                data.put("truststore.jks", tsBytes);
-                data.put("truststore.password", new String(tsPass).getBytes(StandardCharsets.UTF_8));
-
-                // Also provide a PEM bundle for clients (Python, etc.)
+                // Merge internal CA cert into the company truststore (single keystore/Secret to mount).
+                byte[] mergedTruststoreBytes = truststoreBytes;
+                StringBuilder pemBundle = new StringBuilder();
                 try {
-                    KeyStore ks = WebHookConfigurationService.loadKeyStore(Paths.get(tsPath), tsPass, tsType);
-                    StringBuilder pem = new StringBuilder();
-                    var aliases = ks.aliases();
+                    KeyStore keyStore = WebHookConfigurationService.loadKeyStore(Paths.get(truststorePath), truststorePassword, truststoreType);
+                    // Append existing certificates to PEM bundle and track if internal CA is already present.
+                    var aliases = keyStore.aliases();
                     while (aliases.hasMoreElements()) {
                         String alias = aliases.nextElement();
-                        Certificate cert = ks.getCertificate(alias);
-                        if (cert instanceof X509Certificate x509) {
-                            pem.append("-----BEGIN CERTIFICATE-----\n")
+                        Certificate certificate = keyStore.getCertificate(alias);
+                        if (certificate instanceof X509Certificate x509) {
+                            pemBundle.append("-----BEGIN CERTIFICATE-----\n")
                                     .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
                                             .encodeToString(x509.getEncoded()))
                                     .append("\n-----END CERTIFICATE-----\n");
                         }
                     }
-                    if (pem.length() > 0) {
-                        data.put("ca.crt", pem.toString().getBytes(StandardCharsets.UTF_8));
+                    // Load Ambari internal CA cert and add it if not already present.
+                    WebHookConfigurationService webHookCfg = new WebHookConfigurationService(ctx, this.kubernetesService);
+                    var internalCa = webHookCfg.ensureAmbariCertificateAuthority();
+                    X509Certificate internalCaCert = (X509Certificate) java.security.cert.CertificateFactory.getInstance("X.509")
+                            .generateCertificate(new java.io.ByteArrayInputStream(internalCa.caCertificatePem().getBytes(StandardCharsets.UTF_8)));
+                    boolean hasInternalCa = false;
+                    var verifyAliases = keyStore.aliases();
+                    while (verifyAliases.hasMoreElements()) {
+                        String alias = verifyAliases.nextElement();
+                        Certificate certificate = keyStore.getCertificate(alias);
+                        if (certificate instanceof X509Certificate x509) {
+                            try {
+                                x509.verify(internalCaCert.getPublicKey());
+                                hasInternalCa = true;
+                                break;
+                            } catch (Exception ignored) {
+                                // not the same cert
+                            }
+                        }
+                    }
+                    if (!hasInternalCa) {
+                        keyStore.setCertificateEntry("ambari-internal-ca", internalCaCert);
+                        pemBundle.append("-----BEGIN CERTIFICATE-----\n")
+                                .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
+                                        .encodeToString(internalCaCert.getEncoded()))
+                                .append("\n-----END CERTIFICATE-----\n");
+                        try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream()) {
+                            keyStore.store(baos, truststorePassword);
+                            mergedTruststoreBytes = baos.toByteArray();
+                        }
                     }
                 } catch (Exception e) {
-                    LOG.warn("Failed to build PEM bundle from Ambari truststore: {}", e.toString());
+                    LOG.warn("Failed to merge internal CA into truststore {}; using original truststore only: {}", truststorePath, e.toString());
                 }
+
+                data.put("truststore.jks", mergedTruststoreBytes);
+                data.put("truststore.password", new String(truststorePassword).getBytes(StandardCharsets.UTF_8));
+                if (pemBundle.length() > 0) {
+                    data.put("ca.crt", pemBundle.toString().getBytes(StandardCharsets.UTF_8));
+                }
+
                 kubernetesService.createOrUpdateOpaqueSecret(
                         request.getNamespace(),
                         truststoreSecretName,
@@ -601,7 +644,7 @@ public class CommandService {
                 this.commandUtils.addOverride(params, "global.security.tls.truststoreKey", "truststore.jks");
                 this.commandUtils.addOverride(params, "global.security.tls.truststorePasswordKey", "truststore.password");
 
-                LOG.info("Provisioned truststore Secret '{}' in namespace '{}' from Ambari truststore {}", truststoreSecretName, request.getNamespace(), tsPath);
+                LOG.info("Provisioned truststore Secret '{}' in namespace '{}' from Ambari truststore {}", truststoreSecretName, request.getNamespace(), truststorePath);
             } else {
                 LOG.info("Ambari truststore path not configured; skipping truststore Secret provisioning");
             }
@@ -2740,6 +2783,9 @@ public class CommandService {
      * @return SecurityConfigDTO or null when absent/invalid.
      */
     private SecurityConfigDTO loadSecurityConfig(String requestedProfile) {
+        if (requestedProfile == null || requestedProfile.isBlank()) {
+            return null;
+        }
         try {
             SecurityProfileService profileService = new SecurityProfileService(ctx);
             return profileService.resolveProfile(requestedProfile);
@@ -2756,19 +2802,20 @@ public class CommandService {
      * @return resolved profile name or null when no profiles are stored
      */
     private String resolveSecurityProfileName(String requestedProfile) {
+        if (requestedProfile == null || requestedProfile.isBlank()) {
+            return null;
+        }
         try {
             SecurityProfileService profileService = new SecurityProfileService(ctx);
             SecurityProfilesDTO profiles = profileService.loadProfiles();
             if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
                 return null;
             }
-            if (requestedProfile != null && profiles.profiles.containsKey(requestedProfile)) {
+            // Only honor an explicitly requested profile. If the user did not select one, do not auto-apply any profile.
+            if (profiles.profiles.containsKey(requestedProfile)) {
                 return requestedProfile;
             }
-            if (profiles.defaultProfile != null && profiles.profiles.containsKey(profiles.defaultProfile)) {
-                return profiles.defaultProfile;
-            }
-            return profiles.profiles.keySet().stream().findFirst().orElse(null);
+            return null;
         } catch (Exception ex) {
             LOG.warn("Could not resolve security profile name: {}", ex.toString());
             return null;

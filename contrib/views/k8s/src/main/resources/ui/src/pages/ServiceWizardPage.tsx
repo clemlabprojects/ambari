@@ -74,9 +74,6 @@ const ServiceWizardPage: React.FC = () => {
             try {
               const sec = await getSecurityConfig();
             setSecurityProfiles(sec);
-            if (sec.defaultProfile) {
-              setInstallValues((prev: any) => ({ ...prev, securityProfile: prev.securityProfile || sec.defaultProfile }));
-            }
             } catch (e: any) {
               console.warn('Security profiles load failed', e);
             }
@@ -113,7 +110,8 @@ const ServiceWizardPage: React.FC = () => {
               });
             };
             if (Array.isArray(svcDef?.form)) applyDefaults(svcDef.form, initial);
-            // Seed mount defaults from service definition (if any)
+            // Seed mount defaults from service definition (if any).
+            // These defaults mirror the mounts section in service.json so the user sees a prefilled volume editor.
             if (Array.isArray((svcDef as any)?.mounts) && (svcDef as any).mounts.length > 0) {
               const mountObj: any = {};
               (svcDef as any).mounts.forEach((m: any) => {
@@ -124,6 +122,41 @@ const ServiceWizardPage: React.FC = () => {
                 };
               });
               initial.mounts = mountObj;
+            }
+            // Seed TLS defaults from service definition (if any).
+            // This keeps TLS entries visible in the form and makes bindings able to pick up default values,
+            // including resolved secret names so the user sees sensible defaults.
+            const resolveTpl = (tpl: string | undefined, ctx: any) =>
+              (tpl || '').replace(/{{\s*([^}]+)\s*}}/g, (_m, raw) => {
+                const path = String(raw || '').trim().split('.').filter(Boolean);
+                let cur: any = ctx;
+                for (const p of path) {
+                  if (cur == null) return '';
+                  cur = cur[p];
+                }
+                return cur == null ? '' : String(cur);
+              });
+            if (Array.isArray((svcDef as any)?.tls) && (svcDef as any).tls.length > 0) {
+              const tlsObj: any = {};
+              (svcDef as any).tls.forEach((t: any) => {
+                if (!t?.key) return;
+                const secretName = t.secretNameTemplate
+                  ? resolveTpl(t.secretNameTemplate, initial)
+                  : `${initial.releaseName}-${t.key}-tls`;
+                const pwdSecret = (t.defaults && t.defaults.passwordSecretName)
+                  ? t.defaults.passwordSecretName
+                  : `${secretName}-pass`;
+                tlsObj[t.key] = {
+                  ...(t.defaults || {}),
+                  secretName,
+                  passwordSecretName: pwdSecret,
+                  keystoreKey: (t.defaults && t.defaults.keystoreKey) || t.keystoreKey || 'keystore.p12',
+                  passwordKey: (t.defaults && t.defaults.passwordKey) || t.passwordKey || 'truststore.password',
+                  keystorePath: (t.defaults && t.defaults.keystorePath) || t.keystorePath || '/etc/security/tls/https-keystore.p12',
+                  mountPath: (t.defaults && t.defaults.mountPath) || t.mountPath || '/etc/security/tls/https-keystore.p12'
+                };
+              });
+              initial.tls = tlsObj;
             }
             setInstallValues(initial);
         } catch(e) { message.error("Failed to load definition"); }
@@ -249,7 +282,9 @@ const ServiceWizardPage: React.FC = () => {
               ranger: isUpgrade ? null : ((def as any)?.ranger || null),
               requiredConfigMaps: isUpgrade ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
-              securityProfile: (installValues as any)?.securityProfile || securityProfiles.defaultProfile || undefined,
+              tls: (installValues as any)?.tls || undefined,
+              // Only send securityProfile if user explicitly picked one.
+              securityProfile: (installValues as any)?.securityProfile || undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
           }, params);
@@ -328,7 +363,14 @@ const ServiceWizardPage: React.FC = () => {
       {current < steps.length - 1 && 
        <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
             {current === steps.length - 1 && 
-             <Button type="primary" onClick={handleDeploy} loading={submitting}>Deploy</Button>}
+             <Button
+               type="primary"
+               style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+               onClick={handleDeploy}
+               loading={submitting}
+             >
+               Deploy
+             </Button>}
           </div>
           </>
           )}
@@ -381,7 +423,14 @@ const ServiceWizardPage: React.FC = () => {
       {current < steps.length - 1 && 
        <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
       {current === steps.length - 1 && 
-       <Button type="primary" onClick={handleDeploy} loading={submitting}>Deploy</Button>}
+       <Button
+         type="primary"
+         style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+         onClick={handleDeploy}
+         loading={submitting}
+       >
+         Deploy
+       </Button>}
     </div>
     <Modal
       open={previewModalOpen}

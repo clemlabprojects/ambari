@@ -28,6 +28,7 @@ import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
@@ -149,6 +150,52 @@ public class WebHookConfigurationService {
                 toPemPrivateKey(clientKeyPair.getPrivate()),
                 ca.caCertificatePem()
         );
+    }
+
+    /**
+     * Issue a server certificate signed by the Ambari internal CA and package it into a keystore.
+     *
+     * @param dnsSans      DNS Subject Alternative Names to include
+     * @param keystoreType keystore type (PKCS12 default, also supports JKS, PEM)
+     * @param password     keystore password
+     * @param validityDays validity in days (default 365)
+     * @return keystore material plus PEMs for convenience
+     */
+    public ServerKeystoreMaterial issueServerKeystore(List<String> dnsSans,
+                                                      String keystoreType,
+                                                      char[] password,
+                                                      Integer validityDays) {
+        Objects.requireNonNull(password, "password");
+        CertificateAuthorityMaterial ca = ensureAmbariCertificateAuthority();
+        KeyPair serverKeyPair = generateKeyPair();
+        int days = (validityDays == null || validityDays <= 0) ? 365 : validityDays;
+
+        X509Certificate serverCertificate = signServerCertificate(
+                serverKeyPair.getPublic(),
+                safeList(dnsSans),
+                days,
+                ca
+        );
+        try {
+            String type = (keystoreType == null || keystoreType.isBlank()) ? "PKCS12" : keystoreType.toUpperCase(Locale.ROOT);
+            String serverCertPem = toPemCertificate(serverCertificate);
+            String keyPem = toPemPrivateKey(serverKeyPair.getPrivate());
+
+            if ("PEM".equals(type)) {
+                // Return PEM bundle only; caller will create tls.crt/tls.key/ca.crt in Secret.
+                return new ServerKeystoreMaterial(serverCertPem, keyPem, ca.caCertificatePem(), new byte[0]);
+            }
+
+            KeyStore ks = KeyStore.getInstance(type);
+            ks.load(null, password);
+            X509Certificate caCert = parseCertificateFromPem(ca.caCertificatePem());
+            ks.setKeyEntry("server", serverKeyPair.getPrivate(), password, new Certificate[]{serverCertificate, caCert});
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            ks.store(baos, password);
+            return new ServerKeystoreMaterial(serverCertPem, keyPem, ca.caCertificatePem(), baos.toByteArray());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to build server keystore", e);
+        }
     }
 
     /** Create or replace the Opaque Secret with client.crt, client.key, ca.crt. */
@@ -583,6 +630,65 @@ public class WebHookConfigurationService {
         }
     }
 
+    private X509Certificate signServerCertificate(PublicKey serverPublicKey,
+                                                  List<String> dnsSubjectAlternativeNames,
+                                                  int validityDays,
+                                                  CertificateAuthorityMaterial certificateAuthorityMaterial) {
+        try {
+            X509Certificate caCert = parseCertificateFromPem(certificateAuthorityMaterial.caCertificatePem());
+            PrivateKey caPrivateKey = parsePrivateKeyFromPem(certificateAuthorityMaterial.caPrivateKeyPem());
+
+            X500Name issuer = new X500Name(caCert.getSubjectX500Principal().getName());
+            String cn = (dnsSubjectAlternativeNames != null && !dnsSubjectAlternativeNames.isEmpty())
+                    ? dnsSubjectAlternativeNames.get(0)
+                    : "service.svc";
+            X500Name subject = new X500Name(new X500Principal("CN=" + cn).getName());
+
+            Instant notBefore = Instant.now().minus(1, ChronoUnit.DAYS);
+            Instant notAfter  = notBefore.plus(validityDays, ChronoUnit.DAYS);
+            BigInteger serial = new BigInteger(64, new SecureRandom());
+
+            JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
+
+            X509v3CertificateBuilder builder = new X509v3CertificateBuilder(
+                    issuer,
+                    serial,
+                    Date.from(notBefore),
+                    Date.from(notAfter),
+                    subject,
+                    SubjectPublicKeyInfo.getInstance(serverPublicKey.getEncoded())
+            );
+
+            builder.addExtension(Extension.keyUsage, true,
+                    new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+            builder.addExtension(Extension.extendedKeyUsage, false,
+                    new ExtendedKeyUsage(KeyPurposeId.id_kp_serverAuth));
+            builder.addExtension(Extension.subjectKeyIdentifier, false,
+                    extUtils.createSubjectKeyIdentifier(serverPublicKey));
+
+            List<GeneralName> sanEntries = new ArrayList<>();
+            for (String dns : dnsSubjectAlternativeNames) {
+                if (dns != null && !dns.isBlank()) sanEntries.add(new GeneralName(GeneralName.dNSName, dns));
+            }
+            if (!sanEntries.isEmpty()) {
+                GeneralNames gns = new GeneralNames(sanEntries.toArray(new GeneralName[0]));
+                builder.addExtension(Extension.subjectAlternativeName, false, gns);
+            }
+
+            ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA")
+                    .setProvider(BOUNCY_CASTLE_PROVIDER)
+                    .build(caPrivateKey);
+
+            X509CertificateHolder holder = builder.build(signer);
+            return new JcaX509CertificateConverter()
+                    .setProvider(BOUNCY_CASTLE_PROVIDER)
+                    .getCertificate(holder);
+
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to sign server certificate", e);
+        }
+    }
+
     // -------------------- Helpers --------------------
 
     private static boolean expiresBefore(X509Certificate cert, int days) {
@@ -732,6 +838,11 @@ public class WebHookConfigurationService {
     public record ClientCertificateMaterial(String clientCertificatePem,
                                             String clientPrivateKeyPem,
                                             String certificateAuthorityCertificatePem) {}
+
+    public record ServerKeystoreMaterial(String certificatePem,
+                                         String privateKeyPem,
+                                         String caCertificatePem,
+                                         byte[] keystoreBytes) {}
 
 
     // Load a KeyStore (JKS or PKCS12) from disk.

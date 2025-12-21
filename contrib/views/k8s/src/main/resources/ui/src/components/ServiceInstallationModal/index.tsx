@@ -73,6 +73,26 @@ const getExcludedPaths = (fields: FormField[]): string[] => {
   return paths;
 };
 
+const pickAtPath = (obj: any, path: string) => {
+  if (!path) return undefined;
+  const parts = path.split('.').map(p => p.trim()).filter(Boolean);
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+};
+
+const renderTemplate = (tpl: string, ctx: any) => {
+  if (!tpl) return '';
+  return tpl.replace(/{{\s*([^}]+)\s*}}/g, (_m, raw) => {
+    const path = String(raw || '').trim();
+    const val = pickAtPath(ctx, path);
+    return val == null ? '' : String(val);
+  });
+};
+
 /* ---------------------------------- props ----------------------------------- */
 
 type ServiceInstallationModalProps = {
@@ -377,6 +397,7 @@ const handleServiceChange = (value: string) => {
       version: currentValues.version,
       namespace: currentValues.namespace, // Keep the namespace the user typed
       mounts: undefined, // reset mounts
+      tls: undefined,
       ...initialValues,
     });
   };
@@ -683,7 +704,7 @@ const handleServiceChange = (value: string) => {
         // --- DEPLOY MODE: Use Form + Automation ---
         if (!availableServices) return;
 
-        // Validate visible fields, but read ALL values (including unmounted)
+        // Validate visible fields, but read ALL values (including unmounted) so bindings can run on a complete dataset.
         await form.validateFields();
         const allValues = form.getFieldsValue(true) || {};
 
@@ -733,11 +754,14 @@ const handleServiceChange = (value: string) => {
             params.set('version', String(currentService.version));
         }
 
+        // Deep-clone form values that go into the chart values to avoid mutating form state.
         const mergedValues = JSON.parse(JSON.stringify(configValues));
         const mounts = allValues.mounts || {};
         const bindingList = (currentService?.bindings || []) as BindingSpec[];
-        const varCtx = buildVarContext((currentService as any)?.variables, allValues, mounts);
-        const finalPatch = makeTargetsPatch(bindingList, mounts, allValues, allValues.releaseName, varCtx);
+        const variableContext = buildVarContext((currentService as any)?.variables, allValues, mounts);
+      // Bindings drive both Helm values and TLS wiring. Merge their results into the live values object.
+      // This mirrors what the backend does with service.json bindings to produce final Helm values.
+      const finalPatch = makeTargetsPatch(bindingList, mounts, allValues, allValues.releaseName, variableContext);
         
         if (Object.keys(finalPatch).length > 0) deepMerge(mergedValues, finalPatch);
 
@@ -746,12 +770,77 @@ const handleServiceChange = (value: string) => {
             excluded.forEach(path => deleteAtStr(mergedValues, path));
         }
 
+        let tlsPayload: any = null;
+        const tlsSpec = (currentService as any)?.tls || [];
+        if (Array.isArray(tlsSpec) && tlsSpec.length > 0) {
+            // Build a TLS payload separate from chart values.
+            // Backend (TlsManager) will use this to create keystore/PEM Secrets signed by the internal CA.
+            // Chart wiring is still driven by bindings (server.config.https.*, global.security.tls.*).
+            tlsPayload = {};
+            tlsSpec.forEach((spec: any) => {
+                const tlsKey = spec.key || 'tls';
+                const formTls = (allValues as any)?.tls?.[tlsKey] || {};
+                const merged = { ...(spec.defaults || {}), ...formTls };
+                // Generate a password if autoGenerate is on and none provided, so config and Secret stay in sync.
+                if ((merged.autoGenerate ?? spec.autoGenerate) && (!merged.password || merged.password === '')) {
+                    merged.password = Math.random().toString(36).slice(2, 10);
+                }
+
+                // Resolve secret name and SANs using templates.
+                const secretNameTpl = (formTls.secretName || '').trim() || spec.secretNameTemplate;
+                const resolvedSecretName = (formTls.secretName || '').trim()
+                    || (secretNameTpl ? renderTemplate(secretNameTpl, allValues) : `${allValues.releaseName}-${tlsKey}-tls`);
+                const passwordSecretName = (formTls.passwordSecretName || '').trim() || `${resolvedSecretName}-pass`;
+                const dnsTemplates: string[] = Array.isArray(spec.dnsTemplates) ? spec.dnsTemplates : [];
+                const resolvedDnsNames: string[] = [];
+                dnsTemplates.forEach(tpl => {
+                    const rendered = renderTemplate(tpl, allValues);
+                    if (rendered) resolvedDnsNames.push(rendered);
+                });
+                if (Array.isArray(formTls.extraDns)) {
+                    formTls.extraDns.forEach((dnsEntry: any) => { if (dnsEntry) resolvedDnsNames.push(String(dnsEntry)); });
+                }
+
+                // Keep form context in sync so bindings can see resolved defaults.
+                // This allows binding templates to reuse the resolved secret name/paths even if user left defaults.
+                if (!allValues.tls) allValues.tls = {};
+                if (!allValues.tls[tlsKey]) allValues.tls[tlsKey] = {};
+                allValues.tls[tlsKey].secretName = resolvedSecretName;
+                allValues.tls[tlsKey].passwordSecretName = passwordSecretName;
+                allValues.tls[tlsKey].keystoreKey = merged.keystoreKey || spec.keystoreKey || 'keystore.p12';
+                allValues.tls[tlsKey].password = merged.password || '';
+                allValues.tls[tlsKey].passwordKey = merged.passwordKey || spec.passwordKey || 'truststore.password';
+                allValues.tls[tlsKey].mountPath = merged.mountPath || spec.mountPath || '/etc/security/tls/https-keystore.p12';
+                allValues.tls[tlsKey].keystorePath = merged.keystorePath || merged.mountPath || spec.keystorePath || '/etc/security/tls/https-keystore.p12';
+                allValues.tls[tlsKey].keystoreType = merged.keystoreType || spec.keystoreType || 'PKCS12';
+                allValues.tls[tlsKey].passwordMountPath = merged.passwordMountPath || spec.passwordMountPath || '/etc/trino/https-pass/password';
+
+                tlsPayload[tlsKey] = {
+                    enabled: merged.enabled ?? false,
+                    autoGenerate: merged.autoGenerate ?? spec.autoGenerate ?? true,
+                    port: merged.port ?? spec.defaultPort ?? 8443,
+                    secretName: resolvedSecretName,
+                    passwordSecretName,
+                    keystoreKey: merged.keystoreKey || spec.keystoreKey || 'keystore.p12',
+                    passwordKey: merged.passwordKey || spec.passwordKey || 'truststore.password',
+                    keystoreType: merged.keystoreType || spec.keystoreType || 'PKCS12',
+                    mountPath: merged.mountPath || spec.mountPath || '/etc/security/tls/https-keystore.p12',
+                    keystorePath: merged.keystorePath || merged.mountPath || spec.keystorePath || '/etc/security/tls/https-keystore.p12',
+                    password: merged.password || '',
+                    passwordMountPath: merged.passwordMountPath || spec.passwordMountPath || '/etc/trino/https-pass/password',
+                    dnsNames: resolvedDnsNames,
+                    validityDays: merged.validityDays || spec.validityDays || 365
+                };
+            });
+        }
+
         payload = {
             chart: chartRef,
             releaseName: allValues.releaseName,
             namespace: allValues.namespace,
             values: mergedValues,
             mounts,
+            tls: tlsPayload || undefined,
             serviceKey: (allValues.svcKey ?? selectedServiceKey) || undefined,
             repoId: repoId || undefined,
             dependencies: currentService.dependencies || null,
@@ -760,7 +849,9 @@ const handleServiceChange = (value: string) => {
             endpoints: currentService.endpoints || null,
             requiredConfigMaps: currentService.requiredConfigMaps || null,
             secretName: currentService.secretName || null,
-            securityProfile: allValues.securityProfile || securityProfiles.defaultProfile || undefined,
+            // Do not auto-apply a default security profile; only send if the user selected one.
+            // Only send when explicitly selected; prevents implicit profile attachment.
+            securityProfile: allValues.securityProfile || undefined,
             deploymentMode: allValues.deploymentMode || 'DIRECT_HELM',
             git: allValues.git || undefined,
         };
