@@ -283,6 +283,20 @@ const ServiceWizardPage: React.FC = () => {
               requiredConfigMaps: isUpgrade ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
               tls: (installValues as any)?.tls || undefined,
+              // Build optional ingress TLS upload payload:
+              // - Require both cert and key.
+              // - Secret name priority: user-provided -> ingress.tlsSecret -> <release>-ingress-tls.
+              ingressTlsUpload: (() => {
+                const tlsUpload = (installValues as any)?.ingress?.tlsUpload || {};
+                const certPem = tlsUpload.cert || '';
+                const keyPem = tlsUpload.key || '';
+                if (!certPem || !keyPem) return undefined;
+                const chosenSecret =
+                  tlsUpload.secretName ||
+                  (installValues as any)?.ingress?.tlsSecret ||
+                  `${installValues.releaseName}-ingress-tls`;
+                return { certPem, keyPem, secretName: chosenSecret };
+              })(),
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',

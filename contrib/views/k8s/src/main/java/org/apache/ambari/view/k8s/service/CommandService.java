@@ -485,6 +485,28 @@ public class CommandService {
             TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
             tlsManager.applyTls(request.getTls(), request, params);
         }
+        // Create ingress TLS Secret upfront if provided by the request (company CA or user-provided cert).
+        if (request.getIngressTlsUpload() != null && !request.getIngressTlsUpload().isEmpty()) {
+            Map<String, Object> ingressTlsUpload = request.getIngressTlsUpload();
+            String secretName = String.valueOf(ingressTlsUpload.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String certPem = String.valueOf(ingressTlsUpload.getOrDefault("certPem", ""));
+            String keyPem = String.valueOf(ingressTlsUpload.getOrDefault("keyPem", ""));
+            if (!certPem.isBlank() && !keyPem.isBlank()) {
+                LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
+                LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
+                LOG.info("Ingress TLS secret creation labels/annotations not provided; using defaults");
+                kubernetesService.createOrUpdateTlsSecret(
+                        request.getNamespace(),
+                        secretName,
+                        certPem.getBytes(),
+                        keyPem.getBytes(),
+                        null,
+                        null
+                );
+            } else {
+                LOG.warn("Ingress TLS upload present but cert/key are empty; skipping ingress TLS secret creation for release {}", request.getReleaseName());
+            }
+        }
         if (baseUri != null) {
             params.put("_baseUri", baseUri.toString());
         }

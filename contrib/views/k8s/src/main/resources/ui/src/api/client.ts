@@ -658,6 +658,7 @@ export async function submitHelmDeploy(payload: {
   endpoints?: any;
   mounts?: any;
   tls?: any;
+  ingressTlsUpload?: any;
   dependencies?: any;
   ranger?: any;
   requiredConfigMaps?: any;

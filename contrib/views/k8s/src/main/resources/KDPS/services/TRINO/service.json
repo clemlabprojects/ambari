@@ -406,19 +406,31 @@
     },
     {
       "name": "tlsHttpsEnabled",
-      "from": { "type": "form", "field": "tls.https.enabled" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.enabled"
+      }
     },
     {
       "name": "tlsHttpsAutoGenerate",
-      "from": { "type": "form", "field": "tls.https.autoGenerate" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.autoGenerate"
+      }
     },
     {
       "name": "tlsHttpsPort",
-      "from": { "type": "form", "field": "tls.https.port" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.port"
+      }
     },
     {
       "name": "tlsHttpsSecretName",
-      "from": { "type": "form", "field": "tls.https.secretName" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.secretName"
+      }
     },
     {
       "name": "tlsHttpsPasswordSecretName",
@@ -426,23 +438,38 @@
     },
     {
       "name": "tlsHttpsKeystoreKey",
-      "from": { "type": "form", "field": "tls.https.keystoreKey" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.keystoreKey"
+      }
     },
     {
       "name": "tlsHttpsPassword",
-      "from": { "type": "form", "field": "tls.https.password" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.password"
+      }
     },
     {
       "name": "tlsHttpsMountPath",
-      "from": { "type": "form", "field": "tls.https.mountPath" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.mountPath"
+      }
     },
     {
       "name": "tlsHttpsKeystorePath",
-      "from": { "type": "form", "field": "tls.https.keystorePath" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.keystorePath"
+      }
     },
     {
       "name": "tlsHttpsKeystoreType",
-      "from": { "type": "form", "field": "tls.https.keystoreType" }
+      "from": {
+        "type": "form",
+        "field": "tls.https.keystoreType"
+      }
     },
     {
       "name": "webUiEnabled",
@@ -465,9 +492,9 @@
         "field": "internalSharedSecret"
       }
     }
-    ],
-    "bindings": [
-      {
+  ],
+  "bindings": [
+    {
       "role": "coordinator",
       "field": "coordinator.config.nodeProperties.node\\.data-dir",
       "mountKey": "data",
@@ -627,7 +654,10 @@
         {
           "path": "serviceMonitor.labels.release",
           "op": "set",
-          "from": { "type": "form", "field": "monitoring.release" }
+          "from": {
+            "type": "form",
+            "field": "monitoring.release"
+          }
         }
       ]
     },
@@ -859,83 +889,134 @@
         {
           "path": "server.config.https.enabled",
           "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsEnabled}"
+          }
         },
         {
           "path": "server.config.https.port",
           "skipIfVarEmpty": "tlsHttpsPort",
-          "from": { "type": "template", "template": "${tlsHttpsPort}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsPort}"
+          }
         },
         {
           "path": "server.config.https.keystore.path",
           "skipIfVarEmpty": "tlsHttpsKeystorePath",
-          "from": { "type": "template", "template": "${tlsHttpsKeystorePath}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsKeystorePath}"
+          }
         },
         {
           "path": "server.config.https.keystore.secretName",
           "skipIfVarEmpty": "tlsHttpsSecretName",
-          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsSecretName}"
+          }
         },
         {
           "path": "server.config.https.keystore.key",
           "skipIfVarEmpty": "tlsHttpsKeystoreKey",
-          "from": { "type": "template", "template": "${tlsHttpsKeystoreKey}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsKeystoreKey}"
+          }
         },
         {
           "path": "server.config.https.keystore.mountPath",
           "skipIfVarEmpty": "tlsHttpsKeystorePath",
-          "from": { "type": "template", "template": "${tlsHttpsKeystorePath}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsKeystorePath}"
+          }
         },
         {
           "path": "server.config.https.keystore.passwordSecretName",
           "skipIfVarEmpty": "tlsHttpsPasswordSecretName",
-          "from": { "type": "template", "template": "${tlsHttpsPasswordSecretName}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsPasswordSecretName}"
+          }
         },
         {
           "path": "server.config.https.keystore.passwordKey",
           "skipIfVarEmpty": "tlsHttpsPassword",
-          "from": { "type": "template", "template": "truststore.password" }
+          "from": {
+            "type": "template",
+            "template": "truststore.password"
+          }
         },
         {
           "path": "server.config.https.keystore.passwordMountPath",
           "skipIfVarEmpty": "tlsHttpsMountPath",
-          "from": { "type": "template", "template": "/etc/trino/https-pass/password" }
+          "from": {
+            "type": "template",
+            "template": "/etc/trino/https-pass/password"
+          }
         },
         {
           "path": "coordinator.additionalConfigProperties[]",
           "skipIfVarEmpty": "tlsHttpsPassword",
-          "from": { "type": "template", "template": "http-server.https.keystore.key=${tlsHttpsPassword}" }
+          "from": {
+            "type": "template",
+            "template": "http-server.https.keystore.key=${tlsHttpsPassword}"
+          }
         },
         {
           "path": "global.security.tls.enabled",
-          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsEnabled}"
+          }
         },
         {
           "path": "global.security.tls.truststore.enabled",
-          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsEnabled}"
+          }
         },
         {
           "path": "global.security.tls.truststoreSecret",
           "skipIfVarEmpty": "tlsHttpsSecretName",
-          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsSecretName}"
+          }
         },
         {
           "path": "global.security.tls.truststoreKey",
           "skipIfVarEmpty": "tlsHttpsKeystoreKey",
-          "from": { "type": "template", "template": "${tlsHttpsKeystoreKey}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsKeystoreKey}"
+          }
         },
         {
           "path": "global.security.tls.truststorePasswordKey",
-          "from": { "type": "template", "template": "truststore.password" }
+          "from": {
+            "type": "template",
+            "template": "truststore.password"
+          }
         },
         {
           "path": "global.security.tls.truststore.format",
           "skipIfVarEmpty": "tlsHttpsKeystoreType",
-          "from": { "type": "template", "template": "${tlsHttpsKeystoreType}" }
+          "from": {
+            "type": "template",
+            "template": "${tlsHttpsKeystoreType}"
+          }
         },
         {
           "path": "global.security.tls.truststore.pemKey",
-          "from": { "type": "template", "template": "ca.crt" }
+          "from": {
+            "type": "template",
+            "template": "ca.crt"
+          }
         }
       ]
     },
@@ -987,14 +1068,14 @@
         }
       ]
     },
-      {
-        "name": "hive-catalog",
-        "skipIfVarEmpty": "hiveMetastoreUri",
-        "targets": [
-          {
-            "path": "additionalCatalogs.hive",
-            "op": "set",
-            "from": {
+    {
+      "name": "hive-catalog",
+      "skipIfVarEmpty": "hiveMetastoreUri",
+      "targets": [
+        {
+          "path": "additionalCatalogs.hive",
+          "op": "set",
+          "from": {
             "type": "template",
             "template": "connector.name=hive\nhive.metastore.uri=${hiveMetastoreUri}\nhive.security=allow-all\n"
           }
@@ -1021,11 +1102,11 @@
       "label": "Nom logique (nameOverride)",
       "type": "string",
       "defaultValue": "clemlab-trino",
-      "help": "Sera concat\u00e9n\u00e9 au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
+      "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
     },
     {
       "name": "acls",
-      "label": "Contr\u00f4le d'acc\u00e8s (Service Trino)",
+      "label": "Contrôle d'accès (Service Trino)",
       "type": "group",
       "fields": [
         {
@@ -1043,11 +1124,11 @@
             }
           ],
           "defaultValue": "ranger",
-          "help": "Activer l'int\u00e9gration avec Apache Ranger pour le contr\u00f4le d'acc\u00e8s."
+          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
         },
         {
           "name": "nodePort.port",
-          "label": "Port du N\u0153ud (Optionnel)",
+          "label": "Port du Nœud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1079,7 +1160,7 @@
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
-          "help": "Utilis\u00e9 pour construire l'URL du Prometheus interne."
+          "help": "Utilisé pour construire l'URL du Prometheus interne."
         },
         {
           "name": "serviceMonitor.enabled",
@@ -1103,24 +1184,24 @@
     },
     {
       "name": "networkAccess",
-      "label": "Acc\u00e8s R\u00e9seau (Service Trino)",
+      "label": "Accès Réseau (Service Trino)",
       "type": "group",
       "fields": [
         {
           "name": "service.enabled",
-          "label": "Activer l'acc\u00e8s interne (ClusterIP)",
+          "label": "Activer l'accès interne (ClusterIP)",
           "type": "boolean",
           "defaultValue": true
         },
         {
           "name": "nodePort.enabled",
-          "label": "Activer l'acc\u00e8s externe (NodePort)",
+          "label": "Activer l'accès externe (NodePort)",
           "type": "boolean",
           "defaultValue": false
         },
         {
           "name": "nodePort.port",
-          "label": "Port du N\u0153ud (Optionnel)",
+          "label": "Port du Nœud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1152,7 +1233,7 @@
           "label": "Activer l'interface Web",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par d\u00e9faut)."
+          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par défaut)."
         }
       ]
     },
@@ -1166,14 +1247,14 @@
           "label": "Activer l'Ingress",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Active la cr\u00e9ation d'un objet Ingress pour exposer Trino via un hostname."
+          "help": "Active la création d'un objet Ingress pour exposer Trino via un hostname."
         },
         {
           "name": "ingress.className",
           "label": "Classe d'Ingress",
           "required": true,
           "type": "string",
-          "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contr\u00f4leur par d\u00e9faut."
+          "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contrôleur par défaut."
         },
         {
           "name": "ingress.host",
@@ -1213,7 +1294,43 @@
           "name": "ingress.tlsHost",
           "label": "Host TLS",
           "type": "string",
-          "help": "Host associ\u00e9 \u00e0 ce certificat TLS (en g\u00e9n\u00e9ral le m\u00eame que l'host Ingress).",
+          "help": "Host associé à ce certificat TLS (en général le même que l'host Ingress).",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.cert",
+          "label": "Certificat TLS (PEM)",
+          "type": "content",
+          "help": "Collez le cert PEM pour l'Ingress (signé par la CA interne/entreprise).",
+          "language": "plaintext",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.key",
+          "label": "Clé privée TLS (PEM)",
+          "type": "content",
+          "help": "Collez la clé privée PEM associée.",
+          "language": "plaintext",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.secretName",
+          "label": "Nom du Secret TLS",
+          "type": "string",
+          "defaultValue": "trino-ingress-tls",
+          "help": "Nom du Secret Kubernetes à créer/mettre à jour avec ce cert/clé.",
+          "excludeFromValues": true,
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -1240,7 +1357,10 @@
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true },
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          },
           "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
         },
         {
@@ -1249,7 +1369,10 @@
           "type": "number",
           "defaultValue": 8443,
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true }
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          }
         },
         {
           "name": "tls.https.secretName",
@@ -1257,7 +1380,10 @@
           "type": "string",
           "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true }
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          }
         },
         {
           "name": "tls.https.keystoreKey",
@@ -1265,7 +1391,10 @@
           "type": "string",
           "defaultValue": "truststore.jks",
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true }
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          }
         },
         {
           "name": "tls.https.password",
@@ -1274,7 +1403,10 @@
           "defaultValue": "",
           "help": "Laisser vide pour génération aléatoire.",
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true }
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          }
         },
         {
           "name": "tls.https.mountPath",
@@ -1282,7 +1414,10 @@
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true }
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          }
         },
         {
           "name": "tls.https.keystorePath",
@@ -1290,7 +1425,10 @@
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true },
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          },
           "help": "Valeur injectée dans server.config.https.keystore.path."
         },
         {
@@ -1299,12 +1437,24 @@
           "type": "select",
           "defaultValue": "PKCS12",
           "options": [
-            { "label": "PKCS12", "value": "PKCS12" },
-            { "label": "JKS", "value": "JKS" },
-            { "label": "PEM (tls.crt/tls.key)", "value": "PEM" }
+            {
+              "label": "PKCS12",
+              "value": "PKCS12"
+            },
+            {
+              "label": "JKS",
+              "value": "JKS"
+            },
+            {
+              "label": "PEM (tls.crt/tls.key)",
+              "value": "PEM"
+            }
           ],
           "excludeFromValues": true,
-          "condition": { "field": "tls.https.enabled", "value": true },
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          },
           "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
         }
       ]
@@ -1316,13 +1466,13 @@
       "fields": [
         {
           "name": "coordinator.resources.requests.cpu",
-          "label": "CPU Demand\u00e9",
+          "label": "CPU Demandé",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "coordinator.resources.requests.memory",
-          "label": "M\u00e9moire Demand\u00e9e",
+          "label": "Mémoire Demandée",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1334,13 +1484,13 @@
         },
         {
           "name": "coordinator.resources.limits.memory",
-          "label": "M\u00e9moire Limite",
+          "label": "Mémoire Limite",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
-          "label": "R\u00e9pertoire de donn\u00e9es (Coordinateur)",
+          "label": "Répertoire de données (Coordinateur)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1359,13 +1509,13 @@
         },
         {
           "name": "worker.resources.requests.cpu",
-          "label": "CPU Demand\u00e9 / Worker",
+          "label": "CPU Demandé / Worker",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "worker.resources.requests.memory",
-          "label": "M\u00e9moire Demand\u00e9e / Worker",
+          "label": "Mémoire Demandée / Worker",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1377,13 +1527,13 @@
         },
         {
           "name": "worker.resources.limits.memory",
-          "label": "M\u00e9moire Limite / Worker",
+          "label": "Mémoire Limite / Worker",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "worker.config.nodeProperties.node\\.data-dir",
-          "label": "R\u00e9pertoire de donn\u00e9es (Worker)",
+          "label": "Répertoire de données (Worker)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1396,7 +1546,7 @@
       "fields": [
         {
           "name": "requiredWorkers.window",
-          "label": "Fen\u00eatre (required workers)",
+          "label": "Fenêtre (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
@@ -1471,7 +1621,7 @@
     },
     {
       "name": "hadoopIntegration",
-      "label": "Int\u00e9gration Hadoop",
+      "label": "Intégration Hadoop",
       "type": "group",
       "fields": [
         {
@@ -1480,14 +1630,14 @@
           "type": "service-select",
           "serviceType": "HIVE_METASTORE",
           "excludeFromValues": true,
-          "help": "S\u00e9lectionnez un service Hive Metastore existant pour cr\u00e9er un catalogue."
+          "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
         },
         {
           "name": "ui_hive_metastore_uri_override",
-          "label": "URI Hive Metastore personnalis\u00e9",
+          "label": "URI Hive Metastore personnalisé",
           "type": "string",
           "defaultValue": "",
-          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseign\u00e9, remplace la valeur d\u00e9couverte."
+          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseigné, remplace la valeur découverte."
         }
       ]
     }
