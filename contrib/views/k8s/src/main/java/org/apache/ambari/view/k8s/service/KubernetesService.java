@@ -2617,6 +2617,61 @@ public class KubernetesService {
     }
 
     /**
+     * Create or update a TLS Secret (type kubernetes.io/tls) with provided certificate and key bytes.
+     *
+     * @param namespace   Kubernetes namespace where the Secret should reside.
+     * @param secretName  Secret name to create or replace.
+     * @param certData    Certificate PEM bytes.
+     * @param keyData     Private key PEM bytes.
+     * @param labels      Optional labels to attach to the Secret (nullable).
+     * @param annotations Optional annotations to attach to the Secret (nullable).
+     */
+    public void createOrUpdateTlsSecret(String namespace,
+                                        String secretName,
+                                        byte[] certData,
+                                        byte[] keyData,
+                                        Map<String, String> labels,
+                                        Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(certData, "certData");
+        Objects.requireNonNull(keyData, "keyData");
+        checkConfiguration();
+
+        try {
+            Map<String, String> b64 = new LinkedHashMap<>();
+            b64.put("tls.crt", Base64.getEncoder().encodeToString(certData));
+            b64.put("tls.key", Base64.getEncoder().encodeToString(keyData));
+
+            ObjectMeta meta = new ObjectMetaBuilder()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToAnnotations("managed-by", "ambari-k8s-view")
+                    .addToAnnotations("managed-at", java.time.Instant.now().toString())
+                    .addToAnnotations(annotations)
+                    .addToLabels(labels)
+                    .build();
+
+            Secret desired = new SecretBuilder()
+                    .withMetadata(meta)
+                    .withType("kubernetes.io/tls")
+                    .withData(b64)
+                    .build();
+
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null) {
+                client.secrets().inNamespace(namespace).resource(desired).create();
+                LOG.info("Created TLS Secret '{}/{}'", namespace, secretName);
+                return;
+            }
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Updated TLS Secret '{}/{}'", namespace, secretName);
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update TLS Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Read a single key from an Opaque Secret as a UTF-8 string.
      *
      * @param namespace  Kubernetes namespace
