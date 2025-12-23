@@ -19,7 +19,7 @@
 #
 #
 {% if security_enabled %}
-  . {{hive_server_conf_dir}}/hive-env.sh
+  export HADOOP_CLIENT_OPTS="$HADOOP_CLIENT_OPTS -Djava.security.auth.login.config={{jaas_file}}"
 {% endif %}
 export HIVE_CONF_DIR={{hive_server_conf_dir}}; {{hive_bin}}/hiveserver2 > $1 2> $2 &
 echo $!|cat>$3
