@@ -31,6 +31,7 @@ from resource_management.libraries.functions.stack_features import get_stack_fea
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.get_bare_principal import get_bare_principal
 from resource_management.core.exceptions import Fail
+import re
 
 # a map of the Ambari role to the component name
 # for use with <stack-root>/current/<component>
@@ -426,7 +427,25 @@ if audit_solr_enabled and is_solrCloud_enabled:
     ranger_is_solr_kerberised = "true"
 
 ## admin heap
-heap = config['configurations']['ranger-env']['ranger_admin_heap']
+heap_raw = str(config['configurations']['ranger-env']['ranger_admin_heap']).strip()
+
+# Accept values like: "1024", "1024m", "1024M", "2g", "2G"
+m = re.match(r"^(\d+)\s*([mMgG])?$", heap_raw)
+if not m:
+  raise Fail(format("Invalid ranger_admin_heap value '{0}'. Expected integer or integer with unit m/M/g/G.", heap_raw))
+
+heap_mb = int(m.group(1))
+unit = m.group(2)
+
+if unit:
+  unit = unit.lower()
+  if unit == 'g':
+    heap_mb *= 1024
+  # unit == 'm' -> already in MB
+
+# Keep `heap` unitless so the code below can safely append `m` when needed.
+heap = str(heap_mb)
+
 ranger_admin_max_heap_size = format('{heap}m')
 
 hbase_master_hosts = default("/clusterHostInfo/hbase_master_hosts", [])
