@@ -27,6 +27,7 @@ from resource_management.core.logger import Logger
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.libraries.functions.format import format
 from resource_management.core.resources.system import Execute, File
+from resource_management.core.resources.service import Service
 from resource_management.core.signal_utils import TerminateStrategy
 import subprocess
 import time
@@ -40,6 +41,7 @@ def service(componentName, action='start', serviceName='yarn'):
       Service(service_name, action=action)
     elif action == 'status':
       check_windows_service_status(service_name)
+
 
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
@@ -57,7 +59,85 @@ def service(componentName, action='start', serviceName='yarn'):
     usr = params.mapred_user
     log_dir = params.mapred_log_dir
     cmd = format("export HADOOP_LIBEXEC_DIR={hadoop_libexec_dir} && {daemon} --daemon")
+
+    if action == 'stop':
+      # Read the PID up-front (mapred daemon may not clean it up reliably)
+      historyserver_pid = None
+      try:
+        code, out, err = shell.checked_call(("cat", pid_file), sudo=True, stderr=subprocess.PIPE)
+        historyserver_pid = (out or "").strip().splitlines()[0].strip()
+      except Exception:
+        historyserver_pid = None
+
+      check_process = as_sudo(["test", "-f", pid_file]) + " && " + as_sudo(["pgrep", "-F", pid_file])
+      daemon_cmd = format("{cmd} stop {componentName}")
+
+      try:
+        Execute(daemon_cmd, user=usr, only_if=check_process)
+
+        # Verify via ps that the process is gone; if not, follow the requested escalation.
+        if historyserver_pid:
+          ps_cmd = ("ps", "-p", historyserver_pid)
+
+          code, _ = shell.call(ps_cmd, sudo=True)
+          if code == 0:
+            # "kill -0" as requested (existence/permission check), then wait and hard kill if still present.
+            Execute(("kill", "-0", historyserver_pid), user=usr, ignore_failures=True)
+
+            time.sleep(15)
+
+            code, _ = shell.call(ps_cmd, sudo=True)
+            if code == 0:
+              Execute(("kill", "-9", historyserver_pid), user=usr, ignore_failures=True)
+      except:
+        show_logs(log_dir, usr)
+        raise
+      finally:
+        File(pid_file, action="delete")
+
+      return
   else:
+    if serviceName == 'yarn' and componentName == 'nodemanager' and action == 'stop':
+      # Read the PID up-front (yarn daemon may not clean it up reliably)
+      pid_file = format("{yarn_pid_dir}/hadoop-{yarn_user}-{componentName}.pid")
+      usr = params.yarn_user
+      log_dir = params.yarn_log_dir
+
+      nodemanager_pid = None
+      try:
+        code, out, err = shell.checked_call(("cat", pid_file), sudo=True, stderr=subprocess.PIPE)
+        nodemanager_pid = (out or "").strip().splitlines()[0].strip()
+      except Exception:
+        nodemanager_pid = None
+
+      daemon = format("{yarn_bin}/yarn")
+      cmd = format("export HADOOP_LIBEXEC_DIR={hadoop_libexec_dir} && {daemon} --config {hadoop_conf_dir} --daemon")
+      check_process = as_sudo(["test", "-f", pid_file]) + " && " + as_sudo(["pgrep", "-F", pid_file])
+      daemon_cmd = format("{cmd} stop {componentName}")
+
+      try:
+        Execute(daemon_cmd, user=usr, only_if=check_process)
+
+        # Verify via ps that the process is gone; if not, wait and hard kill if still present.
+        if nodemanager_pid:
+          ps_cmd = ("ps", "-p", nodemanager_pid)
+
+          code, _ = shell.call(ps_cmd, sudo=True)
+          if code == 0:
+            Execute(("kill", "-0", nodemanager_pid), user=usr, ignore_failures=True)
+
+            time.sleep(15)
+
+            code, _ = shell.call(ps_cmd, sudo=True)
+            if code == 0:
+              Execute(("kill", "-9", nodemanager_pid), user=usr, ignore_failures=True)
+      except:
+        show_logs(log_dir, usr)
+        raise
+      finally:
+        File(pid_file, action="delete")
+
+      return
     # !!! yarn-daemon.sh deletes the PID for us; if we remove it the script
     # may not work correctly when stopping the service
     delete_pid_file = False
@@ -100,7 +180,6 @@ def service(componentName, action='start', serviceName='yarn'):
   
       # Ensure that the process with the expected PID exists.
       Execute(check_process,
-              not_if = check_process,
               tries=5,
               try_sleep=1,
       )
@@ -152,31 +231,31 @@ def checkAndStopRegistyDNS(cmd):
   # Checking if either of the processes are running and shutting them down if they are.
   for dns_pid_file, dns_user in [(status_params.yarn_registry_dns_priv_pid_file, status_params.root_user),
                          (status_params.yarn_registry_dns_pid_file, params.yarn_user)]:
-      process_id_exists_command = as_sudo(["test", "-f", dns_pid_file]) + " && " + as_sudo(["pgrep", "-F", dns_pid_file])
-      try:
-          Execute(daemon_cmd, only_if = process_id_exists_command, user = dns_user)
-      except:
-          # When the registry dns port is modified but registry dns is not started
-          # immediately, then the configs in yarn-env.sh & yarn-site.xml related
-          # to registry dns may have already changed. This introduces a discrepancy
-          # between the actual process that is running and the configs.
-          # For example, when port is changed from 5300 to 53,
-          # then dns port = 53 in yarn-site and YARN_REGISTRYDNS_SECURE_* envs in yarn-env.sh
-          # are saved. So, while trying to shutdown the stray non-privileged registry dns process
-          # after sometime, yarn daemon from the configs thinks that it needs privileged
-          # access and throws an exception. In such cases, we try to kill the stray process.
-          show_logs(log_dir, dns_user)
-          pass
+    process_id_exists_command = as_sudo(["test", "-f", dns_pid_file]) + " && " + as_sudo(["pgrep", "-F", dns_pid_file])
+    try:
+      Execute(daemon_cmd, only_if = process_id_exists_command, user = dns_user)
+    except:
+      # When the registry dns port is modified but registry dns is not started
+      # immediately, then the configs in yarn-env.sh & yarn-site.xml related
+      # to registry dns may have already changed. This introduces a discrepancy
+      # between the actual process that is running and the configs.
+      # For example, when port is changed from 5300 to 53,
+      # then dns port = 53 in yarn-site and YARN_REGISTRYDNS_SECURE_* envs in yarn-env.sh
+      # are saved. So, while trying to shutdown the stray non-privileged registry dns process
+      # after sometime, yarn daemon from the configs thinks that it needs privileged
+      # access and throws an exception. In such cases, we try to kill the stray process.
+      show_logs(log_dir, dns_user)
+      pass
 
-      process_id_does_not_exist_command = format("! ( {process_id_exists_command} )")
-      code, out = shell.call(process_id_does_not_exist_command,
-                             env = hadoop_env_exports,
-                             tries = 5,
-                             try_sleep = 5)
-      if code != 0:
-          code, out, err = shell.checked_call(("cat", dns_pid_file), sudo=True, env=hadoop_env_exports, stderr=subprocess.PIPE)
-          Logger.info("PID to kill was retrieved: '" + out + "'.")
-          out=out.splitlines()[0]
-          pid = out
-          Execute(("kill", "-9", pid), sudo=True)
-          File(dns_pid_file, action="delete")
+    process_id_does_not_exist_command = format("! ( {process_id_exists_command} )")
+    code, out = shell.call(process_id_does_not_exist_command,
+                           env = hadoop_env_exports,
+                           tries = 5,
+                           try_sleep = 5)
+    if code != 0:
+      code, out, err = shell.checked_call(("cat", dns_pid_file), sudo=True, env=hadoop_env_exports, stderr=subprocess.PIPE)
+      Logger.info("PID to kill was retrieved: '" + out + "'.")
+      out = out.splitlines()[0]
+      pid = out
+      Execute(("kill", "-9", pid), sudo=True)
+      File(dns_pid_file, action="delete")
