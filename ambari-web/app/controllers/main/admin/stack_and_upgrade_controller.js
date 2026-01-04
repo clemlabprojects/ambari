@@ -793,6 +793,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * should be performed only if <code>abortUpgrade<code> was completed
    */
   startDowngrade: function(currentVersion) {
+    var self = this;
    App.ajax.send({
       name: 'admin.downgrade.start',
       sender: this,
@@ -805,7 +806,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       },
       success: 'upgradeSuccessCallback',
       callback: function() {
-        this.sender.set('requestInProgress', false);
+        self.set('requestInProgress', false);
       }
     });
   },
@@ -878,7 +879,14 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @param {object} version
    */
   upgrade: function (version) {
+    var self = this;
     this.set('requestInProgress', true);
+
+    // Show a "preparing the upgrade..." dialog in case the api call returns too slow
+    if (App.router.get('currentState.name') != 'stackUpgrade') {
+      this.set('preparingUpgradePopup', this.showPreparingUpgradeIndicator());
+    }
+
     App.ajax.send({
       name: 'admin.upgrade.start',
       sender: this,
@@ -886,20 +894,15 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       success: 'upgradeSuccessCallback',
       error: 'upgradeErrorCallback',
       callback: function() {
-        this.sender.set('requestInProgress', false);
-        var popup = this.sender.get('preparingUpgradePopup');
+        self.set('requestInProgress', false);
+        var popup = self.get('preparingUpgradePopup');
         if (popup) {
           popup.hide();
-          this.sender.set('preparingUpgradePopup', null);
+          self.set('preparingUpgradePopup', null);
         }
       }
     });
     this.setDBProperty('currentVersion', this.get('currentVersion'));
-
-    // Show a "preparing the upgrade..." dialog in case the api call returns too slow
-    if (App.router.get('currentState.name') != 'stackUpgrade') {
-      this.set('preparingUpgradePopup', this.showPreparingUpgradeIndicator());
-    }
   },
 
   /**
@@ -1300,6 +1303,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    */
   runPreUpgradeCheckOnly: function (data) {
     if (App.get('supports.preUpgradeCheck')) {
+      var self = this;
       var method = this.get('upgradeMethods').findProperty('type', data.type);
       method.setProperties({
         isCheckComplete: false,
@@ -1313,9 +1317,9 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         success: 'runPreUpgradeCheckOnlySuccess',
         error: 'runPreUpgradeCheckOnlyError',
         callback: function () {
-          var runningCheckRequests = this.sender.get('runningCheckRequests');
+          var runningCheckRequests = self.get('runningCheckRequests');
           method.set('isCheckRequestInProgress', false);
-          this.sender.set('runningCheckRequests', runningCheckRequests.rejectProperty('type', this.data.type));
+          self.set('runningCheckRequests', runningCheckRequests.rejectProperty('type', data.type));
         }
       });
       request.type = data.type;
@@ -1595,6 +1599,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @method installRepoVersion
    */
   installRepoVersion: function (repo) {
+    var self = this;
     this.set('requestInProgress', true);
     this.set('requestInProgressRepoId', repo.get('id'));
 
@@ -1613,8 +1618,8 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       success: 'installRepoVersionSuccess',
       error: 'installRepoVersionError',
       callback: function() {
-        this.sender.set('requestInProgress', false);
-        this.sender.set('requestInProgressRepoId', null);
+        self.set('requestInProgress', false);
+        self.set('requestInProgressRepoId', null);
       }
     });
   },
@@ -2066,6 +2071,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @param status
    */
   setUpgradeItemStatus: function(item, status) {
+    var self = this;
     this.set('requestInProgress', true);
     return App.ajax.send({
       name: 'admin.upgrade.upgradeItem.setState',
@@ -2078,7 +2084,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         status: status
       },
       callback: function() {
-        this.sender.set('requestInProgress', false);
+        self.set('requestInProgress', false);
       }
     }).done(function () {
       item.set('status', status);
@@ -2228,6 +2234,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @returns {$.ajax}
    */
   revertPatchUpgrade: function (version) {
+    var self = this;
     this.set('requestInProgress', true);
     return App.ajax.send({
       name: 'admin.upgrade.revert',
@@ -2235,7 +2242,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       success: 'upgradeSuccessCallback',
       error: 'upgradeErrorCallback',
       callback: function () {
-        this.sender.set('requestInProgress', false);
+        self.set('requestInProgress', false);
       },
       data: {
         upgradeId: version.get('stackVersion').get('revertUpgradeId'),
@@ -2263,12 +2270,13 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @returns {$.ajax}
    */
   discardRepoVersion: function(version) {
+    var self = this;
     this.set('requestInProgress', true);
     return App.ajax.send({
       name: 'admin.stack_versions.discard',
       sender: this,
       callback: function () {
-        this.sender.set('requestInProgress', false);
+        self.set('requestInProgress', false);
       },
       data: {
         id: version.get('id'),
