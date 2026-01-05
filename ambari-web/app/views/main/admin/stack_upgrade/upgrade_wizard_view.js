@@ -295,13 +295,21 @@ App.upgradeWizardView = Em.View.extend({
    */
   startPolling: function () {
     var self = this;
-    if (App.get('clusterName')) {
-      this.get('controller').loadUpgradeData().done(function () {
-        self.set('isLoaded', true);
-        self.doPolling();
-      });
+    var clusterName = App.get('clusterName') || App.clusterStatus.get('clusterName');
+    var upgradeId = this.get('controller.upgradeId');
+    if (this.get('updateTimer')) {
+      return;
     }
-  }.observes('App.clusterName'),
+    if (!Em.isNone(upgradeId) && clusterName) {
+      this.get('controller').loadUpgradeData()
+        .done(function () {
+          self.set('isLoaded', true);
+        })
+        .always(function () {
+          self.doPolling();
+        });
+    }
+  }.observes('App.clusterName', 'controller.upgradeId'),
 
   getSkippedServiceChecks: function () {
     if (this.get('isFinalizeItem')) {
@@ -399,9 +407,15 @@ App.upgradeWizardView = Em.View.extend({
   doPolling: function () {
     var self = this;
     this.set('updateTimer', setTimeout(function () {
-      self.get('controller').loadUpgradeData().done(function() {
-        self.doPolling();
-      });
+      self.get('controller').loadUpgradeData()
+        .done(function () {
+          if (!self.get('isLoaded')) {
+            self.set('isLoaded', true);
+          }
+        })
+        .always(function () {
+          self.doPolling();
+        });
     }, App.bgOperationsUpdateInterval));
   },
 

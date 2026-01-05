@@ -464,14 +464,17 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       deferred.resolve();
     } else {
       this.set('isLoadUpgradeDataPending', true);
-      App.ajax.send({
+      var request = App.ajax.send({
         name: (onlyState) ? 'admin.upgrade.state' : 'admin.upgrade.data',
         sender: this,
         data: {
           id: upgradeId
         },
         success: 'loadUpgradeDataSuccessCallback'
-      }).then(deferred.resolve).always(function () {
+      });
+      request.done(deferred.resolve);
+      request.fail(deferred.reject);
+      request.always(function () {
           self.set('isLoadUpgradeDataPending', false);
         });
     }
