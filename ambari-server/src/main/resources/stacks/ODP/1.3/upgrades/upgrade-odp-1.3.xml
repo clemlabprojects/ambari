@@ -202,6 +202,7 @@
       <service name="HDFS">
         <component>DATANODE</component>
         <component>NFS_GATEWAY</component>
+        <component>HTTPFS_GATEWAY</component>
       </service>
 
       <service name="HBASE">
