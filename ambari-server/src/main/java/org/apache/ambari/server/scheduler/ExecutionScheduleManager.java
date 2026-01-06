@@ -37,6 +37,7 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
@@ -185,7 +186,10 @@ public class ExecutionScheduleManager {
         sc
       ));*/
 
-      client = ClientBuilder.newBuilder().sslContext(sc).withConfig(config)
+      HostnameVerifier trustAllHosts = (hostname, session) -> true;
+      client = ClientBuilder.newBuilder().sslContext(sc)
+              .hostnameVerifier(trustAllHosts)
+              .withConfig(config)
               .build();
 
     } else {
