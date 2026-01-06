@@ -53,6 +53,7 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
   private static final String TEZ_AM_EXTRA = "tez_am_extra_java_opts";
   private static final String TEZ_TASK_BASE = "tez_task_base_java_opts";
   private static final String TEZ_TASK_EXTRA = "tez_task_extra_java_opts";
+  private static final String HEAP_DUMP_PLACEHOLDER = "{{heap_dump_opts}}";
 
   private static final String TARGET_STACK_VERSION = "1.3";
 
@@ -130,14 +131,18 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
     boolean updated = false;
     if (!amOpts.isEmpty()) {
       tezEnvProps.put(TEZ_AM_BASE, amOpts);
-      tezEnvProps.putIfAbsent(TEZ_AM_EXTRA, "");
+      if (safe(tezEnvProps.get(TEZ_AM_EXTRA)).isEmpty()) {
+        tezEnvProps.put(TEZ_AM_EXTRA, HEAP_DUMP_PLACEHOLDER);
+      }
       tezSiteProps.put(TEZ_AM_OPTS, "");
       updated = true;
     }
 
     if (!taskOpts.isEmpty()) {
       tezEnvProps.put(TEZ_TASK_BASE, taskOpts);
-      tezEnvProps.putIfAbsent(TEZ_TASK_EXTRA, "");
+      if (safe(tezEnvProps.get(TEZ_TASK_EXTRA)).isEmpty()) {
+        tezEnvProps.put(TEZ_TASK_EXTRA, HEAP_DUMP_PLACEHOLDER);
+      }
       tezSiteProps.put(TEZ_TASK_OPTS, "");
       updated = true;
     }

@@ -96,6 +96,9 @@ export JAVA_HOME={{java64_home}}
     <display-name>Tez AM Extra Java Opts</display-name>
     <value>{{heap_dump_opts}}</value>
     <description>Additional Java options for Tez AppMaster appended after the base options. Leave empty for none.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
@@ -110,6 +113,9 @@ export JAVA_HOME={{java64_home}}
     <display-name>Tez Task Extra Java Opts</display-name>
     <value>{{heap_dump_opts}}</value>
     <description>Additional Java options for Tez tasks appended after the base options. Leave empty for none.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>

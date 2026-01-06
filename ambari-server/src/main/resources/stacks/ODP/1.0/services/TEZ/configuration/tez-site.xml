@@ -70,6 +70,9 @@
     <description>Java options for the Tez AppMaster process. The Xmx value is derived based on tez.am.resource.memory.mb and is 80% of the value by default.
       Used only if the value is not specified explicitly by the DAG definition.
     </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
@@ -116,6 +119,9 @@
     <description>Java options for tasks. The Xmx value is derived based on tez.task.resource.memory.mb and is 80% of this value by default.
       Used only if the value is not specified explicitly by the DAG definition.
     </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>

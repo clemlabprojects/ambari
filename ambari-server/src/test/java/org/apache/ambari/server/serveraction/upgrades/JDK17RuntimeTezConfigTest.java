@@ -43,8 +43,8 @@ public class JDK17RuntimeTezConfigTest {
     assertEquals("", tezSite.get("tez.task.launch.cmd-opts"));
     assertEquals("-Xmx1g -XX:+UseG1GC", tezEnv.get("tez_am_base_java_opts"));
     assertEquals("-Xmx512m -XX:+UseG1GC", tezEnv.get("tez_task_base_java_opts"));
-    assertTrue(tezEnv.containsKey("tez_am_extra_java_opts"));
-    assertTrue(tezEnv.containsKey("tez_task_extra_java_opts"));
+    assertEquals("{{heap_dump_opts}}", tezEnv.get("tez_am_extra_java_opts"));
+    assertEquals("{{heap_dump_opts}}", tezEnv.get("tez_task_extra_java_opts"));
   }
 
   @Test
