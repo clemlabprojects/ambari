@@ -378,7 +378,9 @@ public class ReleaseMetadataService {
             for (Ingress ing : ingresses) {
                 if (ing.getSpec() == null) continue;
 
-                // Precompute TLS hosts
+                // Precompute TLS hosts declared on this ingress. If any TLS block exists,
+                // we prefer https even when host is null/missing to avoid serving http links
+                // when TLS is configured at the ingress level.
                 Set<String> tlsHosts = new HashSet<>();
                 List<IngressTLS> tlsList = ing.getSpec().getTls();
                 if (tlsList != null) {
@@ -388,6 +390,7 @@ public class ReleaseMetadataService {
                         }
                     }
                 }
+                boolean ingressHasTls = tlsList != null && !tlsList.isEmpty();
 
                 if (ing.getSpec().getRules() == null) continue;
                 for (IngressRule rule : ing.getSpec().getRules()) {
@@ -395,7 +398,7 @@ public class ReleaseMetadataService {
                     HTTPIngressRuleValue http = rule.getHttp();
                     if (http == null || http.getPaths() == null) continue;
 
-                    boolean useHttps = host != null && tlsHosts.contains(host);
+                    boolean useHttps = (host != null && tlsHosts.contains(host)) || ingressHasTls;
                     String scheme = useHttps ? "https" : "http";
 
                     for (HTTPIngressPath p : http.getPaths()) {

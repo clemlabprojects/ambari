@@ -39,6 +39,7 @@ const ConfigurationPage: React.FC = () => {
     const [currentStep, setCurrentStep] = React.useState<number>(0);
     const [clusterStepCompleted, setClusterStepCompleted] = React.useState(status !== 'unconfigured');
     const [monitoringStepSaved, setMonitoringStepSaved] = React.useState(false); // bootstrap
+    const [authStepSaved, setAuthStepSaved] = React.useState(false);
     const [storageStepSaved, setStorageStepSaved] = React.useState(false); // storage
     const [goToDashboardLoading, setGoToDashboardLoading] = React.useState(false);
     const navigate = useNavigate();
@@ -72,14 +73,14 @@ const ConfigurationPage: React.FC = () => {
     };
 
     /**
-     * Navigation buttons for the wizard. The "Next" button validates and saves
-     * monitoring settings on step 2 before advancing. The dashboard button
-     * redirects immediately to avoid unnecessary background refreshes here.
+     * Navigation buttons for the wizard. The "Next" button persists settings
+     * for the current step before advancing. The dashboard button redirects
+     * immediately to avoid unnecessary background refreshes here.
      */
     const navButtons = (
     <Space>
       {currentStep > 0 && <Button onClick={() => setCurrentStep(currentStep - 1)}>Back</Button>}
-      {currentStep < 2 && (
+      {currentStep < 3 && (
         <Button
           type="primary"
           onClick={async () => {
@@ -108,6 +109,9 @@ const ConfigurationPage: React.FC = () => {
                     thanosHost: formValues.monitoring?.thanosHost,
                     thanosIngressClass: formValues.monitoring?.thanosIngressClass,
                     thanosNodePort: formValues.monitoring?.thanosNodePort
+                  },
+                  kerberos: {
+                    injectionMode: formValues.kerberos?.injectionMode
                   }
                 });
                 setMonitoringStepSaved(true);
@@ -129,13 +133,64 @@ const ConfigurationPage: React.FC = () => {
               }
               return;
             }
+            if (currentStep === 2) {
+              try {
+                // Only validate auth fields to avoid blocking on storage requirements.
+                await form.validateFields([['kerberos', 'injectionMode']]);
+                const formValues = form.getFieldsValue(true);
+                await saveViewSettings({
+                  monitoring: {
+                    autoBootstrap: formValues.monitoring?.autoBootstrap,
+                    preferPrometheus: formValues.monitoring?.preferPrometheus,
+                    allowMetricsServerFallback: formValues.monitoring?.allowMetricsServerFallback,
+                    skipOnOpenShift: formValues.monitoring?.skipOnOpenShift,
+                    preferOpenShiftMonitoring: formValues.monitoring?.preferOpenShiftMonitoring,
+                    repoId: formValues.monitoring?.repoId,
+                    prometheusHost: formValues.monitoring?.prometheusHost,
+                    prometheusIngressClass: formValues.monitoring?.prometheusIngressClass,
+                    prometheusNodePort: formValues.monitoring?.prometheusNodePort,
+                    thanos: {
+                      enabled: formValues.monitoring?.thanosEnabled,
+                      bucket: formValues.monitoring?.thanosBucket,
+                      endpoint: formValues.monitoring?.thanosEndpoint,
+                      region: formValues.monitoring?.thanosRegion,
+                      accessKey: formValues.monitoring?.thanosAccessKey,
+                      secretKey: formValues.monitoring?.thanosSecretKey,
+                      insecure: formValues.monitoring?.thanosInsecure
+                    },
+                    thanosHost: formValues.monitoring?.thanosHost,
+                    thanosIngressClass: formValues.monitoring?.thanosIngressClass,
+                    thanosNodePort: formValues.monitoring?.thanosNodePort
+                  },
+                  kerberos: {
+                    injectionMode: formValues.kerberos?.injectionMode
+                  }
+                });
+                setAuthStepSaved(true);
+                setCurrentStep(currentStep + 1);
+              } catch (e:any) {
+                Modal.confirm({
+                  title: 'Save failed',
+                  content: (
+                    <Space direction="vertical">
+                      <span>{e?.message || 'Failed to save authentication settings.'}</span>
+                      <span>You can continue to the next step, but authentication overrides won’t be saved until this is fixed.</span>
+                    </Space>
+                  ),
+                  okText: 'Continue anyway',
+                  cancelText: 'Stay',
+                  onOk: () => setCurrentStep(currentStep + 1)
+                });
+              }
+              return;
+            }
             setCurrentStep(currentStep + 1);
           }}
         >
           Next
         </Button>
       )}
-        {status === 'connected' && clusterStepCompleted && monitoringStepSaved && storageStepSaved && (
+        {status === 'connected' && clusterStepCompleted && monitoringStepSaved && authStepSaved && storageStepSaved && (
           <Button
             type="primary"
             loading={goToDashboardLoading}
@@ -241,6 +296,9 @@ const ConfigurationPage: React.FC = () => {
                         thanosHost: settings?.monitoring?.thanosHost,
                         thanosIngressClass: settings?.monitoring?.thanosIngressClass ?? 'nginx',
                         thanosNodePort: settings?.monitoring?.thanosNodePort
+                    },
+                    kerberos: {
+                        injectionMode: settings?.kerberos?.injectionMode ?? 'WEBHOOK'
                     }
                 });
                 if (settings?.monitoring) {
@@ -248,6 +306,9 @@ const ConfigurationPage: React.FC = () => {
                     const thanosEnabled = settings?.monitoring?.thanos?.enabled;
                     const hasThanosConfig = !!(settings?.monitoring?.thanos?.bucket && settings?.monitoring?.thanos?.endpoint);
                     setStorageStepSaved(!thanosEnabled || hasThanosConfig);
+                }
+                if (settings?.kerberos?.injectionMode) {
+                    setAuthStepSaved(true);
                 }
             } catch {
                 // ignore
@@ -311,7 +372,7 @@ const ConfigurationPage: React.FC = () => {
             if (uploadInfo.file.status === 'done') {
                 message.success(`${uploadInfo.file.name} successfully uploaded. Proceed to monitoring step or dashboard when ready.`);
                 setClusterStatus('connected');
-                // Move to step 2 so the user can configure monitoring right after upload.
+                // Move to the monitoring step so the user can configure bootstrap right after upload.
                 setCurrentStep(1);
                 setClusterStepCompleted(true);
                 // Kick off initial fetch so the dashboard has data on first visit
@@ -326,7 +387,7 @@ const ConfigurationPage: React.FC = () => {
         return <Alert message="Insufficient Permissions" description="You do not have the required permissions to configure this view." type="error" showIcon style={{ margin: 24 }} />;
     }
 
-    // If already configured, default to step 2 on load
+    // If already configured, default to the monitoring step on load
     React.useEffect(() => {
         if (status !== 'unconfigured') {
             setCurrentStep(1);
@@ -355,6 +416,7 @@ const ConfigurationPage: React.FC = () => {
                   items={[
                     { title: 'Cluster configuration' },
                     { title: 'Monitoring bootstrap' },
+                    { title: 'Authentication Configuration' },
                     { title: 'Monitoring storage' }
                   ]}
                 />
@@ -446,6 +508,9 @@ const ConfigurationPage: React.FC = () => {
                               skipOnOpenShift: false,
                               thanosEnabled: false,
                               thanosInsecure: false
+                            },
+                            kerberos: {
+                              injectionMode: 'WEBHOOK'
                             }
                           }}
                         >
@@ -521,11 +586,15 @@ const ConfigurationPage: React.FC = () => {
                                             thanosHost: vals.monitoring?.thanosHost,
                                             thanosIngressClass: vals.monitoring?.thanosIngressClass,
                                             thanosNodePort: vals.monitoring?.thanosNodePort
+                                          },
+                                          kerberos: {
+                                            injectionMode: vals.kerberos?.injectionMode
                                           }
                                         });
                                         message.success('Monitoring settings saved');
                                         setMonitoringStepSaved(true);
                                         setStorageStepSaved(!vals.monitoring?.thanosEnabled ? true : storageStepSaved);
+                                        setAuthStepSaved(true);
                                       } catch (e:any) {
                                         message.error(e?.message || 'Save failed');
                                       }
@@ -575,6 +644,80 @@ const ConfigurationPage: React.FC = () => {
                 )}
 
                 {currentStep === 2 && (
+                  <Card
+                    title="Authentication Configuration"
+                    extra={navButtons}
+                    style={{ marginTop: 16 }}
+                    bodyStyle={{ maxHeight: '100vh', overflowY: 'auto' }}
+                  >
+                    <Form form={form} layout="vertical">
+                      <Card size="small" bordered={false}>
+                        <Paragraph>
+                          Choose how Kerberos keytabs are delivered to pods. Webhook mode injects keytabs at
+                          admission time, while pre-provisioned mode creates a Secret before Helm install.
+                        </Paragraph>
+                        <Form.Item
+                          label="Kerberos keytab injection mode"
+                          name={['kerberos', 'injectionMode']}
+                        >
+                          <Select
+                            options={[
+                              { value: 'WEBHOOK', label: 'Webhook (mutating admission)' },
+                              { value: 'PRE_PROVISIONED', label: 'Pre-provisioned Secret (no webhook)' }
+                            ]}
+                          />
+                        </Form.Item>
+                        <Space>
+                          <Button
+                            type="primary"
+                            onClick={async () => {
+                              try {
+                                await form.validateFields([['kerberos', 'injectionMode']]);
+                                const vals = form.getFieldsValue(true);
+                                await saveViewSettings({
+                                  monitoring: {
+                                    autoBootstrap: vals.monitoring?.autoBootstrap,
+                                    preferPrometheus: vals.monitoring?.preferPrometheus,
+                                    allowMetricsServerFallback: vals.monitoring?.allowMetricsServerFallback,
+                                    skipOnOpenShift: vals.monitoring?.skipOnOpenShift,
+                                    preferOpenShiftMonitoring: vals.monitoring?.preferOpenShiftMonitoring,
+                                    repoId: vals.monitoring?.repoId,
+                                    prometheusHost: vals.monitoring?.prometheusHost,
+                                    prometheusIngressClass: vals.monitoring?.prometheusIngressClass,
+                                    prometheusNodePort: vals.monitoring?.prometheusNodePort,
+                                    thanos: {
+                                      enabled: vals.monitoring?.thanosEnabled,
+                                      bucket: vals.monitoring?.thanosBucket,
+                                      endpoint: vals.monitoring?.thanosEndpoint,
+                                      region: vals.monitoring?.thanosRegion,
+                                      accessKey: vals.monitoring?.thanosAccessKey,
+                                      secretKey: vals.monitoring?.thanosSecretKey,
+                                      insecure: vals.monitoring?.thanosInsecure
+                                    },
+                                    thanosHost: vals.monitoring?.thanosHost,
+                                    thanosIngressClass: vals.monitoring?.thanosIngressClass,
+                                    thanosNodePort: vals.monitoring?.thanosNodePort
+                                  },
+                                  kerberos: {
+                                    injectionMode: vals.kerberos?.injectionMode
+                                  }
+                                });
+                                message.success('Authentication settings saved');
+                                setAuthStepSaved(true);
+                              } catch (e:any) {
+                                message.error(e?.message || 'Save failed');
+                              }
+                            }}
+                          >
+                            Save authentication settings
+                          </Button>
+                        </Space>
+                      </Card>
+                    </Form>
+                  </Card>
+                )}
+
+                {currentStep === 3 && (
                   <Card
                     title="Monitoring storage (Thanos optional)"
                     extra={navButtons}
@@ -667,10 +810,14 @@ const ConfigurationPage: React.FC = () => {
                                   thanosHost: vals.monitoring?.thanosHost,
                                   thanosIngressClass: vals.monitoring?.thanosIngressClass,
                                   thanosNodePort: vals.monitoring?.thanosNodePort
+                                },
+                                kerberos: {
+                                  injectionMode: vals.kerberos?.injectionMode
                                 }
                               });
                               message.success('Storage settings saved');
                               setMonitoringStepSaved(true);
+                              setAuthStepSaved(true);
                               setStorageStepSaved(!vals.monitoring?.thanosEnabled || !!(vals.monitoring?.thanosBucket && vals.monitoring?.thanosEndpoint));
                             } catch (e:any) {
                               message.error(e?.message || 'Save failed');

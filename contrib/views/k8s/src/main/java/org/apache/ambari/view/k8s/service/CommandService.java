@@ -62,6 +62,8 @@ import java.util.Comparator;
 import java.util.concurrent.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
@@ -88,6 +90,10 @@ public class CommandService {
     private final CommandUtils commandUtils;
     private final CommandPlanFactory commandPlanFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final String VIEW_SETTINGS_KEY = "view.settings.json";
+    private static final String KERBEROS_INJECTION_MODE_WEBHOOK = "WEBHOOK";
+    private static final String KERBEROS_INJECTION_MODE_PRE_PROVISIONED = "PRE_PROVISIONED";
 
     // External dependencies (adapters) — injected
     private final HelmService helmService;
@@ -188,6 +194,263 @@ public class CommandService {
                 // continue waiting
             }
         }
+    }
+
+    /**
+     * Resolve the Kerberos keytab injection mode from view instance settings.
+     *
+     * @return normalized injection mode ("WEBHOOK" or "PRE_PROVISIONED"); defaults to WEBHOOK
+     */
+    private String resolveKerberosInjectionModeFromSettings() {
+        String defaultMode = KERBEROS_INJECTION_MODE_WEBHOOK;
+        try {
+            String rawSettingsJson = ctx.getInstanceData(VIEW_SETTINGS_KEY);
+            if (rawSettingsJson == null || rawSettingsJson.isBlank()) {
+                return defaultMode;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> rawSettings = objectMapper.readValue(rawSettingsJson, Map.class);
+            Object kerberosSettingsObj = rawSettings.get("kerberos");
+            if (!(kerberosSettingsObj instanceof Map)) {
+                return defaultMode;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> kerberosSettings = (Map<String, Object>) kerberosSettingsObj;
+            Object injectionModeObj = kerberosSettings.get("injectionMode");
+            if (injectionModeObj == null) {
+                return defaultMode;
+            }
+            String injectionMode = injectionModeObj.toString().trim();
+            if (injectionMode.isBlank()) {
+                return defaultMode;
+            }
+            return injectionMode.toUpperCase(Locale.ROOT);
+        } catch (Exception ex) {
+            LOG.warn("Failed to read Kerberos injection mode from settings; defaulting to {}. Error={}",
+                    defaultMode, ex.toString());
+            return defaultMode;
+        }
+    }
+
+    /**
+     * Check whether the injection mode indicates webhook-based keytab injection.
+     *
+     * @param kerberosInjectionMode raw injection mode value (may be null)
+     * @return true when webhook mode is enabled
+     */
+    private boolean isWebhookInjectionMode(String kerberosInjectionMode) {
+        if (kerberosInjectionMode == null || kerberosInjectionMode.isBlank()) {
+            return true;
+        }
+        return KERBEROS_INJECTION_MODE_WEBHOOK.equalsIgnoreCase(kerberosInjectionMode);
+    }
+
+    /**
+     * Normalize the Kerberos entries coming from the service definition. Each entry is a map
+     * and may be keyed by a logical name (e.g., "service") in the request payload.
+     *
+     * @param kerberosSpec raw kerberos spec map from the request payload
+     * @return list of entry maps with a "key" field populated when possible
+     */
+    private List<Map<String, Object>> normalizeKerberosEntries(Map<String, Object> kerberosSpec) {
+        if (kerberosSpec == null || kerberosSpec.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : kerberosSpec.entrySet()) {
+            Object rawEntry = entry.getValue();
+            if (!(rawEntry instanceof Map)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entryMap = new LinkedHashMap<>((Map<String, Object>) rawEntry);
+            // Preserve the logical key for logging/debugging.
+            entryMap.putIfAbsent("key", entry.getKey());
+            entries.add(entryMap);
+        }
+        return entries;
+    }
+
+    /**
+     * Resolve whether a Kerberos entry is enabled. Missing or blank values default to true.
+     *
+     * @param enabledValue the raw "enabled" value from the entry map
+     * @return true if the entry should be processed
+     */
+    private boolean isKerberosEntryEnabled(Object enabledValue) {
+        if (enabledValue == null) {
+            return true;
+        }
+        if (enabledValue instanceof Boolean) {
+            return (Boolean) enabledValue;
+        }
+        String normalized = enabledValue.toString().trim();
+        if (normalized.isBlank()) {
+            return true;
+        }
+        return !"false".equalsIgnoreCase(normalized);
+    }
+
+    /**
+     * Convert a raw value to a non-empty string, falling back to a default when empty.
+     *
+     * @param rawValue raw object from configuration or request payload
+     * @param defaultValue fallback value when rawValue is null/blank
+     * @return normalized string value
+     */
+    private String resolveStringValue(Object rawValue, String defaultValue) {
+        if (rawValue == null) {
+            return defaultValue;
+        }
+        String candidateValue = rawValue.toString().trim();
+        if (candidateValue.isBlank() || "null".equalsIgnoreCase(candidateValue)) {
+            return defaultValue;
+        }
+        return candidateValue;
+    }
+
+    /**
+     * Parse the Kerberos cluster-enabled flag from a params object.
+     *
+     * @param rawValue raw boolean value (Boolean/string) from params
+     * @return true if Kerberos is enabled in the Ambari cluster
+     */
+    private boolean isKerberosClusterEnabled(Object rawValue) {
+        if (rawValue == null) {
+            // Unknown: default to true to preserve legacy webhook behavior when detection is unavailable.
+            return true;
+        }
+        if (rawValue instanceof Boolean) {
+            return (Boolean) rawValue;
+        }
+        String normalized = rawValue.toString().trim();
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return "true".equalsIgnoreCase(normalized);
+    }
+
+    /**
+     * Render a Kerberos principal template using the provided variables.
+     * Supported tokens: {{service}}, {{namespace}}, {{releaseName}}, {{realm}}.
+     *
+     * @param template raw template string (may be null/blank)
+     * @param serviceName service name to inject
+     * @param namespace Kubernetes namespace
+     * @param releaseName Helm release name
+     * @param realm Kerberos realm
+     * @return rendered principal string (never null)
+     */
+    private String renderKerberosPrincipalTemplate(String template,
+                                                   String serviceName,
+                                                   String namespace,
+                                                   String releaseName,
+                                                   String realm) {
+        String templateValue = template == null ? "" : template;
+        String resolvedValue = templateValue;
+        resolvedValue = replaceTemplateToken(resolvedValue, "service", serviceName);
+        resolvedValue = replaceTemplateToken(resolvedValue, "namespace", namespace);
+        resolvedValue = replaceTemplateToken(resolvedValue, "releaseName", releaseName);
+        resolvedValue = replaceTemplateToken(resolvedValue, "realm", realm);
+        return resolvedValue;
+    }
+
+    /**
+     * Replace a single {{token}} placeholder in a template with a concrete value.
+     *
+     * @param templateValue template to mutate
+     * @param tokenName token to replace (without braces)
+     * @param tokenValue replacement value
+     * @return template with token substituted
+     */
+    private String replaceTemplateToken(String templateValue, String tokenName, String tokenValue) {
+        if (templateValue == null || templateValue.isBlank()) {
+            return templateValue;
+        }
+        String safeValue = tokenValue == null ? "" : tokenValue;
+        Pattern tokenPattern = Pattern.compile("\\{\\{\\s*" + Pattern.quote(tokenName) + "\\s*\\}\\}");
+        return tokenPattern.matcher(templateValue).replaceAll(Matcher.quoteReplacement(safeValue));
+    }
+
+    /**
+     * Append Kerberos keytab provisioning steps (issue principal + create Secret) to the current command plan.
+     * These steps are inserted ahead of Helm install when the view is configured for pre-provisioned keytabs.
+     *
+     * @param rootCommand root command entity for the release
+     * @param childCommandIds ordered list of child command ids to append to
+     * @param rootParams base params used by the release (copied into child params)
+     * @param principalFqdn fully qualified principal to request from Ambari
+     * @param namespace target Kubernetes namespace for the Secret
+     * @param secretName target Secret name for the keytab
+     * @param keyNameInSecret key name inside the Secret data
+     * @param kerberosEntryKey logical entry name for logging and traceability
+     */
+    private void appendPreProvisionedKeytabSteps(CommandEntity rootCommand,
+                                                 List<String> childCommandIds,
+                                                 Map<String, Object> rootParams,
+                                                 String principalFqdn,
+                                                 String namespace,
+                                                 String secretName,
+                                                 String keyNameInSecret,
+                                                 String kerberosEntryKey) {
+        final String now = Instant.now().toString();
+
+        // ---- child #1: issue principal & keytab via Ambari action ----
+        String issueCommandId = rootCommand.getId() + "-" + UUID.randomUUID();
+        Map<String, Object> issueParams = new LinkedHashMap<>(rootParams);
+        issueParams.put("principalFqdn", principalFqdn);
+        issueParams.put("namespace", namespace);
+        issueParams.put("secretName", secretName);
+        issueParams.put("keyNameInSecret", keyNameInSecret);
+        issueParams.put("kerberosEntryKey", kerberosEntryKey);
+
+        CommandEntity issueCommand = new CommandEntity();
+        issueCommand.setId(issueCommandId);
+        issueCommand.setViewInstance(ctx.getInstanceName());
+        issueCommand.setType(CommandType.KEYTAB_ISSUE_PRINCIPAL.name());
+        issueCommand.setTitle("Ambari: generate keytab for " + principalFqdn);
+        issueCommand.setParamsJson(gson.toJson(issueParams));
+
+        CommandStatusEntity issueStatus = new CommandStatusEntity();
+        issueStatus.setId(issueCommandId + "-status");
+        issueStatus.setAttempt(0);
+        issueStatus.setState(CommandState.PENDING.name());
+        issueStatus.setCreatedBy(ctx.getUsername());
+        issueStatus.setCreatedAt(now);
+        issueStatus.setUpdatedAt(now);
+        issueCommand.setCommandStatusId(issueStatus.getId());
+
+        // ---- child #2: create/update Opaque secret ----
+        String createSecretCommandId = rootCommand.getId() + "-" + UUID.randomUUID();
+        Map<String, Object> createParams = new LinkedHashMap<>(issueParams);
+        createParams.put("keytabIssuerId", issueCommandId);
+
+        CommandEntity createSecretCommand = new CommandEntity();
+        createSecretCommand.setId(createSecretCommandId);
+        createSecretCommand.setViewInstance(ctx.getInstanceName());
+        createSecretCommand.setType(CommandType.KEYTAB_CREATE_SECRET.name());
+        createSecretCommand.setTitle("K8s: create/update secret " + secretName);
+        createSecretCommand.setParamsJson(gson.toJson(createParams));
+
+        CommandStatusEntity createSecretStatus = new CommandStatusEntity();
+        createSecretStatus.setId(createSecretCommandId + "-status");
+        createSecretStatus.setAttempt(0);
+        createSecretStatus.setState(CommandState.PENDING.name());
+        createSecretStatus.setCreatedBy(ctx.getUsername());
+        createSecretStatus.setCreatedAt(now);
+        createSecretStatus.setUpdatedAt(now);
+        createSecretCommand.setCommandStatusId(createSecretStatus.getId());
+
+        // Persist both child commands so they are visible in the root plan.
+        store(issueStatus);
+        store(issueCommand);
+        store(createSecretStatus);
+        store(createSecretCommand);
+
+        childCommandIds.add(issueCommandId);
+        childCommandIds.add(createSecretCommandId);
+
+        LOG.info("Added Kerberos keytab steps for entry {}: issueId={}, createId={}", kerberosEntryKey, issueCommandId, createSecretCommandId);
     }
 
     // -------------------- Public API --------------------
@@ -481,6 +744,18 @@ public class CommandService {
             LOG.warn("Could not fingerprint security profile {}: {}", resolvedSecurityProfile, ex.toString());
         }
         applySecurityOverrides(securityCfg, params);
+
+        // Resolve Kerberos injection mode from view settings and pass it down to Helm values + step params.
+        String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
+        params.put("kerberosInjectionMode", kerberosInjectionMode);
+        this.commandUtils.addOverride(params, "global.security.kerberos.injectionMode", kerberosInjectionMode);
+        boolean preProvisionedKerberosMode =
+                KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode);
+        if (preProvisionedKerberosMode) {
+            LOG.info("Kerberos injection mode is PRE_PROVISIONED; mutating webhook dependency will be skipped.");
+        } else {
+            LOG.info("Kerberos injection mode is WEBHOOK; mutating webhook dependency remains enabled.");
+        }
         if (request.getTls() != null && !request.getTls().isEmpty()) {
             TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
             tlsManager.applyTls(request.getTls(), request, params);
@@ -552,12 +827,14 @@ public class CommandService {
             }
         }
         boolean kerberosEnabled = false;
+        boolean kerberosDetectionAvailable = false;
         try {
             if (ambariActionClient != null) {
                 String securityEnabledCluster = ambariActionClient.getDesiredConfigProperty(
                         cluster, "cluster-env", "security_enabled"
                 );
                 kerberosEnabled = "true".equalsIgnoreCase(securityEnabledCluster);
+                kerberosDetectionAvailable = true;
             } else {
                 LOG.warn("AmbariActionClient is null; skipping Kerberos detection and ConfigMap creation");
             }
@@ -565,6 +842,11 @@ public class CommandService {
             LOG.warn("Could not determine Kerberos state from Ambari, assuming disabled: {}", ex.toString());
         }
 
+        if (kerberosDetectionAvailable) {
+            params.put("kerberosClusterEnabled", kerberosEnabled);
+        } else {
+            LOG.warn("Kerberos detection unavailable; leaving global.security.kerberos.enabled unchanged");
+        }
         if (kerberosEnabled) {
             LOG.info("Kerberos is enabled on cluster {}, preparing krb5.conf ConfigMap for Helm Chart", cluster);
 
@@ -580,6 +862,10 @@ public class CommandService {
             //    global.security.kerberos.configMapName = <cm name>
             this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "true");
             this.commandUtils.addOverride(params, "global.security.kerberos.configMapName", krb5ConfigMapName);
+        } else if (kerberosDetectionAvailable) {
+            // Explicitly disable Kerberos in chart values when the Ambari cluster is not secured.
+            this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "false");
+            LOG.info("Kerberos is disabled on cluster {}; overriding chart values with global.security.kerberos.enabled=false", cluster);
         }
 
         // ---------- Truststore from Ambari truststore (for downstream TLS clients)
@@ -1234,13 +1520,38 @@ public class CommandService {
          *  2. checking dependencies
          * */
         LOG.info("Processing dependencies if any for the release: {} ",request.getReleaseName());
-        if (request.getDependencies()!= null){
-            if(request.getDependencies().size() > 0){
-                request.getDependencies().entrySet().stream().forEach(
-                        dependency -> {
-                            LOG.info("Processing dependency: {} ",dependency.getKey());
-                            this.commandPlanFactory.createDependencyCommands(rootCommand, dependency.getValue(), dependency.getKey(), repoId, commandsURL,  callerHeaders, baseUri);
-                        }
+        Map<String, Object> dependenciesToProcess = request.getDependencies();
+        if (dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
+            if (kerberosDetectionAvailable && !kerberosEnabled && dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
+                dependenciesToProcess = new LinkedHashMap<>(dependenciesToProcess);
+                dependenciesToProcess.remove("kerberos-keytab-mutating-webhook");
+                LOG.info("Removed kerberos-keytab-mutating-webhook dependency because Kerberos is disabled on the cluster");
+            }
+            if (preProvisionedKerberosMode && dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
+                dependenciesToProcess = new LinkedHashMap<>(dependenciesToProcess);
+                dependenciesToProcess.remove("kerberos-keytab-mutating-webhook");
+                LOG.info("Removed kerberos-keytab-mutating-webhook dependency due to PRE_PROVISIONED mode");
+            }
+            for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
+                Object dependencySpec = dependencyEntry.getValue();
+                // Propagate injection mode to dependency steps so they can skip webhook label work.
+                if (dependencySpec instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                    dependencySpecMap.put("kerberosInjectionMode", kerberosInjectionMode);
+                    if (kerberosDetectionAvailable) {
+                        dependencySpecMap.put("kerberosClusterEnabled", kerberosEnabled);
+                    }
+                }
+                LOG.info("Processing dependency: {} ", dependencyEntry.getKey());
+                this.commandPlanFactory.createDependencyCommands(
+                        rootCommand,
+                        dependencyEntry.getValue(),
+                        dependencyEntry.getKey(),
+                        repoId,
+                        commandsURL,
+                        callerHeaders,
+                        baseUri
                 );
             }
         }
@@ -1256,6 +1567,100 @@ public class CommandService {
             }
         } catch (Exception ex) {
             LOG.warn("Failed to refresh child list after dependencies, continuing with existing list: {}", ex.toString());
+        }
+
+        // 2a. Pre-provision Kerberos keytabs if the view is configured for it.
+        if (preProvisionedKerberosMode) {
+            boolean keytabStepsAdded = false;
+            if (!kerberosEnabled) {
+                LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
+            } else if (ambariActionClient == null || cluster == null || cluster.isBlank()) {
+                LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
+            } else {
+                List<Map<String, Object>> kerberosEntries = normalizeKerberosEntries(request.getKerberos());
+                if (kerberosEntries.isEmpty()) {
+                    LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
+                } else {
+                    String kerberosRealm = null;
+                    try {
+                        AmbariConfigRef realmRef = CommandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM");
+                        if (realmRef != null) {
+                            kerberosRealm = ambariActionClient.getDesiredConfigProperty(cluster, realmRef.type, realmRef.key);
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to resolve Kerberos realm for cluster {}: {}", cluster, ex.toString());
+                    }
+                    if (kerberosRealm == null || kerberosRealm.isBlank()) {
+                        LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
+                    } else {
+                        boolean helmOverridesApplied = false;
+                        int kerberosEntryIndex = 0;
+                        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+                            kerberosEntryIndex++;
+                            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
+                                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
+                                continue;
+                            }
+                            String entryKey = resolveStringValue(
+                                    kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
+                            String serviceName = resolveStringValue(
+                                    kerberosEntry.get("serviceName"), request.getReleaseName());
+                            String principalTemplate = resolveStringValue(
+                                    kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
+                            String principalFqdn = renderKerberosPrincipalTemplate(
+                                    principalTemplate,
+                                    serviceName,
+                                    request.getNamespace(),
+                                    request.getReleaseName(),
+                                    kerberosRealm
+                            );
+                            if (principalFqdn == null || principalFqdn.isBlank()) {
+                                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
+                                continue;
+                            }
+
+                            String secretName = resolveStringValue(
+                                    kerberosEntry.get("secretName"), request.getReleaseName() + "-keytab");
+                            String keyNameInSecret = resolveStringValue(
+                                    kerberosEntry.get("keyNameInSecret"), "service.keytab");
+                            String mountPath = resolveStringValue(
+                                    kerberosEntry.get("mountPath"), "/etc/security/keytabs");
+
+                            LOG.info("Pre-provisioning keytab for entry {}: principal={}, secret={}, key={}, mountPath={}",
+                                    entryKey, principalFqdn, secretName, keyNameInSecret, mountPath);
+
+                            appendPreProvisionedKeytabSteps(
+                                    rootCommand,
+                                    childCommands,
+                                    params,
+                                    principalFqdn,
+                                    request.getNamespace(),
+                                    secretName,
+                                    keyNameInSecret,
+                                    entryKey
+                            );
+                            keytabStepsAdded = true;
+
+                            // Only one secret can be wired to global.security.kerberos.keytab.* today.
+                            if (!helmOverridesApplied) {
+                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretName", secretName);
+                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretDataKey", keyNameInSecret);
+                                if (mountPath != null && !mountPath.isBlank()) {
+                                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", mountPath);
+                                }
+                                helmOverridesApplied = true;
+                            } else {
+                                LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
+                            }
+                        }
+                    }
+                }
+            }
+            if (keytabStepsAdded) {
+                rootCommand.setChildListJson(gson.toJson(childCommands));
+                rootCommand.setParamsJson(gson.toJson(params));
+                store(rootCommand);
+            }
         }
 
         // 2bis. Materialize stack configurations into Secrets before Helm install
@@ -1279,20 +1684,24 @@ public class CommandService {
         this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
 
         // Publish correlation ConfigMap so the mutating webhook can attach keytab requests to this command tree.
-        try {
-            String cmName = "k8s-view-metadata";
-            Map<String, String> data = new HashMap<>();
-            data.put(request.getReleaseName() + ".commandId", id);
-            this.kubernetesService.createOrUpdateConfigMap(
-                    request.getNamespace(),
-                    cmName,
-                    data,
-                    Map.of("managed-by", "ambari-k8s-view"),
-                    Map.of()
-            );
-            LOG.info("Published command correlation ConfigMap {} in namespace {} for release {}", cmName, request.getNamespace(), request.getReleaseName());
-        } catch (Exception e) {
-            LOG.warn("Could not write correlation ConfigMap for release {} in namespace {}: {}", request.getReleaseName(), request.getNamespace(), e.toString());
+        if (isWebhookInjectionMode(kerberosInjectionMode)) {
+            try {
+                String cmName = "k8s-view-metadata";
+                Map<String, String> data = new HashMap<>();
+                data.put(request.getReleaseName() + ".commandId", id);
+                this.kubernetesService.createOrUpdateConfigMap(
+                        request.getNamespace(),
+                        cmName,
+                        data,
+                        Map.of("managed-by", "ambari-k8s-view"),
+                        Map.of()
+                );
+                LOG.info("Published command correlation ConfigMap {} in namespace {} for release {}", cmName, request.getNamespace(), request.getReleaseName());
+            } catch (Exception e) {
+                LOG.warn("Could not write correlation ConfigMap for release {} in namespace {}: {}", request.getReleaseName(), request.getNamespace(), e.toString());
+            }
+        } else {
+            LOG.info("Skipping command correlation ConfigMap; Kerberos injection mode is {}", kerberosInjectionMode);
         }
 
         LOG.info("Queued DEPLOY_COMPOSITE id={} steps={} at {}", id, childCommands.size(), now);
@@ -1771,7 +2180,17 @@ public class CommandService {
                     String releaseName = (String) childParams.get("releaseName");
 
                     this.kubernetesService.createNamespace(namespace);
-                    this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    // Only label the namespace for webhook admission when webhook mode is enabled.
+                    String kerberosInjectionMode = String.valueOf(
+                            childParams.getOrDefault("kerberosInjectionMode", KERBEROS_INJECTION_MODE_WEBHOOK)
+                    );
+                    boolean kerberosClusterEnabled = isKerberosClusterEnabled(childParams.get("kerberosClusterEnabled"));
+                    if (isWebhookInjectionMode(kerberosInjectionMode) && kerberosClusterEnabled) {
+                        this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    } else {
+                        LOG.info("Skipping webhook label on namespace {} (Kerberos mode={}, clusterEnabled={})",
+                                namespace, kerberosInjectionMode, kerberosClusterEnabled);
+                    }
 
                     Map<String, Object> mounts = this.commandUtils.normalizeMountsObject(childParams.get("mounts"));
                     LOG.info("Mounts execution for release {} in ns {}: {}", releaseName, namespace, mounts);
@@ -1930,7 +2349,17 @@ public class CommandService {
                      */
                     String namespace = (String) childParams.get("namespace");
                     this.kubernetesService.createNamespace(namespace);
-                    this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    // Dependency namespaces only need webhook labels in webhook mode when Kerberos is enabled.
+                    String kerberosInjectionMode = String.valueOf(
+                            childParams.getOrDefault("kerberosInjectionMode", KERBEROS_INJECTION_MODE_WEBHOOK)
+                    );
+                    boolean kerberosClusterEnabled = isKerberosClusterEnabled(childParams.get("kerberosClusterEnabled"));
+                    if (isWebhookInjectionMode(kerberosInjectionMode) && kerberosClusterEnabled) {
+                        this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    } else {
+                        LOG.info("Skipping webhook label on dependency namespace {} (Kerberos mode={}, clusterEnabled={})",
+                                namespace, kerberosInjectionMode, kerberosClusterEnabled);
+                    }
                     String releaseName = (String) childParams.get("releaseName");
                     if (secretName != null) {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
@@ -2336,7 +2765,17 @@ public class CommandService {
                     this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
 
                     this.kubernetesService.createNamespace(namespace);
-                    this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    // Dependency namespaces only need webhook labels in webhook mode when Kerberos is enabled.
+                    String kerberosInjectionMode = String.valueOf(
+                            childParams.getOrDefault("kerberosInjectionMode", KERBEROS_INJECTION_MODE_WEBHOOK)
+                    );
+                    boolean kerberosClusterEnabled = isKerberosClusterEnabled(childParams.get("kerberosClusterEnabled"));
+                    if (isWebhookInjectionMode(kerberosInjectionMode) && kerberosClusterEnabled) {
+                        this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    } else {
+                        LOG.info("Skipping webhook label on dependency namespace {} (Kerberos mode={}, clusterEnabled={})",
+                                namespace, kerberosInjectionMode, kerberosClusterEnabled);
+                    }
                     Object secretName = childParams.get("secretName");
                     if (secretName != null) {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
@@ -2401,7 +2840,17 @@ public class CommandService {
                     this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
 
                     this.kubernetesService.createNamespace(namespace);
-                    this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    // Main release namespaces only need webhook labels in webhook mode when Kerberos is enabled.
+                    String kerberosInjectionMode = String.valueOf(
+                            childParams.getOrDefault("kerberosInjectionMode", KERBEROS_INJECTION_MODE_WEBHOOK)
+                    );
+                    boolean kerberosClusterEnabled = isKerberosClusterEnabled(childParams.get("kerberosClusterEnabled"));
+                    if (isWebhookInjectionMode(kerberosInjectionMode) && kerberosClusterEnabled) {
+                        this.kubernetesService.ensureWebhookEnabledNamespace(namespace);
+                    } else {
+                        LOG.info("Skipping webhook label on namespace {} (Kerberos mode={}, clusterEnabled={})",
+                                namespace, kerberosInjectionMode, kerberosClusterEnabled);
+                    }
                     Object secretName = childParams.get("secretName");
                     if (secretName != null) {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
@@ -2613,13 +3062,16 @@ public class CommandService {
                     List<String> siblings = gson.fromJson(root.getChildListJson(), listType);
                     if (siblings == null) siblings = Collections.emptyList();
 
-                    String issuerId = siblings.stream()
-                            .filter(cid -> {
-                                CommandEntity c = findCommandById(cid);
-                                return c != null && CommandType.KEYTAB_ISSUE_PRINCIPAL.name().equals(c.getType());
-                            })
-                            .findFirst()
-                            .orElse(null);
+                    String issuerId = (String) childParams.get("keytabIssuerId");
+                    if (issuerId == null || issuerId.isBlank()) {
+                        issuerId = siblings.stream()
+                                .filter(cid -> {
+                                    CommandEntity c = findCommandById(cid);
+                                    return c != null && CommandType.KEYTAB_ISSUE_PRINCIPAL.name().equals(c.getType());
+                                })
+                                .findFirst()
+                                .orElse(null);
+                    }
 
                     if (issuerId == null) {
                         throw new IllegalStateException("Missing KEYTAB_ISSUE_PRINCIPAL sibling before KEYTAB_CREATE_SECRET");

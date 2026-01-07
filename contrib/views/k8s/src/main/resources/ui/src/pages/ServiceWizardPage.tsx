@@ -158,6 +158,26 @@ const ServiceWizardPage: React.FC = () => {
               });
               initial.tls = tlsObj;
             }
+            // Seed Kerberos defaults (if any) so pre-provisioned mode can use them.
+            if (Array.isArray((svcDef as any)?.kerberos) && (svcDef as any).kerberos.length > 0) {
+              const kerberosObj: any = {};
+              (svcDef as any).kerberos.forEach((k: any) => {
+                if (!k?.key) return;
+                const secretName = k.secretNameTemplate
+                  ? resolveTpl(k.secretNameTemplate, initial)
+                  : `${initial.releaseName}-keytab`;
+                kerberosObj[k.key] = {
+                  ...(k.defaults || {}),
+                  enabled: k.enabled !== false,
+                  principalTemplate: k.principalTemplate || '',
+                  serviceName: k.serviceName || '',
+                  secretName,
+                  keyNameInSecret: k.keyNameInSecret || 'service.keytab',
+                  mountPath: k.mountPath || '/etc/security/keytabs'
+                };
+              });
+              initial.kerberos = kerberosObj;
+            }
             setInstallValues(initial);
         } catch(e) { message.error("Failed to load definition"); }
         finally { setLoading(false); }
@@ -283,6 +303,7 @@ const ServiceWizardPage: React.FC = () => {
               requiredConfigMaps: isUpgrade ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
               tls: (installValues as any)?.tls || undefined,
+              kerberos: (installValues as any)?.kerberos || undefined,
               // Build optional ingress TLS upload payload:
               // - Require both cert and key.
               // - Secret name priority: user-provided -> ingress.tlsSecret -> <release>-ingress-tls.

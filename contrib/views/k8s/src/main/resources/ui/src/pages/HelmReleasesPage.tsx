@@ -1,8 +1,8 @@
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions } from 'antd';
+import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions, Badge } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
@@ -34,6 +34,17 @@ const HelmReleasesPage: React.FC = () => {
   const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
+  const [operationsCount, setOperationsCount] = useState<number>(0);
+
+  const loadOperationsCount = useCallback(async () => {
+    try {
+      const commands = await listCommands(10, 0);
+      const running = (commands || []).filter((c: any) => c.state === 'RUNNING' || c.state === 'PENDING').length;
+      setOperationsCount(running);
+    } catch {
+      setOperationsCount(0);
+    }
+  }, []);
 
   useEffect(() => {
     /**
@@ -43,7 +54,9 @@ const HelmReleasesPage: React.FC = () => {
      * blocking the UI on non-critical metadata.
      */
     getAvailableServices().then(setServiceDefinitions).catch(() => {});
-  }, []);
+    // Load a lightweight count of running/pending background operations for the badge.
+    void loadOperationsCount();
+  }, [loadOperationsCount]);
 
   /**
    * Build GitOps options for a release when it is managed by Flux. This keeps
@@ -118,6 +131,13 @@ const HelmReleasesPage: React.FC = () => {
     }, 30_000);
     return () => clearInterval(interval);
   }, [autoRefreshEnabled, refreshAllStatuses]);
+
+  useEffect(() => {
+    // Refresh badge count when the modal is closed to reflect completed tasks.
+    if (!isCommandDrawerOpen) {
+      void loadOperationsCount();
+    }
+  }, [isCommandDrawerOpen, loadOperationsCount]);
 
   /**
    * Retrieve releases from the backend with paging, update the table source,
@@ -501,9 +521,11 @@ const HelmReleasesPage: React.FC = () => {
                       <Switch size="small" checked={autoRefreshEnabled} onChange={setAutoRefreshEnabled} />
                       <span>Auto status refresh</span>
                     </Space>
-                    <Button onClick={() => { setIsCommandDrawerOpen(true); }}>
-                        Background operations
-                    </Button>
+                    <Badge count={operationsCount} offset={[8, 0]}>
+                      <Button onClick={() => { setIsCommandDrawerOpen(true); }}>
+                          Background operations
+                      </Button>
+                    </Badge>
                     <PermissionGuard requires="canWrite">
                       <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsInstallPickerOpen(true)}>
                           Install Service
