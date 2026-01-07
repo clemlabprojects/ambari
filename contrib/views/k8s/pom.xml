@@ -11,7 +11,7 @@
 
     <groupId>org.apache.ambari.views</groupId>
     <artifactId>k8s-view</artifactId>
-    <version>1.0.0.3</version>
+    <version>1.0.0.5</version>
     <name>K8S View</name>
     <description>An Ambari View to interact with a Kubernetes cluster.</description>
     <packaging>jar</packaging>
