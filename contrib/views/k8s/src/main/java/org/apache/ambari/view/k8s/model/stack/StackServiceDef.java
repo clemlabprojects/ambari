@@ -27,4 +27,5 @@ public class StackServiceDef {
     public List<Map<String, Object>> requiredConfigMaps;
     public List<String> dynamicValues;
     public List<Map<String, Object>> tls;
+    public List<Map<String, Object>> kerberos;
 }

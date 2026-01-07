@@ -27,6 +27,16 @@
     "dynamicValues": [
       "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
     ],
+    "kerberos": [
+      {
+        "key": "service",
+        "serviceName": "superset-dashboard",
+        "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+        "secretNameTemplate": "{{releaseName}}-keytab",
+        "keyNameInSecret": "service.keytab",
+        "mountPath": "/etc/security/keytabs"
+      }
+    ],
     "endpoints": [
       {
         "id": "ui",

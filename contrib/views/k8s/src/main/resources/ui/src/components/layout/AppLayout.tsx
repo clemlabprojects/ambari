@@ -23,6 +23,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { status, stats: clusterStats, error, fetchData } = useClusterStatus();
   const [isOperationsModalOpen, setIsOperationsModalOpen] = React.useState(false);
   const [operationsCount, setOperationsCount] = React.useState<number>(0);
+  // No theme toggle: default light palette
 
   /**
    * Produce a human-readable usage label for the stats bar. Handles missing
@@ -192,9 +193,9 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <div
           className="stats-bar"
           style={{
-            background: '#fafafa',
-            borderBottom: '1px solid #f0f0f0',
-            padding: '2px 16px',
+            background: 'var(--surface-muted)',
+            borderBottom: '1px solid var(--border)',
+            padding: '4px 16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
@@ -206,19 +207,18 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             zIndex: 10,
             overflow: 'hidden',
             whiteSpace: 'nowrap',
+            marginTop: '5px',
+            borderRadius: 14,
+            boxShadow: 'none',
           }}
         >
           <Space size={6} style={{ marginLeft: 'auto' }}>
-            <Badge
-              count={operationsCount}
-              size="small"
-              style={{ backgroundColor: '#1677ff' }}
-              offset={[6, -4]}
-            >
-              <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
-                Background Ops
-              </Button>
-            </Badge>
+            <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
+              <Space size={6}>
+                <span>Background Ops</span>
+                <Badge count={operationsCount} size="small" style={{ backgroundColor: '#1677ff' }} />
+              </Space>
+            </Button>
             {clusterStats?.nodes && (
               <Tag
                 icon={<CloudServerOutlined />}

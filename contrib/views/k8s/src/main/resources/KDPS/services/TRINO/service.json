@@ -189,6 +189,24 @@
       }
     }
   ],
+  "kerberos": [
+    {
+      "key": "coordinator",
+      "serviceName": "trino-coordinator",
+      "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+      "secretNameTemplate": "{{releaseName}}-keytab",
+      "keyNameInSecret": "service.keytab",
+      "mountPath": "/etc/security/keytabs"
+    },
+    {
+      "key": "worker",
+      "serviceName": "trino-worker",
+      "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+      "secretNameTemplate": "{{releaseName}}-worker-keytab",
+      "keyNameInSecret": "service.keytab",
+      "mountPath": "/etc/security/keytabs"
+    }
+  ],
   "endpoints": [
     {
       "id": "trino-ui",
@@ -398,6 +416,13 @@
       }
     },
     {
+      "name": "ingressTLSSecretUpload",
+      "from": {
+        "type": "form",
+        "field": "ingress.tlsUpload.secretName"
+      }
+    },
+    {
       "name": "ingressTLSHost",
       "from": {
         "type": "form",
@@ -544,6 +569,53 @@
             "template": {
               "ambari.clemlab.com/keytab-injection": "${kerberos.enabled}"
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "kerberos-keytab-secrets",
+      "targets": [
+        {
+          "path": "global.security.kerberos.keytab.secretName",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.coordinator.secretName}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.keytab.secretDataKey",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.coordinator.keyNameInSecret}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.keytab.mountPath",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.coordinator.mountPath}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.workerKeytab.secretName",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.worker.secretName}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.workerKeytab.secretDataKey",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.worker.keyNameInSecret}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.workerKeytab.mountPath",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.worker.mountPath}"
           }
         }
       ]
@@ -867,6 +939,20 @@
         },
         {
           "path": "ingress.tls[]",
+          "skipIfVarEmpty": "ingressTLSSecretUpload",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecretUpload}",
+              "hosts": [
+                "${ingressHost}"
+              ]
+            }
+          }
+        },
+        {
+          "path": "ingress.tls[]",
           "skipIfVarEmpty": "ingressTLSSecret",
           "op": "set",
           "from": {
@@ -874,9 +960,7 @@
             "template": {
               "secretName": "${ingressTLSSecret}",
               "hosts": [
-                {
-                  "host": "${ingressTLSHost}"
-                }
+                "${ingressTLSHost}"
               ]
             }
           }
@@ -896,7 +980,7 @@
         },
         {
           "path": "server.config.https.port",
-          "skipIfVarEmpty": "tlsHttpsPort",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsPort}"
@@ -904,7 +988,7 @@
         },
         {
           "path": "server.config.https.keystore.path",
-          "skipIfVarEmpty": "tlsHttpsKeystorePath",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsKeystorePath}"
@@ -912,7 +996,7 @@
         },
         {
           "path": "server.config.https.keystore.secretName",
-          "skipIfVarEmpty": "tlsHttpsSecretName",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsSecretName}"
@@ -920,7 +1004,7 @@
         },
         {
           "path": "server.config.https.keystore.key",
-          "skipIfVarEmpty": "tlsHttpsKeystoreKey",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsKeystoreKey}"
@@ -928,7 +1012,7 @@
         },
         {
           "path": "server.config.https.keystore.mountPath",
-          "skipIfVarEmpty": "tlsHttpsKeystorePath",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsKeystorePath}"
@@ -936,7 +1020,7 @@
         },
         {
           "path": "server.config.https.keystore.passwordSecretName",
-          "skipIfVarEmpty": "tlsHttpsPasswordSecretName",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsPasswordSecretName}"
@@ -944,7 +1028,7 @@
         },
         {
           "path": "server.config.https.keystore.passwordKey",
-          "skipIfVarEmpty": "tlsHttpsPassword",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "truststore.password"
@@ -952,7 +1036,7 @@
         },
         {
           "path": "server.config.https.keystore.passwordMountPath",
-          "skipIfVarEmpty": "tlsHttpsMountPath",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "/etc/trino/https-pass/password"
@@ -960,7 +1044,7 @@
         },
         {
           "path": "coordinator.additionalConfigProperties[]",
-          "skipIfVarEmpty": "tlsHttpsPassword",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "http-server.https.keystore.key=${tlsHttpsPassword}"
@@ -968,6 +1052,7 @@
         },
         {
           "path": "global.security.tls.enabled",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsEnabled}"
@@ -975,6 +1060,7 @@
         },
         {
           "path": "global.security.tls.truststore.enabled",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsEnabled}"
@@ -982,7 +1068,7 @@
         },
         {
           "path": "global.security.tls.truststoreSecret",
-          "skipIfVarEmpty": "tlsHttpsSecretName",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsSecretName}"
@@ -990,7 +1076,7 @@
         },
         {
           "path": "global.security.tls.truststoreKey",
-          "skipIfVarEmpty": "tlsHttpsKeystoreKey",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsKeystoreKey}"
@@ -998,6 +1084,7 @@
         },
         {
           "path": "global.security.tls.truststorePasswordKey",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "truststore.password"
@@ -1005,7 +1092,7 @@
         },
         {
           "path": "global.security.tls.truststore.format",
-          "skipIfVarEmpty": "tlsHttpsKeystoreType",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsKeystoreType}"
@@ -1013,6 +1100,7 @@
         },
         {
           "path": "global.security.tls.truststore.pemKey",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "ca.crt"

@@ -24,6 +24,10 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -137,11 +141,14 @@ public class HelmResource {
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         Map<String,String> versionCache = new HashMap<>();
+        // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
+        final int poolSize = Math.max(2, Math.min(8, page.size()));
+        ExecutorService workerPool = Executors.newFixedThreadPool(poolSize);
+        List<Future<?>> workerFutures = new ArrayList<>();
+        LOG.info("Refreshing Helm releases with parallel workers: {} item(s), pool size {}", page.size(), poolSize);
 
         for (Release release : page) {
             HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
-
-            List<ReleaseEndpointDTO> allEndpoints = new ArrayList<>();
 
             K8sReleaseEntity metadata = releaseMetadataService.find(releaseDto.namespace, releaseDto.name);
             if (metadata != null) {
@@ -169,38 +176,6 @@ public class HelmResource {
                 releaseDto.gitPrNumber = metadata.getGitPrNumber();
                 releaseDto.gitPrState = metadata.getGitPrState();
 
-                // Backend-aware status lookup (Flux or direct Helm)
-                try {
-                    HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
-                    if (refreshed != null) {
-                        if (refreshed.status != null) releaseDto.status = refreshed.status;
-                        if (refreshed.message != null) releaseDto.message = refreshed.message;
-                        releaseDto.lastAppliedRevision = refreshed.lastAppliedRevision;
-                        releaseDto.lastAttemptedRevision = refreshed.lastAttemptedRevision;
-                        releaseDto.lastHandledReconcileAt = refreshed.lastHandledReconcileAt;
-                        releaseDto.sourceStatus = refreshed.sourceStatus;
-                        releaseDto.sourceMessage = refreshed.sourceMessage;
-                        releaseDto.sourceName = refreshed.sourceName;
-                        releaseDto.sourceNamespace = refreshed.sourceNamespace;
-                        releaseDto.reconcileState = refreshed.reconcileState;
-                        releaseDto.reconcileMessage = refreshed.reconcileMessage;
-                        releaseDto.observedGeneration = refreshed.observedGeneration;
-                        releaseDto.desiredGeneration = refreshed.desiredGeneration;
-                        releaseDto.staleGeneration = refreshed.staleGeneration;
-                        releaseDto.conditions = refreshed.conditions;
-                        releaseDto.sourceConditions = refreshed.sourceConditions;
-                        releaseDto.lastTransitionTime = refreshed.lastTransitionTime;
-                        if (refreshed.gitPrState != null) {
-                            releaseDto.gitPrState = refreshed.gitPrState;
-                        }
-                        if (refreshed.gitPrUrl != null) {
-                            releaseDto.gitPrUrl = refreshed.gitPrUrl;
-                        }
-                    }
-                } catch (Exception ex) {
-                    LOG.warn("Backend status lookup failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
-                }
-
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
                         var currentProfile = securityProfileService.resolveProfile(metadata.getSecurityProfile());
@@ -214,59 +189,111 @@ public class HelmResource {
                     }
                 }
 
-                String endpointsJson = metadata.getEndpointsJson();
-                if (endpointsJson != null && !endpointsJson.isEmpty()) {
-                    try {
-                        @SuppressWarnings("unchecked")
-                        List<Map<String, Object>> rawList =
-                                objectMapper.readValue(endpointsJson, List.class);
-
-                        if (rawList != null && !rawList.isEmpty()) {
-                            for (Map<String, Object> e : rawList) {
-                                ReleaseEndpointDTO dto = new ReleaseEndpointDTO();
-                                if (e.get("id") != null) dto.setId(String.valueOf(e.get("id")));
-                                if (e.get("label") != null) dto.setLabel(String.valueOf(e.get("label")));
-                                if (e.get("url") != null) dto.setUrl(String.valueOf(e.get("url")));
-                                if (e.get("description") != null) dto.setDescription(String.valueOf(e.get("description")));
-                                if (e.get("kind") != null) dto.setKind(String.valueOf(e.get("kind")));
-                                allEndpoints.add(dto);
-                            }
-                        }
-                    } catch (Exception ex) {
-                        LOG.warn("Failed to parse endpointsJson for {}/{}: {}",
-                                releaseDto.namespace, releaseDto.name, ex.toString());
-                    }
-                }
             } else {
                 releaseDto.managedByUi = false;
                 releaseDto.restartRequired = false;
             }
 
-            allEndpoints.addAll(
-                    releaseMetadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
-            );
+            // Heavy work per release in parallel: status, endpoints, version.
+            workerFutures.add(workerPool.submit(() -> {
+                try {
+                    // Backend-aware status lookup
+                    if (metadata != null) {
+                        HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
+                        if (refreshed != null) {
+                            if (refreshed.status != null) releaseDto.status = refreshed.status;
+                            if (refreshed.message != null) releaseDto.message = refreshed.message;
+                            releaseDto.lastAppliedRevision = refreshed.lastAppliedRevision;
+                            releaseDto.lastAttemptedRevision = refreshed.lastAttemptedRevision;
+                            releaseDto.lastHandledReconcileAt = refreshed.lastHandledReconcileAt;
+                            releaseDto.sourceStatus = refreshed.sourceStatus;
+                            releaseDto.sourceMessage = refreshed.sourceMessage;
+                            releaseDto.sourceName = refreshed.sourceName;
+                            releaseDto.sourceNamespace = refreshed.sourceNamespace;
+                            releaseDto.reconcileState = refreshed.reconcileState;
+                            releaseDto.reconcileMessage = refreshed.reconcileMessage;
+                            releaseDto.observedGeneration = refreshed.observedGeneration;
+                            releaseDto.desiredGeneration = refreshed.desiredGeneration;
+                            releaseDto.staleGeneration = refreshed.staleGeneration;
+                            releaseDto.conditions = refreshed.conditions;
+                            releaseDto.sourceConditions = refreshed.sourceConditions;
+                            releaseDto.lastTransitionTime = refreshed.lastTransitionTime;
+                            if (refreshed.gitPrState != null) {
+                                releaseDto.gitPrState = refreshed.gitPrState;
+                            }
+                            if (refreshed.gitPrUrl != null) {
+                                releaseDto.gitPrUrl = refreshed.gitPrUrl;
+                            }
+                        }
+                    }
 
-            if (!allEndpoints.isEmpty()) {
-                releaseDto.endpoints = allEndpoints;
-            }
+                    // Endpoints: combine stored endpointsJson and live discovery
+                    List<ReleaseEndpointDTO> endpointsCombined = new ArrayList<>();
+                    if (metadata != null && metadata.getEndpointsJson() != null && !metadata.getEndpointsJson().isEmpty()) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> rawList =
+                                    objectMapper.readValue(metadata.getEndpointsJson(), List.class);
+                            if (rawList != null) {
+                                for (Map<String, Object> e : rawList) {
+                                    ReleaseEndpointDTO dto = new ReleaseEndpointDTO();
+                                    if (e.get("id") != null) dto.setId(String.valueOf(e.get("id")));
+                                    if (e.get("label") != null) dto.setLabel(String.valueOf(e.get("label")));
+                                    if (e.get("url") != null) dto.setUrl(String.valueOf(e.get("url")));
+                                    if (e.get("description") != null) dto.setDescription(String.valueOf(e.get("description")));
+                                    if (e.get("kind") != null) dto.setKind(String.valueOf(e.get("kind")));
+                                    endpointsCombined.add(dto);
+                                }
+                            }
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to parse endpointsJson for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
+                        }
+                    }
+                    endpointsCombined.addAll(
+                            releaseMetadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
+                    );
+                    if (!endpointsCombined.isEmpty()) {
+                        releaseDto.endpoints = endpointsCombined;
+                    }
 
-            // If version is still missing, attempt to resolve via helm show chart
-            if (releaseDto.version == null || releaseDto.version.isBlank()) {
-                String chartRef = metadata != null && metadata.getChartRef() != null && !metadata.getChartRef().isBlank()
-                        ? metadata.getChartRef()
-                        : releaseDto.chart;
-                String cacheKey = chartRef + "::" + (metadata != null ? metadata.getVersion() : "");
-                String resolved = versionCache.get(cacheKey);
-                if (resolved == null) {
-                    resolved = helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null);
-                    versionCache.put(cacheKey, resolved == null ? "" : resolved);
+                    // If version is still missing, attempt to resolve via helm show chart
+                    if (releaseDto.version == null || releaseDto.version.isBlank()) {
+                        String chartRef = metadata != null && metadata.getChartRef() != null && !metadata.getChartRef().isBlank()
+                                ? metadata.getChartRef()
+                                : releaseDto.chart;
+                        String cacheKey = chartRef + "::" + (metadata != null ? metadata.getVersion() : "");
+                        String resolved = versionCache.get(cacheKey);
+                        if (resolved == null) {
+                            resolved = helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null);
+                            versionCache.put(cacheKey, resolved == null ? "" : resolved);
+                        }
+                        if (resolved != null && !resolved.isBlank()) {
+                            releaseDto.version = resolved;
+                        }
+                    }
+                } catch (Exception ex) {
+                    LOG.warn("Async refresh failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
                 }
-                if (resolved != null && !resolved.isBlank()) {
-                    releaseDto.version = resolved;
-                }
-            }
+                return null;
+            }));
 
             releaseList.add(releaseDto);
+        }
+
+        // Wait for parallel status refreshes to complete before responding.
+        try {
+            for (Future<?> future : workerFutures) {
+                future.get();
+            }
+        } catch (Exception ex) {
+            LOG.warn("One or more status refresh tasks failed: {}", ex.toString());
+        } finally {
+            workerPool.shutdown();
+            try {
+                workerPool.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         return new HelmReleasesResponse(releaseList, total);
