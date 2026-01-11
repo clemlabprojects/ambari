@@ -1445,8 +1445,8 @@ class JDKRelease:
   desc = ""
   url = ""
   dest_file = ""
-  jcpol_url = "http://public-repo-1.hortonworks.com/ARTIFACTS/UnlimitedJCEPolicyJDK7.zip"
-  dest_jcpol_file = ""
+  jcpol_url = None
+  dest_jcpol_file = None
   inst_dir = ""
 
   def __init__(self, i_name, i_desc, i_url, i_dest_file, i_jcpol_url, i_dest_jcpol_file, i_inst_dir, i_reg_exp):
@@ -1468,13 +1468,14 @@ class JDKRelease:
     else:
         self.dest_file = i_dest_file
 
-    if not (i_jcpol_url is None or i_jcpol_url == ""):
+    self.jcpol_url = None
+    self.dest_jcpol_file = None
+    if i_jcpol_url:
         self.jcpol_url = i_jcpol_url
-
-    if i_dest_jcpol_file is None or i_dest_jcpol_file == "":
-        self.dest_jcpol_file = "jcpol-" + i_name + ".zip"
-    else:
-        self.dest_jcpol_file = i_dest_jcpol_file
+        if i_dest_jcpol_file:
+            self.dest_jcpol_file = i_dest_jcpol_file
+        else:
+            self.dest_jcpol_file = "jcpol-" + i_name + ".zip"
 
     if i_inst_dir is None or i_inst_dir == "":
         self.inst_dir = os.path.join(configDefaults.JDK_INSTALL_DIR, i_desc)

@@ -20,6 +20,7 @@ limitations under the License.
 
 import optparse
 import os
+import platform
 import re
 import shutil
 import sys
@@ -410,6 +411,89 @@ class JDKSetup(object):
 
     self.jdk_index = 0
 
+  def _configureAmbariJdk(self, args, properties):
+    ambariJavaHome = properties.get_property(AMBARI_JAVA_HOME_PROPERTY)
+    if ambariJavaHome and not validate_jdk(ambariJavaHome):
+      print_warning_msg("Configured AMBARI_JAVA_HOME {0} is invalid.".format(ambariJavaHome))
+      ambariJavaHome = ""
+    if ambariJavaHome and not self._isAmbariJava17(ambariJavaHome):
+      print_warning_msg("Configured AMBARI_JAVA_HOME {0} is not JDK 17.".format(ambariJavaHome))
+      ambariJavaHome = ""
+
+    needsConfigure = not ambariJavaHome
+    if needsConfigure and get_silent() and not args.ambari_java_home:
+      print_error_msg("Path to AMBARI_JAVA_HOME should be specified via --ambari-java-home option.")
+      sys.exit(1)
+
+    if not needsConfigure and not args.ambari_java_home:
+      prompt = "Ambari Server JDK is currently set to {0}. Change it [y/n] (n)? ".format(ambariJavaHome)
+      changeAmbariJdk = get_YN_input(prompt, False)
+      if not changeAmbariJdk:
+        return
+
+    print("Configuring JDK for Ambari Server (ambari.java.home)...")
+    ambariJdkSetup = JDKSetup()
+    previousForceSetup = getattr(args, "ambariForceSetup", False)
+    args.ambariForceSetup = True
+    try:
+      ambariJdkSetup.download_and_install_jdk(args, properties, True)
+      if ambariJdkSetup.jdk_index != ambariJdkSetup.custom_jdk_number:
+        ambariJdkSetup.download_and_unpack_jce_policy(properties, True)
+    finally:
+      args.ambariForceSetup = previousForceSetup
+
+  def _getSystemArch(self):
+    arch = platform.machine().lower()
+    if arch in ("x86_64", "amd64"):
+      return "x64"
+    if arch in ("aarch64", "arm64"):
+      return "aarch64"
+    return arch
+
+  def _getJavaMajorVersion(self, javaHome):
+    try:
+      command = JDK_VERSION_CHECK_CMD.format(os.path.join(javaHome, 'bin', self.JAVA_BIN))
+      process = subprocess.Popen(command,
+                                 stdout=subprocess.PIPE,
+                                 stdin=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,
+                                 shell=True,
+                                 universal_newlines=True
+                                 )
+      (out, err) = process.communicate()
+      if process.returncode != 0:
+        err = "Checking JDK version command returned with exit code %s" % process.returncode
+        raise FatalException(process.returncode, err)
+      # the output can be 1.8.x or 17.x.x
+      if re.match(r'^1\.8\.\d+(_\d+)?$', out):
+        actualJdkVersion = 8
+      elif re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
+        actualJdkVersion = 11
+      elif re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
+        actualJdkVersion = 17
+      else:
+        err = 'Error during parsing of JDK version {0}'.format(out)
+        raise FatalException(process.returncode, err)
+      return actualJdkVersion
+    except FatalException:
+      raise
+    except Exception as e:
+      err = 'Running java version check command failed: {0}.'.format(e)
+      raise FatalException(1, err)
+
+  def _isAmbariJava17(self, javaHome):
+    try:
+      return self._getJavaMajorVersion(javaHome) == 17
+    except FatalException as e:
+      print_warning_msg("Failed to verify JDK version for AMBARI_JAVA_HOME {0}: {1}".format(javaHome, e))
+      return False
+
+  def _enforceAmbariJava17(self, javaHome):
+    javaVersion = self._getJavaMajorVersion(javaHome)
+    if javaVersion != 17:
+      err = "Ambari Server requires JDK 17. Detected JDK {0} at {1}.".format(javaVersion, javaHome)
+      raise FatalException(1, err)
+
   #
   # Downloads and installs the JDK and the JCE policy archive
   #
@@ -418,22 +502,28 @@ class JDKSetup(object):
     jcePolicyWarn = "JCE Policy files are required for configuring Kerberos security. If you plan to use Kerberos," \
                     "please make sure JCE Unlimited Strength Jurisdiction Policy Files are valid on all hosts."
 
-    if args.ambari_java_home:
-      print('start setting AMBARI_JAVA_HOME for Ambari...')
+    if not ambariOnly:
+      self._configureAmbariJdk(args, properties)
+
+    if ambariOnly and args.ambari_java_home:
+      print('Configuring AMBARI_JAVA_HOME for Ambari Server...')
       if not validate_jdk(args.ambari_java_home):
         err = "Path to Ambari java home " + args.ambari_java_home + " or java binary file does not exist"
         raise FatalException(1, err)
+      self._enforceAmbariJava17(args.ambari_java_home)
 
-      print_warning_msg("AMBARI_JAVA_HOME " + args.ambari_java_home + " must be valid on ALL hosts")
+      print_warning_msg("JDK must be installed on all Ambari Server hosts and AMBARI_JAVA_HOME must be valid: {0}".format(args.ambari_java_home))
       print_warning_msg(jcePolicyWarn)
 
       properties.process_pair(AMBARI_JAVA_HOME_PROPERTY, args.ambari_java_home)
-      properties.removeOldProp(JDK_NAME_PROPERTY)
-      properties.removeOldProp(JCE_NAME_PROPERTY)
-      print('Setting AMBARI_JAVA_HOME for Ambari finished')
+      self._ensure_java_home_env_var_is_set(args.ambari_java_home)
+      print('Setting AMBARI_JAVA_HOME for Ambari Server finished')
+      return
 
+    if not ambariOnly:
+      print("Configuring JDK for stack services (java.home/stack.java.home)...")
 
-    if args.java_home:
+    if not ambariOnly and args.java_home:
       #java_home was specified among the command-line arguments. Use it as custom JDK location.
       if not validate_jdk(args.java_home):
         err = "Path to java home " + args.java_home + " or java binary file does not exists"
@@ -465,43 +555,67 @@ class JDKSetup(object):
 
       return
 
-    java_home_var = get_JAVA_HOME()
-    if OS_FAMILY == OSConst.WINSRV_FAMILY:
-      progress_func = None
+    if ambariOnly:
+      javaHomeVar = properties.get_property(AMBARI_JAVA_HOME_PROPERTY)
     else:
-      progress_func = download_progress
+      javaHomeVar = properties.get_property(JAVA_HOME_PROPERTY)
+    if javaHomeVar and not validate_jdk(javaHomeVar):
+      javaHomeVar = None
+    if ambariOnly and getattr(args, "ambariForceSetup", False):
+      javaHomeVar = None
+    if OS_FAMILY == OSConst.WINSRV_FAMILY:
+      progressFunc = None
+    else:
+      progressFunc = download_progress
 
-    if java_home_var:
-      message = "Do you want to change Oracle JDK [y/n] (n)? "
+    if javaHomeVar:
+      message = "Do you want to change the JDK for stack services [y/n] (n)? "
       if ambariOnly:
-        message = "Do you want to change Oracle JDK for Ambari Server [y/n] (n)? "
-      change_jdk = get_YN_input(message, False)
-      if not change_jdk:
-        self._ensure_java_home_env_var_is_set(java_home_var)
+        message = "Do you want to change the JDK for Ambari Server [y/n] (n)? "
+      changeJdk = get_YN_input(message, False)
+      if not changeJdk:
+        self._ensure_java_home_env_var_is_set(javaHomeVar)
         self.jdk_index = self.custom_jdk_number
         return
 
     #Continue with the normal setup, taking the first listed JDK version as the default option
-    jdk_num = str(self.jdk_index + 1)
-    (self.jdks, jdk_choice_prompt, jdk_valid_choices, self.custom_jdk_number) = self._populate_jdk_configs(properties, jdk_num, ambariOnly)
+    jdkNum = str(self.jdk_index + 1)
+    (self.jdks, jdkChoicePrompt, jdkValidChoices, self.custom_jdk_number) = self._populate_jdk_configs(properties, jdkNum, ambariOnly)
 
-    jdk_num = get_validated_string_input(
-      jdk_choice_prompt,
-      jdk_num,
-      jdk_valid_choices,
+    jdkNum = get_validated_string_input(
+      jdkChoicePrompt,
+      jdkNum,
+      jdkValidChoices,
       "Invalid number.",
       False
     )
 
-    self.jdk_index = int(jdk_num) - 1
+    self.jdk_index = int(jdkNum) - 1
 
     if self.jdk_index == self.custom_jdk_number:
-      print_warning_msg("JDK must be installed on all hosts and JAVA_HOME must be valid on all hosts.")
+      if not ambariOnly:
+        print_warning_msg("JDK must be installed on all hosts and JAVA_HOME must be valid on all hosts.")
       print_warning_msg(jcePolicyWarn)
 
       if get_silent():
-        print_error_msg("Path to JAVA_HOME should be specified via -j option.")
+        if ambariOnly:
+          print_error_msg("Path to AMBARI_JAVA_HOME should be specified via --ambari-java-home option.")
+        else:
+          print_error_msg("Path to JAVA_HOME should be specified via -j option.")
         sys.exit(1)
+
+      if ambariOnly:
+        args.ambari_java_home = get_validated_string_input("Path to AMBARI_JAVA_HOME: ", None, None, None, False, False)
+        if not os.path.exists(args.ambari_java_home) or not os.path.isfile(os.path.join(args.ambari_java_home, "bin", self.JAVA_BIN)):
+          err = "Ambari java home path or java binary file is unavailable. Please put correct path to Ambari java home."
+          raise FatalException(1, err)
+        self._enforceAmbariJava17(args.ambari_java_home)
+        print("Validating JDK on Ambari Server...done.")
+
+        print_warning_msg("JDK must be installed on all Ambari Server hosts and AMBARI_JAVA_HOME must be valid: {0}".format(args.ambari_java_home))
+        properties.process_pair(AMBARI_JAVA_HOME_PROPERTY, args.ambari_java_home)
+        self._ensure_java_home_env_var_is_set(args.ambari_java_home)
+        return
 
       args.java_home = get_validated_string_input("Path to JAVA_HOME: ", None, None, None, False, False)
       if not os.path.exists(args.java_home) or not os.path.isfile(os.path.join(args.java_home, "bin", self.JAVA_BIN)):
@@ -558,7 +672,7 @@ class JDKSetup(object):
       jdk_url = jdk_cfg.url
 
       print('Downloading JDK from ' + jdk_url + ' to ' + dest_file)
-      self._download_jdk(jdk_url, dest_file, progress_func)
+      self._download_jdk(jdk_url, dest_file, progressFunc)
 
     try:
       (retcode, out, java_home_dir) = self._install_jdk(dest_file, jdk_cfg)
@@ -576,7 +690,7 @@ class JDKSetup(object):
           jdk_url = jdk_cfg.url
 
           print('Re-downloading JDK from ' + jdk_url + ' to ' + dest_file)
-          self._download_jdk(jdk_url, dest_file, progress_func)
+          self._download_jdk(jdk_url, dest_file, progressFunc)
           print('Successfully re-downloaded JDK distribution to ' + dest_file)
 
           try:
@@ -592,9 +706,11 @@ class JDKSetup(object):
                                                            "please re-run Ambari Server setup"
         raise FatalException(1, err)
 
-    properties.process_pair(JDK_NAME_PROPERTY, jdk_cfg.dest_file)
-    properties.process_pair(JAVA_HOME_PROPERTY, java_home_dir)
-    if not ambariOnly:
+    if ambariOnly:
+      properties.process_pair(AMBARI_JAVA_HOME_PROPERTY, java_home_dir)
+    else:
+      properties.process_pair(JDK_NAME_PROPERTY, jdk_cfg.dest_file)
+      properties.process_pair(JAVA_HOME_PROPERTY, java_home_dir)
       properties.process_pair(STACK_JDK_NAME_PROPERTY, jdk_cfg.dest_file)
       properties.process_pair(STACK_JAVA_HOME_PROPERTY, java_home_dir)
 
@@ -607,6 +723,12 @@ class JDKSetup(object):
     resources_dir = get_resources_location(properties)
 
     jdk_cfg = self.jdks[self.jdk_index]
+    if not jdk_cfg.jcpol_url:
+      print_info_msg("Skipping JCE policy download for {0}".format(jdk_cfg.desc))
+      if not ambariOnly:
+        properties.removeProp(JCE_NAME_PROPERTY)
+        properties.removeProp(STACK_JCE_NAME_PROPERTY)
+      return
 
     try:
       JDKSetup._download_jce_policy(jdk_cfg.jcpol_url, jdk_cfg.dest_jcpol_file, resources_dir, properties, ambariOnly)
@@ -619,7 +741,7 @@ class JDKSetup(object):
 
     print('Installing JCE policy...')
     try:
-      jdk_path = properties.get_property(JAVA_HOME_PROPERTY)
+      jdk_path = properties.get_property(AMBARI_JAVA_HOME_PROPERTY if ambariOnly else JAVA_HOME_PROPERTY)
       JDKSetup.unpack_jce_policy(jdk_path, resources_dir, jdk_cfg.dest_jcpol_file)
       self.adjust_jce_permissions(jdk_path)
     except FatalException as e:
@@ -636,41 +758,52 @@ class JDKSetup(object):
     jce_zip_path = os.path.abspath(os.path.join(str(resources_dir), jce_packed_file))
     expand_jce_zip_file(jce_zip_path, jdk_security_path)
 
-  def _populate_jdk_configs(self, properties, jdk_num, ambariOnly = False):
-    def remove_jdk_condition(name):
+  def _populate_jdk_configs(self, properties, jdkNum, ambariOnly = False):
+    def removeJdkCondition(name):
       """
-      Removes jdk1.7 from the default choices.
-      This method can be removed if JDK 7 support (for stack services) will be dropped.
+      Removes JDK 7/8 from the default choices for Ambari Server.
       """
-      if name != "jdk1.7":
-        return True
-      else:
-       print("JDK 7 detected. Removed from choices.")
-       return False
+      if re.match(r"^jdk1\.(7|8)(\.|$)", name):
+        print("JDK {0} detected. Removed from choices.".format(name))
+        return False
+      return True
+
+    def matchesArch(name, hostArch):
+      if name.endswith("-x64"):
+        return hostArch == "x64"
+      if name.endswith("-aarch64"):
+        return hostArch == "aarch64"
+      return True
+
+    hostArch = self._getSystemArch()
     if properties.__contains__(JDK_RELEASES):
-      jdk_names = properties[JDK_RELEASES].split(',')
-      jdk_names = [_f for _f in jdk_names if _f]
+      jdkNames = properties[JDK_RELEASES].split(',')
+      jdkNames = [name for name in jdkNames if name]
       if ambariOnly:
-        jdk_names = [x for x in jdk_names if remove_jdk_condition(x)]
+        jdkNames = [name for name in jdkNames if removeJdkCondition(name)]
+      jdkNames = [name for name in jdkNames if matchesArch(name, hostArch)]
       jdks = []
-      for jdk_name in jdk_names:
-        jdkR = JDKRelease.from_properties(properties, jdk_name)
-        jdks.append(jdkR)
+      for jdkName in jdkNames:
+        jdkRelease = JDKRelease.from_properties(properties, jdkName)
+        jdks.append(jdkRelease)
     else:
       jdks = self.JDK_DEFAULT_CONFIGS
+      if ambariOnly:
+        jdks = [jdk for jdk in jdks if removeJdkCondition(jdk.name)]
+      jdks = [jdk for jdk in jdks if matchesArch(jdk.name, hostArch)]
 
-    n_config = 1
-    jdk_choice_prompt = ''
-    jdk_choices = ''
+    configIndex = 1
+    jdkChoicePrompt = ''
+    jdkChoices = ''
     for jdk in jdks:
-      jdk_choice_prompt += self.JDK_PROMPT.format(n_config, jdk.desc)
-      jdk_choices += str(n_config)
-      n_config += 1
+      jdkChoicePrompt += self.JDK_PROMPT.format(configIndex, jdk.desc)
+      jdkChoices += str(configIndex)
+      configIndex += 1
 
-    jdk_choice_prompt += self.JDK_CUSTOM_CHOICE_PROMPT.format(n_config, jdk_num)
-    jdk_valid_choices = self.JDK_VALID_CHOICES.format(jdk_choices, n_config)
+    jdkChoicePrompt += self.JDK_CUSTOM_CHOICE_PROMPT.format(configIndex, jdkNum)
+    jdkValidChoices = self.JDK_VALID_CHOICES.format(jdkChoices, configIndex)
 
-    return jdks, jdk_choice_prompt, jdk_valid_choices, n_config - 1
+    return jdks, jdkChoicePrompt, jdkValidChoices, configIndex - 1
 
   def _download_jdk(self, jdk_url, dest_file, progress_func = None):
     jdk_download_fail_msg = " Failed to download JDK: {0}. Please check that the " \
@@ -710,8 +843,8 @@ class JDKSetup(object):
     else:
       print("JCE Policy archive already exists, using " + dest_file)
 
-    properties.process_pair(JCE_NAME_PROPERTY, dest_jcpol_file)
     if not ambariOnly:
+      properties.process_pair(JCE_NAME_PROPERTY, dest_jcpol_file)
       properties.process_pair(STACK_JCE_NAME_PROPERTY, dest_jcpol_file)
 
   # Base implementation, overriden in the subclasses
@@ -1203,7 +1336,7 @@ def setup(options):
   if _check_jdbc_options(options):
     proceedJDBCProperties(options)
 
-  print('Checking JDK...')
+  print('Checking JDKs...')
   try:
     download_and_install_jdk(options)
   except FatalException as e:

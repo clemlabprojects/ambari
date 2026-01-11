@@ -6059,7 +6059,7 @@ class TestAmbariServer(TestCase):
                   "java.releases=jdk1.7,jdk1.6\n"]
 
     NEW_PROPERTY = 'some_new_property=some_value\n'
-    JAVA_RELEASES_NEW_PROPERTY = 'java.releases=jdk1.8,jdk1.7\n'
+    JAVA_RELEASES_NEW_PROPERTY = 'java.releases=jdk1.8,openjdk17-x64,openjdk17-aarch64\n'
     CHANGED_VALUE_PROPERTY = 'server.jdbc.database_name=should_not_overwrite_value\n'
 
     get_conf_dir_mock.return_value = '/etc/ambari-server/conf'
@@ -6101,7 +6101,7 @@ class TestAmbariServer(TestCase):
           line in ambari_properties_content):
           self.fail()
       elif line == "java.releases=jdk1.7,jdk1.6\n":
-        if not "java.releases=jdk1.8,jdk1.7\n" in ambari_properties_content:
+        if not "java.releases=jdk1.8,openjdk17-x64,openjdk17-aarch64\n" in ambari_properties_content:
           self.fail()
       else:
         if not line in ambari_properties_content:
@@ -8860,6 +8860,5 @@ class TestAmbariServer(TestCase):
     options.jaas_principal = None
     options.jaas_keytab = None
     return options
-
 
 
