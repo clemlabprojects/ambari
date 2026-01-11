@@ -19,32 +19,32 @@
   <latest>https://archive.clemlab.com/ODP/odp_urlinfo.json</latest>
   <os family="redhat8">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos8/odp-release/1.3.1.0-148/rpms/</baseurl>
-      <repoid>ODP-1.3.1.0-148</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos8/odp-release/1.3.1.0-242/rpms/</baseurl>
+      <repoid>ODP-1.3.1.0-242</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="redhat9">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos9/odp-release/1.3.1.0-148/rpms/</baseurl>
-      <repoid>ODP-1.3.1.0-148</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/centos9/odp-release/1.3.1.0-242/rpms/</baseurl>
+      <repoid>ODP-1.3.1.0-242</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="ubuntu22">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/1.3.1.0-148/dist/ODP</baseurl>
-      <repoid>ODP-1.3.1.0-148</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/1.3.1.0-242/dist/ODP</baseurl>
+      <repoid>ODP-1.3.1.0-242</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
   </os>
   <os family="ubuntu24">
     <repo>
-      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu24/odp-release/1.3.1.0-148/dist/ODP</baseurl>
-      <repoid>ODP-1.3.1.0-148</repoid>
+      <baseurl>https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu24/odp-release/1.3.1.0-242/dist/ODP</baseurl>
+      <repoid>ODP-1.3.1.0-242</repoid>
       <reponame>ODP</reponame>
       <unique>true</unique>
     </repo>
