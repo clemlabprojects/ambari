@@ -774,6 +774,9 @@ class JDKSetup(object):
       if name.endswith("-aarch64"):
         return hostArch == "aarch64"
       return True
+    
+    def matchesStackJdk(name):
+      return re.match(r"^jdk1\.8(\.|$)", name) is not None
 
     hostArch = self._getSystemArch()
     if properties.__contains__(JDK_RELEASES):
@@ -781,6 +784,8 @@ class JDKSetup(object):
       jdkNames = [name for name in jdkNames if name]
       if ambariOnly:
         jdkNames = [name for name in jdkNames if removeJdkCondition(name)]
+      else:
+        jdkNames = [name for name in jdkNames if matchesStackJdk(name)]
       jdkNames = [name for name in jdkNames if matchesArch(name, hostArch)]
       jdks = []
       for jdkName in jdkNames:
@@ -790,6 +795,8 @@ class JDKSetup(object):
       jdks = self.JDK_DEFAULT_CONFIGS
       if ambariOnly:
         jdks = [jdk for jdk in jdks if removeJdkCondition(jdk.name)]
+      else:
+        jdks = [jdk for jdk in jdks if matchesStackJdk(jdk.name)]
       jdks = [jdk for jdk in jdks if matchesArch(jdk.name, hostArch)]
 
     configIndex = 1
