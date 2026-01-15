@@ -20,8 +20,13 @@ import org.apache.ambari.view.k8s.service.CommandService;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.UriBuilder;
+import javax.ws.rs.core.UriInfo;
+import java.net.URI;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -333,6 +338,84 @@ public class HelmResource {
         }
     }
 
+    /**
+     * Re-run Kerberos keytab creation steps for a deployed release without re-installing the chart.
+     * This schedules an async command which can be tracked in the background operations list.
+     *
+     * @param namespace release namespace
+     * @param releaseName release name
+     * @param requestHeaders caller headers used for Ambari auth
+     * @param uriInfo request URI context for building command links
+     * @return HTTP 202 with command id and href
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/keytabs")
+    public Response regenerateReleaseKeytabs(@PathParam("namespace") String namespace,
+                                             @PathParam("release") String releaseName,
+                                             @Context HttpHeaders requestHeaders,
+                                             @Context UriInfo uriInfo) {
+        try {
+            LOG.info("Submitting keytab regeneration for release {}/{}", namespace, releaseName);
+            String commandId = commandService.submitReleaseKeytabRegeneration(
+                    namespace,
+                    releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Keytab regeneration failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Re-run Ranger repository creation for a deployed release without a Helm upgrade.
+     * The backend reuses the same service.json-defined Ranger specs as install time.
+     *
+     * @param namespace release namespace
+     * @param releaseName release name
+     * @param requestHeaders caller headers used for Ambari auth
+     * @param uriInfo request URI context for building command links
+     * @return HTTP 202 with command id and href
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/ranger")
+    public Response reapplyReleaseRangerRepository(@PathParam("namespace") String namespace,
+                                                   @PathParam("release") String releaseName,
+                                                   @Context HttpHeaders requestHeaders,
+                                                   @Context UriInfo uriInfo) {
+        try {
+            LOG.info("Submitting Ranger repository reapply for release {}/{}", namespace, releaseName);
+            String commandId = commandService.submitReleaseRangerRepositoryReapply(
+                    namespace,
+                    releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Ranger repository reapply failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
     @POST
     @Path("/deploy")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -445,6 +528,29 @@ public class HelmResource {
             this.timestampMs = ts;
             this.releases = releases;
         }
+    }
+
+    /**
+     * Build the commands URL for this view instance to expose command status endpoints.
+     *
+     * @param uriInfo JAX-RS request context for base URI
+     * @return fully qualified commands URL for this view instance
+     */
+    private String getCommandsUrl(UriInfo uriInfo) {
+        String base = UriBuilder.fromUri(uriInfo.getBaseUri())
+                .path("views")
+                .path(viewContext.getViewName())
+                .path("versions")
+                .path(viewContext.getViewDefinition().getVersion())
+                .path("instances")
+                .path(viewContext.getInstanceName())
+                .build()
+                .toString();
+
+        if (!base.endsWith("/")) {
+            base = base + "/";
+        }
+        return base + "resources/api/commands";
     }
 
     @DELETE

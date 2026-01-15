@@ -17,12 +17,14 @@ import org.apache.ambari.view.k8s.model.DeploymentMode;
 import org.apache.ambari.view.k8s.model.RangerTrinoConfigDefaults;
 import org.apache.ambari.view.k8s.model.stack.StackConfig;
 import org.apache.ambari.view.k8s.model.stack.StackProperty;
+import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
+import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import com.marcnuri.helm.Release;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
@@ -453,6 +455,254 @@ public class CommandService {
         LOG.info("Added Kerberos keytab steps for entry {}: issueId={}, createId={}", kerberosEntryKey, issueCommandId, createSecretCommandId);
     }
 
+    /**
+     * Build a Kerberos spec map (key -> entry map) from a service definition list.
+     * This normalizes the service.json list into the payload shape expected by normalizeKerberosEntries().
+     *
+     * @param kerberosEntries list of Kerberos entry maps from the service definition
+     * @return normalized map keyed by entry key (never null)
+     */
+    private Map<String, Object> buildKerberosSpecMapFromServiceDefinition(List<Map<String, Object>> kerberosEntries) {
+        if (kerberosEntries == null || kerberosEntries.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> kerberosSpecMap = new LinkedHashMap<>();
+        int kerberosEntryIndex = 0;
+        // Iterate through each Kerberos entry and preserve its logical key for traceability.
+        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+            kerberosEntryIndex++;
+            if (kerberosEntry == null || kerberosEntry.isEmpty()) {
+                LOG.warn("Skipping empty Kerberos entry at index {}", kerberosEntryIndex);
+                continue;
+            }
+            String kerberosEntryKey = resolveStringValue(kerberosEntry.get("key"), null);
+            if (kerberosEntryKey == null || kerberosEntryKey.isBlank()) {
+                kerberosEntryKey = "entry-" + kerberosEntryIndex;
+                LOG.warn("Kerberos entry missing key; using fallback key {}", kerberosEntryKey);
+            }
+            kerberosSpecMap.put(kerberosEntryKey, new LinkedHashMap<>(kerberosEntry));
+        }
+        return kerberosSpecMap;
+    }
+
+    /**
+     * Resolve the Ranger repository name for the current release.
+     * Uses the repository name property defined in the Ranger plugin settings.
+     *
+     * @param rangerPluginSettingsSpec Ranger plugin settings map
+     * @param effectiveValues merged Helm values map for the release
+     * @param request current deploy request for contextual fallbacks
+     * @return repository name (never blank; falls back to release-namespace)
+     */
+    private String resolveRangerRepositoryName(Map<String, Object> rangerPluginSettingsSpec,
+                                               Map<String, Object> effectiveValues,
+                                               HelmDeployRequest request) {
+        String repositoryNameProperty = resolveStringValue(
+                rangerPluginSettingsSpec != null ? rangerPluginSettingsSpec.get("repository_name_property") : null,
+                "ranger.serviceName"
+        );
+        String resolvedRepositoryName = null;
+        if (effectiveValues != null && repositoryNameProperty != null && !repositoryNameProperty.isBlank()) {
+            Object repositoryNameRawValue = ConfigResolutionService.getByDottedPath(effectiveValues, repositoryNameProperty);
+            if (repositoryNameRawValue != null) {
+                resolvedRepositoryName = repositoryNameRawValue.toString();
+            }
+        }
+        if (resolvedRepositoryName == null || resolvedRepositoryName.isBlank()) {
+            resolvedRepositoryName = request.getReleaseName() + "-" + request.getNamespace();
+            LOG.warn("Ranger repository name not found at helm path '{}'; using fallback '{}'",
+                    repositoryNameProperty, resolvedRepositoryName);
+        }
+        return resolvedRepositoryName;
+    }
+
+    /**
+     * Resolve the Ranger service type for repository creation.
+     *
+     * @param rangerPluginSettingsSpec Ranger plugin settings map
+     * @param request current deploy request for contextual fallbacks
+     * @return resolved service type (never blank)
+     */
+    private String resolveRangerServiceType(Map<String, Object> rangerPluginSettingsSpec,
+                                            HelmDeployRequest request) {
+        String serviceTypeValue = resolveStringValue(
+                rangerPluginSettingsSpec != null ? rangerPluginSettingsSpec.get("service_type") : null,
+                null
+        );
+        if (serviceTypeValue == null || serviceTypeValue.isBlank()) {
+            String serviceKeyValue = request.getServiceKey();
+            serviceTypeValue = serviceKeyValue != null ? serviceKeyValue.toLowerCase(Locale.ROOT) : "unknown";
+            LOG.warn("Ranger service_type not defined in service spec; defaulting to {}", serviceTypeValue);
+        }
+        return serviceTypeValue;
+    }
+
+    /**
+     * Extract a Ranger plugin user name from the service ranger spec, if present.
+     *
+     * @param rangerSpec ranger spec map keyed by logical name
+     * @return plugin user name or null if not defined
+     */
+    private String extractRangerPluginUserName(Map<String, Map<String, Object>> rangerSpec) {
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            return null;
+        }
+        // Search all ranger entries for a plugin username hint.
+        for (Map.Entry<String, Map<String, Object>> rangerSpecEntry : rangerSpec.entrySet()) {
+            Map<String, Object> rangerEntry = rangerSpecEntry.getValue();
+            if (rangerEntry == null) {
+                continue;
+            }
+            String pluginUserNameValue = resolveStringValue(rangerEntry.get("plugin_username"), null);
+            if (pluginUserNameValue == null || pluginUserNameValue.isBlank()) {
+                pluginUserNameValue = resolveStringValue(rangerEntry.get("pluginUserName"), null);
+            }
+            if (pluginUserNameValue != null && !pluginUserNameValue.isBlank()) {
+                return pluginUserNameValue;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Extract a Ranger plugin password from the service ranger spec, if present.
+     * This is optional because many deployments rely on pre-configured credentials.
+     *
+     * @param rangerSpec ranger spec map keyed by logical name
+     * @return plugin password or null if not defined
+     */
+    private String extractRangerPluginUserPassword(Map<String, Map<String, Object>> rangerSpec) {
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            return null;
+        }
+        // Search all ranger entries for a plugin password hint.
+        for (Map.Entry<String, Map<String, Object>> rangerSpecEntry : rangerSpec.entrySet()) {
+            Map<String, Object> rangerEntry = rangerSpecEntry.getValue();
+            if (rangerEntry == null) {
+                continue;
+            }
+            String pluginUserPasswordValue = resolveStringValue(rangerEntry.get("plugin_password"), null);
+            if (pluginUserPasswordValue == null || pluginUserPasswordValue.isBlank()) {
+                pluginUserPasswordValue = resolveStringValue(rangerEntry.get("pluginUserPassword"), null);
+            }
+            if (pluginUserPasswordValue != null && !pluginUserPasswordValue.isBlank()) {
+                return pluginUserPasswordValue;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Determine whether a Ranger repository is configured for Kerberos-based authentication.
+     * We treat the presence of Kerberos principal/keytab hints as a signal that plugin user
+     * creation should be skipped (Ambari requires a password for that path).
+     *
+     * @param rangerSpec ranger spec map keyed by logical name
+     * @return true when Kerberos hints are present
+     */
+    private boolean isKerberosRangerSpec(Map<String, Map<String, Object>> rangerSpec) {
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            return false;
+        }
+        // Scan each ranger entry for Kerberos-related configuration hints.
+        for (Map.Entry<String, Map<String, Object>> rangerSpecEntry : rangerSpec.entrySet()) {
+            Map<String, Object> rangerSpecEntryMap = rangerSpecEntry.getValue();
+            if (rangerSpecEntryMap == null || rangerSpecEntryMap.isEmpty()) {
+                continue;
+            }
+            String krb5PrincipalServiceValue = resolveStringValue(rangerSpecEntryMap.get("krb5_princ_srv"), null);
+            if (krb5PrincipalServiceValue != null && !krb5PrincipalServiceValue.isBlank()) {
+                return true;
+            }
+            String krb5KeytabPathValue = resolveStringValue(rangerSpecEntryMap.get("krb5_keytab_path"), null);
+            if (krb5KeytabPathValue != null && !krb5KeytabPathValue.isBlank()) {
+                return true;
+            }
+            String kerberosPrincipalValue = resolveStringValue(rangerSpecEntryMap.get("kerberos_principal"), null);
+            if (kerberosPrincipalValue != null && !kerberosPrincipalValue.isBlank()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Plan a Ranger repository creation step for a release. This is used during initial install
+     * and for reapply actions, and it is fully driven by the service.json ranger spec.
+     *
+     * @param rootCommand root command entity
+     * @param childCommands mutable list of child command ids
+     * @param request helm deploy request containing release context
+     * @param params root params map (mutated to include ranger metadata)
+     * @param effectiveValues merged Helm values map for templated Ranger configs
+     * @param ambariActionClient Ambari client used for config resolution
+     * @param cluster Ambari cluster name (for logging/config resolution)
+     */
+    private void planRangerRepositoryCreation(CommandEntity rootCommand,
+                                              List<String> childCommands,
+                                              HelmDeployRequest request,
+                                              Map<String, Object> params,
+                                              Map<String, Object> effectiveValues,
+                                              AmbariActionClient ambariActionClient,
+                                              String cluster) {
+        Map<String, Map<String, Object>> rangerSpec = request.getRanger();
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            LOG.info("No Ranger spec provided for release {}; skipping Ranger repository planning.", request.getReleaseName());
+            return;
+        }
+        // Ranger plugin settings drive repository naming and extra configs.
+        Map<String, Object> rangerPluginSettingsSpec = rangerSpec.get("ranger-plugin-settings");
+        if (rangerPluginSettingsSpec == null || rangerPluginSettingsSpec.isEmpty()) {
+            LOG.warn("Ranger plugin settings missing for release {}; cannot plan repository creation.", request.getReleaseName());
+            return;
+        }
+
+        String resolvedRepositoryName = resolveRangerRepositoryName(rangerPluginSettingsSpec, effectiveValues, request);
+        String resolvedServiceType = resolveRangerServiceType(rangerPluginSettingsSpec, request);
+        String rangerPluginUserName = extractRangerPluginUserName(rangerSpec);
+        String rangerPluginUserPassword = extractRangerPluginUserPassword(rangerSpec);
+
+        // Build extra Ranger service configs from templated specs, if available.
+        Map<String, String> rangerServiceConfigs = Collections.emptyMap();
+        if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+            rangerServiceConfigs = configResolutionService.computeExtraRangerConfigs(
+                    rangerPluginSettingsSpec,
+                    params,
+                    effectiveValues,
+                    ambariActionClient,
+                    cluster
+            );
+        } else {
+            LOG.warn("Ambari client unavailable; skipping Ranger extra config resolution for release {}", request.getReleaseName());
+        }
+
+        // Persist ranger metadata into params for the child command step.
+        params.put("_rangerSpec", rangerSpec);
+        params.put("_rangerRepositoryName", resolvedRepositoryName);
+        params.put("_rangerServiceType", resolvedServiceType);
+        params.put("_rangerPluginUserName", rangerPluginUserName);
+        params.put("_rangerPluginUserPassword", rangerPluginUserPassword);
+        params.put("_rangerServiceConfigs", rangerServiceConfigs);
+
+        // Ensure the helm values contain the repository name if it was missing.
+        String repositoryNameProperty = resolveStringValue(rangerPluginSettingsSpec.get("repository_name_property"), null);
+        if (repositoryNameProperty != null && !repositoryNameProperty.isBlank()) {
+            Object repositoryNameValue = effectiveValues != null
+                    ? ConfigResolutionService.getByDottedPath(effectiveValues, repositoryNameProperty)
+                    : null;
+            if (repositoryNameValue == null || repositoryNameValue.toString().isBlank()) {
+                LOG.info("Injecting Ranger repository name override {} -> {}", repositoryNameProperty, resolvedRepositoryName);
+                this.commandUtils.addOverride(params, repositoryNameProperty, resolvedRepositoryName);
+            }
+        }
+
+        LOG.info("Planning Ranger repository action: repo='{}', serviceType='{}', pluginUser='{}'",
+                resolvedRepositoryName, resolvedServiceType, rangerPluginUserName);
+
+        // Add the Ranger repository creation step to the command plan.
+        this.commandPlanFactory.createRangerPluginRepository(rootCommand, rangerSpec, params, childCommands);
+    }
+
     // -------------------- Public API --------------------
 
     public String submitKeytabRequest(KeytabRequest req,
@@ -577,6 +827,294 @@ public class CommandService {
         // queue
         scheduleNow(id);
         return id;
+    }
+
+    /**
+     * Submit a command to regenerate Kerberos keytabs for a deployed release.
+     * This replays the pre-provisioned keytab creation steps without re-deploying the chart.
+     *
+     * @param namespace release namespace
+     * @param releaseName release name
+     * @param callerHeaders HTTP headers from the caller (for Ambari auth)
+     * @param baseUri base URI for the view (used to reach Ambari API)
+     * @return command id for tracking
+     */
+    public String submitReleaseKeytabRegeneration(String namespace,
+                                                  String releaseName,
+                                                  MultivaluedMap<String, String> callerHeaders,
+                                                  URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+
+        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+
+        String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
+        if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode)) {
+            throw new IllegalStateException("Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode + ").");
+        }
+
+        // Resolve Ambari cluster and initialize client for Kerberos checks.
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName;
+        try {
+            // Resolve Ambari cluster name from the view base URI and caller headers.
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve Ambari cluster name for keytab regeneration on {}/{}: {}",
+                    namespace, releaseName, ex.toString());
+            throw new IllegalStateException("Unable to resolve Ambari cluster name for keytab regeneration.", ex);
+        }
+        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+
+        boolean kerberosClusterEnabled = false;
+        try {
+            String securityEnabledValue = ambariActionClient.getDesiredConfigProperty(clusterName, "cluster-env", "security_enabled");
+            kerberosClusterEnabled = "true".equalsIgnoreCase(securityEnabledValue);
+        } catch (Exception ex) {
+            LOG.warn("Failed to determine Kerberos state for cluster {}: {}", clusterName, ex.toString());
+        }
+        if (!kerberosClusterEnabled) {
+            throw new IllegalStateException("Kerberos is disabled on cluster " + clusterName + "; keytab regeneration skipped.");
+        }
+
+        StackDefinitionService stackDefinitionService = new StackDefinitionService(ctx);
+        StackServiceDef serviceDefinition = stackDefinitionService.getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null || serviceDefinition.kerberos == null || serviceDefinition.kerberos.isEmpty()) {
+            throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey() + " has no Kerberos entries.");
+        }
+
+        // Resolve Kerberos realm from Ambari.
+        String kerberosRealm = null;
+        try {
+            AmbariConfigRef realmRef = CommandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM");
+            if (realmRef != null) {
+                kerberosRealm = ambariActionClient.getDesiredConfigProperty(clusterName, realmRef.type, realmRef.key);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve Kerberos realm for cluster {}: {}", clusterName, ex.toString());
+        }
+        if (kerberosRealm == null || kerberosRealm.isBlank()) {
+            throw new IllegalStateException("Kerberos realm is empty; cannot regenerate keytabs.");
+        }
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.REGENERATE_KEYTABS.name());
+        rootCommand.setTitle("Regenerate keytabs for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("kerberosInjectionMode", kerberosInjectionMode);
+        rootParams.put("_cluster", clusterName);
+        rootParams.put("_baseUri", baseUri.toString());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+
+        List<String> childCommandIds = new ArrayList<>();
+
+        Map<String, Object> kerberosSpecMap = buildKerberosSpecMapFromServiceDefinition(serviceDefinition.kerberos);
+        List<Map<String, Object>> kerberosEntries = normalizeKerberosEntries(kerberosSpecMap);
+        if (kerberosEntries.isEmpty()) {
+            throw new IllegalStateException("No Kerberos entries found for service " + releaseMetadata.getServiceKey());
+        }
+
+        int kerberosEntryIndex = 0;
+        boolean keytabStepsAdded = false;
+        // Create keytab generation steps for each Kerberos entry.
+        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+            kerberosEntryIndex++;
+            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
+                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
+                continue;
+            }
+            String entryKey = resolveStringValue(kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
+            String serviceName = resolveStringValue(kerberosEntry.get("serviceName"), releaseName);
+            String principalTemplate = resolveStringValue(kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
+
+            String principalFqdn = renderKerberosPrincipalTemplate(
+                    principalTemplate,
+                    serviceName,
+                    namespace,
+                    releaseName,
+                    kerberosRealm
+            );
+            if (principalFqdn == null || principalFqdn.isBlank()) {
+                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
+                continue;
+            }
+
+            String secretName = resolveStringValue(kerberosEntry.get("secretName"), releaseName + "-keytab");
+            String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
+
+            LOG.info("Regenerating keytab for entry {}: principal={}, secret={}, keyName={}",
+                    entryKey, principalFqdn, secretName, keyNameInSecret);
+
+            appendPreProvisionedKeytabSteps(
+                    rootCommand,
+                    childCommandIds,
+                    rootParams,
+                    principalFqdn,
+                    namespace,
+                    secretName,
+                    keyNameInSecret,
+                    entryKey
+            );
+            keytabStepsAdded = true;
+        }
+
+        if (!keytabStepsAdded) {
+            throw new IllegalStateException("No keytab steps were scheduled for release " + releaseName);
+        }
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+
+        store(rootStatus);
+        store(rootCommand);
+
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Submit a command to reapply the Ranger repository configuration for a release.
+     * This replays the Ranger repository creation step without a Helm upgrade.
+     *
+     * @param namespace release namespace
+     * @param releaseName release name
+     * @param callerHeaders HTTP headers from the caller (for Ambari auth)
+     * @param baseUri base URI for the view (used to reach Ambari API)
+     * @return command id for tracking
+     */
+    public String submitReleaseRangerRepositoryReapply(String namespace,
+                                                       String releaseName,
+                                                       MultivaluedMap<String, String> callerHeaders,
+                                                       URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+
+        StackDefinitionService stackDefinitionService = new StackDefinitionService(ctx);
+        StackServiceDef serviceDefinition = stackDefinitionService.getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null || serviceDefinition.ranger == null || serviceDefinition.ranger.isEmpty()) {
+            throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey() + " has no Ranger spec.");
+        }
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName;
+        try {
+            // Resolve Ambari cluster name from the view base URI and caller headers.
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve Ambari cluster name for Ranger reapply on {}/{}: {}",
+                    namespace, releaseName, ex.toString());
+            throw new IllegalStateException("Unable to resolve Ambari cluster name for Ranger reapply.", ex);
+        }
+        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+
+        Map<String, Object> releaseValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        Map<String, Object> effectiveValues = releaseValues != null ? releaseValues : Collections.emptyMap();
+
+        // Try to merge chart defaults for a richer templating context.
+        if (releaseMetadata.getChartRef() != null && releaseMetadata.getRepoId() != null) {
+            try {
+                Map<String, Object> defaultValues = helmService.getRepositoryService()
+                        .showValuesAsMap(releaseMetadata.getChartRef(), releaseMetadata.getRepoId(), releaseMetadata.getVersion());
+                effectiveValues = configResolutionService.deepMerge(
+                        defaultValues != null ? defaultValues : Collections.emptyMap(),
+                        effectiveValues
+                );
+            } catch (Exception ex) {
+                LOG.warn("Failed to merge chart defaults for Ranger reapply on {}/{}: {}", namespace, releaseName, ex.toString());
+            }
+        }
+
+        HelmDeployRequest rangerRequest = new HelmDeployRequest();
+        rangerRequest.setReleaseName(releaseName);
+        rangerRequest.setNamespace(namespace);
+        rangerRequest.setServiceKey(releaseMetadata.getServiceKey());
+        rangerRequest.setChart(releaseMetadata.getChartRef());
+        rangerRequest.setRanger(serviceDefinition.ranger);
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.RANGER_REPOSITORY_REAPPLY.name());
+        rootCommand.setTitle("Reapply Ranger repository for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("chart", releaseMetadata.getChartRef());
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("repoId", releaseMetadata.getRepoId());
+        rootParams.put("version", releaseMetadata.getVersion());
+        rootParams.put("_cluster", clusterName);
+        rootParams.put("_baseUri", baseUri.toString());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+
+        List<String> childCommandIds = new ArrayList<>();
+        // Plan the Ranger repository creation step with current values.
+        planRangerRepositoryCreation(
+                rootCommand,
+                childCommandIds,
+                rangerRequest,
+                rootParams,
+                effectiveValues,
+                ambariActionClient,
+                clusterName
+        );
+
+        if (childCommandIds.isEmpty()) {
+            throw new IllegalStateException("No Ranger repository steps were scheduled for release " + releaseName);
+        }
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+
+        store(rootStatus);
+        store(rootCommand);
+
+        scheduleNow(commandId);
+        return commandId;
     }
 
     /**
@@ -1077,387 +1615,7 @@ public class CommandService {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
         if (ranger != null) {
-            Map<String, String> extraConfigs = new HashMap<>();
-            LOG.info("Required ranger plugin installation detected");
-            for (Map.Entry<String, Map<String, Object>> rangerRequest : ranger.entrySet()) {
-                Map<String, Object> spec = rangerRequest.getValue();
-                LOG.info("Reading ranger item: {}", spec);
-                String type = spec.get("type").toString();        // e.g. "ranger-security", "ranger-audit", "ranger-policymgr-ssl",
-                if (type.isBlank()) continue;
-                String name = null;
-                String kind = null;
-                String serviceName = null;
-                boolean asSecret = false;
-                if (!type.equals("ranger-plugin-settings")){
-                    name = spec.get("cm_name").toString();
-                    kind = spec.get("cm_type").toString();     // "config-map" | "secret"
-                    serviceName = spec.get("service_type").toString();     // "config-map" | "secret"
-                    asSecret = "secret".equalsIgnoreCase(kind);
-                }
-                String xml = "";
-                String xmlPutName= "";
-                String rangerRepositoryName = cluster+ "_"+ request.getNamespace();
-                boolean doCreation = true;
-
-
-                switch (type) {
-                    case "ranger-plugin-settings":
-                        LOG.info("Generating ranger-plugin-settings for releaseName: {}", request.getReleaseName());
-                        String helmValuesRangerRepositoryNameKey = spec.get("repository_name_property").toString();
-                        this.commandUtils.addOverride(params, helmValuesRangerRepositoryNameKey, rangerRepositoryName);
-                        LOG.info("Overriding ranger-plugin-settings helm value: {} with {}",helmValuesRangerRepositoryNameKey, rangerRepositoryName);
-                        String chartName = request.getChart();
-                        if (chartName == null || chartName.isBlank()) {
-                            LOG.warn("ranger-plugin-settings: chart name missing in params, skipping effective values computation");
-                            break;
-                        }
-                        extraConfigs.putAll(this.configResolutionService.computeExtraRangerConfigs(
-                                spec,               // "ranger-plugin-settings" spec (with extraConfigs section)
-                                params,             // deploy params (namespace, releaseName, _cluster, etc.)
-                                effectiveValues,    // merged helm values: defaults + overrides
-                                ambariActionClient, // Ambari client for ambari-config sources
-                                cluster             // resolved Ambari cluster name
-                        ));
-                        break;
-                    case "ranger-security": {
-                        LOG.info("Xml Type detected is ranger-security");
-                        Map<String, String> rangerSecurityPluginConfig = RangerTrinoConfigDefaults.security(serviceName);
-                        rangerSecurityPluginConfig.putAll(RangerTrinoConfigDefaults.pluginProperties(serviceName));
-
-                        String rangerPolicyMgrSSLFilePath = (String) spec.get("ranger_policymgr_file");
-                        String rangerPolicyMgrSSLFilePathHelmValue = (String) spec.get("helm_values_ranger_policymgr_file");
-                        this.commandUtils.addOverride(params, rangerPolicyMgrSSLFilePathHelmValue, rangerPolicyMgrSSLFilePath);
-
-                        String rangerPluginSuperUsers = (String) spec.get("superusers");
-                        if (rangerPluginSuperUsers != null && !rangerPluginSuperUsers.isBlank()){
-                            rangerSecurityPluginConfig.put(
-                                    "ranger.plugin." + serviceName + ".super.users", rangerPluginSuperUsers
-                            );
-                        }
-
-                        String rangerPolicyCacheDir = (String) spec.get("ranger_policycache_dir");
-                        String rangerPolicyCacheDirHelmProperty = (String) spec.get("ranger_policycache_dir_helm_property");
-                        if ( rangerPolicyCacheDirHelmProperty != null && rangerPolicyCacheDir != null ){
-                            if ( !rangerPolicyCacheDirHelmProperty.isBlank() && !rangerPolicyCacheDir.isBlank()){
-                                LOG.info("Configuring helm chart with: {}:{}", rangerPolicyCacheDirHelmProperty, rangerPolicyCacheDir);
-                                LOG.info("Configuring ranger-security file with: {}:{}", "ranger.plugin." + serviceName + ".policy.cache.dir", rangerPolicyCacheDir);
-                                rangerSecurityPluginConfig.put("ranger.plugin." + serviceName + ".policy.cache.dir", rangerPolicyCacheDir);
-                                extraConfigs.put(rangerPolicyCacheDirHelmProperty,rangerPolicyCacheDir);
-                            }
-                        }
-                        try {
-                            String securityEnabledCluster = ambariActionClient.getDesiredConfigProperty(
-                                    cluster, "cluster-env", "security_enabled"
-                            );
-                            var securityEnabled = (securityEnabledCluster.toLowerCase().equals("true"));
-                            if (securityEnabled){
-                                LOG.info("Kerberos is configured on the cluster {}, configuring Kerberos related Ranger Plugin configs", cluster);
-                                String kerberosRealm = ambariActionClient.getDesiredConfigProperty(
-                                        cluster,
-                                        this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").type,
-                                        this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").key
-                                );
-                                String rangerPluginUserPrincipalPrefix = (String) spec.get("krb5_princ_srv");
-                                if( rangerPluginUserPrincipalPrefix == null ){
-                                    LOG.error("Kerberos is configured on the cluster {}, required config krb5_princ_srv is missing in {}", cluster, type);
-                                }else {
-                                    rangerPluginUserPrincipalPrefix = rangerPluginUserPrincipalPrefix + "-" + request.getNamespace() ;
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".ugi.login.type", "keytab"
-                                    );
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".ugi.keytab.principal",
-                                            rangerPluginUserPrincipalPrefix + "@" + kerberosRealm
-                                    );
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".ugi.keytab.file",
-                                            "/etc/security/keytabs/service.keytab"
-                                    );
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".ugi.initialize",
-                                            "true"
-                                    );
-                                    extraConfigs.put("policy.download.auth.users", rangerPluginUserPrincipalPrefix);
-                                    extraConfigs.put("tag.download.auth.users", rangerPluginUserPrincipalPrefix);
-                                    LOG.info("Ranger Plugin Kerberos Principal is {} with realm: {}", rangerPluginUserPrincipalPrefix, kerberosRealm);
-                                }
-                            }else{
-                                LOG.info("Kerberos is not enabled on the cluster {}, configuring simple auth/password", cluster);
-                                // --- plugin REST client auth (username + password from Secret) ---
-                                String rangerPolicyPluginUserName = (String) spec.get("plugin_username");
-                                // Optional override for secret name / key from spec; otherwise use sane defaults
-                                String pluginPasswordSecretName =
-                                        (String) spec.getOrDefault("plugin_password_secret_name", "ranger-plugin-rest-client-password");
-                                String pluginPasswordSecretKey =
-                                        (String) spec.getOrDefault("plugin_password_secret_k", "password");
-
-                                String pluginPassword = null;
-
-                                if (rangerPolicyPluginUserName != null && !rangerPolicyPluginUserName.isBlank()) {
-                                    // store for later (RANGER_REPOSITORY_CREATION step)
-                                    params.put("_rangerPluginUserName", rangerPolicyPluginUserName);
-
-                                    // 1) try to reuse existing Secret
-                                    pluginPassword = kubernetesService
-                                            .readOpaqueSecretKeyAsString(request.getNamespace(), pluginPasswordSecretName, pluginPasswordSecretKey)
-                                            .orElse(null);
-
-                                    // 2) generate password if Secret does not exist or key not present
-                                    if (pluginPassword == null) {
-                                        LOG.info("Generating new secret for storing Ranger plugin REST client password", pluginPasswordSecretName);
-                                        pluginPassword = UUID.randomUUID().toString(); // or something stronger if you care
-
-                                        Map<String, byte[]> pwdData = new LinkedHashMap<>();
-                                        pwdData.put(pluginPasswordSecretKey, pluginPassword.getBytes(StandardCharsets.UTF_8));
-
-                                        LOG.info("Creating new Secret {} for Ranger plugin REST client password in namespace {}",
-                                                pluginPasswordSecretName, request.getNamespace());
-                                        kubernetesService.createOrUpdateOpaqueSecret(
-                                                request.getNamespace(),
-                                                pluginPasswordSecretName,
-                                                pwdData
-                                        );
-                                    } else {
-                                        LOG.info("Reusing existing Secret {} for Ranger plugin REST client password", pluginPasswordSecretName);
-                                    }
-
-                                    // store for later Ambari call
-                                    params.put("_rangerPluginUserPassword", pluginPassword);
-                                    params.put("_rangerPluginUserPasswordSecretName", pluginPasswordSecretName);
-                                    params.put("_rangerPluginUserPasswordSecretKey", pluginPasswordSecretKey);
-
-                                    // Configure plugin properties with the correct keys:
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".policy.rest.client.username",
-                                            rangerPolicyPluginUserName);
-                                    rangerSecurityPluginConfig.put(
-                                            "ranger.plugin." + serviceName + ".policy.rest.client.password",
-                                            pluginPassword);
-                                } else {
-                                    LOG.info("No ranger plugin username defined in spec; REST client basic auth will not be configured.");
-                                }
-                            }
-                        } catch (Exception ex) {
-                            throw new RuntimeException(ex);
-                        }
-
-                        // configuring plugin main settings on ssl and repository name
-                        rangerSecurityPluginConfig.put("ranger.plugin." + serviceName + ".service.name", rangerRepositoryName);
-                        rangerSecurityPluginConfig.put("ranger.plugin." + serviceName + ".policy.rest.ssl.config.file", rangerPolicyMgrSSLFilePath);
-
-                        LOG.info("Configuring Ranger repository name: {}", rangerRepositoryName);
-                        params.put("_rangerRepositoryName", rangerRepositoryName);
-
-                        // fetch policy mgr external url
-                        try {
-                            String rangerPolicyMgrExternalUrl = ambariActionClient.getDesiredConfigProperty(
-                                    cluster, "admin-properties", "policymgr_external_url"
-                            );
-                            rangerSecurityPluginConfig.put("ranger.plugin." + serviceName + ".policy.rest.url", rangerPolicyMgrExternalUrl);
-                            LOG.info("Configuring Ranger policymgr external url: {}", rangerPolicyMgrExternalUrl);
-                        } catch (Exception ex) {
-                            throw new RuntimeException(ex);
-                        }
-
-                        xml = HadoopSiteXml.render(rangerSecurityPluginConfig);
-                        String helmValuesRangerAuditPluginKey = spec.get("helm_values_property").toString();
-                        this.commandUtils.addOverride(params, helmValuesRangerAuditPluginKey, name);
-                        xmlPutName = name + ".xml";
-                        break;
-                    }
-                    case "ranger-audit": {
-                        LOG.info("Xml Type detected is ranger-audit");
-                        xml = HadoopSiteXml.render(RangerTrinoConfigDefaults.audit());
-                        String helmValuesRangerAuditPluginKey = spec.get("helm_values_property").toString();
-                        this.commandUtils.addOverride(params, helmValuesRangerAuditPluginKey, name);
-                        xmlPutName = name + ".xml";
-                        break;
-                    }
-                    case "ranger-policymgr-ssl": {
-                        LOG.info("Xml Type detected is ranger-policymgr-ssl");
-                        Map<String, String> policymgrSsl = RangerTrinoConfigDefaults.policymgrSsl();
-                        // get bytes from wherever you keep them (Ambari/Secret/file)
-                        // we use the exact same logic as webhook bootstrap to read the defaut truststore when required
-
-                        // Configuring Hadoop credential path in chart override
-                        // hadoop credential provider should come into two part 1 - the directory  and 2 - the file name
-
-                        // 1 - parsing here the file directory
-                        String rangerPluginCredentialProviderPath = (String) spec
-                                .get("ranger_plugin_credential_provider_path");
-                        String rangerPluginCredentialProviderPathHelmProperty = (String) spec
-                                .get("ranger_plugin_credential_provider_path_helm_prop");
-                        if (rangerPluginCredentialProviderPath != null && rangerPluginCredentialProviderPathHelmProperty != null){
-                            this.commandUtils.addOverride(params, rangerPluginCredentialProviderPathHelmProperty, rangerPluginCredentialProviderPath);
-                        }
-                        // 2 - parsing here the file name
-                        String rangerPluginCredentialProviderFile = (String) spec.get("ranger_plugin_credential_provider_file");
-                        String rangerPluginCredentialProviderFileHelmProperty = (String) spec.get("ranger_plugin_credential_provider_file_helm_prop");
-
-                        if ( rangerPluginCredentialProviderFile != null && rangerPluginCredentialProviderFileHelmProperty != null){
-                            this.commandUtils.addOverride(params, rangerPluginCredentialProviderFileHelmProperty, rangerPluginCredentialProviderFile);
-                        }
-
-                        // 3 - parsing the secret Name
-                        String rangerPluginCredentialProviderSecretName = spec
-                                .get("ranger_plugin_credential_provider_secretName").toString();
-                        String rangerPluginCredentialProviderSecretNameHelmProperty = spec
-                                .get("ranger_plugin_credential_provider_secretName_helm_prop").toString();
-                        this.commandUtils.addOverride(params, rangerPluginCredentialProviderSecretNameHelmProperty, rangerPluginCredentialProviderSecretName);
-
-                        LOG.info("Configuring chart with ranger plugin credential provider path {}", rangerPluginCredentialProviderPath+"/"+rangerPluginCredentialProviderFile);
-                        final String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
-                        boolean truststoreExists = (truststorePath != null && !truststorePath.isBlank());
-                        if (truststoreExists) {
-                            try {
-                                final String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
-                                        .filter(s -> !s.isBlank()).orElse("JKS");
-
-                                // Read property (could be plain or ${alias=...})
-                                final String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password"))
-                                        .orElse("");
-
-                                LOG.info("Successfully loaded local truststore password");
-//                                            char[] truststorePass = ambariAliasResolver.resolve(ctx, truststorePassProp);
-                                char[] truststorePass = ambariAliasResolver.resolve(ctx, truststorePassProp);
-                                RangerCredentialWriter writer = new RangerCredentialWriter(kubernetesService);
-
-                                LOG.info("Adding sslTrustStore alias into Hadoop Credential Provider file {}", rangerPluginCredentialProviderPath+"/"+rangerPluginCredentialProviderFile);
-                                Map<String,String> props = writer.ensureJceksSecretForTruststorePassword(
-                                        /* namespace   */ request.getNamespace(),
-                                        /* secretName  */ rangerPluginCredentialProviderSecretName,
-                                        /* mountPath   */ rangerPluginCredentialProviderPath+"/"+rangerPluginCredentialProviderFile,
-                                        /* alias       */ "sslTrustStore",
-                                        /* password    */ truststorePass,
-                                        /* labels      */ Map.of("app", serviceName),
-                                        /* annotations */ Map.of("purpose","ranger-ssl-password")
-                                );
-                                policymgrSsl.put("xasecure.policymgr.clientssl.truststore.password",new String("crypted"));
-                                policymgrSsl.putAll(props);
-                                /**
-                                 * we can read from the RangerRESTClient.java that xasecure.policymgr.clientssl.truststore.password is simply ignored
-                                 * starting with ranger 2.5.0, so we need to create a hadoop credential provider
-                                 *
-                                 */
-
-                                // start of the hadop credential provider store creation
-                                // we need to create it first locally in the /tmp folder before uploading it as a secret
-
-
-                            }catch (Exception ex){
-                                LOG.error("Failed to load default truststore JKS");
-                                throw  ex;
-                            }
-                        }
-                        xml = HadoopSiteXml.render(policymgrSsl);
-                        String helmValuesRangerAuditPluginKey = spec.get("helm_values_property").toString();
-                        this.commandUtils.addOverride(params, helmValuesRangerAuditPluginKey, name);
-
-                        xmlPutName = name + "-"+ serviceName + ".xml";
-                        break;
-                    }
-                    case "ranger-admin-truststore": {
-                        LOG.info("Xml Type detected is ranger-admin-truststore");
-                        LOG.info("Generating custom action to create truststore from ambari'ca");
-                        // the helm property which designated the k8s secret where the truststore is contained
-                        // the value of the secret name is in cm_name
-                        String helmValuesTruststoreSecretNameKey = spec.get("helm_values_property").toString();
-                        this.commandUtils.addOverride(params, helmValuesTruststoreSecretNameKey, name);
-
-                        // the helm property which designates the k8s secret where the truststore'password is contained
-                        String helmValuesTruststorePasswordSecretNameKey = spec.get("truststore_password_helm_values_property").toString();
-                        String helmValuesTruststorePasswordSecretNameValue = spec.get("truststore_password_secret_name").toString();
-                        this.commandUtils.addOverride(params, helmValuesTruststorePasswordSecretNameKey, helmValuesTruststorePasswordSecretNameValue);
-
-                        // the helm property which designates the truststore file path
-                        // example ranger.admin.ssl.truststore.fileKey
-                        String helmValuesTruststorePasswordFileNameKey = spec.get("truststore_file_key_helm_values_property").toString();
-                        String helmValuesTruststorePasswordFileNameValue = spec.get("truststore_file_key").toString(); // example truststore.jks
-                        this.commandUtils.addOverride(params, helmValuesTruststorePasswordFileNameKey, helmValuesTruststorePasswordFileNameValue);
-
-                        // the name of the password key in the secret
-                        String helmValuesTruststorePasswordSecretNameDataKey = spec.get("truststore_password_secret_key_name").toString();
-                        String helmValuesTruststorePasswordSecretNameDataValue = spec.get("truststore_password_secret_key_value").toString();
-                        this.commandUtils.addOverride(params, helmValuesTruststorePasswordSecretNameDataKey, helmValuesTruststorePasswordSecretNameDataValue);
-
-                        // get bytes from wherever you keep them (Ambari/Secret/file)
-                        // we use the exact same logic as webhook bootstrap to read the defaut truststore when required
-                        final String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
-                        boolean truststoreExists = (truststorePath != null && !truststorePath.isBlank());
-                        if (truststoreExists) {
-                            try {
-                                final String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
-                                        .filter(s -> !s.isBlank()).orElse("JKS");
-
-                                // Read property (could be plain or ${alias=...})
-                                final String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password"))
-                                        .orElse("");
-
-                                char[] truststorePass = ambariAliasResolver.resolve(ctx, truststorePassProp);
-                                LOG.info("Creating truststore secret with data key {}, and as secret: {}",helmValuesTruststorePasswordFileNameValue, name );
-                                this.kubernetesService.ensureOrRotateTruststoreSecretFromLocalFile(
-                                        request.getNamespace(),
-                                        name, truststorePath, truststoreType, truststorePass, helmValuesTruststorePasswordFileNameValue,365,null
-                                );
-                                LOG.info("Creating truststore'password secret with data key {}, and as secret: {}",helmValuesTruststorePasswordFileNameValue, helmValuesTruststorePasswordSecretNameValue );
-                                this.kubernetesService.createOrUpdateOpaqueSecret (
-                                        request.getNamespace(),
-                                        helmValuesTruststorePasswordSecretNameValue, helmValuesTruststorePasswordSecretNameDataValue, new String(truststorePass).getBytes(StandardCharsets.UTF_8)
-                                );
-                                xmlPutName = helmValuesTruststorePasswordFileNameValue;
-
-                            }catch (Exception ex){
-                                LOG.error("Failed to load default truststore JKS");
-                                throw  ex;
-                            }
-                        }
-                        doCreation = false;
-                        break;
-                    }
-                    case "ranger-admin-tls-client": {
-                        // Map.of("tls.crt", crtBytes, "tls.key", keyBytes)
-//                        Map<String, byte[]> tls = obtainTlsKeypair();
-//                        if (tls != null && !tls.isEmpty()) {
-//                            kubernetesService.createOrUpdateOpaqueSecret(req.getNamespace(), name, tls);
-//                        }
-                        break;
-                    }
-                    default:
-                        // ignore unknown
-                }
-                if (!type.equals("ranger-plugin-settings") && doCreation){
-                    LOG.info("creating configmap {}", name);
-                    if (asSecret){
-                        Map<String, byte[]> data = new LinkedHashMap<>();
-                        if (xmlPutName.isBlank() && xmlPutName.equals("")) xmlPutName = name;
-                        LOG.info("Inserting key: {} in secret {}",xmlPutName, name);
-                        if (xml != null) data.put(xmlPutName, xml.getBytes(StandardCharsets.UTF_8));
-                        this.kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
-                    }else{
-                        Map<String, String> data = new LinkedHashMap<>();
-                        if (xmlPutName.isBlank() && xmlPutName.equals("")) xmlPutName = name;
-                        LOG.info("Inserting key: {} in configmap {}",xmlPutName, name);
-                        if (xml != null) data.put(xmlPutName, xml);
-                        this.kubernetesService.createOrUpdateConfigMap(
-                                request.getNamespace(), name, data,
-                                Map.of("managed-by","ambari-k8s-view"), Map.of());
-                    }
-                }
-
-            }
-            // 3) Attach them to params so RANGER_REPOSITORY_CREATION can use them later
-            if (!extraConfigs.isEmpty()) {
-                @SuppressWarnings("unchecked")
-                Map<String, String> existing =
-                        (Map<String, String>) params.get("_rangerServiceConfigs");
-                if (existing == null) {
-                    existing = new LinkedHashMap<>();
-                    params.put("_rangerServiceConfigs", existing);
-                }
-                existing.putAll(extraConfigs);
-                LOG.info("Computed extra Ranger service configs: {}", extraConfigs);
-            }
-            this.commandPlanFactory.createRangerPluginRepository(rootCommand, ranger, params, childCommands);
+            planRangerRepositoryCreation(rootCommand, childCommands, request, params, effectiveValues, ambariActionClient, cluster);
         }
         // storing the Command Status
         store(commandStatusEntity);
@@ -1871,6 +2029,10 @@ public class CommandService {
                 cs.createdAt = st.getCreatedAt();
                 cs.updatedAt = st.getUpdatedAt();
                 cs.percent = computePercentage(child);
+                if (!cs.hasChildren && cs.state == CommandState.RUNNING && cs.percent <= 0) {
+                    // Leaf commands do not have a natural percentage; surface a midpoint while running.
+                    cs.percent = 50;
+                }
                 if (!cs.hasChildren && (cs.state == CommandState.SUCCEEDED || cs.state == CommandState.FAILED || cs.state == CommandState.CANCELED)) {
                     cs.percent = 100;
                 }
@@ -1931,10 +2093,13 @@ public class CommandService {
             return 0;
         }
 
-        int total = childIds.size();
-        int succeeded = 0;
+        int totalChildCount = childIds.size();
+        int completedChildCount = 0;
+        Integer firstRunningChildIndex = null;
+        Integer firstPendingChildIndex = null;
 
-        for (String childId : childIds) {
+        for (int childIndex = 0; childIndex < childIds.size(); childIndex++) {
+            String childId = childIds.get(childIndex);
             if (childId == null || childId.isBlank()) {
                 continue;
             }
@@ -1951,14 +2116,52 @@ public class CommandService {
                 continue;
             }
 
-            if (CommandState.SUCCEEDED.name().equals(st.getState())) {
-                succeeded++;
+            CommandState childState;
+            try {
+                childState = CommandState.valueOf(st.getState());
+            } catch (IllegalArgumentException ex) {
+                LOG.debug("Unknown state '{}' for child {}", st.getState(), childId);
+                continue;
+            }
+
+            if (childState == CommandState.SUCCEEDED || childState == CommandState.FAILED || childState == CommandState.CANCELED) {
+                completedChildCount++;
+                continue;
+            }
+
+            if (childState == CommandState.RUNNING && firstRunningChildIndex == null) {
+                firstRunningChildIndex = childIndex;
+            }
+            if (childState == CommandState.PENDING && firstPendingChildIndex == null) {
+                firstPendingChildIndex = childIndex;
             }
         }
 
-        int percent = (int) Math.round(succeeded * 100.0 / total);
-        LOG.debug("Computed success percentage for {} -> {}/{} = {}%", cmd.getId(), succeeded, total, percent);
-        return percent;
+        if (completedChildCount >= totalChildCount) {
+            return 100;
+        }
+
+        if (firstRunningChildIndex != null) {
+            int runningPercent = (int) Math.round(((firstRunningChildIndex + 0.5) * 100.0) / totalChildCount);
+            int boundedRunningPercent = Math.min(99, Math.max(1, runningPercent));
+            LOG.debug("Computed in-progress percentage for {} -> runningIndex={}, total={}, percent={}%",
+                    cmd.getId(), firstRunningChildIndex, totalChildCount, boundedRunningPercent);
+            return boundedRunningPercent;
+        }
+
+        if (firstPendingChildIndex != null) {
+            int pendingPercent = (int) Math.round((firstPendingChildIndex * 100.0) / totalChildCount);
+            int boundedPendingPercent = Math.min(99, Math.max(0, pendingPercent));
+            LOG.debug("Computed pending percentage for {} -> pendingIndex={}, total={}, percent={}%",
+                    cmd.getId(), firstPendingChildIndex, totalChildCount, boundedPendingPercent);
+            return boundedPendingPercent;
+        }
+
+        int completedPercent = (int) Math.round(completedChildCount * 100.0 / totalChildCount);
+        int boundedCompletedPercent = Math.min(99, Math.max(0, completedPercent));
+        LOG.debug("Computed completion percentage for {} -> {}/{} = {}%",
+                cmd.getId(), completedChildCount, totalChildCount, boundedCompletedPercent);
+        return boundedCompletedPercent;
     }
 
     public void cancel(String id) {
@@ -2602,6 +2805,22 @@ public class CommandService {
                     // ---- Resolve plugin user / password from params or ranger spec ----
                     String pluginUserName = (String) childParams.get("_rangerPluginUserName");
                     String pluginUserPassword = (String) childParams.get("_rangerPluginUserPassword");
+                    Map<String, Map<String, Object>> rangerSpec =
+                            (Map<String, Map<String, Object>>) childParams.get("_rangerSpec");
+                    boolean kerberosRangerSpec = isKerberosRangerSpec(rangerSpec);
+
+                    if (pluginUserName != null && !pluginUserName.isBlank()
+                            && (pluginUserPassword == null || pluginUserPassword.isBlank())) {
+                        if (kerberosRangerSpec) {
+                            LOG.info("Skipping Ranger plugin user creation for repo '{}' because Kerberos configuration is present.",
+                                    rangerRepositoryName);
+                            pluginUserName = null;
+                            pluginUserPassword = null;
+                        } else {
+                            throw new IllegalStateException(
+                                    "Ranger plugin user password is required when plugin user name is provided.");
+                        }
+                    }
 
 
                     // Default serviceType unless overridden from params

@@ -41,6 +41,7 @@ import io.fabric8.openshift.client.OpenShiftClient;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.okhttp.OkHttpClientFactory;
+import io.fabric8.kubernetes.client.internal.SSLUtils;
 import io.fabric8.kubernetes.client.utils.Serialization;
 
 import org.apache.ambari.view.ViewContext;
@@ -129,6 +130,8 @@ public class KubernetesService {
     private final AtomicBoolean monitoringBootstrapScheduled = new AtomicBoolean(false);
     private final AtomicReference<String> metricsSource = new AtomicReference<>("unknown");
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AtomicReference<Boolean> runningInsideKubernetesCache = new AtomicReference<>(null);
+    private final AtomicReference<String> lastPrometheusProxyUrlLogged = new AtomicReference<>(null);
 
     private MountManager mountManager;
 
@@ -155,6 +158,9 @@ public class KubernetesService {
     private static final String MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP = "monitoring.defaultRepo.autoCreate";
     private static final String SETTINGS_KEY = "view.settings.json";
     private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
+    private static final String KUBERNETES_SERVICE_HOST_ENV = "KUBERNETES_SERVICE_HOST";
+    private static final String KUBERNETES_SERVICE_PORT_ENV = "KUBERNETES_SERVICE_PORT";
+    private static final Path KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH = Paths.get("/var/run/secrets/kubernetes.io/serviceaccount/token");
 
 
     private static final int MAX_METRICS_NODES = Integer.getInteger("k8s.view.metrics.sample.nodes", 200);
@@ -425,8 +431,12 @@ public class KubernetesService {
                     if (promUrl == null || promUrl.isBlank()) {
                         promUrl = "https://thanos-querier.openshift-monitoring.svc:9091";
                     }
+                    // Use API proxy when Ambari is outside the cluster.
+                    MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
+                    promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
                 } else if (prom != null) {
-                    promUrl = prom.url();
+                    // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
+                    promUrl = resolvePrometheusReachableUrl(prom);
                 }
                 if (promUrl != null && !promUrl.isBlank()) {
                     double[] promMetrics = queryPrometheusClusterUsage(promUrl);
@@ -1046,12 +1056,27 @@ public class KubernetesService {
             }
             // Ensure image pull secret for private registries and inject into values
             try {
-                String pullSecretName = "monitoring-image-pull";
+                String pullSecretName = "regcred";
                 this.helmService.ensureImagePullSecretFromRepo(repoId, ns, pullSecretName, null);
-                overrides.put("imagePullSecrets", List.of(Map.of("name", pullSecretName)));
+                List<Map<String, String>> imagePullSecretRefs = List.of(Map.of("name", pullSecretName));
+                overrides.put("imagePullSecrets", imagePullSecretRefs);
                 Map<String, Object> global = (Map<String, Object>) overrides.computeIfAbsent("global", k -> new LinkedHashMap<String, Object>());
-                global.put("imagePullSecrets", List.of(Map.of("name", pullSecretName)));
-                LOG.info("Injected imagePullSecrets override for monitoring bootstrap repoId={} secret={}", repoId, pullSecretName);
+                global.put("imagePullSecrets", imagePullSecretRefs);
+                // Some subcharts do not honor global.imagePullSecrets; set explicit paths to avoid image pull failures.
+                List<String> imagePullSecretOverrideKeys = List.of(
+                        "kube-state-metrics.imagePullSecrets",
+                        "kube-state-metrics.serviceAccount.imagePullSecrets",
+                        "prometheus-node-exporter.imagePullSecrets",
+                        "prometheus-node-exporter.serviceAccount.imagePullSecrets",
+                        "prometheus-windows-exporter.imagePullSecrets",
+                        "prometheus-windows-exporter.serviceAccount.imagePullSecrets",
+                        "grafana.imagePullSecrets"
+                );
+                for (String overrideKey : imagePullSecretOverrideKeys) {
+                    overrides.put(overrideKey, imagePullSecretRefs);
+                }
+                LOG.info("Injected imagePullSecrets override for monitoring bootstrap repoId={} secret={} keys={}",
+                        repoId, pullSecretName, imagePullSecretOverrideKeys);
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret for monitoring repoId {}: {}", repoId, ex.getMessage());
             }
@@ -1099,6 +1124,141 @@ public class KubernetesService {
      * Container for the Prometheus exposure decision (ingress or NodePort) and the resulting URL.
      */
     private record MonitoringExposure(String url) { }
+
+    /**
+     * Parsed service endpoint information for an in-cluster Prometheus service.
+     */
+    private record PrometheusServiceEndpoint(String namespace, String serviceName, int servicePort) { }
+
+    /**
+     * Resolve a Prometheus URL that is reachable from this Ambari process.
+     * When Ambari is running outside the cluster and the URL points to a *.svc
+     * service, the Kubernetes API proxy is used.
+     *
+     * @param monitoringInfo discovered monitoring info (namespace/release/url)
+     * @return a reachable Prometheus URL or {@code null} if no URL is available
+     */
+    private String resolvePrometheusReachableUrl(MonitoringInfo monitoringInfo) {
+        if (monitoringInfo == null || monitoringInfo.url() == null || monitoringInfo.url().isBlank()) {
+            return null;
+        }
+        String prometheusUrl = monitoringInfo.url().trim();
+        if (isRunningInsideKubernetes()) {
+            LOG.info("Prometheus URL will use in-cluster endpoint {}", prometheusUrl);
+            return prometheusUrl;
+        }
+        PrometheusServiceEndpoint prometheusServiceEndpoint = extractPrometheusServiceEndpoint(prometheusUrl);
+        if (prometheusServiceEndpoint == null) {
+            LOG.info("Prometheus URL is external; using {}", prometheusUrl);
+            return prometheusUrl;
+        }
+        String proxyUrl = buildPrometheusServiceProxyUrl(prometheusServiceEndpoint);
+        if (proxyUrl == null) {
+            LOG.warn("Could not build Kubernetes API proxy URL for Prometheus; falling back to {}", prometheusUrl);
+            return prometheusUrl;
+        }
+        logPrometheusProxyUrlOnce(proxyUrl, prometheusUrl);
+        return proxyUrl;
+    }
+
+    /**
+     * Detect whether Ambari is running inside a Kubernetes pod by checking
+     * standard in-cluster environment variables and the service account token.
+     *
+     * @return {@code true} if Ambari is running inside Kubernetes
+     */
+    private boolean isRunningInsideKubernetes() {
+        Boolean cachedResult = runningInsideKubernetesCache.get();
+        if (cachedResult != null) {
+            return cachedResult;
+        }
+        String serviceHost = System.getenv(KUBERNETES_SERVICE_HOST_ENV);
+        String servicePort = System.getenv(KUBERNETES_SERVICE_PORT_ENV);
+        boolean hasServiceEnvironment = serviceHost != null && !serviceHost.isBlank()
+                && servicePort != null && !servicePort.isBlank();
+        boolean hasServiceAccountToken = Files.isReadable(KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH);
+        boolean runningInsideKubernetes = hasServiceEnvironment && hasServiceAccountToken;
+        runningInsideKubernetesCache.compareAndSet(null, runningInsideKubernetes);
+        LOG.info("In-cluster detection: envPresent={} tokenPresent={} runningInsideKubernetes={}",
+                hasServiceEnvironment, hasServiceAccountToken, runningInsideKubernetes);
+        return runningInsideKubernetes;
+    }
+
+    /**
+     * Parse a Prometheus URL that targets a Kubernetes service (e.g., http://svc.ns.svc:9090).
+     *
+     * @param prometheusUrl candidate URL to parse
+     * @return service endpoint metadata or {@code null} if not a cluster service URL
+     */
+    private PrometheusServiceEndpoint extractPrometheusServiceEndpoint(String prometheusUrl) {
+        if (prometheusUrl == null || prometheusUrl.isBlank()) {
+            return null;
+        }
+        try {
+            URI parsedUri = URI.create(prometheusUrl);
+            String host = parsedUri.getHost();
+            if (host == null || host.isBlank()) {
+                return null;
+            }
+            String[] hostSegments = host.split("\\.");
+            if (hostSegments.length < 3 || !"svc".equals(hostSegments[2])) {
+                return null;
+            }
+            String serviceName = hostSegments[0];
+            String namespace = hostSegments[1];
+            int servicePort = parsedUri.getPort() > 0 ? parsedUri.getPort() : 9090;
+            return new PrometheusServiceEndpoint(namespace, serviceName, servicePort);
+        } catch (Exception parseException) {
+            LOG.warn("Unable to parse Prometheus URL for service proxying ({}): {}", prometheusUrl, parseException.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Build a Kubernetes API proxy URL for a Prometheus service.
+     *
+     * @param prometheusServiceEndpoint service endpoint metadata
+     * @return API proxy base URL or {@code null} if the API server URL is unavailable
+     */
+    private String buildPrometheusServiceProxyUrl(PrometheusServiceEndpoint prometheusServiceEndpoint) {
+        if (prometheusServiceEndpoint == null || client == null) {
+            return null;
+        }
+        String apiServerUrl = client.getConfiguration().getMasterUrl();
+        if (apiServerUrl == null || apiServerUrl.isBlank()) {
+            LOG.warn("Kubernetes API server URL is not configured; cannot proxy Prometheus");
+            return null;
+        }
+        String normalizedApiServerUrl = apiServerUrl.endsWith("/")
+                ? apiServerUrl.substring(0, apiServerUrl.length() - 1)
+                : apiServerUrl;
+        String proxyPath = String.format(
+                "/api/v1/namespaces/%s/services/http:%s:%d/proxy",
+                prometheusServiceEndpoint.namespace(),
+                prometheusServiceEndpoint.serviceName(),
+                prometheusServiceEndpoint.servicePort()
+        );
+        return normalizedApiServerUrl + proxyPath;
+    }
+
+    /**
+     * Log the Prometheus API proxy URL only once per unique URL to avoid log spam.
+     *
+     * @param proxyUrl resolved Kubernetes API proxy URL
+     * @param originalUrl original in-cluster Prometheus URL
+     */
+    private void logPrometheusProxyUrlOnce(String proxyUrl, String originalUrl) {
+        if (proxyUrl == null || proxyUrl.isBlank()) {
+            return;
+        }
+        String previouslyLoggedProxyUrl = lastPrometheusProxyUrlLogged.get();
+        if (proxyUrl.equals(previouslyLoggedProxyUrl)) {
+            return;
+        }
+        if (lastPrometheusProxyUrlLogged.compareAndSet(previouslyLoggedProxyUrl, proxyUrl)) {
+            LOG.info("Prometheus URL '{}' will be accessed via Kubernetes API proxy '{}'", originalUrl, proxyUrl);
+        }
+    }
 
     /**
      * Compute and apply ingress/NodePort overrides for Prometheus to ensure Ambari can reach it from outside the cluster.
@@ -1478,42 +1638,32 @@ public class KubernetesService {
      */
     private double[] queryPrometheusClusterUsage(String promUrl) {
         try {
-            var httpBuilder = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(java.time.Duration.ofSeconds(5));
-            // If HTTPS, try to trust the cluster CA from kubeconfig
-            try {
-                if (promUrl.startsWith("https")) {
-                    String caData = client.getConfiguration().getCaCertData();
-                    if (caData != null && !caData.isBlank()) {
-                        SSLContext sslContext = buildSslContextFromCaData(caData);
-                        httpBuilder.sslContext(sslContext);
-                    }
-                }
-            } catch (Exception e) {
-                LOG.warn("Prometheus HTTPS trust setup failed: {}", e.getMessage());
-            }
-            java.net.http.HttpClient http = httpBuilder.build();
+            HttpClient prometheusHttpClient = buildPrometheusHttpClient(promUrl);
             String cpuQuery = java.net.URLEncoder.encode("sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))", StandardCharsets.UTF_8);
             String memQuery = java.net.URLEncoder.encode("sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)", StandardCharsets.UTF_8);
             String cpuUrl = promUrl + "/api/v1/query?query=" + cpuQuery;
             String memUrl = promUrl + "/api/v1/query?query=" + memQuery;
 
-            java.net.http.HttpRequest.Builder b1 = java.net.http.HttpRequest.newBuilder().GET().uri(java.net.URI.create(cpuUrl)).timeout(java.time.Duration.ofSeconds(8));
-            java.net.http.HttpRequest.Builder b2 = java.net.http.HttpRequest.newBuilder().GET().uri(java.net.URI.create(memUrl)).timeout(java.time.Duration.ofSeconds(8));
-            String token = client.getConfiguration().getOauthToken();
-            if (token != null && !token.isBlank()) {
-                b1.header("Authorization", "Bearer " + token);
-                b2.header("Authorization", "Bearer " + token);
-            }
-            var cpuResp = http.send(b1.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
-            var memResp = http.send(b2.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
-            if (cpuResp.statusCode() >= 300 || memResp.statusCode() >= 300) {
+            HttpRequest.Builder cpuRequestBuilder = HttpRequest.newBuilder()
+                    .GET()
+                    .uri(URI.create(cpuUrl))
+                    .timeout(Duration.ofSeconds(8));
+            HttpRequest.Builder memoryRequestBuilder = HttpRequest.newBuilder()
+                    .GET()
+                    .uri(URI.create(memUrl))
+                    .timeout(Duration.ofSeconds(8));
+            // Add auth headers if kubeconfig provides a token.
+            applyPrometheusAuth(cpuRequestBuilder);
+            applyPrometheusAuth(memoryRequestBuilder);
+            HttpResponse<String> cpuResponse = prometheusHttpClient.send(cpuRequestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> memoryResponse = prometheusHttpClient.send(memoryRequestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (cpuResponse.statusCode() >= 300 || memoryResponse.statusCode() >= 300) {
                 LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}",
-                        cpuResp.statusCode(), memResp.statusCode(), promUrl, cpuResp.body(), memResp.body());
+                        cpuResponse.statusCode(), memoryResponse.statusCode(), promUrl, cpuResponse.body(), memoryResponse.body());
                 return null;
             }
-            double cpuUsed = parsePrometheusSingleValue(cpuResp.body());
-            double memUsedBytes = parsePrometheusSingleValue(memResp.body());
+            double cpuUsed = parsePrometheusSingleValue(cpuResponse.body());
+            double memUsedBytes = parsePrometheusSingleValue(memoryResponse.body());
             if (Double.isNaN(cpuUsed) || Double.isNaN(memUsedBytes)) return null;
             double memUsedGiB = memUsedBytes / (1024 * 1024 * 1024.0);
             return new double[]{cpuUsed, memUsedGiB};
@@ -1542,9 +1692,12 @@ public class KubernetesService {
                 if (promUrl == null || promUrl.isBlank()) {
                     promUrl = OPENSHIFT_THANOS_URL_DEFAULT;
                 }
+                // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
+                MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
+                promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
             } else {
                 MonitoringInfo info = discoverMonitoringPrometheus();
-                promUrl = info != null ? info.url() : null;
+                promUrl = resolvePrometheusReachableUrl(info);
             }
             return (promUrl != null && !promUrl.isBlank()) ? promUrl : null;
         } catch (Exception e) {
@@ -1632,10 +1785,21 @@ public class KubernetesService {
     private HttpClient buildPrometheusHttpClient(String promUrl) throws Exception {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5));
+        // Kubernetes API proxy is known to close HTTP/2 streams (GOAWAY); force HTTP/1.1 for stability.
+        if (promUrl != null && promUrl.contains("/api/v1/namespaces/") && promUrl.contains("/proxy")) {
+            builder.version(HttpClient.Version.HTTP_1_1);
+        }
         if (promUrl.startsWith("https")) {
-            String caData = client.getConfiguration().getCaCertData();
-            if (caData != null && !caData.isBlank()) {
-                builder.sslContext(buildSslContextFromCaData(caData));
+            try {
+                // Use the full kubeconfig TLS material (CA + optional client cert/key).
+                builder.sslContext(SSLUtils.sslContext(client.getConfiguration()));
+            } catch (Exception sslException) {
+                // Fall back to CA-only trust if client cert parsing fails.
+                String caData = client.getConfiguration().getCaCertData();
+                if (caData != null && !caData.isBlank()) {
+                    builder.sslContext(buildSslContextFromCaData(caData));
+                }
+                LOG.warn("Prometheus HTTPS client setup fell back to CA-only trust: {}", sslException.getMessage());
             }
         }
         return builder.build();
@@ -1645,9 +1809,21 @@ public class KubernetesService {
      * Apply bearer tokens to Prometheus requests if the kubeconfig provides one.
      */
     private void applyPrometheusAuth(HttpRequest.Builder builder) {
-        String token = client.getConfiguration().getOauthToken();
+        Config currentConfig = client.getConfiguration();
+        String token = currentConfig.getOauthToken();
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getAutoOAuthToken();
+        }
         if (token != null && !token.isBlank()) {
             builder.header("Authorization", "Bearer " + token);
+            return;
+        }
+        String username = currentConfig.getUsername();
+        String password = currentConfig.getPassword();
+        if (username != null && !username.isBlank() && password != null) {
+            String basicAuthValue = Base64.getEncoder()
+                    .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
+            builder.header("Authorization", "Basic " + basicAuthValue);
         }
     }
 

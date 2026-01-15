@@ -100,6 +100,10 @@ export interface ServiceDefinition {
   label: string;
   chart: string;
   form: FormField[];
+  defaultRepo?: string;
+  // Optional backend-driven metadata for post-install actions (e.g., keytab/ranger replay).
+  kerberos?: Array<Record<string, any>>;
+  ranger?: Record<string, Record<string, any>>;
 }
 
 export type ComponentStatusType = 'Healthy' | 'Unhealthy';

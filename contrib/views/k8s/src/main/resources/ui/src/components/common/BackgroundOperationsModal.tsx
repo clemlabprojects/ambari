@@ -30,6 +30,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   const logStateRef = React.useRef(logState);
   useEffect(() => { logStateRef.current = logState; }, [logState]);
   const [polling, setPolling] = useState<NodeJS.Timeout | null>(null);
+  const [watchCommandCompleted, setWatchCommandCompleted] = useState(false);
   const logRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const commandsRef = React.useRef<CommandStatus[]>([]);
   useEffect(() => { commandsRef.current = commands; }, [commands]);
@@ -49,6 +50,16 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
 
   const displayPercent = (cmd?: CommandStatus | null): number => {
     if (!cmd) return 0;
+    const isLeafCommand = cmd.hasChildren === false;
+
+    // For leaf commands, show an "in progress" indication while running so the bar is not stuck at 0%.
+    if (isLeafCommand && cmd.state === 'RUNNING') {
+      return Math.max(50, cmd.percent ?? 0);
+    }
+    if (isLeafCommand && cmd.state === 'PENDING') {
+      return Math.max(0, cmd.percent ?? 0);
+    }
+
     if (cmd.percent !== undefined && cmd.percent !== null) return cmd.percent;
     if (cmd.state === 'SUCCEEDED' || cmd.state === 'FAILED') return 100;
     return 0;
@@ -136,6 +147,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       setExpandedRowKeys([]);
       loadPage(true);
       setLogState({});
+      setWatchCommandCompleted(false);
 
       // start lightweight polling for status refresh without rebuilding the table
       const t = setInterval(async () => {
@@ -158,11 +170,17 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               return upd ? { ...c, ...upd } : c;
             })
           );
-          if (watchCommandId) {
-            const watched = updates.find(u => u && u.id === watchCommandId);
-            if (watched && watched.state === 'SUCCEEDED' && onAutoClose) {
-              onAutoClose();
-              return;
+          if (watchCommandId && !watchCommandCompleted) {
+            // Only apply watch behavior for the current command; keep polling other commands.
+            const watched =
+              updates.find(u => u && u.id === watchCommandId) ||
+              current.find(c => c.id === watchCommandId) ||
+              null;
+            if (watched && isTerminal(watched)) {
+              setWatchCommandCompleted(true);
+              if (watched.state === 'SUCCEEDED' && onAutoClose) {
+                onAutoClose();
+              }
             }
           }
           // refresh children + logs for expanded rows only
@@ -170,11 +188,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             const row = (current as any).find((c: any) => c.id === key);
             if (row) {
               try {
-                if (!isTerminal(row)) {
-                  const kids = await listChildCommands(row.id);
-                  const trees = await Promise.all(kids.map(async (ch) => await buildTree(ch)));
-                  setTreeDataMap(prev => ({ ...prev, [row.id]: trees.flat() }));
-                }
+                // Always refresh child steps for expanded rows so completed sub-steps appear immediately.
+                const kids = await listChildCommands(row.id);
+                const trees = await Promise.all(kids.map(async (ch) => await buildTree(ch)));
+                setTreeDataMap(prev => ({ ...prev, [row.id]: trees.flat() }));
               } catch {
                 // ignore child refresh errors
               }
@@ -289,6 +306,16 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       setTreeDataMap(prev => ({ ...prev, [record.id]: [] }));
     }
   };
+
+  useEffect(() => {
+    if (!open || !watchCommandId) return;
+    const watchedCommandRow = commands.find((row) => row.id === watchCommandId);
+    if (!watchedCommandRow) return;
+    if (expandedRowKeysRef.current.includes(watchedCommandRow.id)) return;
+
+    // Auto-expand the watched command so the operator sees all child steps without extra clicks.
+    void onExpandRow(true, watchedCommandRow);
+  }, [open, watchCommandId, commands]);
 
   const loadLogs = async (id: string, reset = false, quiet = false, force = false) => {
     setLogState(prev => ({
