@@ -531,6 +531,24 @@ export const getReleaseStatus = async (namespace: string, releaseName: string): 
   return handleApiResponse(response);
 };
 
+/**
+ * Trigger an idempotent keytab regeneration workflow for a deployed release.
+ * The backend schedules a background command and returns its id for tracking.
+ */
+export const regenerateReleaseKeytabs = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/keytabs`;
+  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
+ * Re-apply the Ranger repository configuration for a deployed release.
+ * The backend replays the same install-time Ranger action without a Helm upgrade.
+ */
+export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ranger`;
+  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
 export const getHelmRepos = () => {
   if (import.meta.env.DEV) {
     return getMockHelmRepos();

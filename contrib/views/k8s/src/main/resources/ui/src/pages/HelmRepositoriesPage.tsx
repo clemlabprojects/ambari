@@ -4,7 +4,7 @@ import { Col, Form,  Input, Select, Button, Table, Space, Popconfirm, Row, Toolt
 import { CheckCircleTwoTone, DeleteOutlined, ReloadOutlined, EditOutlined } from "@ant-design/icons";
 import { getHelmRepos, saveHelmRepo, deleteHelmRepo, loginHelmRepo, checkHelmRepo, installMonitoring, getMonitoringDiscovery} from '../api/client';
 import type HelmRepo from '../types';
-import { required, url, slug, trim, domain } from "../utils/formRules"; 
+import { required, url, slug, trim } from "../utils/formRules"; 
 
 export default function RepositoriesPage() {
   /** ---------------- state --------------- */
@@ -15,6 +15,8 @@ export default function RepositoriesPage() {
   const [selectedRepo, setSelectedRepo] = useState<string>();
   const [monitoringState, setMonitoringState] = useState<{ state?: string; message?: string; namespace?: string; release?: string }>({});
   const [form] = Form.useForm();
+  // Watch repo type so URL validation stays in sync when editing existing entries.
+  const repoTypeWatch = Form.useWatch("type", form);
   /** -------------- effects --------------- */
   const fetchRepos = async () => {
     setLoading(true);
@@ -238,7 +240,7 @@ export default function RepositoriesPage() {
     },
   ];
   let returnDynamicRules = () => {
-    const type = form.getFieldValue("type");
+    const type = repoTypeWatch;
 
     if (type === "OCI") {
       // OCI: host or host + optional path, no scheme

@@ -2,11 +2,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions, Badge } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
@@ -240,6 +240,50 @@ const HelmReleasesPage: React.FC = () => {
     }
   };
 
+  /**
+   * Re-run keytab generation for a release without redeploying Helm.
+   * This schedules a background command and opens the operations drawer for tracking.
+   */
+  const triggerKeytabRegeneration = async (release: HelmRelease) => {
+    const hide = message.loading(`Regenerating keytabs for ${release.name}...`, 0);
+    try {
+      const response = await regenerateReleaseKeytabs(release.namespace, release.name);
+      if (response?.id) {
+        setWatchedCommandId(response.id);
+        setIsCommandDrawerOpen(true);
+        message.success('Keytab regeneration started');
+      } else {
+        message.success('Keytab regeneration submitted');
+      }
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to regenerate keytabs');
+    } finally {
+      hide();
+    }
+  };
+
+  /**
+   * Re-apply the Ranger repository configuration for a release.
+   * This mirrors the install-time Ranger setup without touching the chart.
+   */
+  const triggerRangerRepositoryReapply = async (release: HelmRelease) => {
+    const hide = message.loading(`Reapplying Ranger repository for ${release.name}...`, 0);
+    try {
+      const response = await reapplyReleaseRangerRepository(release.namespace, release.name);
+      if (response?.id) {
+        setWatchedCommandId(response.id);
+        setIsCommandDrawerOpen(true);
+        message.success('Ranger repository reapply started');
+      } else {
+        message.success('Ranger repository reapply submitted');
+      }
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to reapply Ranger repository');
+    } finally {
+      hide();
+    }
+  };
+
     // legacy commandHistory kept for label building; actual statuses fetched via shared modal
     
     const renderServiceCell = (releaseRecord: HelmRelease) => {
@@ -269,73 +313,92 @@ const HelmReleasesPage: React.FC = () => {
       return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
     }
 
-    const buildMenuItems = (record: HelmRelease): MenuProps['items'] => ([
-    {
-        key: 'update',
-        icon: <SyncOutlined />,
-        label: 'Upgrade / Config',
-        disabled: !record.serviceKey,
-        onClick: () => {
-          if (!record.serviceKey) {
-            message.warning('Upgrade wizard is only available for UI-managed services.');
-            return;
-          }
-          navigate(`/services/${record.serviceKey}`, {
-            state: {
-              mode: 'upgrade',
-              releaseName: record.name,
-              namespace: record.namespace,
-              repoId: record.repoId,
-              deploymentMode: record.deploymentMode,
-              git: gitOptionsForRelease(record),
-            },
-          });
-        }
-    },
-    ...(record.securityProfile ? [{
-        key: 'refresh-security',
-        icon: <ReloadOutlined />,
-        disabled: !record.securityProfileStale,
-        label: record.securityProfileStale ? 'Refresh security profile' : 'Refresh security profile (up-to-date)',
-        onClick: () => refreshSecurityProfile(record)
-    }] : []),
-    ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [{
-        key: 'resync',
-        icon: <ReloadOutlined />,
-        label: 'Resync / restart',
-        onClick: () => resyncRelease(record, 'Resyncing release...')
-    }] : []),
-    {
-        type: 'divider',
-    },
-    {
-        key: 'uninstall',
-        icon: <DeleteOutlined />,
-        danger: true,
-        label: 'Uninstall',
-        onClick: () => {
-          Modal.confirm({
-            title: `Uninstall ${record.name}?`,
-            content: `This action will remove the release in namespace ${record.namespace}.`,
-            okText: 'Uninstall',
-            okButtonProps: { danger: true },
-            cancelText: 'Cancel',
-            onOk: async () => {
-              try {
-                const params = new URLSearchParams();
-                if (record.repoId) params.set('repoId', record.repoId);
-                if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
-                await uninstallHelm(record.name, record.namespace, params);
-                message.success(`Release ${record.name} uninstalled successfully.`);
-                await refresh();
-              } catch (e: any) {
-                message.error(e?.message || 'Error during uninstallation');
-              }
+    const buildMenuItems = (record: HelmRelease): MenuProps['items'] => {
+      // Resolve the service definition to know which post-install actions are supported.
+      const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
+      const supportsKerberosRegeneration = !!(serviceDefinition?.kerberos && serviceDefinition.kerberos.length > 0);
+      const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
+
+      return ([
+        {
+          key: 'update',
+          icon: <SyncOutlined />,
+          label: 'Upgrade / Config',
+          disabled: !record.serviceKey,
+          onClick: () => {
+            if (!record.serviceKey) {
+              message.warning('Upgrade wizard is only available for UI-managed services.');
+              return;
             }
-          });
-        }
-    },
-    ]);
+            navigate(`/services/${record.serviceKey}`, {
+              state: {
+                mode: 'upgrade',
+                releaseName: record.name,
+                namespace: record.namespace,
+                repoId: record.repoId,
+                deploymentMode: record.deploymentMode,
+                git: gitOptionsForRelease(record),
+              },
+            });
+          }
+        },
+        ...(record.securityProfile ? [{
+          key: 'refresh-security',
+          icon: <ReloadOutlined />,
+          disabled: !record.securityProfileStale,
+          label: record.securityProfileStale ? 'Refresh security profile' : 'Refresh security profile (up-to-date)',
+          onClick: () => refreshSecurityProfile(record)
+        }] : []),
+        ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [{
+          key: 'resync',
+          icon: <ReloadOutlined />,
+          label: 'Resync / restart',
+          onClick: () => resyncRelease(record, 'Resyncing release...')
+        }] : []),
+        ...(supportsKerberosRegeneration ? [{
+          key: 'regenerate-keytabs',
+          icon: <KeyOutlined />,
+          label: 'Regenerate keytabs',
+          onClick: () => triggerKeytabRegeneration(record)
+        }] : []),
+        ...(supportsRangerReapply ? [{
+          key: 'reapply-ranger',
+          icon: <SafetyCertificateOutlined />,
+          label: 'Reapply Ranger repository',
+          onClick: () => triggerRangerRepositoryReapply(record)
+        }] : []),
+        {
+          type: 'divider',
+        },
+        {
+          key: 'uninstall',
+          icon: <DeleteOutlined />,
+          danger: true,
+          label: 'Uninstall',
+          onClick: () => {
+            Modal.confirm({
+              title: `Uninstall ${record.name}?`,
+              content: `This action will remove the release in namespace ${record.namespace}.`,
+              okText: 'Uninstall',
+              okButtonProps: { danger: true },
+              cancelText: 'Cancel',
+              onOk: async () => {
+                try {
+                  const params = new URLSearchParams();
+                  if (record.repoId) params.set('repoId', record.repoId);
+                  if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
+                  await uninstallHelm(record.name, record.namespace, params);
+                  message.success(`Release ${record.name} uninstalled successfully.`);
+                  await refresh();
+                } catch (e: any) {
+                  message.error(e?.message || 'Error during uninstallation');
+                }
+              }
+            });
+          }
+        },
+      ]);
+    };
 
     const renderEndpoints = (release: HelmRelease) => {
     if (!release.endpoints || release.endpoints.length === 0) {

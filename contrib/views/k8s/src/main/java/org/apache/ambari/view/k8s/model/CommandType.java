@@ -33,8 +33,10 @@ public enum CommandType {
     KEYTAB_REQUEST_ROOT,
     KEYTAB_ISSUE_PRINCIPAL,   // create-if-missing principal + keytab (idempotent)
     KEYTAB_CREATE_SECRET,
+    REGENERATE_KEYTABS,
 
     // Ranger related commands
     RANGER_REPOSITORY_CREATION,
     RANGER_USER_CREATION,
+    RANGER_REPOSITORY_REAPPLY,
 }
