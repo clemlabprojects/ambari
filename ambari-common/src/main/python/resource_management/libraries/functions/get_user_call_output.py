@@ -63,6 +63,12 @@ def _add_current_path_to_env(env):
     result['PATH'] = os.pathsep.join([os.environ.get('PATH',''), result['PATH']])
   return result
 
+def _prefix_env_for_sudo(argv, env):
+  if not env:
+    return list(argv)
+  env_args = [f"{key}={value}" for key, value in env.items()]
+  return ["/usr/bin/env"] + env_args + list(argv)
+
 def _get_environment_str(env):
   return reduce(lambda s,x: f'{s} {x}={quote_bash_args(env[x])}', env, '')
 
@@ -97,6 +103,7 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
             os.umask(0o22)
 
         # ---- decide argv & preexec based on command type and shell need ----
+        env = _add_current_path_to_env(call_kwargs.get('env', None))
         use_shell = False
         if isinstance(command, str):
             # Strings likely contain shell syntax (and must be one arg to bash -c)
@@ -116,7 +123,7 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
             # Use a login shell (keeps behavior you were aiming at); switch to "-c" if you don't want login env.
             bash_bits = ["bash", "-lc", command_str]
             if os.geteuid() != 0:
-                argv = ["sudo", "-n", "-u", name, "--"] + bash_bits
+                argv = ["sudo", "-n", "-u", name, "--"] + _prefix_env_for_sudo(bash_bits, env)
                 preexec = None
             else:
                 argv = bash_bits
@@ -124,12 +131,10 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
         else:
             # No shell path
             if os.geteuid() != 0:
-                argv = ["sudo", "-n", "-u", name, "--"] + argv
+                argv = ["sudo", "-n", "-u", name, "--"] + _prefix_env_for_sudo(argv, env)
                 preexec = None
             else:
                 preexec = _drop_privs
-
-        env = _add_current_path_to_env(call_kwargs.get('env', None))
 
         # ---- spawn ----
         p = subprocess.Popen(
