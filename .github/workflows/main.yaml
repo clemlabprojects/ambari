@@ -1,0 +1,115 @@
+name: build
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+  workflow_dispatch:
+
+jobs:
+  build-rocky9:
+    name: Build (Rocky 9, public Nexus)
+    runs-on: ubuntu-latest
+
+    # Build inside Rocky Linux 9 (swap to almalinux:9 if you want)
+    container:
+      image: rockylinux:9
+
+    env:
+      MAVEN_OPTS: "-Djava.awt.headless=true -Xmx4g"
+
+      # Keep your version pins, since your build snippet had them
+      ODP_RELEASE_NUMBER: "2.8.1.0"
+      ZOOKEEPER_VERSION: "3.8.4.1.2.2.0-155"
+      HADOOP_VERSION: "3.3.6.1.2.2.0-155"
+      HBASE_VERSION: "2.5.6.1.2.2.0-155"
+      KAFKA_VERSION: "2.8.1.1.2.2.0-155"
+
+      # Your public Nexus repo
+      NEXUS_RELEASES_URL: "https://nexus.clemlab.com/repository/maven-releases/"
+
+    steps:
+      - name: Install build deps (Java 8, Maven, Ant, Git)
+        run: |
+          dnf -y update
+          dnf -y install git which tar gzip findutils python3-distro \
+                         java-1.8.0-openjdk-devel java-17-openjdk-devel \
+                         maven ant
+          java -version
+          mvn -version
+          ant -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Configure Maven (add public Nexus repository)
+        run: |
+          mkdir -p /root/.m2
+          cat > /root/.m2/settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+            <profiles>
+              <profile>
+                <id>public-nexus</id>
+                <repositories>
+                  <repository>
+                    <id>clemlab-releases</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>clemlab-plugins</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+
+            <activeProfiles>
+              <activeProfile>public-nexus</activeProfile>
+            </activeProfiles>
+
+          </settings>
+          EOF
+
+          echo "Wrote /root/.m2/settings.xml"
+          sed -n '1,160p' /root/.m2/settings.xml
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: /root/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
+      - name: Build Ambari
+        run: |
+          # Set JAVA_HOME explicitly
+          export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
+          echo "JAVA_HOME=$JAVA_HOME"
+
+          mvn -B clean install \
+            -DskipTests=true \
+            -Dmaven.clover.skip=true \
+            -Drat.ignoreErrors=true \
+            -Dfindbugs.skip=true \
+            -Dviews \
+            "-Dodp.release.number=${ODP_RELEASE_NUMBER}" \
+            "-Dproject-release=${GITHUB_RUN_NUMBER}" \
+            "-Dpackage-release=${GITHUB_RUN_NUMBER}" \
+            "-Dzookeeper.version=${ZOOKEEPER_VERSION}" \
+            "-Dhadoop.version=${HADOOP_VERSION}" \
+            "-Dhbase.version=${HBASE_VERSION}" \
+            "-Dkafka.version=${KAFKA_VERSION}"
