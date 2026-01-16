@@ -20,7 +20,7 @@ jobs:
       MAVEN_OPTS: "-Djava.awt.headless=true -Xmx4g"
 
       # Keep your version pins, since your build snippet had them
-      ODP_RELEASE_NUMBER: "2.8.1.0"
+      ODP_RELEASE_NUMBER: "155"
       ZOOKEEPER_VERSION: "3.8.4.1.2.2.0-155"
       HADOOP_VERSION: "3.3.6.1.2.2.0-155"
       HBASE_VERSION: "2.5.6.1.2.2.0-155"
