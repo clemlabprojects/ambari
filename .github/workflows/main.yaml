@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-rocky9:
-    name: Build (Rocky 9, public Nexus)
+    name: Apache Ambari (clemlab) Master Branch Build 
     runs-on: ubuntu-latest
 
     # Build inside Rocky Linux 9 (swap to almalinux:9 if you want)
@@ -36,7 +36,7 @@ jobs:
           dnf -y update
           dnf -y install git which tar gzip findutils python3-distro \
                          java-1.8.0-openjdk-devel java-17-openjdk-devel \
-                         maven ant
+                         maven ant python3 python3-devel gcc
           java -version
           mvn -version
           ant -version
