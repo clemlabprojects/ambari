@@ -28,6 +28,7 @@ jobs:
 
       # Your public Nexus repo
       NEXUS_RELEASES_URL: "https://nexus.clemlab.com/repository/maven-releases/"
+      NEXUS_CENTRAL_URL: "https://nexus.clemlab.com/repository/maven-central/"
 
     steps:
       - name: Install build deps (Java 8, Maven, Ant, Git)
@@ -61,6 +62,12 @@ jobs:
                   <repository>
                     <id>clemlab-releases</id>
                     <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                  <repository>
+                    <id>clemlab-central</id>
+                    <url>${NEXUS_CENTRAL_URL}</url>
                     <releases><enabled>true</enabled></releases>
                     <snapshots><enabled>false</enabled></snapshots>
                   </repository>
@@ -105,6 +112,7 @@ jobs:
             -Dmaven.clover.skip=true \
             -Drat.ignoreErrors=true \
             -Dfindbugs.skip=true \
+            -Dambari.grafana.arch=amd64 \
             -Dviews \
             "-Dodp.release.number=${ODP_RELEASE_NUMBER}" \
             "-Dproject-release=${GITHUB_RUN_NUMBER}" \
