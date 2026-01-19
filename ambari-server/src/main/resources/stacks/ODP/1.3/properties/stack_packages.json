@@ -449,27 +449,45 @@
         "NIFI_MASTER": {
           "STACK-SELECT-PACKAGE": "nifi",
           "INSTALL": [
-            "nifi"
+            "nifi",
+            "nifi-toolkit"
           ],
           "PATCH": [
-            "nifi"
+            "nifi",
+            "nifi-toolkit"
           ],
           "STANDARD": [
-            "nifi"
+            "nifi",
+            "nifi-toolkit"
           ]
-        }
-      },
+        },
+        "NIFI_CA": {
+          "STACK-SELECT-PACKAGE": "nifi-toolkit",
+          "INSTALL": [
+            "nifi-toolkit"
+          ],
+          "PATCH": [
+            "nifi-toolkit"
+          ],
+          "STANDARD": [
+            "nifi-toolkit"
+          ]
+        } 
+       },
       "NIFI_REGISTRY": {
         "NIFI_REGISTRY_MASTER": {
           "STACK-SELECT-PACKAGE": "nifi-registry",
           "INSTALL": [
-            "nifi-registry"
+            "nifi-registry",
+            "nifi-toolkit"
           ],
           "PATCH": [
-            "nifi-registry"
+            "nifi-registry",
+            "nifi-toolkit"
           ],
           "STANDARD": [
-            "nifi-registry"
+            "nifi-registry",
+            "nifi-toolkit"
           ]
         }
       },
