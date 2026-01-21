@@ -14,7 +14,8 @@ import org.apache.ambari.view.k8s.model.CommandState;
 import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.model.DeploymentMode;
-import org.apache.ambari.view.k8s.model.RangerTrinoConfigDefaults;
+import org.apache.ambari.view.k8s.model.RangerConfigDefaultsProvider;
+import org.apache.ambari.view.k8s.model.RangerConfigDefaultsRegistry;
 import org.apache.ambari.view.k8s.model.stack.StackConfig;
 import org.apache.ambari.view.k8s.model.stack.StackProperty;
 import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
@@ -627,6 +628,395 @@ public class CommandService {
     }
 
     /**
+     * Create or update Ranger-related ConfigMaps/Secrets required by charts.
+     * The behavior is driven entirely by the service.json Ranger spec entries.
+     *
+     * @param request deploy request containing the Ranger spec
+     * @param params mutable params map used to store Helm overrides and Ranger metadata
+     * @param effectiveValues merged Helm values map for repository name resolution
+     * @param ambariActionClient Ambari client for config resolution (may be null)
+     * @param cluster Ambari cluster name (may be null when Ambari is unavailable)
+     * @param ambariAliasResolver resolver for Ambari credential aliases
+     */
+    private void materializeRangerResources(HelmDeployRequest request,
+                                            Map<String, Object> params,
+                                            Map<String, Object> effectiveValues,
+                                            AmbariActionClient ambariActionClient,
+                                            String cluster,
+                                            AmbariAliasResolver ambariAliasResolver) {
+        Map<String, Map<String, Object>> rangerSpec = request.getRanger();
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> rangerPluginSettingsSpec = rangerSpec.get("ranger-plugin-settings");
+        String rangerRepositoryName = resolveRangerRepositoryName(rangerPluginSettingsSpec, effectiveValues, request);
+        String rangerServiceType = resolveRangerServiceType(rangerPluginSettingsSpec, request);
+        RangerConfigDefaultsProvider rangerDefaultsProvider =
+                RangerConfigDefaultsRegistry.resolve(rangerServiceType);
+        boolean kerberosClusterEnabled = Boolean.TRUE.equals(params.get("kerberosClusterEnabled"));
+        Map<String, String> rangerExtraServiceConfigs = new LinkedHashMap<>();
+
+        AmbariAliasResolver aliasResolver = ambariAliasResolver != null
+                ? ambariAliasResolver
+                : new AmbariAliasResolver(ctx);
+
+        for (Map.Entry<String, Map<String, Object>> rangerEntry : rangerSpec.entrySet()) {
+            Map<String, Object> spec = rangerEntry.getValue();
+            if (spec == null || spec.isEmpty()) {
+                continue;
+            }
+            String type = resolveStringValue(spec.get("type"), null);
+            if (type == null || type.isBlank()) {
+                LOG.warn("Skipping Ranger entry {} because type is missing", rangerEntry.getKey());
+                continue;
+            }
+            if ("ranger-plugin-settings".equals(type)) {
+                continue;
+            }
+
+            String name = resolveStringValue(spec.get("cm_name"), null);
+            String kind = resolveStringValue(spec.get("cm_type"), null);
+            if (name == null || name.isBlank() || kind == null || kind.isBlank()) {
+                LOG.warn("Skipping Ranger entry {} because cm_name/cm_type is missing", rangerEntry.getKey());
+                continue;
+            }
+            boolean asSecret = "secret".equalsIgnoreCase(kind);
+            boolean doCreation = true;
+            String xmlKey = name + ".xml";
+            String xml = null;
+
+            switch (type) {
+                case "ranger-security": {
+                    Map<String, String> rangerSecurityConfig = new LinkedHashMap<>();
+                    if (rangerDefaultsProvider != null) {
+                        rangerSecurityConfig.putAll(rangerDefaultsProvider.security(rangerServiceType));
+                        rangerSecurityConfig.putAll(rangerDefaultsProvider.pluginProperties(rangerServiceType));
+                    }
+
+                    String policyMgrSslFilePath = resolveStringValue(spec.get("ranger_policymgr_file"), null);
+                    String policyMgrSslHelmProperty = resolveStringValue(spec.get("helm_values_ranger_policymgr_file"), null);
+                    if (policyMgrSslFilePath != null && policyMgrSslHelmProperty != null) {
+                        this.commandUtils.addOverride(params, policyMgrSslHelmProperty, policyMgrSslFilePath);
+                    }
+
+                    String rangerPluginSuperUsers = resolveStringValue(spec.get("superusers"), null);
+                    if (rangerPluginSuperUsers != null && !rangerPluginSuperUsers.isBlank()) {
+                        rangerSecurityConfig.put(
+                                "ranger.plugin." + rangerServiceType + ".super.users",
+                                rangerPluginSuperUsers
+                        );
+                    }
+
+                    String rangerPolicyCacheDir = resolveStringValue(spec.get("ranger_policycache_dir"), null);
+                    String rangerPolicyCacheDirHelmProperty = resolveStringValue(spec.get("ranger_policycache_dir_helm_property"), null);
+                    if (rangerPolicyCacheDir != null && rangerPolicyCacheDirHelmProperty != null
+                            && !rangerPolicyCacheDir.isBlank() && !rangerPolicyCacheDirHelmProperty.isBlank()) {
+                        this.commandUtils.addOverride(params, rangerPolicyCacheDirHelmProperty, rangerPolicyCacheDir);
+                        rangerSecurityConfig.put(
+                                "ranger.plugin." + rangerServiceType + ".policy.cache.dir",
+                                rangerPolicyCacheDir
+                        );
+                    }
+
+                    if (kerberosClusterEnabled && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+                        try {
+                            String kerberosRealm = ambariActionClient.getDesiredConfigProperty(
+                                    cluster,
+                                    this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").type,
+                                    this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").key
+                            );
+                            String rangerPrincipalPrefix = resolveStringValue(spec.get("krb5_princ_srv"), null);
+                            if (rangerPrincipalPrefix == null || rangerPrincipalPrefix.isBlank()) {
+                                LOG.warn("Ranger Kerberos principal prefix (krb5_princ_srv) missing for {}", type);
+                            } else {
+                                String rangerKeytabPath = resolveStringValue(
+                                        spec.get("krb5_keytab_path"),
+                                        "/etc/security/keytabs/service.keytab"
+                                );
+                                rangerPrincipalPrefix = rangerPrincipalPrefix + "-" + request.getNamespace();
+                                rangerSecurityConfig.put(
+                                        "ranger.plugin." + rangerServiceType + ".ugi.login.type",
+                                        "keytab"
+                                );
+                                rangerSecurityConfig.put(
+                                        "ranger.plugin." + rangerServiceType + ".ugi.keytab.principal",
+                                        rangerPrincipalPrefix + "@" + kerberosRealm
+                                );
+                                rangerSecurityConfig.put(
+                                        "ranger.plugin." + rangerServiceType + ".ugi.keytab.file",
+                                        rangerKeytabPath
+                                );
+                                rangerSecurityConfig.put(
+                                        "ranger.plugin." + rangerServiceType + ".ugi.initialize",
+                                        "true"
+                                );
+                                rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrefix);
+                                rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrefix);
+                            }
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to resolve Kerberos realm for Ranger config: {}", ex.toString());
+                        }
+                    } else if (!kerberosClusterEnabled) {
+                        String rangerPluginUserName = resolveStringValue(spec.get("plugin_username"), null);
+                        if (rangerPluginUserName != null && !rangerPluginUserName.isBlank()) {
+                            String pluginPasswordSecretName = resolveStringValue(
+                                    spec.get("plugin_password_secret_name"),
+                                    "ranger-plugin-rest-client-password"
+                            );
+                            String pluginPasswordSecretKey = resolveStringValue(
+                                    spec.get("plugin_password_secret_k"),
+                                    "password"
+                            );
+                            String pluginPassword = kubernetesService
+                                    .readOpaqueSecretKeyAsString(
+                                            request.getNamespace(),
+                                            pluginPasswordSecretName,
+                                            pluginPasswordSecretKey
+                                    )
+                                    .orElse(null);
+                            if (pluginPassword == null) {
+                                pluginPassword = UUID.randomUUID().toString();
+                                Map<String, byte[]> pwdData = new LinkedHashMap<>();
+                                pwdData.put(pluginPasswordSecretKey, pluginPassword.getBytes(StandardCharsets.UTF_8));
+                                kubernetesService.createOrUpdateOpaqueSecret(
+                                        request.getNamespace(),
+                                        pluginPasswordSecretName,
+                                        pwdData
+                                );
+                                LOG.info("Created Ranger plugin password secret {} in namespace {}",
+                                        pluginPasswordSecretName, request.getNamespace());
+                            } else {
+                                LOG.info("Reusing Ranger plugin password secret {} in namespace {}",
+                                        pluginPasswordSecretName, request.getNamespace());
+                            }
+                            params.put("_rangerPluginUserName", rangerPluginUserName);
+                            params.put("_rangerPluginUserPassword", pluginPassword);
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".policy.rest.client.username",
+                                    rangerPluginUserName
+                            );
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".policy.rest.client.password",
+                                    pluginPassword
+                            );
+                        }
+                    }
+
+                    rangerSecurityConfig.put(
+                            "ranger.plugin." + rangerServiceType + ".service.name",
+                            rangerRepositoryName
+                    );
+                    if (policyMgrSslFilePath != null && !policyMgrSslFilePath.isBlank()) {
+                        rangerSecurityConfig.put(
+                                "ranger.plugin." + rangerServiceType + ".policy.rest.ssl.config.file",
+                                policyMgrSslFilePath
+                        );
+                    }
+
+                    if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+                        try {
+                            String rangerPolicyMgrExternalUrl = ambariActionClient.getDesiredConfigProperty(
+                                    cluster,
+                                    "admin-properties",
+                                    "policymgr_external_url"
+                            );
+                            if (rangerPolicyMgrExternalUrl != null && !rangerPolicyMgrExternalUrl.isBlank()) {
+                                rangerSecurityConfig.put(
+                                        "ranger.plugin." + rangerServiceType + ".policy.rest.url",
+                                        rangerPolicyMgrExternalUrl
+                                );
+                            }
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to resolve Ranger policymgr external URL: {}", ex.toString());
+                        }
+                    }
+
+                    String helmValuesProperty = resolveStringValue(spec.get("helm_values_property"), null);
+                    if (helmValuesProperty != null && !helmValuesProperty.isBlank()) {
+                        this.commandUtils.addOverride(params, helmValuesProperty, name);
+                    }
+                    xml = HadoopSiteXml.render(rangerSecurityConfig);
+                    xmlKey = name + ".xml";
+                    break;
+                }
+                case "ranger-audit": {
+                    String helmValuesProperty = resolveStringValue(spec.get("helm_values_property"), null);
+                    if (helmValuesProperty != null && !helmValuesProperty.isBlank()) {
+                        this.commandUtils.addOverride(params, helmValuesProperty, name);
+                    }
+                    Map<String, String> auditConfig = new LinkedHashMap<>();
+                    if (rangerDefaultsProvider != null) {
+                        auditConfig.putAll(rangerDefaultsProvider.audit());
+                    }
+                    xml = HadoopSiteXml.render(auditConfig);
+                    xmlKey = name + ".xml";
+                    break;
+                }
+                case "ranger-policymgr-ssl": {
+                    Map<String, String> policymgrSsl = new LinkedHashMap<>();
+                    if (rangerDefaultsProvider != null) {
+                        policymgrSsl.putAll(rangerDefaultsProvider.policymgrSsl());
+                    }
+
+                    String credProviderPath = resolveStringValue(spec.get("ranger_plugin_credential_provider_path"), null);
+                    String credProviderPathHelm = resolveStringValue(spec.get("ranger_plugin_credential_provider_path_helm_prop"), null);
+                    if (credProviderPath != null && credProviderPathHelm != null) {
+                        this.commandUtils.addOverride(params, credProviderPathHelm, credProviderPath);
+                    }
+                    String credProviderFile = resolveStringValue(spec.get("ranger_plugin_credential_provider_file"), null);
+                    String credProviderFileHelm = resolveStringValue(spec.get("ranger_plugin_credential_provider_file_helm_prop"), null);
+                    if (credProviderFile != null && credProviderFileHelm != null) {
+                        this.commandUtils.addOverride(params, credProviderFileHelm, credProviderFile);
+                    }
+                    String credProviderSecretName = resolveStringValue(
+                            spec.get("ranger_plugin_credential_provider_secretName"),
+                            null
+                    );
+                    String credProviderSecretNameHelm = resolveStringValue(
+                            spec.get("ranger_plugin_credential_provider_secretName_helm_prop"),
+                            null
+                    );
+                    if (credProviderSecretName != null && credProviderSecretNameHelm != null) {
+                        this.commandUtils.addOverride(params, credProviderSecretNameHelm, credProviderSecretName);
+                    }
+
+                    String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
+                    if (truststorePath != null && !truststorePath.isBlank()
+                            && credProviderPath != null && credProviderFile != null && credProviderSecretName != null) {
+                        try {
+                            String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password"))
+                                    .orElse("");
+                            char[] truststorePass = aliasResolver.resolve(ctx, truststorePassProp);
+                            RangerCredentialWriter writer = new RangerCredentialWriter(kubernetesService);
+                            String jceksPath = credProviderPath + "/" + credProviderFile;
+                            Map<String, String> props = writer.ensureJceksSecretForTruststorePassword(
+                                    request.getNamespace(),
+                                    credProviderSecretName,
+                                    jceksPath,
+                                    RangerCredentialWriter.DEFAULT_ALIAS,
+                                    truststorePass,
+                                    Map.of("app", rangerServiceType),
+                                    Map.of("purpose", "ranger-ssl-password")
+                            );
+                            policymgrSsl.put("xasecure.policymgr.clientssl.truststore.password", "crypted");
+                            policymgrSsl.putAll(props);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to generate Ranger credential provider: {}", ex.toString());
+                        }
+                    }
+
+                    String helmValuesProperty = resolveStringValue(spec.get("helm_values_property"), null);
+                    if (helmValuesProperty != null && !helmValuesProperty.isBlank()) {
+                        this.commandUtils.addOverride(params, helmValuesProperty, name);
+                    }
+                    xml = HadoopSiteXml.render(policymgrSsl);
+                    xmlKey = name + "-" + rangerServiceType + ".xml";
+                    break;
+                }
+                case "ranger-admin-truststore": {
+                    String helmValuesSecretNameKey = resolveStringValue(spec.get("helm_values_property"), null);
+                    if (helmValuesSecretNameKey != null && !helmValuesSecretNameKey.isBlank()) {
+                        this.commandUtils.addOverride(params, helmValuesSecretNameKey, name);
+                    }
+                    String helmValuesPasswordSecretKey = resolveStringValue(spec.get("truststore_password_helm_values_property"), null);
+                    String helmValuesPasswordSecretValue = resolveStringValue(spec.get("truststore_password_secret_name"), null);
+                    if (helmValuesPasswordSecretKey != null && helmValuesPasswordSecretValue != null) {
+                        this.commandUtils.addOverride(params, helmValuesPasswordSecretKey, helmValuesPasswordSecretValue);
+                    }
+                    String helmValuesFileKey = resolveStringValue(spec.get("truststore_file_key_helm_values_property"), null);
+                    String helmValuesFileValue = resolveStringValue(spec.get("truststore_file_key"), null);
+                    if (helmValuesFileKey != null && helmValuesFileValue != null) {
+                        this.commandUtils.addOverride(params, helmValuesFileKey, helmValuesFileValue);
+                    }
+                    String helmValuesPasswordKey = resolveStringValue(spec.get("truststore_password_secret_key_name"), null);
+                    String helmValuesPasswordValue = resolveStringValue(spec.get("truststore_password_secret_key_value"), null);
+                    if (helmValuesPasswordKey != null && helmValuesPasswordValue != null) {
+                        this.commandUtils.addOverride(params, helmValuesPasswordKey, helmValuesPasswordValue);
+                    }
+
+                    String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
+                    if (truststorePath != null && !truststorePath.isBlank()) {
+                        try {
+                            String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
+                                    .filter(s -> !s.isBlank()).orElse("JKS");
+                            String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password"))
+                                    .orElse("");
+                            char[] truststorePass = aliasResolver.resolve(ctx, truststorePassProp);
+                            if (helmValuesFileValue != null && !helmValuesFileValue.isBlank()) {
+                                kubernetesService.ensureOrRotateTruststoreSecretFromLocalFile(
+                                        request.getNamespace(),
+                                        name,
+                                        truststorePath,
+                                        truststoreType,
+                                        truststorePass,
+                                        helmValuesFileValue,
+                                        365,
+                                        null
+                                );
+                            }
+                            if (helmValuesPasswordSecretValue != null && !helmValuesPasswordSecretValue.isBlank()
+                                    && helmValuesPasswordValue != null && !helmValuesPasswordValue.isBlank()) {
+                                kubernetesService.createOrUpdateOpaqueSecret(
+                                        request.getNamespace(),
+                                        helmValuesPasswordSecretValue,
+                                        helmValuesPasswordValue,
+                                        new String(truststorePass).getBytes(StandardCharsets.UTF_8)
+                                );
+                            }
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to provision Ranger admin truststore: {}", ex.toString());
+                        }
+                    }
+                    doCreation = false;
+                    break;
+                }
+                case "ranger-admin-tls-client": {
+                    doCreation = false;
+                    break;
+                }
+                default:
+                    LOG.info("Skipping unsupported Ranger spec type {}", type);
+                    doCreation = false;
+            }
+
+            if (doCreation) {
+                if (xml == null || xml.isBlank()) {
+                    LOG.warn("Skipping Ranger config {} because XML content is empty", name);
+                    continue;
+                }
+                if (asSecret) {
+                    Map<String, byte[]> data = new LinkedHashMap<>();
+                    data.put(xmlKey, xml.getBytes(StandardCharsets.UTF_8));
+                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                } else {
+                    Map<String, String> data = new LinkedHashMap<>();
+                    data.put(xmlKey, xml);
+                    kubernetesService.createOrUpdateConfigMap(
+                            request.getNamespace(),
+                            name,
+                            data,
+                            Map.of("managed-by", "ambari-k8s-view"),
+                            Map.of()
+                    );
+                }
+            }
+        }
+
+        if (!rangerExtraServiceConfigs.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            Map<String, String> existingConfigs = (Map<String, String>) params.get("_rangerServiceConfigs");
+            Map<String, String> mergedConfigs = new LinkedHashMap<>();
+            if (existingConfigs != null && !existingConfigs.isEmpty()) {
+                mergedConfigs.putAll(existingConfigs);
+            }
+            mergedConfigs.putAll(rangerExtraServiceConfigs);
+            params.put("_rangerServiceConfigs", mergedConfigs);
+            LOG.info("Added Ranger service configs derived from security settings: {}", mergedConfigs);
+        }
+    }
+
+    /**
      * Plan a Ranger repository creation step for a release. This is used during initial install
      * and for reapply actions, and it is fully driven by the service.json ranger spec.
      *
@@ -659,19 +1049,33 @@ public class CommandService {
 
         String resolvedRepositoryName = resolveRangerRepositoryName(rangerPluginSettingsSpec, effectiveValues, request);
         String resolvedServiceType = resolveRangerServiceType(rangerPluginSettingsSpec, request);
-        String rangerPluginUserName = extractRangerPluginUserName(rangerSpec);
-        String rangerPluginUserPassword = extractRangerPluginUserPassword(rangerSpec);
+        String rangerPluginUserName = resolveStringValue(params.get("_rangerPluginUserName"), null);
+        if (rangerPluginUserName == null || rangerPluginUserName.isBlank()) {
+            rangerPluginUserName = extractRangerPluginUserName(rangerSpec);
+        }
+        String rangerPluginUserPassword = resolveStringValue(params.get("_rangerPluginUserPassword"), null);
+        if (rangerPluginUserPassword == null || rangerPluginUserPassword.isBlank()) {
+            rangerPluginUserPassword = extractRangerPluginUserPassword(rangerSpec);
+        }
 
         // Build extra Ranger service configs from templated specs, if available.
-        Map<String, String> rangerServiceConfigs = Collections.emptyMap();
+        Map<String, String> rangerServiceConfigs = new LinkedHashMap<>();
+        @SuppressWarnings("unchecked")
+        Map<String, String> existingServiceConfigs = (Map<String, String>) params.get("_rangerServiceConfigs");
+        if (existingServiceConfigs != null && !existingServiceConfigs.isEmpty()) {
+            rangerServiceConfigs.putAll(existingServiceConfigs);
+        }
         if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-            rangerServiceConfigs = configResolutionService.computeExtraRangerConfigs(
+            Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
                     rangerPluginSettingsSpec,
                     params,
                     effectiveValues,
                     ambariActionClient,
                     cluster
             );
+            if (computedConfigs != null && !computedConfigs.isEmpty()) {
+                rangerServiceConfigs.putAll(computedConfigs);
+            }
         } else {
             LOG.warn("Ambari client unavailable; skipping Ranger extra config resolution for release {}", request.getReleaseName());
         }
@@ -1090,6 +1494,16 @@ public class CommandService {
         rootParams.put("_cluster", clusterName);
         rootParams.put("_baseUri", baseUri.toString());
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+
+        AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
+        materializeRangerResources(
+                rangerRequest,
+                rootParams,
+                effectiveValues,
+                ambariActionClient,
+                clusterName,
+                ambariAliasResolver
+        );
 
         List<String> childCommandIds = new ArrayList<>();
         // Plan the Ranger repository creation step with current values.
@@ -1574,6 +1988,22 @@ public class CommandService {
         Map<String, Object> effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
         if (effectiveValues.isEmpty()) {
             LOG.error("CRITICAL: effectiveValues is EMPTY. 'helm show values' failed or parsing failed.");
+        }
+
+        if (ranger != null && !ranger.isEmpty()) {
+            materializeRangerResources(
+                    request,
+                    params,
+                    effectiveValues,
+                    ambariActionClient,
+                    cluster,
+                    ambariAliasResolver
+            );
+            overrides = this.commandUtils.loadValuesFromParams(params);
+            if (overrides == null) {
+                overrides = Collections.emptyMap();
+            }
+            effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
         }
 
         List<Map<String, Object>> resolvedEndpoints = this.configResolutionService
@@ -2824,10 +3254,10 @@ public class CommandService {
 
 
                     // Default serviceType unless overridden from params
-                    String serviceType = "trino";
-                    Object stObj = childParams.get("_rangerServiceType");
-                    if (stObj instanceof String s && !s.isBlank()) {
-                        serviceType = s;
+                    String serviceType = resolveStringValue(childParams.get("_rangerServiceType"), null);
+                    if (serviceType == null || serviceType.isBlank()) {
+                        String serviceKey = resolveStringValue(childParams.get("serviceKey"), "unknown");
+                        serviceType = serviceKey.toLowerCase(Locale.ROOT);
                     }
 
                     String repoDescription =
