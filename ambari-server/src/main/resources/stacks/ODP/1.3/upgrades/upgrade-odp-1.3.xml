@@ -208,6 +208,8 @@
       <service name="HBASE">
         <component>HBASE_REGIONSERVER</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
 
       <service name="YARN">
@@ -731,6 +733,18 @@
       </component>
 
       <component name="HBASE_REGIONSERVER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+
+      <component name="HBASE_THRIFTSERVER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+
+      <component name="HBASE_RESTSERVER">
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
