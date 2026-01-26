@@ -516,6 +516,70 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Create a no-op dependency step that marks the dependency as already satisfied.
+     * This is used when a shared dependency release is detected and install should be skipped.
+     *
+     * @param cmd root command
+     * @param dependencyName helm release name for the dependency
+     * @param dependencySpec dependency spec map (for namespace/context)
+     * @param reason message to attach to the command status
+     */
+    public void createDependencySatisfiedCommand(CommandEntity cmd,
+                                                 String dependencyName,
+                                                 Map<String, Object> dependencySpec,
+                                                 String reason) {
+        final String now = Instant.now().toString();
+        String id = cmd.getId() + "-" + UUID.randomUUID();
+
+        CommandEntity satisfied = new CommandEntity();
+        satisfied.setId(id);
+        satisfied.setType(CommandType.DEPENDENCY_SATISFIED.name());
+        satisfied.setTitle("Dependency already present: " + dependencyName);
+        satisfied.setViewInstance(ctx.getInstanceName());
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("releaseName", dependencyName);
+        if (dependencySpec != null) {
+            Object namespace = dependencySpec.get("namespace");
+            if (namespace != null) {
+                params.put("namespace", namespace);
+            }
+        }
+        params.put("reason", reason);
+        satisfied.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.SUCCEEDED.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        status.setMessage(reason);
+        status.setWorkerId(null);
+        satisfied.setCommandStatusId(status.getId());
+
+        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+        List<String> childCommands;
+        try {
+            childCommands = gson.fromJson(cmd.getChildListJson(), listType);
+            if (childCommands == null) {
+                childCommands = new ArrayList<>();
+            }
+        } catch (Exception e) {
+            childCommands = new ArrayList<>();
+        }
+        childCommands.add(satisfied.getId());
+        cmd.setChildListJson(gson.toJson(childCommands));
+
+        store(cmd);
+        store(status);
+        store(satisfied);
+
+        LOG.info("Dependency {} already present; added satisfied step {}", dependencyName, satisfied.getId());
+    }
+
+    /**
      * this method does create the ranger plugin repository creation sub-command
      * each helm chart can have a plugin ranger plugin which can be wired to a ranger repository
      * the ranger repository will be created if it does not exist

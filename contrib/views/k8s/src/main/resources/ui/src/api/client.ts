@@ -87,9 +87,11 @@ export interface SecurityConfig {
     bindDn?: string;
     bindPassword?: string;
     userDnTemplate?: string;
+    userSearchFilter?: string;
     baseDn?: string;
     groupSearchBase?: string;
     groupSearchFilter?: string;
+    groupAuthPattern?: string;
     referral?: string;
     startTls?: boolean;
     adUrl?: string;

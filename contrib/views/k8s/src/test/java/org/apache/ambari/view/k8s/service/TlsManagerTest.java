@@ -53,6 +53,8 @@ class TlsManagerTest {
 
         tlsManager.applyTls(tls, request, new HashMap<>());
 
+        verify(kubernetesService).createNamespace("ns");
+
         ArgumentCaptor<Map<String, byte[]>> keystoreCaptor = ArgumentCaptor.forClass(Map.class);
         verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), keystoreCaptor.capture());
         Map<String, byte[]> keystoreData = keystoreCaptor.getValue();

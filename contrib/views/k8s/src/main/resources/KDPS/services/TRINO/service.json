@@ -150,6 +150,7 @@
       "secretName": "regcred",
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
+      "skipIfReleaseExists": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
       ],
