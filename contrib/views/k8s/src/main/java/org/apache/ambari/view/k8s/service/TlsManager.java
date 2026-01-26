@@ -103,6 +103,7 @@ public class TlsManager {
                     tlsKey, request.getReleaseName(), secretName, autoGenerate);
 
             if (autoGenerate) {
+                ensureNamespaceExists(request.getNamespace());
                 // Generate and persist a keystore or PEM Secret signed by Ambari's internal CA.
                 generateKeystoreSecret(request.getNamespace(), secretName, keystoreKey, passwordKey, keystoreType, password, dnsNames, validityDays);
                 generatePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, password);
@@ -116,6 +117,23 @@ public class TlsManager {
             }
 
             // Helm values are handled via bindings; here we only provision the secret.
+        }
+    }
+
+    /**
+     * Ensure the target namespace exists before provisioning TLS secrets.
+     *
+     * @param namespace target namespace for secret creation
+     */
+    private void ensureNamespaceExists(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            throw new IllegalArgumentException("Namespace is required for TLS secret provisioning");
+        }
+        try {
+            kubernetesService.createNamespace(namespace);
+            LOG.info("TLS provisioning ensured namespace {} exists", namespace);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to ensure namespace " + namespace + " exists for TLS provisioning", e);
         }
     }
 

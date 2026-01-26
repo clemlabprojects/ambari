@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Typography, message, Tooltip } from 'antd';
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { getSecurityConfig, getSecurityProfileUsage, getSecuritySchema, saveSecurityConfig, deleteSecurityProfile } from '../api/client';
@@ -20,6 +20,36 @@ const GlobalSecurityPage: React.FC = () => {
     schema?.properties?.find((p: any) => p.name === 'mode')?.default ||
     schema?.sections?.find((s: any) => s.name === 'mode')?.default ||
     'none';
+
+  const schemaProperties = useMemo(() => {
+    const props: any[] = [];
+    if (Array.isArray(schema?.properties)) {
+      props.push(...schema.properties);
+    }
+    if (Array.isArray(schema?.sections)) {
+      schema.sections.forEach((section: any) => {
+        const sectionProps = section?.properties || section?.fields;
+        if (Array.isArray(sectionProps)) {
+          props.push(...sectionProps);
+        }
+      });
+    }
+    return props.filter((prop) => prop?.name);
+  }, [schema]);
+
+  const mode = Form.useWatch('mode', form);
+
+  const modeProperty = schemaProperties.find((prop: any) => prop.name === 'mode');
+  const modeOptions = Array.isArray(modeProperty?.options)
+    ? modeProperty.options
+    : [
+        { label: 'None', value: 'none' },
+        { label: 'LDAP', value: 'ldap' },
+        { label: 'Active Directory', value: 'ad' },
+        { label: 'OIDC', value: 'oidc' },
+      ];
+  const modeLabel =
+    modeOptions.find((option: any) => option?.value === mode)?.label || mode;
 
   const [deleteProfileLoading, setDeleteProfileLoading] = useState(false);
   const [usageModalVisible, setUsageModalVisible] = useState(false);
@@ -57,6 +87,74 @@ const GlobalSecurityPage: React.FC = () => {
     const title = helmTitle(fieldPath, modeValue);
     return title ? <Text type="secondary" style={{ fontSize: 12 }}>{title}</Text> : undefined;
   };
+
+  const schemaFieldMatchesMode = (prop: any, modeValue?: string) => {
+    if (!modeValue) return true;
+    if (!Array.isArray(prop?.modes) || prop.modes.length === 0) return true;
+    return prop.modes.includes(modeValue);
+  };
+
+  const buildFieldExtra = (prop: any, modeValue?: string) => {
+    const items: React.ReactNode[] = [];
+    if (prop?.description) {
+      items.push(
+        <Text key={`${prop.name}-desc`} type="secondary" style={{ fontSize: 12 }}>
+          {prop.description}
+        </Text>
+      );
+    }
+    const helmInfo = helmMeta(prop?.name, modeValue);
+    if (helmInfo) {
+      items.push(<span key={`${prop.name}-helm`}>{helmInfo}</span>);
+    }
+    if (!items.length) return undefined;
+    return <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{items}</div>;
+  };
+
+  const renderSchemaField = (prop: any, modeValue?: string) => {
+    const namePath = String(prop?.name || '').split('.').filter(Boolean);
+    const label = prop?.displayName || prop?.name;
+    const isBoolean = prop?.type === 'boolean';
+    const isPassword = prop?.type === 'password';
+    const isSelect = prop?.type === 'select';
+    const rules = prop?.required ? [{ required: true, message: `${label} is required` }] : undefined;
+    let input = <Input />;
+    if (isBoolean) {
+      input = <Switch />;
+    } else if (isPassword) {
+      input = <Input.Password />;
+    } else if (isSelect) {
+      input = (
+        <Select>
+          {(prop?.options || []).map((option: any) => (
+            <Option key={option?.value ?? option?.label} value={option?.value}>
+              {option?.label ?? option?.value}
+            </Option>
+          ))}
+        </Select>
+      );
+    }
+    return (
+      <Form.Item
+        key={prop?.name}
+        label={label}
+        name={namePath}
+        rules={rules}
+        tooltip={helmTitle(prop?.name, modeValue)}
+        extra={buildFieldExtra(prop, modeValue)}
+        valuePropName={isBoolean ? 'checked' : undefined}
+      >
+        {input}
+      </Form.Item>
+    );
+  };
+
+  const modeFields = (prefix: string, modeValue?: string) =>
+    schemaProperties.filter(
+      (prop: any) =>
+        String(prop?.name || '').startsWith(`${prefix}.`) &&
+        schemaFieldMatchesMode(prop, modeValue)
+    );
 
   const applyProfileToForm = (cfg?: SecurityConfig, fallbackMode?: string) => {
     const extraList = Object.entries(cfg?.extraProperties || {}).map(([key, value]) => ({
@@ -178,8 +276,6 @@ const GlobalSecurityPage: React.FC = () => {
   const canDeleteProfile = Boolean(currentProfile && !isNewProfile && profiles[currentProfile]);
   const usageModalTitle = usageProfileLabel ? `Profile "${usageProfileLabel}" is in use` : 'Profile in use';
 
-  const mode = Form.useWatch('mode', form);
-
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -263,235 +359,41 @@ const GlobalSecurityPage: React.FC = () => {
             extra={helmMeta('mode')}
           >
             <Select>
-              <Option value="none">None</Option>
-              <Option value="ldap">LDAP</Option>
-              <Option value="ad">Active Directory</Option>
-              <Option value="oidc">OIDC</Option>
+              {modeOptions.map((option: any) => (
+                <Option key={option?.value ?? option?.label} value={option?.value}>
+                  {option?.label ?? option?.value}
+                </Option>
+              ))}
             </Select>
           </Form.Item>
 
           {(mode === 'ldap' || mode === 'ad') && (
             <div style={{ marginBottom: 16 }}>
-              <Title level={4} style={{ marginBottom: 8 }}>{mode === 'ad' ? 'Active Directory' : 'LDAP'}</Title>
-              <Form.Item
-                label="URL"
-                name={['ldap', mode === 'ad' ? 'adUrl' : 'url']}
-                rules={[{ required: true }]}
-                tooltip={helmTitle(mode === 'ad' ? 'ldap.adUrl' : 'ldap.url', mode)}
-                extra={helmMeta(mode === 'ad' ? 'ldap.adUrl' : 'ldap.url', mode)}
-              >
-                <Input placeholder="ldap://host:389" title={helmTitle(mode === 'ad' ? 'ldap.adUrl' : 'ldap.url', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Bind DN"
-                name={['ldap', mode === 'ad' ? 'adBindDn' : 'bindDn']}
-                tooltip={helmTitle(mode === 'ad' ? 'ldap.adBindDn' : 'ldap.bindDn', mode)}
-                extra={helmMeta(mode === 'ad' ? 'ldap.adBindDn' : 'ldap.bindDn', mode)}
-              >
-                <Input title={helmTitle(mode === 'ad' ? 'ldap.adBindDn' : 'ldap.bindDn', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Bind Password"
-                name={['ldap', mode === 'ad' ? 'adBindPassword' : 'bindPassword']}
-                tooltip={helmTitle(mode === 'ad' ? 'ldap.adBindPassword' : 'ldap.bindPassword', mode)}
-                extra={helmMeta(mode === 'ad' ? 'ldap.adBindPassword' : 'ldap.bindPassword', mode)}
-              >
-                <Input.Password title={helmTitle(mode === 'ad' ? 'ldap.adBindPassword' : 'ldap.bindPassword', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="User DN Template"
-                name={['ldap', 'userDnTemplate']}
-                tooltip={helmTitle('ldap.userDnTemplate', mode)}
-                extra={helmMeta('ldap.userDnTemplate', mode)}
-              >
-                <Input
-                  placeholder="uid={0},ou=users,dc=example,dc=com"
-                  title={helmTitle('ldap.userDnTemplate', mode)}
-                />
-              </Form.Item>
-              <Form.Item
-                label="Base DN"
-                name={['ldap', mode === 'ad' ? 'adBaseDn' : 'baseDn']}
-                tooltip={helmTitle(mode === 'ad' ? 'ldap.adBaseDn' : 'ldap.baseDn', mode)}
-                extra={helmMeta(mode === 'ad' ? 'ldap.adBaseDn' : 'ldap.baseDn', mode)}
-              >
-                <Input title={helmTitle(mode === 'ad' ? 'ldap.adBaseDn' : 'ldap.baseDn', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Group Search Base"
-                name={['ldap', 'groupSearchBase']}
-                tooltip={helmTitle('ldap.groupSearchBase', mode)}
-                extra={helmMeta('ldap.groupSearchBase', mode)}
-              >
-                <Input title={helmTitle('ldap.groupSearchBase', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Group Search Filter"
-                name={['ldap', 'groupSearchFilter']}
-                tooltip={helmTitle('ldap.groupSearchFilter', mode)}
-                extra={helmMeta('ldap.groupSearchFilter', mode)}
-              >
-                <Input
-                  placeholder="(member=uid={0},ou=users,...)"
-                  title={helmTitle('ldap.groupSearchFilter', mode)}
-                />
-              </Form.Item>
-              <Form.Item
-                label="Referral"
-                name={['ldap', 'referral']}
-                tooltip={helmTitle('ldap.referral', mode)}
-                extra={helmMeta('ldap.referral', mode)}
-              >
-                <Input placeholder="follow|ignore" title={helmTitle('ldap.referral', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="StartTLS"
-                name={['ldap', 'startTls']}
-                valuePropName="checked"
-                tooltip={helmTitle('ldap.startTls', mode)}
-                extra={helmMeta('ldap.startTls', mode)}
-              >
-                <Switch />
-              </Form.Item>
-              {mode === 'ad' && (
-                <>
-                  <Form.Item
-                    label="AD Domain"
-                    name={['ldap', 'adDomain']}
-                    tooltip={helmTitle('ldap.adDomain', mode)}
-                    extra={helmMeta('ldap.adDomain', mode)}
-                  >
-                    <Input title={helmTitle('ldap.adDomain', mode)} />
-                  </Form.Item>
-                  <Form.Item
-                    label="AD User Search Filter"
-                    name={['ldap', 'adUserSearchFilter']}
-                    tooltip={helmTitle('ldap.adUserSearchFilter', mode)}
-                    extra={helmMeta('ldap.adUserSearchFilter', mode)}
-                  >
-                    <Input
-                      placeholder="(sAMAccountName={0})"
-                      title={helmTitle('ldap.adUserSearchFilter', mode)}
-                    />
-                  </Form.Item>
-                </>
-              )}
+              <Title level={4} style={{ marginBottom: 8 }}>{modeLabel || (mode === 'ad' ? 'Active Directory' : 'LDAP')}</Title>
+              {modeFields('ldap', mode).map((prop: any) => renderSchemaField(prop, mode))}
             </div>
           )}
 
           {mode === 'oidc' && (
             <div style={{ marginBottom: 16 }}>
-              <Title level={4} style={{ marginBottom: 8 }}>OIDC</Title>
-              <Form.Item
-                label="Issuer URL"
-                name={['oidc', 'issuerUrl']}
-                rules={[{ required: true }]}
-                tooltip={helmTitle('oidc.issuerUrl', mode)}
-                extra={helmMeta('oidc.issuerUrl', mode)}
-              >
-                <Input placeholder="https://idp.example.com" title={helmTitle('oidc.issuerUrl', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Client ID"
-                name={['oidc', 'clientId']}
-                rules={[{ required: true }]}
-                tooltip={helmTitle('oidc.clientId', mode)}
-                extra={helmMeta('oidc.clientId', mode)}
-              >
-                <Input title={helmTitle('oidc.clientId', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Client Secret"
-                name={['oidc', 'clientSecret']}
-                rules={[{ required: true }]}
-                tooltip={helmTitle('oidc.clientSecret', mode)}
-                extra={helmMeta('oidc.clientSecret', mode)}
-              >
-                <Input.Password title={helmTitle('oidc.clientSecret', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Scopes"
-                name={['oidc', 'scopes']}
-                tooltip={helmTitle('oidc.scopes', mode)}
-                extra={helmMeta('oidc.scopes', mode)}
-              >
-                <Input placeholder="openid profile email" title={helmTitle('oidc.scopes', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Redirect URI"
-                name={['oidc', 'redirectUri']}
-                tooltip={helmTitle('oidc.redirectUri', mode)}
-                extra={helmMeta('oidc.redirectUri', mode)}
-              >
-                <Input title={helmTitle('oidc.redirectUri', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="User Claim"
-                name={['oidc', 'userClaim']}
-                tooltip={helmTitle('oidc.userClaim', mode)}
-                extra={helmMeta('oidc.userClaim', mode)}
-              >
-                <Input placeholder="preferred_username" title={helmTitle('oidc.userClaim', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Groups Claim"
-                name={['oidc', 'groupsClaim']}
-                tooltip={helmTitle('oidc.groupsClaim', mode)}
-                extra={helmMeta('oidc.groupsClaim', mode)}
-              >
-                <Input placeholder="groups" title={helmTitle('oidc.groupsClaim', mode)} />
-              </Form.Item>
-              <Form.Item
-                label="Skip TLS Verify"
-                name={['oidc', 'skipTlsVerify']}
-                valuePropName="checked"
-                tooltip={helmTitle('oidc.skipTlsVerify', mode)}
-                extra={helmMeta('oidc.skipTlsVerify', mode)}
-              >
-                <Switch />
-              </Form.Item>
-              <Form.Item
-                label="CA Secret (optional)"
-                name={['oidc', 'caSecret']}
-                tooltip={helmTitle('oidc.caSecret', mode)}
-                extra={helmMeta('oidc.caSecret', mode)}
-              >
-                <Input placeholder="secret with ca.crt" title={helmTitle('oidc.caSecret', mode)} />
-              </Form.Item>
+              <Title level={4} style={{ marginBottom: 8 }}>{modeLabel || 'OIDC'}</Title>
+              {modeFields('oidc', mode).map((prop: any) => renderSchemaField(prop, mode))}
             </div>
           )}
 
           <div style={{ marginBottom: 16 }}>
             <Title level={4} style={{ marginBottom: 8 }}>Truststore (optional)</Title>
-            <Form.Item
-              label="Truststore Secret"
-              name={['tls', 'truststoreSecret']}
-              tooltip={helmTitle('tls.truststoreSecret', mode)}
-              extra={helmMeta('tls.truststoreSecret', mode)}
-            >
-              <Input placeholder="secret name containing truststore" title={helmTitle('tls.truststoreSecret', mode)} />
-            </Form.Item>
-            <Form.Item
-              label="Truststore Key"
-              name={['tls', 'truststoreKey']}
-              tooltip={helmTitle('tls.truststoreKey', mode)}
-              extra={helmMeta('tls.truststoreKey', mode)}
-            >
-              <Input placeholder="truststore.jks or ca.crt" title={helmTitle('tls.truststoreKey', mode)} />
-            </Form.Item>
-            <Form.Item
-              label="Truststore Password Key"
-              name={['tls', 'truststorePasswordKey']}
-              tooltip={helmTitle('tls.truststorePasswordKey', mode)}
-              extra={helmMeta('tls.truststorePasswordKey', mode)}
-            >
-              <Input placeholder="truststore.password" title={helmTitle('tls.truststorePasswordKey', mode)} />
-            </Form.Item>
+            {modeFields('tls', mode).map((prop: any) => renderSchemaField(prop, mode))}
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <Title level={4} style={{ marginBottom: 8 }}>Advanced overrides</Title>
             <Text type="secondary">Add extra Helm overrides (helm path → value) shared across charts.</Text>
+            <div>
+              <Text type="secondary">
+                New schema fields still require a backend rebuild unless you add them here as overrides.
+              </Text>
+            </div>
             <Form.List name="extraPropertiesList">
               {(fields, { add, remove }) => (
                 <>

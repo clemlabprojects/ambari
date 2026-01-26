@@ -8,9 +8,11 @@ public class LdapConfig {
     public String bindDn;
     public String bindPassword;
     public String userDnTemplate;
+    public String userSearchFilter;
     public String baseDn;
     public String groupSearchBase;
     public String groupSearchFilter;
+    public String groupAuthPattern;
     public String referral;
     public boolean startTls;
     public String adUrl;

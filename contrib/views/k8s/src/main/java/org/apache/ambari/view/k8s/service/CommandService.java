@@ -236,6 +236,48 @@ public class CommandService {
     }
 
     /**
+     * Parse a loosely-typed boolean value (String/Boolean/Number).
+     *
+     * @param value raw value to parse
+     * @param defaultValue fallback when parsing fails
+     * @return parsed boolean
+     */
+    private static boolean asBoolean(Object value, boolean defaultValue) {
+        if (value == null) return defaultValue;
+        if (value instanceof Boolean b) return b;
+        if (value instanceof Number n) return n.intValue() != 0;
+        String s = String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(s) || "yes".equals(s) || "1".equals(s)) return true;
+        if ("false".equals(s) || "no".equals(s) || "0".equals(s)) return false;
+        return defaultValue;
+    }
+
+    /**
+     * Check if a dependency release already exists in the target namespace.
+     *
+     * @param namespace dependency namespace
+     * @param releaseName dependency release name
+     * @return true when a release with the same name exists
+     */
+    private boolean dependencyReleaseExists(String namespace, String releaseName) {
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()) {
+            return false;
+        }
+        try {
+            String kubeconfig = this.kubernetesService.getConfigurationService().getKubeconfigContents();
+            if (kubeconfig == null || kubeconfig.isBlank()) {
+                LOG.warn("Cannot check dependency release existence; kubeconfig is empty");
+                return false;
+            }
+            return this.helmService.list(namespace, kubeconfig).stream()
+                    .anyMatch(r -> releaseName.equals(r.getName()));
+        } catch (Exception ex) {
+            LOG.warn("Failed to check existing dependency release {}/{}: {}", namespace, releaseName, ex.toString());
+            return false;
+        }
+    }
+
+    /**
      * Check whether the injection mode indicates webhook-based keytab injection.
      *
      * @param kerberosInjectionMode raw injection mode value (may be null)
@@ -2122,6 +2164,8 @@ public class CommandService {
             }
             for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
                 Object dependencySpec = dependencyEntry.getValue();
+                boolean skipIfReleaseExists = false;
+                String dependencyNamespace = null;
                 // Propagate injection mode to dependency steps so they can skip webhook label work.
                 if (dependencySpec instanceof Map) {
                     @SuppressWarnings("unchecked")
@@ -2130,6 +2174,29 @@ public class CommandService {
                     if (kerberosDetectionAvailable) {
                         dependencySpecMap.put("kerberosClusterEnabled", kerberosEnabled);
                     }
+                    skipIfReleaseExists = asBoolean(dependencySpecMap.get("skipIfReleaseExists"), false);
+                    dependencyNamespace = resolveStringValue(dependencySpecMap.get("namespace"), null);
+                }
+
+                String dependencyReleaseName = dependencyEntry.getKey();
+                if (skipIfReleaseExists && dependencyReleaseName != null && dependencyNamespace != null) {
+                    if (dependencyReleaseExists(dependencyNamespace, dependencyReleaseName)) {
+                        String reason = "Dependency already installed as Helm release '" + dependencyReleaseName
+                                + "' in namespace '" + dependencyNamespace + "'";
+                        LOG.info("Skipping dependency install because release exists: {} in {}", dependencyReleaseName, dependencyNamespace);
+                        if (dependencySpec instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                            this.commandPlanFactory.createDependencySatisfiedCommand(
+                                    rootCommand,
+                                    dependencyReleaseName,
+                                    dependencySpecMap,
+                                    reason
+                            );
+                        }
+                        continue;
+                    }
+                    LOG.info("Dependency {} not found in {}; proceeding with install", dependencyReleaseName, dependencyNamespace);
                 }
                 LOG.info("Processing dependency: {} ", dependencyEntry.getKey());
                 this.commandPlanFactory.createDependencyCommands(
@@ -3188,6 +3255,13 @@ public class CommandService {
                     } catch (Exception ex) {
                         LOG.warn("Failed to record dependency metadata for {}/{}: {}", namespace, releaseName, ex.toString());
                     }
+                }
+                case DEPENDENCY_SATISFIED -> {
+                    String releaseName = (String) childParams.get("releaseName");
+                    String namespace = (String) childParams.get("namespace");
+                    String reason = (String) childParams.get("reason");
+                    LOG.info("Dependency {} already satisfied in {}. {}", releaseName, namespace, reason);
+                    appendCommandLog(id, "Dependency already satisfied: release=" + releaseName + " namespace=" + namespace);
                 }
                 case RANGER_REPOSITORY_CREATION -> {
                     // this step will create the Ranger plugin repository for the chart plugin
