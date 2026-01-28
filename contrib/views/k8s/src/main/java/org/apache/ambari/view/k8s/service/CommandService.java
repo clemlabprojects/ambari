@@ -53,12 +53,14 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.Collection;
 import java.util.Comparator;
@@ -415,6 +417,183 @@ public class CommandService {
         String safeValue = tokenValue == null ? "" : tokenValue;
         Pattern tokenPattern = Pattern.compile("\\{\\{\\s*" + Pattern.quote(tokenName) + "\\s*\\}\\}");
         return tokenPattern.matcher(templateValue).replaceAll(Matcher.quoteReplacement(safeValue));
+    }
+
+    /**
+     * Resolve the Kerberos realm from Ambari, using the dynamic source map key.
+     *
+     * @param ambariActionClient Ambari client used for config lookup
+     * @param clusterName Ambari cluster name
+     * @return resolved realm string or null when unavailable
+     */
+    private String resolveKerberosRealmFromAmbari(AmbariActionClient ambariActionClient, String clusterName) {
+        if (ambariActionClient == null) {
+            LOG.warn("AmbariActionClient is null; cannot resolve Kerberos realm");
+            return null;
+        }
+        if (clusterName == null || clusterName.isBlank()) {
+            LOG.warn("Cluster name is blank; cannot resolve Kerberos realm");
+            return null;
+        }
+        try {
+            AmbariConfigRef realmRef = CommandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM");
+            if (realmRef == null) {
+                LOG.warn("Dynamic source map does not define AMBARI_KERBEROS_REALM");
+                return null;
+            }
+            String kerberosRealmValue = ambariActionClient.getDesiredConfigProperty(clusterName, realmRef.type, realmRef.key);
+            if (kerberosRealmValue == null || kerberosRealmValue.isBlank()) {
+                LOG.warn("Kerberos realm resolved to empty for cluster {}", clusterName);
+                return null;
+            }
+            LOG.info("Resolved Kerberos realm '{}' from Ambari for cluster {}", kerberosRealmValue, clusterName);
+            return kerberosRealmValue;
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve Kerberos realm from Ambari for cluster {}: {}", clusterName, ex.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the secret name for a Kerberos entry, supporting an optional template.
+     *
+     * @param kerberosEntry Kerberos entry map from the request/service definition
+     * @param serviceName service name used in template expansion
+     * @param namespace Kubernetes namespace
+     * @param releaseName Helm release name
+     * @param kerberosRealm Kerberos realm for template expansion
+     * @return resolved secret name (never null, falls back to releaseName-keytab)
+     */
+    private String resolveKerberosEntrySecretName(Map<String, Object> kerberosEntry,
+                                                  String serviceName,
+                                                  String namespace,
+                                                  String releaseName,
+                                                  String kerberosRealm) {
+        if (kerberosEntry == null) {
+            return releaseName + "-keytab";
+        }
+        String secretNameTemplate = resolveStringValue(kerberosEntry.get("secretNameTemplate"), null);
+        if (secretNameTemplate != null && !secretNameTemplate.isBlank()) {
+            String renderedSecretName = renderKerberosPrincipalTemplate(
+                    secretNameTemplate,
+                    serviceName,
+                    namespace,
+                    releaseName,
+                    kerberosRealm == null ? "" : kerberosRealm
+            );
+            if (renderedSecretName != null && !renderedSecretName.isBlank()) {
+                LOG.info("Resolved Kerberos secretName from template '{}': {}", secretNameTemplate, renderedSecretName);
+                return renderedSecretName;
+            }
+            LOG.warn("Kerberos secretNameTemplate rendered to empty; falling back to explicit secretName or release default.");
+        }
+        String explicitSecretName = resolveStringValue(kerberosEntry.get("secretName"), null);
+        if (explicitSecretName != null && !explicitSecretName.isBlank()) {
+            return explicitSecretName;
+        }
+        return releaseName + "-keytab";
+    }
+
+    /**
+     * Build a flattened template variable map for Kerberos entries.
+     * Keys are exposed as "kerberos.entries.<entryKey>.<field>" for template rendering.
+     *
+     * @param kerberosEntries normalized Kerberos entry list
+     * @param namespace Kubernetes namespace
+     * @param releaseName Helm release name
+     * @param kerberosRealm resolved Kerberos realm (may be null)
+     * @return map of template variables (never null)
+     */
+    private Map<String, Object> buildKerberosTemplateVariablesForEntries(List<Map<String, Object>> kerberosEntries,
+                                                                         String namespace,
+                                                                         String releaseName,
+                                                                         String kerberosRealm) {
+        Map<String, Object> templateVariables = new LinkedHashMap<>();
+        if (kerberosRealm != null && !kerberosRealm.isBlank()) {
+            templateVariables.put("kerberos.realm", kerberosRealm);
+        }
+        if (kerberosEntries == null || kerberosEntries.isEmpty()) {
+            LOG.info("No Kerberos entries available to expose template variables.");
+            return templateVariables;
+        }
+
+        int kerberosEntryIndex = 0;
+        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+            kerberosEntryIndex++;
+            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
+                LOG.info("Skipping Kerberos template variables for disabled entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
+                continue;
+            }
+
+            String entryKey = resolveStringValue(kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
+            String serviceName = resolveStringValue(kerberosEntry.get("serviceName"), releaseName);
+            String principalTemplate = resolveStringValue(
+                    kerberosEntry.get("principalTemplate"),
+                    "{{service}}-{{namespace}}@{{realm}}"
+            );
+            String resolvedPrincipal = renderKerberosPrincipalTemplate(
+                    principalTemplate,
+                    serviceName,
+                    namespace,
+                    releaseName,
+                    kerberosRealm == null ? "" : kerberosRealm
+            );
+            String secretName = resolveKerberosEntrySecretName(
+                    kerberosEntry,
+                    serviceName,
+                    namespace,
+                    releaseName,
+                    kerberosRealm
+            );
+            String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
+            String mountPath = resolveStringValue(kerberosEntry.get("mountPath"), "/etc/security/keytabs");
+
+            String templatePrefix = "kerberos.entries." + entryKey + ".";
+            templateVariables.put(templatePrefix + "entryKey", entryKey);
+            templateVariables.put(templatePrefix + "serviceName", serviceName);
+            templateVariables.put(templatePrefix + "principalTemplate", principalTemplate);
+            templateVariables.put(templatePrefix + "principal", resolvedPrincipal);
+            templateVariables.put(templatePrefix + "secretName", secretName);
+            templateVariables.put(templatePrefix + "keyNameInSecret", keyNameInSecret);
+            templateVariables.put(templatePrefix + "mountPath", mountPath);
+            templateVariables.put(templatePrefix + "keytabPath", mountPath + "/" + keyNameInSecret);
+            if (kerberosRealm != null && !kerberosRealm.isBlank()) {
+                templateVariables.put(templatePrefix + "realm", kerberosRealm);
+            }
+            LOG.info("Exposed Kerberos template variables for entry {}: principal={}, secretName={}, keyNameInSecret={}",
+                    entryKey, resolvedPrincipal, secretName, keyNameInSecret);
+        }
+
+        LOG.info("Built {} Kerberos template variables for {} entries", templateVariables.size(), kerberosEntries.size());
+        return templateVariables;
+    }
+
+    /**
+     * Merge template variables into params with collision-safe logging.
+     *
+     * @param params mutable params map to augment
+     * @param templateVariables template variables to merge
+     * @param variableGroupName logical group name for logging
+     */
+    private void mergeTemplateVariablesIntoParams(Map<String, Object> params,
+                                                  Map<String, Object> templateVariables,
+                                                  String variableGroupName) {
+        if (params == null || templateVariables == null || templateVariables.isEmpty()) {
+            LOG.info("No {} template variables to merge into params.", variableGroupName);
+            return;
+        }
+        int mergedCount = 0;
+        for (Map.Entry<String, Object> entry : templateVariables.entrySet()) {
+            String templateKey = entry.getKey();
+            Object templateValue = entry.getValue();
+            if (params.containsKey(templateKey)) {
+                LOG.warn("Template variable '{}' already exists in params; skipping overwrite for group {}", templateKey, variableGroupName);
+                continue;
+            }
+            params.put(templateKey, templateValue);
+            mergedCount++;
+        }
+        LOG.info("Merged {} {} template variables into params", mergedCount, variableGroupName);
     }
 
     /**
@@ -1149,6 +1328,557 @@ public class CommandService {
         this.commandPlanFactory.createRangerPluginRepository(rootCommand, rangerSpec, params, childCommands);
     }
 
+    /**
+     * Build catalog enrichment overrides from the service definition.
+     * This method is service-agnostic and driven entirely by catalogEnrichments specs.
+     *
+     * @param catalogEnrichmentSpecList list of enrichment specs from service.json
+     * @param params root params map (used for templating)
+     * @param effectiveValues merged Helm values (used to read existing catalog content)
+     * @param ambariActionClient Ambari client for config lookups
+     * @param clusterName Ambari cluster name
+     * @param kerberosEnabled true when Kerberos is enabled on the Ambari cluster
+     * @return map of Helm overrides (path -> updated catalog string)
+     */
+    private Map<String, String> buildCatalogEnrichmentOverrides(List<Map<String, Object>> catalogEnrichmentSpecList,
+                                                                Map<String, Object> params,
+                                                                Map<String, Object> effectiveValues,
+                                                                AmbariActionClient ambariActionClient,
+                                                                String clusterName,
+                                                                boolean kerberosEnabled) {
+        Map<String, String> catalogOverrides = new LinkedHashMap<>();
+        if (catalogEnrichmentSpecList == null || catalogEnrichmentSpecList.isEmpty()) {
+            LOG.info("No catalog enrichment specs found; skipping catalog enrichment.");
+            return catalogOverrides;
+        }
+
+        Map<String, Object> templateEnv = this.configResolutionService.buildTemplateEnv(params, clusterName);
+        int enrichmentIndex = 0;
+        for (Map<String, Object> catalogEnrichmentSpec : catalogEnrichmentSpecList) {
+            enrichmentIndex++;
+            if (catalogEnrichmentSpec == null || catalogEnrichmentSpec.isEmpty()) {
+                LOG.warn("Skipping empty catalog enrichment spec at index {}", enrichmentIndex);
+                continue;
+            }
+            String enrichmentName = resolveStringValue(
+                    catalogEnrichmentSpec.get("name"),
+                    "catalog-enrichment-" + enrichmentIndex
+            );
+            @SuppressWarnings("unchecked")
+            Map<String, Object> whenSpec = (Map<String, Object>) catalogEnrichmentSpec.get("when");
+            if (!shouldApplyCatalogEnrichment(whenSpec, kerberosEnabled)) {
+                LOG.info("Catalog enrichment '{}' skipped due to 'when' conditions.", enrichmentName);
+                continue;
+            }
+
+            String targetPath = resolveCatalogEnrichmentTargetPath(catalogEnrichmentSpec);
+            if (targetPath == null || targetPath.isBlank()) {
+                LOG.warn("Catalog enrichment '{}' missing target.path; skipping.", enrichmentName);
+                continue;
+            }
+
+            String currentCatalogContent = catalogOverrides.get(targetPath);
+            if (currentCatalogContent == null) {
+                List<String> basePathList = resolveCatalogEnrichmentBasePaths(catalogEnrichmentSpec);
+                if (basePathList != null && !basePathList.isEmpty()) {
+                    currentCatalogContent = mergeCatalogBaseContents(
+                            basePathList,
+                            catalogOverrides,
+                            effectiveValues,
+                            enrichmentName,
+                            targetPath
+                    );
+                }
+                if (currentCatalogContent == null) {
+                    Object currentCatalogValue = ConfigResolutionService.getByDottedPath(effectiveValues, targetPath);
+                    currentCatalogContent = currentCatalogValue == null ? "" : String.valueOf(currentCatalogValue);
+                }
+            }
+            List<String> catalogLines = parseCatalogContentToLines(currentCatalogContent);
+            Map<String, Integer> catalogKeyIndexMap = indexCatalogKeyPositions(catalogLines);
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> propertySpecList =
+                    (List<Map<String, Object>>) catalogEnrichmentSpec.get("properties");
+            if (propertySpecList == null || propertySpecList.isEmpty()) {
+                LOG.warn("Catalog enrichment '{}' has no properties; skipping.", enrichmentName);
+                continue;
+            }
+
+            boolean updatesApplied = false;
+            for (Map<String, Object> propertySpec : propertySpecList) {
+                if (propertySpec == null || propertySpec.isEmpty()) {
+                    continue;
+                }
+                String propertyKey = resolveStringValue(propertySpec.get("key"), null);
+                if (propertyKey == null || propertyKey.isBlank()) {
+                    LOG.warn("Catalog enrichment '{}' has a property with empty key; skipping.", enrichmentName);
+                    continue;
+                }
+                boolean overrideExisting = asBoolean(propertySpec.get("overrideExisting"), true);
+                String resolvedValue = resolveCatalogPropertyValue(
+                        propertySpec,
+                        params,
+                        effectiveValues,
+                        ambariActionClient,
+                        clusterName,
+                        templateEnv
+                );
+                if (resolvedValue == null) {
+                    LOG.warn("Catalog enrichment '{}' property '{}' resolved to null; skipping.", enrichmentName, propertyKey);
+                    continue;
+                }
+                if (resolvedValue.isBlank()) {
+                    LOG.warn("Catalog enrichment '{}' property '{}' resolved to blank value; applying anyway.", enrichmentName, propertyKey);
+                }
+
+                if (catalogKeyIndexMap.containsKey(propertyKey)) {
+                    if (!overrideExisting) {
+                        LOG.info("Catalog enrichment '{}' leaves existing property '{}' untouched (overrideExisting=false).", enrichmentName, propertyKey);
+                        continue;
+                    }
+                    int existingIndex = catalogKeyIndexMap.get(propertyKey);
+                    catalogLines.set(existingIndex, propertyKey + "=" + resolvedValue);
+                    updatesApplied = true;
+                } else {
+                    catalogLines.add(propertyKey + "=" + resolvedValue);
+                    catalogKeyIndexMap.put(propertyKey, catalogLines.size() - 1);
+                    updatesApplied = true;
+                }
+            }
+
+            if (updatesApplied) {
+                String updatedCatalogContent = normalizeCatalogContent(catalogLines);
+                catalogOverrides.put(targetPath, updatedCatalogContent);
+                LOG.info("Catalog enrichment '{}' produced override for {} ({} chars).",
+                        enrichmentName, targetPath, updatedCatalogContent.length());
+            } else {
+                LOG.info("Catalog enrichment '{}' produced no updates for {}.", enrichmentName, targetPath);
+            }
+        }
+
+        return catalogOverrides;
+    }
+
+    /**
+     * Resolve the target path for a catalog enrichment spec.
+     *
+     * @param catalogEnrichmentSpec raw enrichment spec map
+     * @return dotted helm path or null when missing
+     */
+    private String resolveCatalogEnrichmentTargetPath(Map<String, Object> catalogEnrichmentSpec) {
+        if (catalogEnrichmentSpec == null || catalogEnrichmentSpec.isEmpty()) {
+            return null;
+        }
+        Object targetSpecObj = catalogEnrichmentSpec.get("target");
+        if (targetSpecObj instanceof Map<?, ?>) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> targetSpecMap = (Map<String, Object>) targetSpecObj;
+            return resolveStringValue(targetSpecMap.get("path"), null);
+        }
+        if (targetSpecObj instanceof String) {
+            return resolveStringValue(targetSpecObj, null);
+        }
+        return resolveStringValue(catalogEnrichmentSpec.get("path"), null);
+    }
+
+    /**
+     * Determine whether a catalog enrichment should run, based on its "when" block.
+     *
+     * @param whenSpec optional when block (may be null)
+     * @param kerberosEnabled true if Kerberos is enabled on the Ambari cluster
+     * @return true when enrichment should run
+     */
+    private boolean shouldApplyCatalogEnrichment(Map<String, Object> whenSpec, boolean kerberosEnabled) {
+        if (whenSpec == null || whenSpec.isEmpty()) {
+            return true;
+        }
+        Object kerberosEnabledSpec = whenSpec.get("kerberosEnabled");
+        if (kerberosEnabledSpec != null) {
+            boolean expectedKerberosEnabled = asBoolean(kerberosEnabledSpec, false);
+            if (expectedKerberosEnabled != kerberosEnabled) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Resolve optional base paths for catalog enrichment.
+     * When provided, base paths are merged in order to build the initial catalog content before
+     * applying enrichment updates to the target path.
+     *
+     * @param catalogEnrichmentSpec raw enrichment spec map
+     * @return ordered list of base paths (may be empty)
+     */
+    private List<String> resolveCatalogEnrichmentBasePaths(Map<String, Object> catalogEnrichmentSpec) {
+        if (catalogEnrichmentSpec == null || catalogEnrichmentSpec.isEmpty()) {
+            return Collections.emptyList();
+        }
+        LinkedHashSet<String> basePathSet = new LinkedHashSet<>();
+
+        Object targetSpecObj = catalogEnrichmentSpec.get("target");
+        if (targetSpecObj instanceof Map<?, ?>) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> targetSpecMap = (Map<String, Object>) targetSpecObj;
+            addCatalogEnrichmentBasePaths(basePathSet, targetSpecMap.get("basePaths"));
+            String targetBasePathValue = resolveStringValue(targetSpecMap.get("basePath"), null);
+            if (targetBasePathValue != null && !targetBasePathValue.isBlank()) {
+                basePathSet.add(targetBasePathValue);
+            }
+        }
+
+        addCatalogEnrichmentBasePaths(basePathSet, catalogEnrichmentSpec.get("basePaths"));
+        String basePathValue = resolveStringValue(catalogEnrichmentSpec.get("basePath"), null);
+        if (basePathValue != null && !basePathValue.isBlank()) {
+            basePathSet.add(basePathValue);
+        }
+
+        if (!basePathSet.isEmpty()) {
+            LOG.info("Resolved catalog enrichment base paths: {}", basePathSet);
+        }
+
+        return new ArrayList<>(basePathSet);
+    }
+
+    /**
+     * Merge base catalog content from multiple paths into a single catalog string.
+     *
+     * @param basePathList ordered list of base paths to merge
+     * @param catalogOverrides existing catalog overrides computed so far
+     * @param effectiveValues merged Helm values
+     * @param enrichmentName name of the catalog enrichment (for logging)
+     * @param targetPath target catalog path being enriched
+     * @return merged catalog content, or null when no base content was found
+     */
+    private String mergeCatalogBaseContents(List<String> basePathList,
+                                            Map<String, String> catalogOverrides,
+                                            Map<String, Object> effectiveValues,
+                                            String enrichmentName,
+                                            String targetPath) {
+        if (basePathList == null || basePathList.isEmpty()) {
+            return null;
+        }
+
+        List<String> mergedCatalogLines = null;
+        Map<String, Integer> mergedCatalogKeyIndexMap = null;
+
+        for (String basePathEntry : basePathList) {
+            if (basePathEntry == null || basePathEntry.isBlank()) {
+                continue;
+            }
+            String baseCatalogContent = null;
+            if (catalogOverrides != null && catalogOverrides.containsKey(basePathEntry)) {
+                baseCatalogContent = catalogOverrides.get(basePathEntry);
+                LOG.info("Catalog enrichment '{}' resolved base path '{}' from overrides for target {}.",
+                        enrichmentName, basePathEntry, targetPath);
+            } else {
+                Object baseValueObj = ConfigResolutionService.getByDottedPath(effectiveValues, basePathEntry);
+                if (baseValueObj != null) {
+                    baseCatalogContent = String.valueOf(baseValueObj);
+                    LOG.info("Catalog enrichment '{}' resolved base path '{}' from Helm values for target {}.",
+                            enrichmentName, basePathEntry, targetPath);
+                }
+            }
+
+            if (baseCatalogContent == null || baseCatalogContent.isBlank()) {
+                LOG.warn("Catalog enrichment '{}' base path '{}' is empty for target {}.",
+                        enrichmentName, basePathEntry, targetPath);
+                continue;
+            }
+
+            if (mergedCatalogLines == null) {
+                mergedCatalogLines = parseCatalogContentToLines(baseCatalogContent);
+                mergedCatalogKeyIndexMap = indexCatalogKeyPositions(mergedCatalogLines);
+                continue;
+            }
+
+            List<String> baseCatalogLines = parseCatalogContentToLines(baseCatalogContent);
+            for (String baseCatalogLine : baseCatalogLines) {
+                String propertyKey = extractCatalogPropertyKey(baseCatalogLine);
+                if (propertyKey == null || propertyKey.isBlank()) {
+                    continue;
+                }
+                if (mergedCatalogKeyIndexMap.containsKey(propertyKey)) {
+                    int existingIndex = mergedCatalogKeyIndexMap.get(propertyKey);
+                    mergedCatalogLines.set(existingIndex, propertyKey + "=" + extractCatalogPropertyValue(baseCatalogLine));
+                } else {
+                    mergedCatalogLines.add(propertyKey + "=" + extractCatalogPropertyValue(baseCatalogLine));
+                    mergedCatalogKeyIndexMap.put(propertyKey, mergedCatalogLines.size() - 1);
+                }
+            }
+        }
+
+        if (mergedCatalogLines == null || mergedCatalogLines.isEmpty()) {
+            return null;
+        }
+        return normalizeCatalogContent(mergedCatalogLines);
+    }
+
+    /**
+     * Add base paths into a target set from a mixed basePaths object.
+     *
+     * @param basePathSet ordered set of base paths to populate
+     * @param basePathsObj basePaths object (string or list)
+     */
+    private void addCatalogEnrichmentBasePaths(Set<String> basePathSet, Object basePathsObj) {
+        if (basePathSet == null || basePathsObj == null) {
+            return;
+        }
+        if (basePathsObj instanceof String) {
+            String basePathValue = resolveStringValue(basePathsObj, null);
+            if (basePathValue != null && !basePathValue.isBlank()) {
+                basePathSet.add(basePathValue);
+            }
+            return;
+        }
+        if (basePathsObj instanceof List<?>) {
+            @SuppressWarnings("unchecked")
+            List<Object> basePathList = (List<Object>) basePathsObj;
+            for (Object basePathObj : basePathList) {
+                String basePathValue = resolveStringValue(basePathObj, null);
+                if (basePathValue != null && !basePathValue.isBlank()) {
+                    basePathSet.add(basePathValue);
+                }
+            }
+            return;
+        }
+        LOG.warn("Unsupported basePaths type {}; expected string or list.", basePathsObj.getClass().getName());
+    }
+
+    /**
+     * Extract a catalog property key from a raw line.
+     *
+     * @param rawLine raw catalog line
+     * @return property key or null if not a property line
+     */
+    private String extractCatalogPropertyKey(String rawLine) {
+        if (rawLine == null) {
+            return null;
+        }
+        String trimmedLine = rawLine.trim();
+        if (trimmedLine.isBlank() || trimmedLine.startsWith("#")) {
+            return null;
+        }
+        int separatorIndex = trimmedLine.indexOf('=');
+        if (separatorIndex <= 0) {
+            return null;
+        }
+        String key = trimmedLine.substring(0, separatorIndex).trim();
+        return key.isBlank() ? null : key;
+    }
+
+    /**
+     * Extract a catalog property value from a raw line.
+     *
+     * @param rawLine raw catalog line
+     * @return property value or empty string if not found
+     */
+    private String extractCatalogPropertyValue(String rawLine) {
+        if (rawLine == null) {
+            return "";
+        }
+        String trimmedLine = rawLine.trim();
+        int separatorIndex = trimmedLine.indexOf('=');
+        if (separatorIndex < 0 || separatorIndex >= trimmedLine.length() - 1) {
+            return "";
+        }
+        return trimmedLine.substring(separatorIndex + 1).trim();
+    }
+
+    /**
+     * Parse catalog content into a list of raw lines, preserving comments and blank lines.
+     *
+     * @param catalogContent raw catalog content string
+     * @return mutable list of lines (never null)
+     */
+    private List<String> parseCatalogContentToLines(String catalogContent) {
+        List<String> lines = new ArrayList<>();
+        if (catalogContent == null || catalogContent.isBlank()) {
+            return lines;
+        }
+        String[] rawLines = catalogContent.split("\\r?\\n", -1);
+        for (String rawLine : rawLines) {
+            lines.add(rawLine);
+        }
+        return lines;
+    }
+
+    /**
+     * Index key positions inside catalog lines so we can update in-place.
+     *
+     * @param catalogLines list of catalog lines
+     * @return map of property key -> line index
+     */
+    private Map<String, Integer> indexCatalogKeyPositions(List<String> catalogLines) {
+        Map<String, Integer> keyIndexMap = new LinkedHashMap<>();
+        if (catalogLines == null || catalogLines.isEmpty()) {
+            return keyIndexMap;
+        }
+        for (int lineIndex = 0; lineIndex < catalogLines.size(); lineIndex++) {
+            String rawLine = catalogLines.get(lineIndex);
+            if (rawLine == null) {
+                continue;
+            }
+            String trimmedLine = rawLine.trim();
+            if (trimmedLine.isBlank() || trimmedLine.startsWith("#")) {
+                continue;
+            }
+            int separatorIndex = trimmedLine.indexOf('=');
+            if (separatorIndex <= 0) {
+                continue;
+            }
+            String key = trimmedLine.substring(0, separatorIndex).trim();
+            if (!key.isBlank() && !keyIndexMap.containsKey(key)) {
+                keyIndexMap.put(key, lineIndex);
+            }
+        }
+        return keyIndexMap;
+    }
+
+    /**
+     * Normalize catalog lines into a single string, preserving original order.
+     *
+     * @param catalogLines list of catalog lines
+     * @return normalized catalog content string
+     */
+    private String normalizeCatalogContent(List<String> catalogLines) {
+        if (catalogLines == null || catalogLines.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int lineIndex = 0; lineIndex < catalogLines.size(); lineIndex++) {
+            if (lineIndex > 0) {
+                builder.append("\n");
+            }
+            builder.append(catalogLines.get(lineIndex));
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Resolve a catalog property value from a property spec.
+     *
+     * @param propertySpec property spec map from service.json
+     * @param params root params map (for templating context)
+     * @param effectiveValues merged Helm values (for helm-derived properties)
+     * @param ambariActionClient Ambari client for config lookups
+     * @param clusterName Ambari cluster name
+     * @param templateEnv template environment map
+     * @return resolved string value or null if not resolved
+     */
+    private String resolveCatalogPropertyValue(Map<String, Object> propertySpec,
+                                               Map<String, Object> params,
+                                               Map<String, Object> effectiveValues,
+                                               AmbariActionClient ambariActionClient,
+                                               String clusterName,
+                                               Map<String, Object> templateEnv) {
+        String directValue = resolveStringValue(propertySpec.get("value"), null);
+        if (directValue != null) {
+            return directValue;
+        }
+
+        String ambariLookup = resolveStringValue(propertySpec.get("valueFromAmbari"), null);
+        if (ambariLookup != null && !ambariLookup.isBlank()) {
+            if (ambariActionClient == null || clusterName == null || clusterName.isBlank()) {
+                LOG.warn("Ambari client unavailable; cannot resolve valueFromAmbari {}", ambariLookup);
+            } else {
+                String[] parts = ambariLookup.split("/", 2);
+                if (parts.length == 2) {
+                    try {
+                        String ambariValue = ambariActionClient.getDesiredConfigProperty(clusterName, parts[0], parts[1]);
+                        return resolveStringValue(ambariValue, null);
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to resolve Ambari property {} for catalog enrichment: {}", ambariLookup, ex.toString());
+                    }
+                } else {
+                    LOG.warn("Invalid valueFromAmbari format '{}'; expected 'configType/property'.", ambariLookup);
+                }
+            }
+        }
+
+        Object valueFromTemplateObj = propertySpec.get("valueFromTemplate");
+        if (valueFromTemplateObj != null) {
+            if (valueFromTemplateObj instanceof String) {
+                String templateValue = (String) valueFromTemplateObj;
+                return ConfigResolutionService.renderTemplate(templateValue, templateEnv);
+            }
+            if (valueFromTemplateObj instanceof Map<?, ?>) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> templateMap = (Map<String, Object>) valueFromTemplateObj;
+                String templateValue = resolveStringValue(templateMap.get("template"), null);
+                if (templateValue == null || templateValue.isBlank()) {
+                    LOG.warn("valueFromTemplate object missing 'template' field; skipping.");
+                    return null;
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> templateProperties = (Map<String, Object>) templateMap.get("properties");
+                return resolveCatalogTemplateValueWithProperties(
+                        templateValue,
+                        templateProperties,
+                        params,
+                        effectiveValues,
+                        ambariActionClient,
+                        clusterName,
+                        templateEnv
+                );
+            }
+            LOG.warn("Unsupported valueFromTemplate type {}; expected string or object.", valueFromTemplateObj.getClass().getName());
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve a template value that includes an optional properties block.
+     *
+     * @param templateValue template string
+     * @param templateProperties map of property definitions (may be null)
+     * @param params root params map
+     * @param effectiveValues merged Helm values
+     * @param ambariActionClient Ambari client for config lookups
+     * @param clusterName Ambari cluster name
+     * @param templateEnv base template environment map
+     * @return rendered template string
+     */
+    private String resolveCatalogTemplateValueWithProperties(String templateValue,
+                                                             Map<String, Object> templateProperties,
+                                                             Map<String, Object> params,
+                                                             Map<String, Object> effectiveValues,
+                                                             AmbariActionClient ambariActionClient,
+                                                             String clusterName,
+                                                             Map<String, Object> templateEnv) {
+        if (templateProperties == null || templateProperties.isEmpty()) {
+            return ConfigResolutionService.renderTemplate(templateValue, templateEnv);
+        }
+        Map<String, Object> resolvedPropertyValues = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> propertyEntry : templateProperties.entrySet()) {
+            String propertyName = propertyEntry.getKey();
+            Object propertyDefObj = propertyEntry.getValue();
+            if (!(propertyDefObj instanceof Map<?, ?>)) {
+                resolvedPropertyValues.put(propertyName, propertyDefObj);
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> propertyDef = (Map<String, Object>) propertyDefObj;
+            Object resolvedValue = this.configResolutionService.resolveInnerPropertyValue(
+                    propertyName,
+                    propertyDef,
+                    params,
+                    effectiveValues,
+                    ambariActionClient,
+                    clusterName,
+                    templateEnv
+            );
+            if (resolvedValue != null) {
+                resolvedPropertyValues.put(propertyName, resolvedValue);
+            }
+        }
+        Map<String, Object> mergedTemplateEnv = new LinkedHashMap<>(templateEnv);
+        mergedTemplateEnv.putAll(resolvedPropertyValues);
+        return ConfigResolutionService.renderTemplate(templateValue, mergedTemplateEnv);
+    }
+
     // -------------------- Public API --------------------
 
     public String submitKeytabRequest(KeytabRequest req,
@@ -1334,15 +2064,7 @@ public class CommandService {
         }
 
         // Resolve Kerberos realm from Ambari.
-        String kerberosRealm = null;
-        try {
-            AmbariConfigRef realmRef = CommandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM");
-            if (realmRef != null) {
-                kerberosRealm = ambariActionClient.getDesiredConfigProperty(clusterName, realmRef.type, realmRef.key);
-            }
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve Kerberos realm for cluster {}: {}", clusterName, ex.toString());
-        }
+        String kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, clusterName);
         if (kerberosRealm == null || kerberosRealm.isBlank()) {
             throw new IllegalStateException("Kerberos realm is empty; cannot regenerate keytabs.");
         }
@@ -1408,7 +2130,13 @@ public class CommandService {
                 continue;
             }
 
-            String secretName = resolveStringValue(kerberosEntry.get("secretName"), releaseName + "-keytab");
+            String secretName = resolveKerberosEntrySecretName(
+                    kerberosEntry,
+                    serviceName,
+                    namespace,
+                    releaseName,
+                    kerberosRealm
+            );
             String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
 
             LOG.info("Regenerating keytab for entry {}: principal={}, secret={}, keyName={}",
@@ -1862,6 +2590,20 @@ public class CommandService {
             LOG.info("Kerberos is disabled on cluster {}; overriding chart values with global.security.kerberos.enabled=false", cluster);
         }
 
+        // Build Kerberos template variables for later templating (catalog enrichments, etc.).
+        List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
+        String kerberosRealm = null;
+        if (kerberosEnabled) {
+            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
+        }
+        Map<String, Object> kerberosTemplateVariableMap = buildKerberosTemplateVariablesForEntries(
+                kerberosEntryList,
+                request.getNamespace(),
+                request.getReleaseName(),
+                kerberosRealm
+        );
+        mergeTemplateVariablesIntoParams(params, kerberosTemplateVariableMap, "kerberos");
+
         // ---------- Truststore from Ambari truststore (for downstream TLS clients)
         // This builds a Secret from the company CA truststore and also injects the Ambari internal CA cert
         // so both can be trusted by downstream clients. Helm wiring uses global.security.tls.*. ----------
@@ -2048,6 +2790,56 @@ public class CommandService {
             effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
         }
 
+        // Apply catalog enrichments (e.g., Kerberos properties) when defined in service.json.
+        try {
+            if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
+                StackDefinitionService catalogStackDefinitionService = new StackDefinitionService(this.ctx);
+                StackServiceDef catalogServiceDefinition = catalogStackDefinitionService.getServiceDefinition(request.getServiceKey());
+                List<Map<String, Object>> catalogEnrichmentSpecList =
+                        catalogServiceDefinition != null ? catalogServiceDefinition.catalogEnrichments : null;
+                // Use the persisted Kerberos cluster flag when available to decide if Kerberos-only catalog enrichments apply.
+                boolean kerberosEnabledForCatalogEnrichments = kerberosEnabled;
+                if (params != null && params.containsKey("kerberosClusterEnabled")) {
+                    kerberosEnabledForCatalogEnrichments = asBoolean(
+                            params.get("kerberosClusterEnabled"),
+                            kerberosEnabled
+                    );
+                }
+                LOG.info("Catalog enrichment Kerberos flag resolved to {} (detected={}, paramsOverridePresent={})",
+                        kerberosEnabledForCatalogEnrichments,
+                        kerberosEnabled,
+                        params != null && params.containsKey("kerberosClusterEnabled"));
+                Map<String, String> catalogOverrideMap = buildCatalogEnrichmentOverrides(
+                        catalogEnrichmentSpecList,
+                        params,
+                        effectiveValues,
+                        ambariActionClient,
+                        cluster,
+                        kerberosEnabledForCatalogEnrichments
+                );
+                if (catalogOverrideMap != null && !catalogOverrideMap.isEmpty()) {
+                    for (Map.Entry<String, String> overrideEntry : catalogOverrideMap.entrySet()) {
+                        String overridePath = overrideEntry.getKey();
+                        String overrideValue = overrideEntry.getValue();
+                        this.commandUtils.addOverride(params, overridePath, overrideValue);
+                        LOG.info("Applied catalog enrichment override {} ({} chars)", overridePath,
+                                overrideValue != null ? overrideValue.length() : 0);
+                    }
+                    overrides = this.commandUtils.loadValuesFromParams(params);
+                    if (overrides == null) {
+                        overrides = Collections.emptyMap();
+                    }
+                    effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
+                } else {
+                    LOG.info("No catalog enrichment overrides applied for serviceKey {}", request.getServiceKey());
+                }
+            } else {
+                LOG.info("ServiceKey missing; skipping catalog enrichment.");
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to apply catalog enrichments for release {}: {}", request.getReleaseName(), ex.toString());
+        }
+
         List<Map<String, Object>> resolvedEndpoints = this.configResolutionService
                 .computeEndpointsForRelease(request.getEndpoints(), params, effectiveValues, ambariActionClient, cluster);
         if (resolvedEndpoints == null) {
@@ -2232,19 +3024,10 @@ public class CommandService {
             } else if (ambariActionClient == null || cluster == null || cluster.isBlank()) {
                 LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
             } else {
-                List<Map<String, Object>> kerberosEntries = normalizeKerberosEntries(request.getKerberos());
+                List<Map<String, Object>> kerberosEntries = kerberosEntryList;
                 if (kerberosEntries.isEmpty()) {
                     LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
                 } else {
-                    String kerberosRealm = null;
-                    try {
-                        AmbariConfigRef realmRef = CommandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM");
-                        if (realmRef != null) {
-                            kerberosRealm = ambariActionClient.getDesiredConfigProperty(cluster, realmRef.type, realmRef.key);
-                        }
-                    } catch (Exception ex) {
-                        LOG.warn("Failed to resolve Kerberos realm for cluster {}: {}", cluster, ex.toString());
-                    }
                     if (kerberosRealm == null || kerberosRealm.isBlank()) {
                         LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
                     } else {
@@ -2274,8 +3057,13 @@ public class CommandService {
                                 continue;
                             }
 
-                            String secretName = resolveStringValue(
-                                    kerberosEntry.get("secretName"), request.getReleaseName() + "-keytab");
+                            String secretName = resolveKerberosEntrySecretName(
+                                    kerberosEntry,
+                                    serviceName,
+                                    request.getNamespace(),
+                                    request.getReleaseName(),
+                                    kerberosRealm
+                            );
                             String keyNameInSecret = resolveStringValue(
                                     kerberosEntry.get("keyNameInSecret"), "service.keytab");
                             String mountPath = resolveStringValue(
