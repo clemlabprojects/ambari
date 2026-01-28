@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.41.0",
+  "version": "1.42.0",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
   ],
@@ -206,6 +206,110 @@
       "secretNameTemplate": "{{releaseName}}-worker-keytab",
       "keyNameInSecret": "service.keytab",
       "mountPath": "/etc/security/keytabs"
+    }
+  ],
+  "catalogEnrichments": [
+    {
+      "name": "hive-metastore-config-resources",
+      "target": {
+        "path": "additionalCatalogs.hive"
+      },
+      "properties": [
+        {
+          "key": "hive.config.resources",
+          "value": "/etc/hadoop/conf/core-site.xml,/etc/hadoop/conf/hdfs-site.xml"
+        },
+        {
+          "key": "fs.hadoop.enabled",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "name": "hive-metastore-kerberos-coordinator",
+      "target": {
+        "path": "coordinator.additionalCatalogs.hive",
+        "basePaths": [
+          "catalogs.hive",
+          "additionalCatalogs.hive"
+        ]
+      },
+      "when": {
+        "kerberosEnabled": true
+      },
+      "properties": [
+        {
+          "key": "hive.metastore.authentication.type",
+          "value": "KERBEROS"
+        },
+        {
+          "key": "hive.metastore.service.principal",
+          "valueFromAmbari": "hive-site/hive.metastore.kerberos.principal"
+        },
+        {
+          "key": "hive.metastore.client.principal",
+          "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
+        },
+        {
+          "key": "hive.metastore.client.keytab",
+          "valueFromTemplate": "{{kerberos.entries.coordinator.mountPath}}/{{kerberos.entries.coordinator.keyNameInSecret}}"
+        },
+        {
+          "key": "hive.hdfs.authentication.type",
+          "value": "KERBEROS"
+        },
+        {
+          "key": "hive.hdfs.trino.principal",
+          "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
+        },
+        {
+          "key": "hive.hdfs.trino.keytab",
+          "valueFromTemplate": "{{kerberos.entries.coordinator.mountPath}}/{{kerberos.entries.coordinator.keyNameInSecret}}"
+        }
+      ]
+    },
+    {
+      "name": "hive-metastore-kerberos-worker",
+      "target": {
+        "path": "worker.additionalCatalogs.hive",
+        "basePaths": [
+          "catalogs.hive",
+          "additionalCatalogs.hive"
+        ]
+      },
+      "when": {
+        "kerberosEnabled": true
+      },
+      "properties": [
+        {
+          "key": "hive.metastore.authentication.type",
+          "value": "KERBEROS"
+        },
+        {
+          "key": "hive.metastore.service.principal",
+          "valueFromAmbari": "hive-site/hive.metastore.kerberos.principal"
+        },
+        {
+          "key": "hive.metastore.client.principal",
+          "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
+        },
+        {
+          "key": "hive.metastore.client.keytab",
+          "valueFromTemplate": "{{kerberos.entries.worker.mountPath}}/{{kerberos.entries.worker.keyNameInSecret}}"
+        },
+        {
+          "key": "hive.hdfs.authentication.type",
+          "value": "KERBEROS"
+        },
+        {
+          "key": "hive.hdfs.trino.principal",
+          "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
+        },
+        {
+          "key": "hive.hdfs.trino.keytab",
+          "valueFromTemplate": "{{kerberos.entries.worker.mountPath}}/{{kerberos.entries.worker.keyNameInSecret}}"
+        }
+      ]
     }
   ],
   "endpoints": [
