@@ -22,12 +22,15 @@ Ambari Agent
 import \
   ambari_simplejson as json  # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import grp
+import hashlib
 import os
 import pwd
 import re
 import time
+import uuid
 from urllib.parse import urlparse
 from resource_management.core import shell
+from resource_management.core import global_lock
 from resource_management.core import sudo
 from resource_management.core.base import Fail
 from resource_management.core.environment import Environment
@@ -42,6 +45,8 @@ from resource_management.libraries.functions.hdfs_utils import is_https_enabled_
 
 JSON_PATH = '/var/lib/ambari-agent/tmp/hdfs_resources_{timestamp}.json'
 JAR_PATH = '/var/lib/ambari-agent/lib/fast-hdfs-resource.jar'
+WEBHDFS_KRB_CACHE_DIR = 'curl_krb_cache'
+WEBHDFS_KRB_CACHE_PREFIX = 'webhdfs'
 
 RESOURCE_TO_JSON_FIELDS = {
   'target': 'target',
@@ -189,7 +194,7 @@ class WebHDFSCallException(Fail):
     return None
 
 class WebHDFSUtil:
-  def __init__(self, hdfs_site, nameservice, run_user, security_enabled, logoutput=None):
+  def __init__(self, hdfs_site, nameservice, run_user, security_enabled, logoutput=None, kerberos_env=None):
     self.is_https_enabled = is_https_enabled_in_hdfs(hdfs_site['dfs.http.policy'], hdfs_site['dfs.https.enable'])
     address_property = 'dfs.namenode.https-address' if self.is_https_enabled else 'dfs.namenode.http-address'
     address = namenode_ha_utils.get_property_for_active_namenode(hdfs_site, nameservice, address_property,
@@ -200,6 +205,7 @@ class WebHDFSUtil:
     self.run_user = run_user
     self.security_enabled = security_enabled
     self.logoutput = logoutput
+    self.kerberos_env = kerberos_env
     
   @staticmethod
   def is_webhdfs_available(is_webhdfs_enabled, dfs_type):
@@ -259,7 +265,20 @@ class WebHDFSUtil:
     for k,v in request_args.items():
       url = format("{url}&{k}={v}")
     
-    cmd = ["curl", "-sS","-L", "-w", "%{http_code}", "-X", method]
+    cookie_file = None
+    if self.security_enabled:
+      tmp_dir = Environment.get_instance().tmp_dir or "/tmp"
+      cookies_dir = os.path.join(tmp_dir, "cookies")
+      if not os.path.exists(cookies_dir):
+        os.makedirs(cookies_dir)
+      os.chmod(cookies_dir, 0o1777)
+      cookie_file = os.path.join(cookies_dir, str(uuid.uuid4()))
+
+    cmd = ["curl", "-sS", "-w", "%{http_code}", "-X", method]
+    if self.security_enabled:
+      cmd += ["--location-trusted", "-b", cookie_file, "-c", cookie_file]
+    else:
+      cmd += ["-L"]
 
     # When operation is "OPEN" the target is actually the DFS file to download and the file_to_put is actually the target see _download_file
     if operation == "OPEN":
@@ -284,7 +303,11 @@ class WebHDFSUtil:
       cmd += ["-k"]
       
     cmd.append(url)
-    _, out, err = get_user_call_output(cmd, user=self.run_user, logoutput=self.logoutput, quiet=False)
+    try:
+      _, out, err = get_user_call_output(cmd, user=self.run_user, logoutput=self.logoutput, quiet=False, env=self.kerberos_env)
+    finally:
+      if cookie_file and os.path.isfile(cookie_file):
+        os.remove(cookie_file)
     status_code = out[-3:]
     out = out[:-3] # remove last line from output which is status code
     
@@ -322,6 +345,36 @@ class HdfsResourceWebHDFS:
   
   def action_execute(self, main_resource):
     pass
+
+  def _get_kerberos_env(self, main_resource):
+    keytab_file = main_resource.resource.keytab
+    principal_name = main_resource.resource.principal_name
+    kinit_path = main_resource.resource.kinit_path_local
+    user = main_resource.resource.user
+
+    if not keytab_file or not principal_name or not kinit_path:
+      raise Fail("Kerberos is enabled but keytab, principal, or kinit path is missing for WebHDFS calls.")
+
+    tmp_dir = Environment.get_instance().tmp_dir or "/tmp"
+    cache_dir = os.path.join(tmp_dir, WEBHDFS_KRB_CACHE_DIR)
+    if not os.path.exists(cache_dir):
+      os.makedirs(cache_dir)
+    os.chmod(cache_dir, 0o1777)
+
+    ccache_hash = hashlib.sha224(f"{principal_name}|{keytab_file}".encode("utf-8")).hexdigest()
+    ccache_file_path = f"{cache_dir}{os.sep}{WEBHDFS_KRB_CACHE_PREFIX}_{user}_cc_{ccache_hash}"
+    kerberos_env = {'KRB5CCNAME': ccache_file_path}
+
+    # concurrent kinit can cause cache corruption; serialize via global lock
+    kinit_lock = global_lock.get_lock(global_lock.LOCK_TYPE_KERBEROS)
+    kinit_lock.acquire()
+    try:
+      shell.checked_call([kinit_path, "-c", ccache_file_path, "-kt", keytab_file, principal_name],
+                         user=user, env=kerberos_env)
+    finally:
+      kinit_lock.release()
+
+    return kerberos_env
   
   def _assert_valid(self):
     source = self.main_resource.resource.source
@@ -366,8 +419,11 @@ class HdfsResourceWebHDFS:
   def action_delayed(self, action_name, main_resource):
     main_resource.assert_parameter_is_set('user')
     
+    self.kerberos_env = None
     if main_resource.resource.security_enabled:
+      # Preserve default cache behavior for other HA/JMX calls, but use a dedicated cache for WebHDFS curls.
       main_resource.kinit()
+      self.kerberos_env = self._get_kerberos_env(main_resource)
 
     if main_resource.resource.nameservices is None:
       nameservices = namenode_ha_utils.get_nameservices(main_resource.resource.hdfs_site)
@@ -390,7 +446,8 @@ class HdfsResourceWebHDFS:
 
   def action_delayed_for_nameservice(self, nameservice, action_name, main_resource):
     self.util = WebHDFSUtil(main_resource.resource.hdfs_site, nameservice, main_resource.resource.user,
-                            main_resource.resource.security_enabled, main_resource.resource.logoutput)
+                            main_resource.resource.security_enabled, main_resource.resource.logoutput,
+                            kerberos_env=self.kerberos_env)
     self.mode = oct(main_resource.resource.mode)[2:] if main_resource.resource.mode else main_resource.resource.mode
     self.mode_set = False
     self.main_resource = main_resource
@@ -710,4 +767,3 @@ class HdfsResourceProvider(Provider):
     Execute(format("{kinit_path} -kt {keytab_file} {principal_name}"),
             user=user
     )    
-

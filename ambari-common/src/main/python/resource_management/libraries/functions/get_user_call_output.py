@@ -20,10 +20,12 @@ Ambari Agent
 
 """
 
-import os, sys, shlex, tempfile, subprocess, pwd
+import os, sys, shlex, tempfile, subprocess, pwd, threading
 from resource_management.core import shell
 from resource_management.core.logger import Logger
-from resource_management.core.exceptions import ExecutionFailed
+from resource_management.core.exceptions import ExecutionFailed, ExecuteTimeoutException
+from resource_management.core.signal_utils import TerminateStrategy, terminate_process
+from ambari_commons.constants import AMBARI_SUDO_BINARY
 from functools import reduce
 
 # --- helpers to decide when a shell is needed ---
@@ -37,10 +39,21 @@ def _needs_shell_from_list(argv):
     return any(tok in _SHELL_TOKENS for tok in argv)
 
 def _to_shell_string(cmd):
-    # Ensure a single string for bash -c/-lc
+    # Ensure a single string for bash -c/-lc; preserve shell tokens
     if isinstance(cmd, (list, tuple)):
-        return " ".join(shlex.quote(x) for x in cmd)
+        parts = []
+        for item in cmd:
+            s = str(item)
+            if s in _SHELL_TOKENS:
+                parts.append(s)
+            else:
+                parts.append(shlex.quote(s))
+        return " ".join(parts)
     return cmd
+
+def _on_timeout(proc, timeout_event, terminate_strategy):
+    timeout_event.set()
+    terminate_process(proc, terminate_strategy)
 
 def quote_bash_args(command):
   # (left as-is from your code)
@@ -68,6 +81,9 @@ def _prefix_env_for_sudo(argv, env):
     return list(argv)
   env_args = [f"{key}={value}" for key, value in env.items()]
   return ["/usr/bin/env"] + env_args + list(argv)
+
+def _get_sudo_binary():
+  return AMBARI_SUDO_BINARY
 
 def _get_environment_str(env):
   return reduce(lambda s,x: f'{s} {x}={quote_bash_args(env[x])}', env, '')
@@ -104,6 +120,13 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
 
         # ---- decide argv & preexec based on command type and shell need ----
         env = _add_current_path_to_env(call_kwargs.get('env', None))
+        path = call_kwargs.get('path')
+        if path:
+            path_str = os.pathsep.join(path) if isinstance(path, (list, tuple)) else path
+            env['PATH'] = os.pathsep.join([env.get('PATH', ''), path_str])
+        cwd = call_kwargs.get('cwd', None)
+        timeout = call_kwargs.get('timeout', None)
+        timeout_kill_strategy = call_kwargs.get('timeout_kill_strategy', TerminateStrategy.TERMINATE_PARENT)
         use_shell = False
         if isinstance(command, str):
             # Strings likely contain shell syntax (and must be one arg to bash -c)
@@ -123,7 +146,7 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
             # Use a login shell (keeps behavior you were aiming at); switch to "-c" if you don't want login env.
             bash_bits = ["bash", "-lc", command_str]
             if os.geteuid() != 0:
-                argv = ["sudo", "-n", "-u", name, "--"] + _prefix_env_for_sudo(bash_bits, env)
+                argv = [_get_sudo_binary(), "-n", "-u", name, "--"] + _prefix_env_for_sudo(bash_bits, env)
                 preexec = None
             else:
                 argv = bash_bits
@@ -131,7 +154,7 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
         else:
             # No shell path
             if os.geteuid() != 0:
-                argv = ["sudo", "-n", "-u", name, "--"] + _prefix_env_for_sudo(argv, env)
+                argv = [_get_sudo_binary(), "-n", "-u", name, "--"] + _prefix_env_for_sudo(argv, env)
                 preexec = None
             else:
                 preexec = _drop_privs
@@ -142,8 +165,16 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
             stdout=fout,
             stderr=ferr,
             env=env,
+            cwd=cwd,
             preexec_fn=preexec,
         )
+        timeout_event = None
+        timer = None
+        if timeout:
+            timeout_event = threading.Event()
+            timer = threading.Timer(timeout, _on_timeout, [p, timeout_event, timeout_kill_strategy])
+            timer.start()
+
         code = p.wait()
 
         # ---- read outputs ----
@@ -154,6 +185,13 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
         with open(fout.name, "rb") as rfout, open(ferr.name, "rb") as rferr:
             out = rfout.read().decode("utf-8", errors="replace").rstrip("\n")
             err = rferr.read().decode("utf-8", errors="replace").rstrip("\n")
+
+        if timeout:
+            if not timeout_event.is_set():
+                timer.cancel()
+            else:
+                err_msg = Logger.filter_text(f"Execution of {argv!r} was killed due timeout after {timeout} seconds")
+                raise ExecuteTimeoutException(err_msg)
 
         # ---- error handling & logging ----
         if code:
