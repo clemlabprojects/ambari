@@ -122,5 +122,22 @@
       </component>
     </service>
 
+    <service name="SPARK3">
+      <component name="SPARK3_CLIENT">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag">
+            <type>spark3-env</type>
+            <set key="spark.atlas.hook" value="false" if-key="spark.atlas.hook" if-key-state="absent"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs">
+            <type>spark3-atlas-application.properties</type>
+            <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag" value="required"/>
+            <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleName" value="com.sun.security.auth.module.Krb5LoginModule"/>
+            <set key="atlas.jaas.ticketBased-KafkaClient.option.useTicketCache" value="true"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
   </services>
 </upgrade-config-changes>

@@ -166,6 +166,13 @@ smokeuser_principal =  config['configurations']['cluster-env']['smokeuser_princi
 spark_thriftserver_hosts = default("/clusterHostInfo/spark3_thriftserver_hosts", [])
 has_spark_thriftserver = not len(spark_thriftserver_hosts) == 0
 
+# Atlas Spark hook
+spark_atlas_application_properties = default('/configurations/spark3-atlas-application.properties', {})
+atlas_hook_filename = default('/configurations/atlas-env/metadata_conf_file', 'atlas-application.properties')
+enable_spark_atlas_hook = False
+if 'spark3-env' in config['configurations'] and 'spark.atlas.hook' in config['configurations']['spark3-env']:
+  enable_spark_atlas_hook = str(config['configurations']['spark3-env']['spark.atlas.hook']).lower() == 'true'
+
 # hive-site params
 spark_hive_properties = {
   'hive.metastore.uris': default('/configurations/hive-site/hive.metastore.uris', '')
@@ -313,4 +320,3 @@ HdfsResource = functools.partial(
   immutable_paths = get_not_managed_resources(),
   dfs_type = dfs_type
 )
-

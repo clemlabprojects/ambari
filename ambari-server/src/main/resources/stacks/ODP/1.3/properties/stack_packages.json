@@ -289,6 +289,56 @@
           ]
         }
       },
+      "IMPALA": {
+        "IMPALA_STATE_STORE": {
+          "STACK-SELECT-PACKAGE": "impala-state-store",
+          "INSTALL": [
+            "impala"
+          ],
+          "PATCH": [
+            "impala"
+          ],
+          "STANDARD": [
+            "impala"
+          ]
+        },
+        "IMPALA_CATALOG_SERVICE": {
+          "STACK-SELECT-PACKAGE": "impala-catalog-service",
+          "INSTALL": [
+            "impala"
+          ],
+          "PATCH": [
+            "impala"
+          ],
+          "STANDARD": [
+            "impala"
+          ]
+        },
+        "IMPALA_DAEMON": {
+          "STACK-SELECT-PACKAGE": "impala-daemon",
+          "INSTALL": [
+            "impala"
+          ],
+          "PATCH": [
+            "impala"
+          ],
+          "STANDARD": [
+            "impala"
+          ]
+        },
+        "IMPALA_CLIENT": {
+          "STACK-SELECT-PACKAGE": "impala-client",
+          "INSTALL": [
+            "impala"
+          ],
+          "PATCH": [
+            "impala"
+          ],
+          "STANDARD": [
+            "impala"
+          ]
+        }
+      },
       "HUE": {
         "HUE_SERVER": {
           "STACK-SELECT-PACKAGE": "hue-server",
@@ -862,6 +912,12 @@
           "current_dir": "{0}/current/hive-webhcat/etc/hcatalog"
         }
       ],
+      "impala": [
+        {
+          "conf_dir": "/etc/impala/conf",
+          "current_dir": "{0}/current/impala-daemon/conf"
+        }
+      ],
       "kafka": [
         {
           "conf_dir": "/etc/kafka/conf",
@@ -977,6 +1033,9 @@
       },
       "HIVE": {
         "packages": ["hive", "hive-hcatalog", "hive2", "tez_hive2"]
+      },
+      "IMPALA": {
+        "packages": ["impala"]
       },
       "KAFKA": {
         "packages": ["kafka"]

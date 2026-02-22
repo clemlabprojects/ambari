@@ -39,6 +39,8 @@ from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions import lzo_utils
 from resource_management.libraries.resources.xml_config import XmlConfig
+from resource_management.libraries.functions.setup_atlas_hook import setup_atlas_hook
+from ambari_commons.constants import SERVICE
 
 def setup_spark(env, type, upgrade_type = None, action = None):
   import params
@@ -105,6 +107,11 @@ def setup_spark(env, type, upgrade_type = None, action = None):
     group=params.spark_group,
     mode=0o644
   )
+
+  if params.enable_spark_atlas_hook:
+    atlas_hook_filepath = os.path.join(params.spark_conf, params.atlas_hook_filename)
+    setup_atlas_hook(SERVICE.SPARK, params.spark_atlas_application_properties, atlas_hook_filepath,
+                     params.spark_user, params.spark_group)
 
   # create spark-env.sh in etc/conf dir
   File(os.path.join(params.spark_conf, 'spark-env.sh'),

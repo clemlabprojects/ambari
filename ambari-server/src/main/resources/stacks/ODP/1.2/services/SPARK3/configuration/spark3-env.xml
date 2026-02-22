@@ -82,6 +82,16 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>spark.atlas.hook</name>
+    <display-name>Enable Atlas Spark Hook</display-name>
+    <value>false</value>
+    <description>Enable the Atlas Spark bridge hook.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>hive_kerberos_keytab</name>
     <value>{{hive_kerberos_keytab}}</value>
     <description>hive keytab for spark thirft server</description>

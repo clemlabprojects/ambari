@@ -186,6 +186,7 @@
         <config-type>spark3-livy2-conf</config-type>
         <config-type>spark3-livy2-env</config-type>
         <config-type>spark3-livy2-log4j-properties</config-type>
+        <config-type>spark3-atlas-application.properties</config-type>
       </configuration-dependencies>
 
       <commandScript>

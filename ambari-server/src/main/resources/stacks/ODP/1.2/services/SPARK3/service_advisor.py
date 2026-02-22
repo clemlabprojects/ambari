@@ -231,6 +231,7 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     :type services dict
     :type hosts dict
     """
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     spark3JobHistoryServerHosts = self.getHostWithComponent("SPARK3", "SPARK3_JOBHISTORYSERVER", services, hosts)
     putSpark3DefaultsProperty = self.putProperty(configurations, "spark3-defaults", services)
     spark_jhs_port = '18082'
@@ -255,6 +256,81 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
             putSpark3DefaultsProperty('spark.history.ui.port', spark_jhs_port)
 
           putSpark3DefaultsProperty('spark.yarn.historyServer.address', spark3JobHistoryServerHosts['Hosts']['host_name'] + ':' + spark_jhs_port)
+
+    # Atlas Spark Hook
+    is_atlas_present_in_cluster = "ATLAS" in servicesList
+    enable_external_atlas_for_spark = False
+    if "spark3-atlas-application.properties" in services["configurations"] and \
+       "enable.external.atlas.for.spark" in services["configurations"]["spark3-atlas-application.properties"]["properties"]:
+      enable_external_atlas_for_spark = services["configurations"]["spark3-atlas-application.properties"]["properties"]["enable.external.atlas.for.spark"].lower() == "true"
+
+    putSpark3EnvProperty = self.putProperty(configurations, "spark3-env", services)
+    if is_atlas_present_in_cluster or enable_external_atlas_for_spark:
+      putSpark3EnvProperty("spark.atlas.hook", "true")
+    else:
+      putSpark3EnvProperty("spark.atlas.hook", "false")
+
+    enable_atlas_hook = False
+    if "spark3-env" in configurations and "spark.atlas.hook" in configurations["spark3-env"]["properties"]:
+      enable_atlas_hook = configurations["spark3-env"]["properties"]["spark.atlas.hook"].lower() == "true"
+    elif "spark3-env" in services["configurations"] and "spark.atlas.hook" in services["configurations"]["spark3-env"]["properties"]:
+      enable_atlas_hook = services["configurations"]["spark3-env"]["properties"]["spark.atlas.hook"].lower() == "true"
+
+    def _get_site_value(site, key):
+      if site in configurations and key in configurations[site]["properties"]:
+        return configurations[site]["properties"][key]
+      if site in services["configurations"] and key in services["configurations"][site]["properties"]:
+        return services["configurations"][site]["properties"][key]
+      return None
+
+    def _merge_csv(value, entry):
+      if value:
+        items = [x.strip() for x in value.split(",") if x.strip()]
+      else:
+        items = []
+      if entry not in items:
+        items.append(entry)
+      return ",".join(items)
+
+    def _append_option(site, put_property, key, option_value):
+      current = _get_site_value(site, key)
+      if current:
+        tokens = current.split()
+        if option_value not in tokens:
+          put_property(key, current + " " + option_value)
+      else:
+        put_property(key, option_value)
+
+    if enable_atlas_hook:
+      atlas_listener = "org.apache.atlas.spark.hook.SparkAtlasQueryExecutionListener"
+      atlas_conf_opt = "-Datlas.conf=/etc/spark3/conf"
+
+      putSpark3DefaultsProperty = self.putProperty(configurations, "spark3-defaults", services)
+      putSpark3ThriftSparkConf = self.putProperty(configurations, "spark3-thrift-sparkconf", services)
+
+      current_listeners = _get_site_value("spark3-defaults", "spark.sql.queryExecutionListeners")
+      putSpark3DefaultsProperty("spark.sql.queryExecutionListeners", _merge_csv(current_listeners, atlas_listener))
+
+      current_thrift_listeners = _get_site_value("spark3-thrift-sparkconf", "spark.sql.queryExecutionListeners")
+      putSpark3ThriftSparkConf("spark.sql.queryExecutionListeners", _merge_csv(current_thrift_listeners, atlas_listener))
+
+      _append_option("spark3-defaults", putSpark3DefaultsProperty, "spark.driver.extraJavaOptions", atlas_conf_opt)
+      _append_option("spark3-defaults", putSpark3DefaultsProperty, "spark.executor.extraJavaOptions", atlas_conf_opt)
+
+    # Add ticket-based JAAS properties for Spark Atlas hook when security is enabled
+    security_enabled = self.isSecurityEnabled(services)
+    if "spark3-atlas-application.properties" in services["configurations"]:
+      putSparkAtlasHookProperty = self.putProperty(configurations, "spark3-atlas-application.properties", services)
+      putSparkAtlasHookPropertyAttribute = self.putPropertyAttribute(configurations, "spark3-atlas-application.properties")
+
+      if security_enabled and enable_atlas_hook:
+        putSparkAtlasHookProperty("atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag", "required")
+        putSparkAtlasHookProperty("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "com.sun.security.auth.module.Krb5LoginModule")
+        putSparkAtlasHookProperty("atlas.jaas.ticketBased-KafkaClient.option.useTicketCache", "true")
+      else:
+        putSparkAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag", "delete", "true")
+        putSparkAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "delete", "true")
+        putSparkAtlasHookPropertyAttribute("atlas.jaas.ticketBased-KafkaClient.option.useTicketCache", "delete", "true")
 
   def __addZeppelinToLivy2SuperUsers(self, configurations, services):
     """
