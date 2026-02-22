@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<configuration supports_final="true" supports_do_not_extend="true">
+  <property>
+    <name>rpc_bind_addresses</name>
+    <value>0.0.0.0:7051</value>
+    <description>RPC bind interface and port for Kudu master.</description>
+  </property>
+  <property>
+    <name>webserver_interface</name>
+    <value>0.0.0.0</value>
+    <description>Web UI bind interface for Kudu master.</description>
+  </property>
+  <property>
+    <name>webserver_port</name>
+    <value>8051</value>
+    <description>Web UI port for Kudu master.</description>
+  </property>
+  <property>
+    <name>master_addresses</name>
+    <value></value>
+    <description>Comma-separated Kudu master host:port list. If empty, Ambari will auto-generate from KUDU_MASTER hosts.</description>
+    <value-attributes>
+      <type>string</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+  </property>
+  <property>
+    <name>fs_wal_dir</name>
+    <value>/var/lib/kudu/master</value>
+    <description>WAL directory for Kudu master.</description>
+  </property>
+  <property>
+    <name>fs_data_dirs</name>
+    <value>/var/lib/kudu/master</value>
+    <description>Data directories for Kudu master. Comma-separated for multiple paths.</description>
+  </property>
+  <property>
+    <name>master_additional_flags</name>
+    <value></value>
+    <description>Additional flags appended to master.gflagfile (one per line recommended).</description>
+    <value-attributes>
+      <type>string</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+  </property>
+</configuration>

@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<metainfo>
+  <schemaVersion>2.0</schemaVersion>
+  <services>
+    <service>
+      <name>KUDU</name>
+      <displayName>Kudu</displayName>
+      <comment>Apache Kudu distributed storage for fast analytics on rapidly changing data</comment>
+      <version>1.18.1</version>
+      <components>
+        <component>
+          <name>KUDU_MASTER</name>
+          <displayName>Kudu Master</displayName>
+          <category>MASTER</category>
+          <cardinality>1+</cardinality>
+          <commandScript>
+            <script>scripts/kudu-master.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>10000</timeout>
+          </commandScript>
+        </component>
+        <component>
+          <name>KUDU_TSERVER</name>
+          <displayName>Kudu Tablet Server</displayName>
+          <category>SLAVE</category>
+          <cardinality>1+</cardinality>
+          <commandScript>
+            <script>scripts/kudu-tserver.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>10000</timeout>
+          </commandScript>
+        </component>
+        <component>
+          <name>KUDU_CLIENT</name>
+          <displayName>Kudu Client</displayName>
+          <category>CLIENT</category>
+          <cardinality>1+</cardinality>
+          <commandScript>
+            <script>scripts/kudu-client.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>10000</timeout>
+          </commandScript>
+        </component>
+      </components>
+
+      <osSpecifics>
+        <osSpecific>
+          <osFamily>redhat8,rocky8</osFamily>
+          <packages>
+            <package>
+              <name>kudu</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>redhat9</osFamily>
+          <packages>
+            <package>
+              <name>kudu</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <packages>
+            <package>
+              <name>kudu</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24</osFamily>
+          <packages>
+            <package>
+              <name>kudu</name>
+            </package>
+          </packages>
+        </osSpecific>
+      </osSpecifics>
+
+      <configuration-dependencies>
+        <config-type>kudu-env</config-type>
+        <config-type>kudu-master-env</config-type>
+        <config-type>kudu-tserver-env</config-type>
+      </configuration-dependencies>
+      <restartRequiredAfterChange>true</restartRequiredAfterChange>
+    </service>
+  </services>
+</metainfo>

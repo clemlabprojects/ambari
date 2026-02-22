@@ -339,6 +339,44 @@
           ]
         }
       },
+      "KUDU": {
+        "KUDU_MASTER": {
+          "STACK-SELECT-PACKAGE": "kudu-master",
+          "INSTALL": [
+            "kudu"
+          ],
+          "PATCH": [
+            "kudu"
+          ],
+          "STANDARD": [
+            "kudu"
+          ]
+        },
+        "KUDU_TSERVER": {
+          "STACK-SELECT-PACKAGE": "kudu-tserver",
+          "INSTALL": [
+            "kudu"
+          ],
+          "PATCH": [
+            "kudu"
+          ],
+          "STANDARD": [
+            "kudu"
+          ]
+        },
+        "KUDU_CLIENT": {
+          "STACK-SELECT-PACKAGE": "kudu-client",
+          "INSTALL": [
+            "kudu"
+          ],
+          "PATCH": [
+            "kudu"
+          ],
+          "STANDARD": [
+            "kudu"
+          ]
+        }
+      },
       "HUE": {
         "HUE_SERVER": {
           "STACK-SELECT-PACKAGE": "hue-server",
@@ -918,6 +956,12 @@
           "current_dir": "{0}/current/impala-daemon/conf"
         }
       ],
+      "kudu": [
+        {
+          "conf_dir": "/etc/kudu/conf",
+          "current_dir": "{0}/current/kudu-master/conf"
+        }
+      ],
       "kafka": [
         {
           "conf_dir": "/etc/kafka/conf",
@@ -1042,6 +1086,9 @@
       },
       "KNOX": {
         "packages": ["knox"]
+      },
+      "KUDU": {
+        "packages": ["kudu"]
       },
       "MAPREDUCE2": {
         "packages": []
