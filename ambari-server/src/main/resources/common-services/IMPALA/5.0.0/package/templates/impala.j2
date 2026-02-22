@@ -1,0 +1,230 @@
+IMPALA_CATALOG_SERVICE_HOST={{impala_catalog_host}}
+IMPALA_STATE_STORE_HOST={{impala_state_store_host}}
+IMPALA_STATE_STORE_PORT={{impala_env['impala_state_store_port']}}
+HIVE_SERVER_HOST={{hive_server_host}}
+IMPALA_BACKEND_PORT={{impala_env['impala_backend_port']}}
+IMPALA_LOG_DIR={{impala_log_dir}}
+IMPALA_SCRATCH_DIR={{impala_env['impala_scratch_dir']}}
+MEM_LIMIT={{impala_env['mem_limit']}}
+RANGER_APP_ID={{impala_env['impala_ranger_app_id']}}
+AUTH_PROVIDER={{impala_env['impala_authorization_provider']}}
+TRUSTED_SUBNETS={{impala_env['trusted_subnets']}} 
+PROXY_USER_CONF={{impala_env['impala_proxy_user_config']}}
+RANGER_SERVICE_TYPE={{impala_env['impala_ranger_service_type']}}
+LDAP_URI={{impala_env['impala_ldap_uri']}}
+PWD_IN_CLEAR={{impala_env['impala_ldap_passwords_in_clear_ok']}}
+LDAP_DOMAIN={{impala_env['impala_ldap_domain']}}
+BIND_PASSWORD='echo "{{impala_env['impala_ldap_bind_password']}}"'
+KRB_REINIT_INT={{impala_env['kerberos_reinit_interval']}}
+LOCAL_TO_UNIX={{impala_env['impala_use_local_tz_for_unix_timestamp_conversions']}}
+LEGACY_HIVE_TS={{impala_env['impala_convert_legacy_hive_parquet_utc_timestamps']}}
+SSL_SERVER_CERT={{impala_env['ssl_server_certificate']}}
+SSL_PRIVATE_KEY={{impala_env['ssl_private_key']}}
+SSL_PRIVATE_KEY_PWD_CMD={{impala_env['ssl_private_key_password_cmd']}}
+SSL_CLIENT_CA_CERT={{impala_env['ssl_client_ca_certificate']}}
+LDAP_CA_CERT={{impala_env['ldap_ca_certificate']}}
+WEBSERVER_CERT_FILE={{impala_env['webserver_certificate_file']}}
+WEBSERVER_PRIVATE_KEY_FILE={{impala_env['webserver_private_key_file']}}
+WEBSERVER_PRIVATE_KEY_PWD_CMD={{impala_env['webserver_private_key_password_cmd']}}
+
+IMPALA_CATALOG_ARGS=" \
+    -log_dir=${IMPALA_LOG_DIR} \
+    -state_store_host=${IMPALA_STATE_STORE_HOST} \
+    -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
+    -num_metadata_loading_threads={{impala_env['num_metadata_loading_threads']}} \
+    -inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}} \
+    -datastream_sender_timeout_ms={{impala_env['datastream_sender_timeout_ms']}} \
+    -rpc_negotiation_thread_count={{impala_env['rpc_negotiation_thread_count']}} \
+    -accepted_cnxn_queue_depth={{impala_env['accepted_cnxn_queue_depth']}} \
+    -minidump_path={{impala_env['minidump_path']}} \
+    -default_query_options={{impala_env['default_query_options']}} \
+    -idle_query_timeout={{impala_env['impala_idle_query_timeout']}} \
+    -idle_session_timeout={{impala_env['impala_idle_session_timeout']}} \
+    -statestore_subscriber_timeout_seconds={{impala_env['statestore_subscriber_timeout_s']}} \
+    -load_catalog_in_background={{impala_env['load_catalog_in_background']}} \
+    -load_auth_to_local_rules={{impala_env['load_auth_to_local_rules']}} \
+    -enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}} \
+    -redaction_rules_file={{impala_env['redaction_rules_file']}} \
+    {% if enable_ranger %}
+    -server_name=${HIVE_SERVER_HOST} \
+    -ranger_service_type=${RANGER_SERVICE_TYPE} \
+    -ranger_app_id=${RANGER_APP_ID} \
+    -authorization_provider=${AUTH_PROVIDER} \
+    -authorized_proxy_user_config=${PROXY_USER_CONF} \
+    {% endif %}
+    -disable_kudu=true \
+    {% if security_enabled %}
+    -kerberos_reinit_interval=${KRB_REINIT_INT} \
+    -principal=impala/{{impala_catalog_host}}@{{realm_name}} \
+    -keytab_file=/etc/security/keytabs/impala.service.keytab \
+    {% endif %}
+    {% if client_services_ssl_enabled %}
+    -ssl_server_certificate={{impala_env['ssl_server_certificate']}} \
+    -ssl_private_key={{impala_env['ssl_private_key']}} \
+    -ssl_private_key_password_cmd=${SSL_PRIVATE_KEY_PWD_CMD} \
+    -ssl_client_ca_certificate={{impala_env['ssl_client_ca_certificate']}} \
+    -webserver_certificate_file=${WEBSERVER_CERT_FILE} \
+    -webserver_private_key_file=${WEBSERVER_PRIVATE_KEY_FILE} \
+    -webserver_private_key_password_cmd=${WEBSERVER_PRIVATE_KEY_PWD_CMD} \
+    {% endif %}
+    {% if enable_ldap_auth %}
+    -enable_ldap_auth=true \
+    -ldap_uri=${LDAP_URI} \
+    -ldap_passwords_in_clear_ok=${PWD_IN_CLEAR} \
+    -ldap_domain=${LDAP_DOMAIN} \
+    -ldap_bind_password_cmd=${BIND_PASSWORD} \
+    {% endif %}
+    {% if enable_ldap_tls %}
+    -ldap_tls=true \
+    -ldap_ca_certificate=${LDAP_CA_CERT} \
+    {% endif %}
+	"
+IMPALA_STATE_STORE_ARGS=" \
+    -log_dir=${IMPALA_LOG_DIR} \
+    -state_store_port=${IMPALA_STATE_STORE_PORT} \
+    -statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}} \
+    -statestore_num_update_threads={{impala_env['statestore_num_update_threads']}} \
+    -inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}} \
+    -minidump_path={{impala_env['minidump_path']}} \
+    -default_query_options={{impala_env['default_query_options']}} \
+    -idle_query_timeout={{impala_env['impala_idle_query_timeout']}} \
+    -idle_session_timeout={{impala_env['impala_idle_session_timeout']}} \
+    -enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}} \
+    -statestore_heartbeat_frequency_ms={{impala_env['statestore_heartbeat_frequency_ms']}} \
+    -statestore_heartbeat_tcp_timeout_seconds={{impala_env['statestore_heartbeat_tcp_timeout_seconds']}} \
+    -statestore_max_missed_heartbeats={{impala_env['statestore_max_missed_heartbeats']}} \
+    -statestore_num_heartbeat_threads={{impala_env['statestore_num_heartbeat_threads']}} \
+    -redaction_rules_file={{impala_env['redaction_rules_file']}} \
+    {% if enable_ranger %}
+    -server_name=${HIVE_SERVER_HOST} \
+    -ranger_service_type=${RANGER_SERVICE_TYPE} \
+    -ranger_app_id=${RANGER_APP_ID} \
+    -authorization_provider=${AUTH_PROVIDER} \
+    -authorized_proxy_user_config=${PROXY_USER_CONF} \
+    {% endif %}
+    -disable_kudu=true \
+	{% if security_enabled %}
+    -kerberos_reinit_interval=${KRB_REINIT_INT} \
+    -principal=impala/{{impala_state_store_host}}@{{realm_name}} \
+    -keytab_file=/etc/security/keytabs/impala.service.keytab \
+	{% endif %}
+    {% if client_services_ssl_enabled %}
+    -ssl_server_certificate={{impala_env['ssl_server_certificate']}} \
+    -ssl_private_key={{impala_env['ssl_private_key']}} \
+    -ssl_private_key_password_cmd=${SSL_PRIVATE_KEY_PWD_CMD} \
+    -ssl_client_ca_certificate={{impala_env['ssl_client_ca_certificate']}} \
+    -webserver_certificate_file=${WEBSERVER_CERT_FILE} \
+    -webserver_private_key_file=${WEBSERVER_PRIVATE_KEY_FILE} \
+    -webserver_private_key_password_cmd=${WEBSERVER_PRIVATE_KEY_PWD_CMD} \
+    {% endif %}
+    {% if enable_ldap_auth %}
+    -enable_ldap_auth=true \
+    -ldap_uri=${LDAP_URI} \
+    -ldap_passwords_in_clear_ok=${PWD_IN_CLEAR} \
+    -ldap_domain=${LDAP_DOMAIN} \
+    -ldap_bind_password_cmd=${BIND_PASSWORD} \
+    {% endif %}
+    {% if enable_ldap_tls %}
+    -ldap_tls=true \
+    -ldap_ca_certificate=${LDAP_CA_CERT} \
+    {% endif %}
+	"
+IMPALA_SERVER_ARGS=" \
+    -log_dir=${IMPALA_LOG_DIR} \
+	--scratch_dirs=${IMPALA_SCRATCH_DIR} \
+	--catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
+	--state_store_host=${IMPALA_STATE_STORE_HOST} \
+	-mem_limit=${MEM_LIMIT} \
+    -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
+    -state_store_port=${IMPALA_STATE_STORE_PORT} \
+    -fe_service_threads={{impala_env['fe_service_threads']}} \
+    -inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}} \
+    -max_profile_log_file_size={{impala_env['max_profile_log_file_size']}} \
+    -max_profile_log_files={{impala_env['max_profile_log_files']}} \
+    -profile_log_dir={{impala_env['profile_log_dir']}} \
+    -default_pool_max_queued={{impala_env['default_pool_max_queued']}} \
+    -default_pool_max_requests={{impala_env['default_pool_max_requests']}} \
+    -queue_wait_timeout_ms={{impala_env['queue_wait_timeout_ms']}} \
+    -minidump_path={{impala_env['minidump_path']}} \
+    -default_query_options={{impala_env['default_query_options']}} \
+    -idle_query_timeout={{impala_env['impala_idle_query_timeout']}} \
+    -idle_session_timeout={{impala_env['impala_idle_session_timeout']}} \
+    -use_local_tz_for_unix_timestamp_conversions=${LOCAL_TO_UNIX} \
+    -convert_legacy_hive_parquet_utc_timestamps=${LEGACY_HIVE_TS} \
+    -insert_inherit_permissions \
+    -enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}} \
+    -disk_spill_encryption={{impala_env['disk_spill_encryption']}} \
+    -abort_on_failed_audit_event={{impala_env['abort_on_failed_audit_event']}} \
+    -lineage_event_log_dir={{impala_env['lineage_event_log_dir']}} \
+    -max_lineage_log_file_size={{impala_env['max_lineage_log_file_size']}} \
+    -redaction_rules_file={{impala_env['redaction_rules_file']}} \
+    -is_coordinator={{impala_env['is_coordinator']}} \
+    -is_executor={{impala_env['is_executor']}} \
+    {% if enable_ranger %}
+    -server_name=${HIVE_SERVER_HOST} \
+    -ranger_service_type=${RANGER_SERVICE_TYPE} \
+    -ranger_app_id=${RANGER_APP_ID} \
+    -authorization_provider=${AUTH_PROVIDER} \
+    -authorized_proxy_user_config=${PROXY_USER_CONF} \
+    {% endif %}
+    {% if enable_trusted_subnets %}
+    --trusted_subnets=${TRUSTED_SUBNETS} \
+    {% endif %}
+    -disable_kudu=true \
+    -use_statestore \
+    -state_store_host=${IMPALA_STATE_STORE_HOST} \
+    -be_port=${IMPALA_BACKEND_PORT} \
+	{% if security_enabled %}
+    -kerberos_reinit_interval=${KRB_REINIT_INT} \
+    {% if enable_load_balancer %}
+    -principal=impala/{{impala_load_balancer_host}}@{{realm_name}} \
+    {% else %}
+    -principal=impala/{{current_host_name}}@{{realm_name}} \
+    {% endif %}
+    -be_principal=impala/{{current_host_name}}@{{realm_name}} \
+    -keytab_file=/etc/security/keytabs/impala.service.keytab \
+	{% endif %}
+    {% if client_services_ssl_enabled %}
+    -ssl_server_certificate={{impala_env['ssl_server_certificate']}} \
+    -ssl_private_key={{impala_env['ssl_private_key']}} \
+    -ssl_private_key_password_cmd=${SSL_PRIVATE_KEY_PWD_CMD} \
+    -ssl_client_ca_certificate={{impala_env['ssl_client_ca_certificate']}} \
+    -webserver_certificate_file=${WEBSERVER_CERT_FILE} \
+    -webserver_private_key_file=${WEBSERVER_PRIVATE_KEY_FILE} \
+    -webserver_private_key_password_cmd=${WEBSERVER_PRIVATE_KEY_PWD_CMD} \
+    {% endif %}
+    {% if enable_ldap_auth %}
+    -enable_ldap_auth=true \
+    -ldap_uri=${LDAP_URI} \
+    -ldap_passwords_in_clear_ok=${PWD_IN_CLEAR} \
+    -ldap_domain=${LDAP_DOMAIN} \
+    -ldap_bind_password_cmd=${BIND_PASSWORD} \
+    {% endif %}
+    {% if enable_ldap_tls %}
+    -ldap_tls=true \
+    -ldap_ca_certificate=${LDAP_CA_CERT} \
+    {% endif %}
+    {% if enable_admission_control %}
+    -fair_scheduler_allocation_path=/etc/impala/conf/fair-scheduler.xml \
+    -llama_site_path=/etc/impala/conf/llama-site.xml \
+    {% endif %}
+	"
+IMPALAD_ARGS=" \
+    {% if enable_trusted_subnets %}
+    --trusted_subnets=${TRUSTED_SUBNETS} \
+    {% endif %}
+        "
+
+export ENABLE_CORE_DUMPS={{impala_env['enable_core_dumps']}}
+export JAVA_TOOL_OPTIONS={{impala_env['impala_service_java_options']}}
+
+LIBHDFS_OPTS=-Djava.library.path=/usr/odp/current/impala-daemon/lib/native
+# MYSQL_CONNECTOR_JAR=/usr/share/java/mysql-connector-java.jar
+# IMPALA_BIN=/usr/odp/current/impala-daemon/sbin
+# IMPALA_HOME=/usr/odp/current/impala-daemon
+# HIVE_HOME=/usr/odp/current/hive
+# HBASE_HOME=/usr/odp/current/hbase
+# IMPALA_CONF_DIR=/etc/impala/conf
+# HADOOP_CONF_DIR=/etc/impala/conf
+# HIVE_CONF_DIR=/etc/impala/conf
+# HBASE_CONF_DIR=/etc/impala/conf
