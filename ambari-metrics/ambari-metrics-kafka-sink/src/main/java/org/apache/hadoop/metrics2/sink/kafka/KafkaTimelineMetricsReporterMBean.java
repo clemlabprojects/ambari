@@ -18,8 +18,6 @@
 
 package org.apache.hadoop.metrics2.sink.kafka;
 
-import kafka.metrics.KafkaMetricsReporterMBean;
-
-public interface KafkaTimelineMetricsReporterMBean extends KafkaMetricsReporterMBean {
+public interface KafkaTimelineMetricsReporterMBean {
 
 }

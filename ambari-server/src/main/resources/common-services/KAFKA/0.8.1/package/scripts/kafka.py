@@ -78,7 +78,7 @@ def kafka(upgrade_type=None):
       kafka_server_config['kafka.timeline.metrics.truststore.password'] = params.metric_truststore_password
 
     kafka_data_dir = kafka_server_config['log.dirs']
-    kafka_data_dirs = filter(None, kafka_data_dir.split(","))
+    kafka_data_dirs = list(filter(None, kafka_data_dir.split(",")))
 
     rack="/default-rack"
     i=0

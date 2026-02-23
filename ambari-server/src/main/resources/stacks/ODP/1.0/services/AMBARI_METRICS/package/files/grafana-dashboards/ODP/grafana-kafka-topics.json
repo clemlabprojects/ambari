@@ -417,7 +417,7 @@
               "app": "kafka_broker",
               "downsampleAggregator": "avg",
               "errors": {},
-              "metric": "kafka.server.FetcherLagMetrics.ConsumerLag.clientId.ReplicaFetcherThread-0-1001.partition.0.topic.*",
+              "metric": "kafka.server.FetcherLagMetrics.ConsumerLag.clientId.*.partition.*.topic.*",
               "precision": "default",
               "refId": "A",
               "transform": "none",

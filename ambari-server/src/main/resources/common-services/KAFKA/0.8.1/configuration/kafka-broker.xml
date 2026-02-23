@@ -326,7 +326,18 @@
     <name>kafka.metrics.reporters</name>
     <value/>
     <description>
-      kafka ganglia metrics reporter and kafka timeline metrics reporter
+      Legacy metrics reporters (Kafka 2.x and earlier)
+    </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>metric.reporters</name>
+    <value/>
+    <description>
+      Kafka metrics reporters (Kafka 3.x and later)
     </description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>

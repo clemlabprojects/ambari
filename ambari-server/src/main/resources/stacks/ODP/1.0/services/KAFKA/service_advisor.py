@@ -268,10 +268,26 @@ class KafkaRecommender(service_advisor.ServiceAdvisor):
     else:
       putKafkaBrokerAttributes('authorizer.class.name', 'delete', 'true')
 
-    #If AMS is part of Services, use the KafkaTimelineMetricsReporter for metric reporting. Default is ''.
-    # TODO: update Ambari Metrics for Apache Kafka 3.x version
-    # if "AMBARI_METRICS" in servicesList:
-    #   putKafkaBrokerProperty('kafka.metrics.reporters', 'org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter')
+    # If AMS is part of Services, use the KafkaTimelineMetricsReporter for metric reporting.
+    if "AMBARI_METRICS" in servicesList:
+      reporter_class = 'org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter'
+      metric_reporters = None
+      if 'kafka-broker' in configurations and \
+          'metric.reporters' in configurations['kafka-broker']['properties']:
+        metric_reporters = configurations['kafka-broker']['properties']['metric.reporters']
+      elif 'kafka-broker' in services['configurations'] and \
+          'metric.reporters' in services['configurations']['kafka-broker']['properties']:
+        metric_reporters = services['configurations']['kafka-broker']['properties']['metric.reporters']
+
+      if metric_reporters:
+        reporters = [reporter.strip() for reporter in metric_reporters.split(',') if reporter.strip()]
+        if reporter_class not in reporters:
+          reporters.append(reporter_class)
+        metric_reporters = ",".join(reporters)
+      else:
+        metric_reporters = reporter_class
+
+      putKafkaBrokerProperty('metric.reporters', metric_reporters)
 
     if ranger_plugin_enabled:
       kafkaLog4jRangerLines = [{
