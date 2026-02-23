@@ -1,0 +1,311 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+
+  <!-- Core HTTP properties -->
+  <property>
+    <name>quarkus.http.port</name>
+    <display-name>HTTP Port</display-name>
+    <value>8181</value>
+    <description>HTTP port for the Polaris server.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>65535</maximum>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- Authentication mode -->
+  <property>
+    <name>polaris.authentication.type</name>
+    <display-name>Authentication Type (Global)</display-name>
+    <value>internal</value>
+    <description>Authentication mode: internal, external, or mixed.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>internal</value>
+          <label>Internal</label>
+        </entry>
+        <entry>
+          <value>external</value>
+          <label>External (OIDC)</label>
+        </entry>
+        <entry>
+          <value>mixed</value>
+          <label>Mixed</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.authenticator.type</name>
+    <display-name>Authenticator Type</display-name>
+    <value>default</value>
+    <description>Authenticator implementation for Polaris.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.active-roles-provider.type</name>
+    <display-name>Active Roles Provider Type</display-name>
+    <value>default</value>
+    <description>Active roles provider implementation for Polaris.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-service.type</name>
+    <display-name>Token Service Type</display-name>
+    <value>default</value>
+    <description>Token service implementation for internal authentication.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- Token broker configuration (internal authentication) -->
+  <property>
+    <name>polaris.authentication.token-broker.type</name>
+    <display-name>Token Broker Type</display-name>
+    <value>rsa-key-pair</value>
+    <description>Token broker implementation (rsa-key-pair or symmetric-key).</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>rsa-key-pair</value>
+          <label>RSA Key Pair</label>
+        </entry>
+        <entry>
+          <value>symmetric-key</value>
+          <label>Symmetric Key</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-broker.max-token-generation</name>
+    <display-name>Max Token Lifetime</display-name>
+    <value>PT1H</value>
+    <description>Maximum token lifetime in ISO-8601 duration format (e.g. PT1H).</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-broker.rsa-key-pair.public-key-file</name>
+    <display-name>RSA Public Key File</display-name>
+    <value>/etc/polaris/conf/keys/public.key</value>
+    <description>Public key file for RSA token broker.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-broker.rsa-key-pair.private-key-file</name>
+    <display-name>RSA Private Key File</display-name>
+    <value>/etc/polaris/conf/keys/private.key</value>
+    <description>Private key file for RSA token broker.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-broker.symmetric-key.file</name>
+    <display-name>Symmetric Key File</display-name>
+    <value>/etc/polaris/conf/keys/symmetric.key</value>
+    <description>Shared secret file for symmetric token broker.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.authentication.token-broker.symmetric-key.secret</name>
+    <display-name>Symmetric Key Secret</display-name>
+    <value></value>
+    <description>Optional shared secret for symmetric token broker.</description>
+    <value-attributes>
+      <type>password</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- Realm context -->
+  <property>
+    <name>polaris.realm-context.realms</name>
+    <display-name>Allowed Realms</display-name>
+    <value>POLARIS</value>
+    <description>Comma-separated list of Polaris realms.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.realm-context.header-name</name>
+    <display-name>Realm Header Name</display-name>
+    <value>Polaris-Realm</value>
+    <description>HTTP header used to resolve the realm.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.realm-context.require-header</name>
+    <display-name>Require Realm Header</display-name>
+    <value>true</value>
+    <description>Require the realm header for all requests.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- OIDC tenant configuration (Quarkus) -->
+  <property>
+    <name>quarkus.oidc.tenant-enabled</name>
+    <display-name>OIDC Tenant Enabled</display-name>
+    <value>false</value>
+    <description>Enable the default OIDC tenant when using external authentication.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>quarkus.oidc.auth-server-url</name>
+    <display-name>OIDC Auth Server URL</display-name>
+    <value>http://localhost:8080/realms/polaris</value>
+    <description>OIDC issuer base URL for the default tenant.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>quarkus.oidc.client-id</name>
+    <display-name>OIDC Client ID</display-name>
+    <value>polaris</value>
+    <description>OIDC client id for Polaris.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>quarkus.oidc.credentials.secret</name>
+    <display-name>OIDC Client Secret</display-name>
+    <value></value>
+    <description>OIDC client secret for Polaris.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>quarkus.oidc.application-type</name>
+    <display-name>OIDC Application Type</display-name>
+    <value>service</value>
+    <description>Quarkus OIDC application type.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>service</value>
+          <label>Service</label>
+        </entry>
+        <entry>
+          <value>web-app</value>
+          <label>Web App</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>quarkus.oidc.roles.role-claim-path</name>
+    <display-name>OIDC Role Claim Path</display-name>
+    <value>polaris/roles</value>
+    <description>JWT claim path used by Quarkus to read roles.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- Polaris OIDC principal mapping -->
+  <property>
+    <name>polaris.oidc.principal-mapper.type</name>
+    <display-name>Principal Mapper Type</display-name>
+    <value>default</value>
+    <description>Principal mapper implementation.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.oidc.principal-mapper.id-claim-path</name>
+    <display-name>Principal ID Claim Path</display-name>
+    <value>polaris/principal_id</value>
+    <description>JWT claim path for the principal id.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.oidc.principal-mapper.name-claim-path</name>
+    <display-name>Principal Name Claim Path</display-name>
+    <value>polaris/principal_name</value>
+    <description>JWT claim path for the principal name.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <!-- Polaris OIDC role mapping -->
+  <property>
+    <name>polaris.oidc.principal-roles-mapper.type</name>
+    <display-name>Principal Roles Mapper Type</display-name>
+    <value>default</value>
+    <description>Principal roles mapper implementation.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.oidc.principal-roles-mapper.filter</name>
+    <display-name>Principal Roles Filter</display-name>
+    <value>^(?!profile$|email$).*</value>
+    <description>Regex filter applied to roles before mapping.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.oidc.principal-roles-mapper.mappings[0].regex</name>
+    <display-name>Principal Roles Mapping Regex</display-name>
+    <value>^.*$</value>
+    <description>Regex for mapping role names.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
+    <name>polaris.oidc.principal-roles-mapper.mappings[0].replacement</name>
+    <display-name>Principal Roles Mapping Replacement</display-name>
+    <value>PRINCIPAL_ROLE:$0</value>
+    <description>Replacement for mapped role names.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+</configuration>

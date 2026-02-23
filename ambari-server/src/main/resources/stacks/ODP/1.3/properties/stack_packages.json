@@ -588,6 +588,32 @@
           ]
         }
       },
+      "POLARIS": {
+        "POLARIS_CLIENT": {
+          "STACK-SELECT-PACKAGE": "polaris-server",
+          "INSTALL": [
+            "polaris-server"
+          ],
+          "PATCH": [
+            "polaris-server"
+          ],
+          "STANDARD": [
+            "polaris-server"
+          ]
+        },
+        "POLARIS_SERVER": {
+          "STACK-SELECT-PACKAGE": "polaris-server",
+          "INSTALL": [
+            "polaris-server"
+          ],
+          "PATCH": [
+            "polaris-server"
+          ],
+          "STANDARD": [
+            "polaris-server"
+          ]
+        }
+      },
       "RANGER": {
         "RANGER_ADMIN": {
           "STACK-SELECT-PACKAGE": "ranger-admin",
@@ -1004,6 +1030,12 @@
           "current_dir": "{0}/current/phoenix-client/conf"
         }
       ],
+      "polaris": [
+        {
+          "conf_dir": "/etc/polaris/conf",
+          "current_dir": "{0}/current/polaris-server/conf"
+        }
+      ],
       "ranger-admin": [
         {
           "conf_dir": "/etc/ranger/admin/conf",
@@ -1095,6 +1127,9 @@
       },
       "OOZIE": {
         "packages": ["oozie"]
+      },
+      "POLARIS": {
+        "packages": ["polaris"]
       },
       "R4ML": {
         "packages": []

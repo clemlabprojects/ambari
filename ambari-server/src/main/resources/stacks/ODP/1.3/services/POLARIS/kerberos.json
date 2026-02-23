@@ -1,0 +1,57 @@
+{
+  "services": [
+    {
+      "name": "POLARIS",
+      "configurations": [
+        {
+          "ranger-polaris-audit": {
+            "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
+            "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
+            "xasecure.audit.jaas.Client.option.useKeyTab": "true",
+            "xasecure.audit.jaas.Client.option.storeKey": "false",
+            "xasecure.audit.jaas.Client.option.serviceName": "solr",
+            "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "POLARIS_SERVER",
+          "identities": [
+            {
+              "name": "polaris_service",
+              "principal": {
+                "value": "${polaris-env/polaris_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "polaris-env/polaris_principal",
+                "local_username": "${polaris-env/polaris_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/polaris.service.keytab",
+                "owner": {
+                  "name": "${polaris-env/polaris_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "polaris-env/polaris_keytab"
+              }
+            },
+            {
+              "name": "ranger_polaris_audit",
+              "reference": "/POLARIS/POLARIS_SERVER/polaris_service",
+              "principal": {
+                "configuration": "ranger-polaris-audit/xasecure.audit.jaas.Client.option.principal"
+              },
+              "keytab": {
+                "configuration": "ranger-polaris-audit/xasecure.audit.jaas.Client.option.keyTab"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

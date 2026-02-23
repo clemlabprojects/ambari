@@ -1,0 +1,215 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+  <property require-input="false">
+    <name>polaris_log_dir</name>
+    <display-name>Polaris Log Dir</display-name>
+    <value>/var/log/polaris</value>
+    <description>Directory for Polaris logs.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>polaris_pid_dir</name>
+    <display-name>Polaris PID Dir</display-name>
+    <value>/var/run/polaris</value>
+    <description>Directory for Polaris PID files.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+      <editable-only-at-install>true</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>polaris_conf_dir</name>
+    <display-name>Polaris Conf Dir</display-name>
+    <value>/etc/polaris/conf</value>
+    <description>Polaris configuration directory.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_conf_file</name>
+    <value>application.properties</value>
+    <description>Polaris configuration file name.</description>
+    <value-attributes>
+      <read-only>true</read-only>
+      <overridable>false</overridable>
+      <visible>false</visible>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property require-input="false">
+    <name>polaris_data_dir</name>
+    <display-name>Polaris Data Dir</display-name>
+    <value>/var/lib/polaris</value>
+    <description>Polaris data directory.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_user</name>
+    <display-name>Polaris User</display-name>
+    <value>polaris</value>
+    <property-type>USER</property-type>
+    <description>Polaris service user.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+      <user-groups>
+        <property>
+          <type>cluster-env</type>
+          <name>user_group</name>
+        </property>
+      </user-groups>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_keytab</name>
+    <display-name>Polaris Keytab</display-name>
+    <value>/etc/security/keytabs/polaris.service.keytab</value>
+    <description>Keytab used by the Polaris service principal.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_principal</name>
+    <display-name>Polaris Principal</display-name>
+    <value>polaris/_HOST@EXAMPLE.COM</value>
+    <property-type>KERBEROS_PRINCIPAL</property-type>
+    <description>Kerberos principal for the Polaris service.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_jaas_file</name>
+    <display-name>Polaris JAAS File</display-name>
+    <value>/etc/polaris/conf/polaris_jaas.conf</value>
+    <description>JAAS file used when Kerberos is enabled.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_jaas_context</name>
+    <display-name>Polaris JAAS Context</display-name>
+    <value>PolarisServer</value>
+    <description>JAAS login context name for Polaris.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_protocol</name>
+    <display-name>Polaris Protocol</display-name>
+    <value>http</value>
+    <description>Protocol used for Polaris service checks and links.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>http</value>
+          <label>HTTP</label>
+        </entry>
+        <entry>
+          <value>https</value>
+          <label>HTTPS</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_opts</name>
+    <display-name>Polaris JVM Options</display-name>
+    <value></value>
+    <description>Additional JVM options for the Polaris server.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_admin_username</name>
+    <display-name>Polaris Admin Username</display-name>
+    <value>admin</value>
+    <description>Default Polaris internal admin username.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_admin_password</name>
+    <display-name>Polaris Admin Password</display-name>
+    <value>admin</value>
+    <description>Default Polaris internal admin password.</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <!-- polaris-env.sh -->
+  <property>
+    <name>content</name>
+    <display-name>polaris-env template</display-name>
+    <description>This is the jinja template for polaris-env.sh file</description>
+    <value>
+# The java implementation to use. If JAVA_HOME is not found we expect java and jar to be in path
+export JAVA_HOME={{java64_home}}
+
+# Polaris JAAS configuration (used when Kerberos is enabled)
+export POLARIS_JAAS_FILE={{polaris_jaas_conf}}
+
+# Additional Java opts for Polaris, including Kerberos options when enabled
+export POLARIS_OPTS="{{polaris_opts}} {{polaris_kerberos_opts}}"
+
+# Polaris configuration directory
+export POLARIS_CONF_DIR={{polaris_conf_dir}}
+
+# Where log files are stored
+export POLARIS_LOG_DIR={{polaris_log_dir}}
+
+# PID dir
+export POLARIS_PID_DIR={{polaris_pid_dir}}
+
+# Data dir
+export POLARIS_DATA_DIR={{polaris_data_dir}}
+
+# Polaris home
+export POLARIS_HOME={{polaris_home}}
+
+# Default internal admin credentials (optional)
+export POLARIS_ADMIN_USER={{polaris_admin_username}}
+export POLARIS_ADMIN_PASSWORD={{polaris_admin_password}}
+    </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>
