@@ -837,6 +837,21 @@ public class ClusterService extends BaseService {
   }
 
   /**
+   * Handles: GET /clusters/{clusterID}/oidc_descriptors
+   * Gets the composite OIDC descriptor associated with the cluster.
+   *
+   * @param request     the request.
+   * @param clusterName the cluster name.
+   * @return composite OIDC descriptor resource representation
+   */
+  @Path("{clusterName}/oidc_descriptors")
+  public ClusterOidcDescriptorService getCompositeOidcDescriptor(
+      @Context javax.ws.rs.core.Request request,
+      @PathParam("clusterName") String clusterName) {
+    return new ClusterOidcDescriptorService(clusterName);
+  }
+
+  /**
    * Gets the Logging Service
    *
    * @param request the request

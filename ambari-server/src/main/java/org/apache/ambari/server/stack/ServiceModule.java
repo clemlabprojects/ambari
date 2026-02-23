@@ -144,6 +144,7 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
     serviceInfo.setMetricsFile(serviceDirectory.getMetricsFile(serviceInfo.getName()));
     serviceInfo.setAlertsFile(serviceDirectory.getAlertsFile());
     serviceInfo.setKerberosDescriptorFile(serviceDirectory.getKerberosDescriptorFile());
+    serviceInfo.setOidcDescriptorFile(serviceDirectory.getOidcDescriptorFile());
     serviceInfo.setWidgetsDescriptorFile(serviceDirectory.getWidgetsDescriptorFile(serviceInfo.getName()));
     serviceInfo.setRoleCommandOrder(serviceDirectory.getRoleCommandOrder());
     serviceInfo.setSchemaVersion(AmbariMetaInfo.SCHEMA_VERSION_2);
@@ -252,6 +253,9 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
     }
     if (serviceInfo.getKerberosDescriptorFile() == null) {
       serviceInfo.setKerberosDescriptorFile(parent.getKerberosDescriptorFile());
+    }
+    if (serviceInfo.getOidcDescriptorFile() == null) {
+      serviceInfo.setOidcDescriptorFile(parent.getOidcDescriptorFile());
     }
     if (serviceInfo.getThemesMap().isEmpty()) {
       serviceInfo.setThemesMap(parent.getThemesMap());

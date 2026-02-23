@@ -473,6 +473,13 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         );
         break;
 
+      case ClusterOidcDescriptor:
+        resourceDefinition = new SimpleResourceDefinition(
+            Resource.Type.ClusterOidcDescriptor,
+            "oidc_descriptor",
+            "oidc_descriptors");
+        break;
+
       case LoggingQuery:
         resourceDefinition = new LoggingResourceDefinition();
         break;

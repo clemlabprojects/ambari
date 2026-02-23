@@ -161,6 +161,7 @@ public interface Resource {
     UserAuthorization,
     VersionDefinition,
     ClusterKerberosDescriptor,
+    ClusterOidcDescriptor,
     LoggingQuery,
     RemoteCluster,
     Auth;
@@ -285,6 +286,7 @@ public interface Resource {
     public static final Type UserAuthorization = InternalType.UserAuthorization.getType();
     public static final Type VersionDefinition = InternalType.VersionDefinition.getType();
     public static final Type ClusterKerberosDescriptor = InternalType.ClusterKerberosDescriptor.getType();
+    public static final Type ClusterOidcDescriptor = InternalType.ClusterOidcDescriptor.getType();
     public static final Type LoggingQuery = InternalType.LoggingQuery.getType();
     public static final Type RemoteCluster = InternalType.RemoteCluster.getType();
     public static final Type Auth = InternalType.Auth.getType();

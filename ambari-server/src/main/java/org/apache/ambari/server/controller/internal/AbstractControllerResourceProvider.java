@@ -237,6 +237,8 @@ public abstract class AbstractControllerResourceProvider extends AbstractAuthori
         return new VersionDefinitionResourceProvider();
       case ClusterKerberosDescriptor:
         return new ClusterKerberosDescriptorResourceProvider(managementController);
+      case ClusterOidcDescriptor:
+        return new ClusterOidcDescriptorResourceProvider(managementController);
       case LoggingQuery:
         return new LoggingResourceProvider(managementController);
       case AlertTarget:

@@ -398,6 +398,10 @@ public class StackMerger {
       File srcKerberosFile = serviceInfo.getKerberosDescriptorFile();
       exportFile(srcKerberosFile, serviceDir);
 
+      // Export oidc.json
+      File srcOidcFile = serviceInfo.getOidcDescriptorFile();
+      exportFile(srcOidcFile, serviceDir);
+
       // Export quicklinks
       for (Map.Entry<String, QuickLinksConfigurationInfo> entry : serviceInfo.getQuickLinksConfigurationsMap()
         .entrySet()) {

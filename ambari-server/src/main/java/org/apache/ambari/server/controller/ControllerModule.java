@@ -147,6 +147,7 @@ import org.apache.ambari.server.state.host.HostFactory;
 import org.apache.ambari.server.state.host.HostImpl;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
 import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptorFactory;
+import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
 import org.apache.ambari.server.state.scheduler.RequestExecution;
 import org.apache.ambari.server.state.scheduler.RequestExecutionFactory;
 import org.apache.ambari.server.state.scheduler.RequestExecutionImpl;
@@ -329,6 +330,7 @@ public class ControllerModule extends AbstractModule {
     bind(KerberosOperationHandlerFactory.class);
     bind(KerberosDescriptorFactory.class);
     bind(KerberosServiceDescriptorFactory.class);
+    bind(OidcDescriptorFactory.class);
     bind(KerberosHelper.class).to(KerberosHelperImpl.class);
 
     bind(CredentialStoreService.class).to(CredentialStoreServiceImpl.class);

@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+  <property>
+    <name>oidc_provider</name>
+    <display-name>OIDC Provider</display-name>
+    <value>keycloak</value>
+    <description>OIDC provider implementation.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>keycloak</value>
+          <label>Keycloak</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_admin_url</name>
+    <display-name>OIDC Admin URL</display-name>
+    <value>http://localhost:8080</value>
+    <description>Base URL for the OIDC admin endpoint.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_admin_realm</name>
+    <display-name>OIDC Admin Realm</display-name>
+    <value>master</value>
+    <description>Admin realm for the OIDC provider.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_realm</name>
+    <display-name>OIDC Realm</display-name>
+    <value>odp</value>
+    <description>Default OIDC realm used for service clients.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_admin_client_id</name>
+    <display-name>OIDC Admin Client ID</display-name>
+    <value>admin-cli</value>
+    <description>OIDC admin client id used to authenticate admin API calls.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_admin_client_secret</name>
+    <display-name>OIDC Admin Client Secret</display-name>
+    <value></value>
+    <description>OIDC admin client secret (if required by the provider).</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>oidc_verify_tls</name>
+    <display-name>Verify TLS</display-name>
+    <value>true</value>
+    <description>Verify TLS certificates for OIDC admin API calls.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

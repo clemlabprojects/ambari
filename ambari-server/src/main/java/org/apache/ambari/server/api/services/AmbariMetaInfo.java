@@ -78,6 +78,9 @@ import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
 import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptorFactory;
+import org.apache.ambari.server.state.oidc.OidcDescriptor;
+import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
+import org.apache.ambari.server.state.oidc.OidcServiceDescriptor;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
 import org.apache.ambari.server.state.stack.ConfigUpgradePack;
 import org.apache.ambari.server.state.stack.Metric;
@@ -114,6 +117,7 @@ public class AmbariMetaInfo {
    * The filename for a Kerberos descriptor file at either the stack or service level
    */
   public static final String KERBEROS_DESCRIPTOR_FILE_NAME = "kerberos.json";
+  public static final String OIDC_DESCRIPTOR_FILE_NAME = "oidc.json";
 
   /**
    * The filename for a Widgets descriptor file at either the stack or service level
@@ -146,6 +150,7 @@ public class AmbariMetaInfo {
   private File commonWidgetsDescriptorFile;
   private File customActionRoot;
   private String commonKerberosDescriptorFileLocation;
+  private String commonOidcDescriptorFileLocation;
   Map<String, VersionDefinitionXml> versionDefinitions = null;
 
 
@@ -196,6 +201,12 @@ public class AmbariMetaInfo {
   private KerberosServiceDescriptorFactory kerberosServiceDescriptorFactory;
 
   /**
+   * OidcDescriptorFactory used to create OIDC descriptor instances
+   */
+  @Inject
+  private OidcDescriptorFactory oidcDescriptorFactory;
+
+  /**
    * Factory for injecting {@link StackManager} instances.
    */
   @Inject
@@ -236,6 +247,7 @@ public class AmbariMetaInfo {
     customActionRoot = new File(conf.getCustomActionDefinitionPath());
 
     commonKerberosDescriptorFileLocation = new File(conf.getResourceDirPath(), KERBEROS_DESCRIPTOR_FILE_NAME).getAbsolutePath();
+    commonOidcDescriptorFileLocation = new File(conf.getResourceDirPath(), OIDC_DESCRIPTOR_FILE_NAME).getAbsolutePath();
     commonWidgetsDescriptorFile = new File(conf.getResourceDirPath(), WIDGETS_DESCRIPTOR_FILE_NAME);
   }
 
@@ -1355,6 +1367,10 @@ public class AmbariMetaInfo {
     return commonKerberosDescriptorFileLocation;
   }
 
+  protected String getCommonOidcDescriptorFileLocation() {
+    return commonOidcDescriptorFileLocation;
+  }
+
   /**
    * Gets the requested service-level Kerberos descriptor(s)
    * <p/>
@@ -1382,6 +1398,61 @@ public class AmbariMetaInfo {
     }
 
     return kerberosServiceDescriptors;
+  }
+
+  /**
+   * Gets the fully compiled OIDC descriptor for the relevant stack and version.
+   *
+   * @param stackName    a String declaring the stack name
+   * @param stackVersion a String declaring the stack version
+   * @return a new complete OidcDescriptor, or null if no OIDC descriptor information is available
+   * @throws AmbariException if an error occurs reading or parsing the stack's oidc.json files
+   */
+  public OidcDescriptor getOidcDescriptor(String stackName, String stackVersion) throws AmbariException {
+    OidcDescriptor oidcDescriptor = readOidcDescriptorFromFile(getCommonOidcDescriptorFileLocation());
+    if (oidcDescriptor == null) {
+      oidcDescriptor = new OidcDescriptor();
+    }
+
+    Map<String, ServiceInfo> services = getServices(stackName, stackVersion);
+    if (services != null) {
+      for (ServiceInfo service : services.values()) {
+        OidcServiceDescriptor[] serviceDescriptors = getOidcDescriptor(service);
+        if (serviceDescriptors != null) {
+          for (OidcServiceDescriptor serviceDescriptor : serviceDescriptors) {
+            oidcDescriptor.putService(serviceDescriptor);
+          }
+        }
+      }
+    }
+
+    return oidcDescriptor;
+  }
+
+  /**
+   * Gets the requested service-level OIDC descriptor(s)
+   *
+   * @param serviceInfo a ServiceInfo declaring the stack name, version, a service (directory) name
+   * @return an array of OidcServiceDescriptors, or null if the relevant service does not contain OIDC descriptor details
+   * @throws AmbariException if an error occurs reading or parsing the service's oidc.json files
+   */
+  public OidcServiceDescriptor[] getOidcDescriptor(ServiceInfo serviceInfo) throws AmbariException {
+    OidcServiceDescriptor[] oidcServiceDescriptors = null;
+    File oidcFile = (serviceInfo == null) ? null : serviceInfo.getOidcDescriptorFile();
+
+    if (oidcFile != null) {
+      try {
+        OidcDescriptor oidcDescriptor = oidcDescriptorFactory.createInstance(oidcFile);
+        if (oidcDescriptor != null && oidcDescriptor.getServices() != null) {
+          oidcServiceDescriptors = oidcDescriptor.getServices().values().toArray(new OidcServiceDescriptor[0]);
+        }
+      } catch (Exception e) {
+        LOG.error("Could not read the OIDC descriptor file", e);
+        throw new AmbariException("Could not read OIDC descriptor file", e);
+      }
+    }
+
+    return oidcServiceDescriptors;
   }
 
   /* Return ambari.properties from configuration API. This is to avoid
@@ -1477,6 +1548,28 @@ public class AmbariMetaInfo {
       }
     } else {
       LOG.debug("Missing path to Kerberos descriptor, returning null");
+    }
+
+    return null;
+  }
+
+  OidcDescriptor readOidcDescriptorFromFile(String fileLocation) throws AmbariException {
+    if (!StringUtils.isEmpty(fileLocation)) {
+      File file = new File(fileLocation);
+
+      if (file.canRead()) {
+        try {
+          return oidcDescriptorFactory.createInstance(file);
+        } catch (IOException e) {
+          throw new AmbariException(String.format("Failed to parse OIDC descriptor file %s",
+            file.getAbsolutePath()), e);
+        }
+      } else {
+        throw new AmbariException(String.format("Unable to read OIDC descriptor file %s",
+          file.getAbsolutePath()));
+      }
+    } else {
+      LOG.debug("Missing path to OIDC descriptor, returning null");
     }
 
     return null;

@@ -193,8 +193,10 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
   createKerberosResources: function (callback) {
     var self = this;
     this.createKerberosService().done(function () {
-      self.updateAndCreateServiceComponent('KERBEROS_CLIENT').done(function () {
-        self.createKerberosHostComponents().done(callback);
+      self.createOidcService().always(function () {
+        self.updateAndCreateServiceComponent('KERBEROS_CLIENT').done(function () {
+          self.createKerberosHostComponents().done(callback);
+        });
       });
     });
   },
@@ -205,6 +207,20 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
       sender: this,
       data: {
         data: '{"ServiceInfo": { "service_name": "KERBEROS"}}',
+        cluster: App.get('clusterName')
+      }
+    });
+  },
+
+  createOidcService: function () {
+    if (!App.StackService.find().someProperty('serviceName', 'OIDC')) {
+      return $.Deferred().resolve().promise();
+    }
+    return App.ajax.send({
+      name: 'wizard.step8.create_selected_services',
+      sender: this,
+      data: {
+        data: '{"ServiceInfo": { "service_name": "OIDC"}}',
         cluster: App.get('clusterName')
       }
     });
@@ -298,7 +314,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
           const dfd = $.Deferred();
 
           if (!self.get('stackConfigsLoaded')) {
-            App.config.loadConfigsFromStack(['KERBEROS']).always(function() {
+            App.config.loadConfigsFromStack(['KERBEROS', 'OIDC']).always(function() {
               self.loadServiceConfigProperties();
               self.set('stackConfigsLoaded', true);
               dfd.resolve();

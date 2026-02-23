@@ -103,6 +103,7 @@ import org.apache.ambari.server.serveraction.kerberos.PrepareKerberosIdentitiesS
 import org.apache.ambari.server.serveraction.kerberos.UpdateKerberosConfigsServerAction;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.ResolvedKerberosKeytab;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.ResolvedKerberosPrincipal;
+import org.apache.ambari.server.serveraction.oidc.ConfigureOidcServerAction;
 import org.apache.ambari.server.stageplanner.RoleGraph;
 import org.apache.ambari.server.stageplanner.RoleGraphFactory;
 import org.apache.ambari.server.state.Cluster;
@@ -3831,6 +3832,29 @@ public class KerberosHelperImpl implements KerberosHelper {
       requestStageContainer.addStages(roleGraph.getStages());
     }
 
+    public void addConfigureOidcStage(Cluster cluster, String clusterHostInfoJson,
+                                      String hostParamsJson, ServiceComponentHostServerActionEvent event,
+                                      Map<String, String> commandParameters,
+                                      RoleCommandOrder roleCommandOrder, RequestStageContainer requestStageContainer)
+      throws AmbariException {
+      Stage stage = createServerActionStage(requestStageContainer.getLastStageId(),
+        cluster,
+        requestStageContainer.getId(),
+        "Configure OIDC",
+        "{}",
+        hostParamsJson,
+        ConfigureOidcServerAction.class,
+        event,
+        commandParameters,
+        "Configure OIDC",
+        configuration.getDefaultServerTaskTimeout());
+
+      RoleGraph roleGraph = roleGraphFactory.createNew(roleCommandOrder);
+      roleGraph.build(stage);
+
+      requestStageContainer.addStages(roleGraph.getStages());
+    }
+
     public void addFinalizeOperationStage(Cluster cluster, String clusterHostInfoJson,
                                           String hostParamsJson, ServiceComponentHostServerActionEvent event,
                                           File dataDirectory, RoleCommandOrder roleCommandOrder,
@@ -4049,6 +4073,11 @@ public class KerberosHelperImpl implements KerberosHelper {
       // *****************************************************************
       // Create stage to update configurations of services
       addUpdateConfigurationsStage(cluster, clusterHostInfoJson, hostParamsJson, event, commandParameters,
+        roleCommandOrder, requestStageContainer);
+
+      // *****************************************************************
+      // Create stage to configure OIDC clients/configs where applicable
+      addConfigureOidcStage(cluster, clusterHostInfoJson, hostParamsJson, event, commandParameters,
         roleCommandOrder, requestStageContainer);
 
       return requestStageContainer.getLastStageId();

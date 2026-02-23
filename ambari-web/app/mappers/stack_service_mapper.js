@@ -88,7 +88,7 @@ App.stackServiceMapper = App.QuickDataMapper.create({
     var model = this.get('model');
     var result = [];
     var stackServiceComponents = [];
-    var nonInstallableServices = ['KERBEROS'];
+    var nonInstallableServices = ['KERBEROS', 'OIDC'];
     var displayOrderLength = App.StackService.displayOrder.length;
     var items = json.items.map(function (item, index) {
       var displayOrderIndex = App.StackService.displayOrder.indexOf(item.StackServices.service_name);
@@ -130,4 +130,3 @@ App.stackServiceMapper = App.QuickDataMapper.create({
   }
 
 });
-

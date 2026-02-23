@@ -387,7 +387,7 @@ App.KerberosWizardStep4Controller = App.WizardStep7Controller.extend(App.AddSecu
    */
   getConfigTagsSuccess: function(data) {
     // here we get all installed services including KERBEROS
-    var serviceNames = App.Service.find().mapProperty('serviceName').concat(['KERBEROS']).uniq();
+    var serviceNames = App.Service.find().mapProperty('serviceName').concat(['KERBEROS', 'OIDC']).uniq();
     // collect all config types for selected services
     var installedServiceSites = Array.prototype.concat.apply([], App.config.get('preDefinedServiceConfigs').filter(function(serviceConfig) {
       return serviceNames.contains(Em.get(serviceConfig, 'serviceName'));

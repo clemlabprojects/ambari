@@ -193,6 +193,9 @@ public class ServiceInfo implements Validable, Cloneable {
   private File kerberosDescriptorFile = null;
 
   @XmlTransient
+  private File oidcDescriptorFile = null;
+
+  @XmlTransient
   private File widgetsDescriptorFile = null;
 
   @XmlTransient
@@ -1087,6 +1090,20 @@ public class ServiceInfo implements Validable, Cloneable {
    */
   public File getKerberosDescriptorFile() {
     return kerberosDescriptorFile;
+  }
+
+  /**
+   * @param file the file containing the OIDC descriptor definitions
+   */
+  public void setOidcDescriptorFile(File file) {
+    oidcDescriptorFile = file;
+  }
+
+  /**
+   * @return the OIDC descriptor file, or <code>null</code> if none exists
+   */
+  public File getOidcDescriptorFile() {
+    return oidcDescriptorFile;
   }
 
   /**

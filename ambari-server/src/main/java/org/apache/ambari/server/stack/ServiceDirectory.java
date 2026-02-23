@@ -62,6 +62,7 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
    * kerberos descriptor file
    */
   private File kerberosDescriptorFile;
+  private File oidcDescriptorFile;
 
   /**
    * RCO file
@@ -242,6 +243,10 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
     return kerberosDescriptorFile;
   }
 
+  public File getOidcDescriptorFile() {
+    return oidcDescriptorFile;
+  }
+
   /**
    * Obtain the Widgets Descriptor file.
    *
@@ -282,6 +287,9 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
 
     File kdf = new File(directory, AmbariMetaInfo.KERBEROS_DESCRIPTOR_FILE_NAME);
     kerberosDescriptorFile = kdf.exists() ? kdf : null;
+
+    File odf = new File(directory, AmbariMetaInfo.OIDC_DESCRIPTOR_FILE_NAME);
+    oidcDescriptorFile = odf.exists() ? odf : null;
 
     File rco = new File(directory, StackDirectory.RCO_FILE_NAME);
     if (rco.exists()) {
