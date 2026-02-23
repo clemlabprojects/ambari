@@ -1115,6 +1115,50 @@ describe('App.WizardController', function () {
               group: {name: 'group'},
               showLabel: true,
               category: 'some_category'
+            }),
+            Em.Object.create({
+              id: 'id',
+              name: 'oidc_admin_principal',
+              value: 'value',
+              defaultValue: 'defaultValue',
+              description: 'description',
+              serviceName: 'serviceName',
+              domain: 'domain',
+              isVisible: true,
+              isNotDefaultValue: true,
+              isFinal: true,
+              defaultIsFinal: true,
+              supportsFinal: true,
+              filename: 'oidc-env.xml',
+              displayType: 'string',
+              isRequiredByAgent: false,
+              hasInitialValue: true,
+              isRequired: true,
+              group: {name: 'group'},
+              showLabel: true,
+              category: 'some_category'
+            }),
+            Em.Object.create({
+              id: 'id',
+              name: 'oidc_admin_password',
+              value: 'value',
+              defaultValue: 'defaultValue',
+              description: 'description',
+              serviceName: 'serviceName',
+              domain: 'domain',
+              isVisible: true,
+              isNotDefaultValue: true,
+              isFinal: true,
+              defaultIsFinal: true,
+              supportsFinal: true,
+              filename: 'oidc-env.xml',
+              displayType: 'password',
+              isRequiredByAgent: false,
+              hasInitialValue: true,
+              isRequired: true,
+              group: {name: 'group'},
+              showLabel: true,
+              category: 'some_category'
             })
           ]
         })
@@ -1209,7 +1253,7 @@ describe('App.WizardController', function () {
       expect(saved[0].category).to.equal('some_category');
     });
 
-    it('should not save admin_principal or admin_password to the localStorage', function () {
+    it('should not save kerberos or oidc admin credentials to the localStorage', function () {
       c.saveServiceConfigProperties(kerberosStepController);
       var saved = c.get('content.serviceConfigProperties');
       expect(saved.everyProperty('value', '')).to.be.true;

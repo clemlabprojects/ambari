@@ -216,6 +216,7 @@ describe('App.KerberosWizardStep2Controller', function() {
       sinon.stub(controller, 'filterConfigs');
       sinon.stub(controller, 'getKerberosConfigs');
       sinon.stub(controller, 'initializeKDCStoreProperties');
+      sinon.stub(controller, 'initializeOIDCAdminProperties');
       sinon.stub(controller, 'applyServicesConfigs');
       sinon.stub(controller, 'updateKDCStoreProperties');
       controller.reopen({
@@ -238,6 +239,7 @@ describe('App.KerberosWizardStep2Controller', function() {
       controller.filterConfigs.restore();
       controller.getKerberosConfigs.restore();
       controller.initializeKDCStoreProperties.restore();
+      controller.initializeOIDCAdminProperties.restore();
       controller.applyServicesConfigs.restore();
       controller.updateKDCStoreProperties.restore();
     });
@@ -282,6 +284,11 @@ describe('App.KerberosWizardStep2Controller', function() {
     it("applyServicesConfigs should be called", function() {
       controller.loadStep();
       expect(controller.applyServicesConfigs.calledOnce).to.be.true;
+    });
+
+    it("initializeOIDCAdminProperties should be called", function() {
+      controller.loadStep();
+      expect(controller.initializeOIDCAdminProperties.calledOnce).to.be.true;
     });
 
     it("updateKDCStoreProperties should be called", function() {
@@ -799,11 +806,13 @@ describe('App.KerberosWizardStep2Controller', function() {
   describe("#createKerberosAdminSession()", function () {
 
     beforeEach(function() {
-      sinon.stub(controller, 'createKDCCredentials');
+      sinon.stub(controller, 'createKDCCredentials').returns($.Deferred().resolve().promise());
+      sinon.stub(controller, 'createOIDCCredentials').returns($.Deferred().resolve().promise());
     });
 
     afterEach(function() {
       controller.createKDCCredentials.restore();
+      controller.createOIDCCredentials.restore();
     });
 
     it("createKDCCredentials should be called", function() {

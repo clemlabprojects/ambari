@@ -290,6 +290,9 @@ describe('App.KerberosWizardController', function() {
       sinon.stub(controller, 'createKerberosService').returns({
         done: Em.clb
       });
+      sinon.stub(controller, 'createOidcService').returns({
+        always: Em.clb
+      });
       sinon.stub(controller, 'updateAndCreateServiceComponent').returns({
         done: Em.clb
       });
@@ -302,6 +305,7 @@ describe('App.KerberosWizardController', function() {
     afterEach(function() {
       controller.createKerberosHostComponents.restore();
       controller.updateAndCreateServiceComponent.restore();
+      controller.createOidcService.restore();
       controller.createKerberosService.restore();
       mock.callback.restore();
     });
@@ -312,6 +316,10 @@ describe('App.KerberosWizardController', function() {
 
     it("updateAndCreateServiceComponent should be called", function() {
       expect(controller.updateAndCreateServiceComponent.calledWith('KERBEROS_CLIENT')).to.be.true;
+    });
+
+    it("createOidcService should be called", function() {
+      expect(controller.createOidcService.calledOnce).to.be.true;
     });
 
     it("createKerberosHostComponents should be called", function() {
