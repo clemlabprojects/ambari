@@ -38,7 +38,8 @@ module.exports = {
   },
 
   ALIAS: {
-    KDC_CREDENTIALS: 'kdc.admin.credential'
+    KDC_CREDENTIALS: 'kdc.admin.credential',
+    OIDC_CREDENTIALS: 'oidc.admin.credential'
   },
 
   /**

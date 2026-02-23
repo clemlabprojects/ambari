@@ -17,6 +17,7 @@
  */
 
 var App = require('app');
+var credentialsUtils = require('utils/credentials');
 require('controllers/wizard/step7_controller');
 
 App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCredentialsControllerMixin, {
@@ -24,9 +25,9 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
 
   isKerberosWizard: true,
 
-  selectedServiceNames: ['KERBEROS'],
+  selectedServiceNames: ['KERBEROS', 'OIDC'],
 
-  allSelectedServiceNames: ['KERBEROS'],
+  allSelectedServiceNames: ['KERBEROS', 'OIDC'],
 
   componentName: 'KERBEROS_CLIENT',
 
@@ -50,6 +51,41 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
       type: Em.I18n.t('admin.kerberos.wizard.step1.option.ipa')
     }
   },
+
+  oidcCredentialAlias: credentialsUtils.ALIAS.OIDC_CREDENTIALS,
+
+  oidcCredentialsStoreConfigs: [
+    {
+      name: 'oidc_admin_principal',
+      displayType: 'string',
+      value: '',
+      recommendedValue: '',
+      supportsFinal: false,
+      recommendedIsFinal: false,
+      displayName: Em.I18n.t('admin.oidc.credentials.principal.label'),
+      category: Em.I18n.t('admin.oidc.credentials.category'),
+      isRequired: true,
+      isRequiredByAgent: false,
+      hintMessage: false,
+      isEditable: true,
+      index: 1
+    },
+    {
+      name: 'oidc_admin_password',
+      displayType: 'password',
+      value: '',
+      recommendedValue: '',
+      supportsFinal: false,
+      recommendedIsFinal: false,
+      displayName: Em.I18n.t('admin.oidc.credentials.password.label'),
+      category: Em.I18n.t('admin.oidc.credentials.category'),
+      isRequired: true,
+      isRequiredByAgent: false,
+      hintMessage: false,
+      isEditable: true,
+      index: 2
+    }
+  ],
 
   /**
    * @type {boolean} true if test connection to hosts is in progress
@@ -104,6 +140,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     if (!this.get('wizardController.skipClientInstall')) {
       this.initializeKDCStoreProperties(this.get('configs'));
     }
+    this.initializeOIDCAdminProperties(this.get('configs'));
     this.applyServicesConfigs(this.get('configs'));
     if (!this.get('wizardController.skipClientInstall')) {
       this.updateKDCStoreProperties(this.get('stepConfigs').findProperty('serviceName', 'KERBEROS').get('configs'));
@@ -115,12 +152,20 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
    * @returns {Array.<T>|*}
    */
   getKerberosConfigs: function() {
-    var kerberosConfigTypes = Em.keys(App.config.get('preDefinedServiceConfigs').findProperty('serviceName', 'KERBEROS').get('configTypes'));
+    var serviceNames = ['KERBEROS', 'OIDC'];
+    var configTypes = [];
+    var predefinedConfigs = App.config.get('preDefinedServiceConfigs');
+    serviceNames.forEach(function(serviceName) {
+      var service = predefinedConfigs.findProperty('serviceName', serviceName);
+      if (service) {
+        configTypes = configTypes.concat(Em.keys(service.get('configTypes')));
+      }
+    });
 
     return App.configsCollection.getAll().filter(function(configProperty) {
       var fileName = Em.getWithDefault(configProperty, 'fileName', false);
-      var isService = ['KERBEROS'].contains(Em.get(configProperty, 'serviceName'));
-      var isFileName = fileName && kerberosConfigTypes.contains(App.config.getConfigTagFromFileName(fileName));
+      var isService = serviceNames.contains(Em.get(configProperty, 'serviceName'));
+      var isFileName = fileName && configTypes.contains(App.config.getConfigTagFromFileName(fileName));
       return isService || isFileName;
     });
   },
@@ -135,6 +180,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     var manageIdentitiesConfig = configs.findProperty('name', 'manage_identities');
     configs.filterProperty('serviceName', 'KERBEROS').setEach('isVisible', true);
     this.setKDCTypeProperty(configs);
+    this.applyOIDCConfigsFilter(configs);
     if (kdcType !== Em.I18n.t('admin.kerberos.wizard.step1.option.ad')) {
         kerberosWizardController.overrideVisibility(configs, false, kerberosWizardController.get('exceptionsForNonAdOption'), true);
     }
@@ -151,6 +197,48 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     this.setConfigVisibility('ad', configs, kdcType);
     this.setConfigVisibility('mit', configs, kdcType);
     this.setConfigVisibility('ipa', configs, kdcType);
+  },
+
+  isOidcServiceAvailable: function() {
+    return App.StackService.find().someProperty('serviceName', 'OIDC');
+  },
+
+  initializeOIDCAdminProperties: function(configs) {
+    if (!this.isOidcServiceAvailable()) {
+      return;
+    }
+
+    this.generateOIDCAdminProperties().forEach(function(configObject) {
+      var configProperty = configs.findProperty('name', configObject.name);
+      if (!Em.isNone(configProperty)) {
+        Em.setProperties(configProperty, configObject);
+      } else {
+        configs.pushObject(configObject);
+      }
+    });
+  },
+
+  generateOIDCAdminProperties: function() {
+    var properties = [];
+
+    this.get('oidcCredentialsStoreConfigs').forEach(function(item) {
+      var configObject = App.config.createDefaultConfig(item.name, 'oidc-env.xml', false);
+      $.extend(configObject, item);
+      properties.push(configObject);
+    });
+
+    return properties;
+  },
+
+  applyOIDCConfigsFilter: function(configs) {
+    var oidcSecretConfig = configs.findProperty('name', 'oidc_admin_client_secret');
+    if (oidcSecretConfig) {
+      oidcSecretConfig.setProperties({
+        isVisible: false,
+        isRequired: false,
+        isRequiredByAgent: false
+      });
+    }
   },
 
   /**
@@ -199,24 +287,31 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   },
 
   createConfigurations: function () {
-    var service = App.StackService.find().findProperty('serviceName', 'KERBEROS'),
+    var serviceNames = ['KERBEROS', 'OIDC'],
         serviceConfigTags = [],
         allConfigData = [],
         serviceConfigData = [];
 
-    Object.keys(service.get('configTypes')).forEach(function (type) {
-      if (!serviceConfigTags.someProperty('type', type)) {
-        var obj = this.createKerberosSiteObj(type);
-        obj.service_config_version_note = Em.I18n.t('admin.kerberos.wizard.configuration.note');
-        serviceConfigTags.pushObject(obj);
+    serviceNames.forEach(function(serviceName) {
+      var service = App.StackService.find().findProperty('serviceName', serviceName);
+      if (!service) {
+        return;
       }
-    }, this);
 
-    Object.keys(service.get('configTypesRendered')).forEach(function (type) {
-      var serviceConfigTag = serviceConfigTags.findProperty('type', type);
-      if (serviceConfigTag) {
-        serviceConfigData.pushObject(serviceConfigTag);
-      }
+      Object.keys(service.get('configTypes')).forEach(function (type) {
+        if (!serviceConfigTags.someProperty('type', type)) {
+          var obj = this.createKerberosSiteObj(type);
+          obj.service_config_version_note = Em.I18n.t('admin.kerberos.wizard.configuration.note');
+          serviceConfigTags.pushObject(obj);
+        }
+      }, this);
+
+      Object.keys(service.get('configTypesRendered')).forEach(function (type) {
+        var serviceConfigTag = serviceConfigTags.findProperty('type', type);
+        if (serviceConfigTag) {
+          serviceConfigData.pushObject(serviceConfigTag);
+        }
+      }, this);
     }, this);
     if (serviceConfigData.length) {
       allConfigData.pushObject(JSON.stringify({
@@ -236,8 +331,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
 
   createKerberosSiteObj: function (site) {
     var properties = {};
-    var content = this.get('stepConfigs')[0].get('configs');
-    var configs = content.filterProperty('filename', site + '.xml');
+    var configs = this.getAllStepConfigs().filterProperty('filename', site + '.xml');
     // properties that should be formated as hosts
     var hostProperties = ['kdc_hosts', 'realm'];
 
@@ -255,6 +349,12 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     this.tweakManualKdcProperties(properties);
     this.tweakIpaKdcProperties(properties);
     return {"type": site, "properties": properties};
+  },
+
+  getAllStepConfigs: function() {
+    return Em.getWithDefault(this, 'stepConfigs', []).reduce(function(result, serviceConfig) {
+      return result.concat(Em.getWithDefault(serviceConfig, 'configs', []));
+    }, []);
   },
 
   tweakKdcTypeValue: function (properties) {
@@ -302,25 +402,50 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
    * @returns {*} jqXHr
    */
   createKerberosAdminSession: function (configs) {
-    configs = configs || this.get('stepConfigs')[0].get('configs');
+    configs = configs || this.getAllStepConfigs();
+    var sessionRequest;
     if (!this.get('wizardController.skipClientInstall')) {
-      return this.createKDCCredentials(configs);
+      sessionRequest = this.createKDCCredentials(configs);
+    } else {
+      var adminPrincipalValue = configs.findProperty('name', 'admin_principal').value;
+      var adminPasswordValue = configs.findProperty('name', 'admin_password').value;
+      sessionRequest = App.ajax.send({
+        name: 'common.cluster.update',
+        sender: this,
+        data: {
+          clusterName: App.get('clusterName'),
+          data: [{
+            session_attributes: {
+              kerberos_admin: {principal: adminPrincipalValue, password: adminPasswordValue}
+            }
+          }]
+        }
+      });
     }
 
-    var adminPrincipalValue = configs.findProperty('name', 'admin_principal').value;
-    var adminPasswordValue = configs.findProperty('name', 'admin_password').value;
-    return App.ajax.send({
-      name: 'common.cluster.update',
-      sender: this,
-      data: {
-        clusterName: App.get('clusterName'),
-        data: [{
-          session_attributes: {
-            kerberos_admin: {principal: adminPrincipalValue, password: adminPasswordValue}
-          }
-        }]
-      }
-    });
+    return sessionRequest.then(function() {
+      return this.createOIDCCredentials(configs);
+    }.bind(this));
+  },
+
+  createOIDCCredentials: function(configs) {
+    if (!this.isOidcServiceAvailable()) {
+      return $.Deferred().resolve().promise();
+    }
+
+    var principal = Em.getWithDefault(configs.findProperty('name', 'oidc_admin_principal') || {}, 'value', '');
+    var password = Em.getWithDefault(configs.findProperty('name', 'oidc_admin_password') || {}, 'value', '');
+    if (!principal || !password) {
+      return $.Deferred().resolve().promise();
+    }
+
+    var resource = credentialsUtils.createCredentialResource(
+      principal,
+      password,
+      this._getStorageTypeValue(configs)
+    );
+
+    return credentialsUtils.createOrUpdateCredentials(App.get('clusterName'), this.get('oidcCredentialAlias'), resource);
   },
 
   /**

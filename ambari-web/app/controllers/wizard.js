@@ -51,7 +51,9 @@ App.WizardController = Em.Controller.extend(App.LocalStorage, App.ThemesMappingM
 
   sensibleConfigs: [
     { name: 'admin_principal', filename: 'krb5-conf.xml'},
-    { name: 'admin_password', filename: 'krb5-conf.xml' }
+    { name: 'admin_password', filename: 'krb5-conf.xml' },
+    { name: 'oidc_admin_principal', filename: 'oidc-env.xml' },
+    { name: 'oidc_admin_password', filename: 'oidc-env.xml' }
   ],
 
   init: function () {
