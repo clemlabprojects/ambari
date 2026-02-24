@@ -25,6 +25,15 @@ from unittest import TestCase
 
 from only_for_platform import  not_for_platform, PLATFORM_WINDOWS
 from resource_management.libraries.functions.fcntl_based_process_lock import FcntlBasedProcessLock
+from resource_management.core.logger import Logger
+
+def _dummy_task(lock_file, mutex):
+  Logger.initialize_logger()
+  with FcntlBasedProcessLock(lock_file, skip_fcntl_failures = False):
+    if (not mutex.acquire(block = False)):
+      raise Exception("ERROR: FcntlBasedProcessLock was acquired by several processes")
+    time.sleep(0.1)
+    mutex.release()
 
 class TestFcntlBasedProcessLock(TestCase):
 
@@ -38,19 +47,10 @@ class TestFcntlBasedProcessLock(TestCase):
     try:
       lock_file = os.path.join(test_temp_dir, "lock")
 
-      # Raises an exception if mutex.acquire fails.
-      # It indicates that more than one process acquired the lock.
-      def dummy_task(index, mutex):
-        with FcntlBasedProcessLock(lock_file, skip_fcntl_failures = False):
-          if (not mutex.acquire(block = False)):
-            raise Exception("ERROR: FcntlBasedProcessLock was acquired by several processes")
-          time.sleep(0.1)
-          mutex.release()
-
       mutex = multiprocessing.Lock()
       process_list = []
       for i in range(0, 3):
-        p = multiprocessing.Process(target=dummy_task, args=(i, mutex))
+        p = multiprocessing.Process(target=_dummy_task, args=(lock_file, mutex))
         p.start()
         process_list.append(p)
 
@@ -60,4 +60,3 @@ class TestFcntlBasedProcessLock(TestCase):
 
     finally:
       shutil.rmtree(test_temp_dir)
-

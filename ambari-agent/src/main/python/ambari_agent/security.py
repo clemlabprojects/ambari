@@ -38,7 +38,7 @@ from socket import error as socket_error
 logger = logging.getLogger(__name__)
 
 GEN_AGENT_KEY = 'openssl req -new -newkey rsa -nodes -keyout "%(keysdir)s' \
-                + os.sep + '%(hostname)s.key" -subj /OU=%(hostname)s/ ' \
+                + os.sep + '%(hostname)s.key" -subj /OU=%(subject_ou)s/ ' \
                 '-out "%(keysdir)s' + os.sep + '%(hostname)s.csr"'
 KEY_FILENAME = '%(hostname)s.key'
 
@@ -294,20 +294,51 @@ class CertificateManager():
 
   def genAgentCrtReq(self, keyname):
     keysdir = os.path.abspath(self.config.get('security', 'keysdir'))
+    agent_hostname = hostname.hostname(self.config)
+    subject_ou = self.getCertificateSubjectOu(agent_hostname)
     generate_script = GEN_AGENT_KEY % {
-      'hostname': hostname.hostname(self.config),
+      'hostname': agent_hostname,
+      'subject_ou': subject_ou,
       'keysdir': keysdir}
 
     logger.info(generate_script)
     if platform.system() == 'Windows':
-      p = subprocess.Popen(generate_script, stdout=subprocess.PIPE)
-      p.communicate()
+      p = subprocess.Popen(generate_script, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      communication_result = p.communicate()
     else:
       p = subprocess.Popen([generate_script], shell=True,
-                           stdout=subprocess.PIPE)
-      p.communicate()
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      communication_result = p.communicate()
+
+    stderr = ""
+    if isinstance(communication_result, tuple) and len(communication_result) > 1:
+      stderr = communication_result[1]
+
+    return_code = getattr(p, "returncode", 0)
+    if not isinstance(return_code, int):
+      return_code = 0
+
+    if return_code != 0:
+      if isinstance(stderr, bytes):
+        stderr = stderr.decode('utf-8', 'ignore')
+      raise RuntimeError("Failed to generate agent certificate request: {0}".format(stderr))
     # this is required to be 600 for security concerns.
     os.chmod(keyname, 0o600)
+
+  @staticmethod
+  def getCertificateSubjectOu(hostname_value):
+    """
+    Keep OU stable and OpenSSL-compatible.
+    ASN.1 string attributes commonly have a max length of 64 chars.
+    """
+    if not hostname_value:
+      return "ambari-agent"
+
+    short_hostname = hostname_value.split('.', 1)[0].strip()
+    if not short_hostname:
+      short_hostname = hostname_value.strip()
+
+    return short_hostname[:64]
 
   def initSecurity(self):
     self.checkCertExists()

@@ -21,6 +21,11 @@ Ambari Agent
 """
 import re
 
+try:
+  string_types = (basestring,)
+except NameError:
+  string_types = (str,)
+
 def _normalize(v, desired_segments=0):
   """
   :param v: Input string of the form "#.#.#" or "#.#.#.#"
@@ -39,7 +44,7 @@ def format_stack_version(value):
   :param value: Input string, e.g. "2.2" or "GlusterFS", or "2.0.6.GlusterFS", or "2.2.0.1-885"
   :return: Returns a well-formatted HDP stack version of the form #.#.#.# as a string.
   """
-  if value:
+  if value and isinstance(value, string_types):
     if "-" in value:
       first_occurrence = value.find("-")
       last_occurence = value.rfind("-")

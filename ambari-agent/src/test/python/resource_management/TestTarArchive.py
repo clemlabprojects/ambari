@@ -16,6 +16,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
+import os
+import shutil
+import tempfile
+
 from mock.mock import patch, MagicMock
 from unittest import TestCase
 
@@ -29,38 +33,46 @@ class TestTarArchive(TestCase):
 
   @patch("resource_management.core.providers.system.ExecuteProvider")
   def test_archive_dir(self, execute_mock):
-    archive = '/home/etc.tar.gz'
+    tmp_dir = tempfile.mkdtemp(prefix="ambari-tar-")
+    archive = os.path.join(tmp_dir, 'etc.tar.gz')
     directory = '/etc'
+    try:
+      with Environment():
+        tar_archive.archive_dir(archive, directory)
 
-    with Environment():
-      tar_archive.archive_dir(archive, directory)
-
-    self.assertEqual(execute_mock.call_count, 1)
-    self.assertEqual(execute_mock.call_args[0][0].command, ('tar', '-zcf', archive, '-C', directory, '.'))
+      self.assertEqual(execute_mock.call_count, 1)
+      self.assertEqual(execute_mock.call_args[0][0].command, ('tar', '-czf', '-', '-C', directory, '.'))
+    finally:
+      shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
   @patch("resource_management.core.providers.system.ExecuteProvider")
   def test_archive_directory_dereference(self, execute_mock):
-    archive = '/home/etc.tar.gz'
+    tmp_dir = tempfile.mkdtemp(prefix="ambari-tar-")
+    archive = os.path.join(tmp_dir, 'etc.tar.gz')
     directory = '/etc'
+    try:
+      with Environment():
+        tar_archive.archive_directory_dereference(archive, directory)
 
-    with Environment():
-      tar_archive.archive_directory_dereference(archive, directory)
-
-    self.assertEqual(execute_mock.call_count, 1)
-    self.assertEqual(execute_mock.call_args[0][0].command, ('tar', '-zchf', archive, '-C', directory, '.'))
+      self.assertEqual(execute_mock.call_count, 1)
+      self.assertEqual(execute_mock.call_args[0][0].command, ('tar', '-h', '-czf', '-', '-C', directory, '.'))
+    finally:
+      shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
   @patch("resource_management.core.providers.system.ExecuteProvider")
   def test_archive_dir_via_temp_file(self, execute_mock):
-    archive = '/home/etc.tar.gz'
+    tmp_dir = tempfile.mkdtemp(prefix="ambari-tar-")
+    archive = os.path.join(tmp_dir, 'etc.tar.gz')
     directory = '/etc'
+    try:
+      with Environment():
+        tar_archive.archive_dir_via_temp_file(archive, directory)
 
-    with Environment():
-      tar_archive.archive_dir_via_temp_file(archive, directory)
-
-    self.assertEqual(execute_mock.call_count, 2)
-    self.assertEqual(execute_mock.call_args_list[0][0][0].command[:2], ('tar', '-zchf'))
-    self.assertEqual(execute_mock.call_args_list[0][0][0].command[3:], ('-C', directory, '.'))
-    temp_file = execute_mock.call_args_list[0][0][0].command[2]
-    self.assertEqual(execute_mock.call_args_list[1][0][0].command, ('mv', temp_file, archive))
+      self.assertEqual(execute_mock.call_count, 2)
+      self.assertEqual(execute_mock.call_args_list[0][0][0].command, ('tar', '-h', '-czf', '-', '-C', directory, '.'))
+      temp_file = execute_mock.call_args_list[1][0][0].command[1]
+      self.assertEqual(execute_mock.call_args_list[1][0][0].command, ('mv', temp_file, archive))
+    finally:
+      shutil.rmtree(tmp_dir, ignore_errors=True)

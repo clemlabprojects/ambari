@@ -18,7 +18,7 @@ limitations under the License.
 
 
 from unittest import TestCase
-from mock.mock import patch, MagicMock
+from mock.mock import patch, MagicMock, ANY
 from only_for_platform import get_platform, not_for_platform, os_distro_value, PLATFORM_WINDOWS
 
 from ambari_commons.os_check import OSCheck
@@ -105,7 +105,7 @@ class TestFileResource(TestCase):
       )
     
 
-    create_file_mock.assert_called_with('/directory/file', 'file-content', encoding=None)
+    create_file_mock.assert_called_with('/directory/file', 'file-content', encoding=None, on_file_created=ANY)
     self.assertEqual(create_file_mock.call_count, 1)
     ensure_mock.assert_called()
 
@@ -131,7 +131,7 @@ class TestFileResource(TestCase):
       )
 
     read_file_mock.assert_called_with('/directory/file', encoding=None)    
-    create_file_mock.assert_called_with('/directory/file', 'new-content', encoding=None)
+    create_file_mock.assert_called_with('/directory/file', 'new-content', encoding=None, on_file_created=ANY)
 
 
   @patch("resource_management.core.sudo.unlink")
@@ -299,6 +299,12 @@ class TestFileResource(TestCase):
     getgrnam_mock.return_value = MagicMock()
     getgrnam_mock.return_value.gr_gid = 0
 
+    def _create_file_side_effect(path, content, encoding=None, on_file_created=None):
+      if on_file_created:
+        on_file_created(path)
+
+    create_file_mock.side_effect = _create_file_side_effect
+
     with Environment('/') as env:
       File('/directory/file',
            action='create',
@@ -309,7 +315,7 @@ class TestFileResource(TestCase):
       )
     
 
-    create_file_mock.assert_called_with('/directory/file', 'file-content', encoding=None)
+    create_file_mock.assert_called_with('/directory/file', 'file-content', encoding=None, on_file_created=ANY)
     self.assertEqual(create_file_mock.call_count, 1)
     stat_mock.assert_called_with('/directory/file')
     self.assertEqual(chmod_mock.call_count, 1)
@@ -361,4 +367,3 @@ class TestFileResource(TestCase):
 
 
     read_file_mock.assert_called_with('/directory/file', encoding='UTF-8')
-

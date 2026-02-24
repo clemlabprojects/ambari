@@ -133,7 +133,7 @@ def _copy_files(source_and_dest_pairs, component_user, file_owner, group_owner, 
                       conf_dir=params.hadoop_conf_dir
         )
       except Exception as e:
-        Logger.error("Failed to copy file. Source: %s, Destination: %s. Error: %s" % (source, destination, e.message))
+        Logger.error("Failed to copy file. Source: %s, Destination: %s. Error: %s" % (source, destination, str(e)))
         return_value = 1
   return return_value
 

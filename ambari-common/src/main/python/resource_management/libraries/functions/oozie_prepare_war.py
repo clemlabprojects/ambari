@@ -40,9 +40,12 @@ def prepare_war(params):
 
   # DON'T CHANGE THE VALUE SINCE IT'S USED TO DETERMINE WHETHER TO RUN THE COMMAND OR NOT BY READING THE MARKER FILE.
   # Oozie tmp dir should be /var/tmp/oozie and is already created by a function above.
-  command = format("cd {oozie_tmp_dir} && {oozie_setup_sh}").strip()
+  prepare_war_args = "prepare-war"
+  if getattr(params, "security_enabled", False):
+    prepare_war_args = f"{prepare_war_args} -secure"
+  command = format("cd {oozie_tmp_dir} && {oozie_setup_sh} " + prepare_war_args).strip()
   # oozie_setup_sh and oozie_setup_sh_current are different during Ambaripreupload
-  command_to_file = format("cd {oozie_tmp_dir} && {oozie_setup_sh_current}").strip()
+  command_to_file = format("cd {oozie_tmp_dir} && {oozie_setup_sh_current} " + prepare_war_args).strip()
 
   run_prepare_war = False
   if os.path.exists(prepare_war_cmd_file):
@@ -81,7 +84,12 @@ def prepare_war(params):
     if output is None:
       output = ""
 
-    if return_code != 0 or "Oozie is ready to be started".lower() not in output.lower():
+    success_markers = [
+      "Oozie is ready to be started",
+      "New Oozie WAR file",
+    ]
+    output_lower = output.lower()
+    if return_code != 0 or not any(marker.lower() in output_lower for marker in success_markers):
       message = f"Unexpected Oozie WAR preparation output {output}"
       Logger.error(message)
       raise Fail(message)

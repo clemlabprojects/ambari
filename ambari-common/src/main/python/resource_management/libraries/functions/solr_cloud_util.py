@@ -363,7 +363,7 @@ def add_solr_roles(config, roles = [], new_service_principals = [], tries = 30, 
 
       set_user_role_map = {}
       set_user_role_map['set-user-role'] = user_role_map
-      set_user_role_json = json.dumps(set_user_role_map)
+      set_user_role_json = json.dumps(set_user_role_map, sort_keys=True)
 
       add_solr_role_cmd = format("{solr_user_kinit_cmd} curl -H 'Content-type:application/json' -d '{set_user_role_json}' -s -o /dev/null -w'%{{http_code}}' --negotiate -u: -k {solr_url} | grep 200")
 

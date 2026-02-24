@@ -40,6 +40,39 @@ except ImportError:
     # for alternative platforms that
     # may not have inspect
     inspect = None
+else:
+    if not hasattr(inspect, "formatargspec"):
+        def _formatargspec(args, varargs=None, varkw=None, defaults=None,
+                           kwonlyargs=(), kwonlydefaults=None, annotations=None,
+                           formatvalue=lambda value: ""):
+            specs = []
+            defaults = defaults or ()
+            default_offset = len(args) - len(defaults)
+
+            for i, arg in enumerate(args):
+                if defaults and i >= default_offset:
+                    specs.append("%s%s" % (arg, formatvalue(defaults[i - default_offset])))
+                else:
+                    specs.append(arg)
+
+            if varargs:
+                specs.append("*" + varargs)
+
+            if kwonlyargs:
+                if not varargs:
+                    specs.append("*")
+                for kwarg in kwonlyargs:
+                    if kwonlydefaults and kwarg in kwonlydefaults:
+                        specs.append("%s%s" % (kwarg, formatvalue(kwonlydefaults[kwarg])))
+                    else:
+                        specs.append(kwarg)
+
+            if varkw:
+                specs.append("**" + varkw)
+
+            return "(" + ", ".join(specs) + ")"
+
+        inspect.formatargspec = _formatargspec
 
 try:
     from functools import wraps as original_wraps

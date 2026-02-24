@@ -18,6 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
+import errno
 import os
 import tarfile
 import tempfile
@@ -39,6 +40,14 @@ def archive_dir(output_filename, input_dir, follow_links=False):
     if follow_links:
         tar_cmd += ['-h']
     tar_cmd += ['-czf', '-', '-C', input_dir, '.']
+
+    output_dir = os.path.dirname(output_filename)
+    if output_dir:
+        try:
+            os.makedirs(output_dir)
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise
 
     # IMPORTANT: open the destination file here (agent user), then give it to Execute as stdout
     # If output path already exists and you don't own it, you'll still get a PermissionError here —

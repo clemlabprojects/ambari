@@ -33,12 +33,12 @@ import os
 class TestLinkResource(TestCase):
 
   @patch.object(os.path, "realpath")
-  @patch("resource_management.core.sudo.path_lexists")
+  @patch("resource_management.core.sudo.path_islink")
   @patch("resource_management.core.sudo.path_lexists")
   @patch("resource_management.core.sudo.unlink")
   @patch("resource_management.core.sudo.symlink")
   def test_action_create_relink(self, symlink_mock, unlink_mock, 
-                         islink_mock, lexists_mock,
+                         lexists_mock, islink_mock,
                          realmock):
     lexists_mock.return_value = True
     realmock.return_value = "/old_to_link_path"

@@ -79,7 +79,27 @@ class Facter(object):
 
   # Return first ip adress
   def getIpAddress(self):
-    return socket.gethostbyname(self.getFqdn().lower())
+    fqdn = self.getFqdn().lower()
+    try:
+      return socket.gethostbyname(fqdn)
+    except socket.error:
+      # Some CI/container hosts have non-resolvable FQDNs. Keep agent startup/test flow working.
+      log.warn("Can't resolve host '%s', trying hostname fallbacks", fqdn)
+
+    hostnames = [
+      fqdn.split('.', 1)[0],
+      socket.gethostname().lower(),
+      "localhost",
+    ]
+    for candidate in hostnames:
+      if not candidate:
+        continue
+      try:
+        return socket.gethostbyname(candidate)
+      except socket.error:
+        pass
+
+    return "127.0.0.1"
 
   # Returns the currently running user id
   def getId(self):
