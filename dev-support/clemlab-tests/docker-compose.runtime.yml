@@ -1,0 +1,59 @@
+version: '3'
+services:
+  ambari-server:
+    image: ambari-arm/build
+    platform: ${DOCKER_PLATFORM:-linux/arm64/v8}
+    volumes:
+      - "${AMBARI_SRC:-/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects}:/tmp/ambari"
+      - m2-cache:/root/.m2
+    environment:
+      AMBARI_DB_HOST: db-ambari-test
+      AMBARI_DB_PORT: 5432
+      AMBARI_DB_NAME: ambari_db
+      AMBARI_DB_USER: ambari_user
+      AMBARI_DB_PASS: ambari123
+    entrypoint: ["/bin/bash", "/tmp/ambari/dev-support/clemlab-tests/entrypoint-server.sh"]
+    ports:
+      - 8080:8080
+      - 9888:9888
+      - 9876:9876
+      - 9878:9878
+
+  ambari-agent-1:
+    image: ambari-arm/build
+    platform: ${DOCKER_PLATFORM:-linux/arm64/v8}
+    volumes:
+      - "${AMBARI_SRC:-/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects}:/tmp/ambari"
+    environment:
+      AMBARI_SERVER_HOST: ambari-server
+    entrypoint: ["/bin/bash", "/tmp/ambari/dev-support/clemlab-tests/entrypoint-agent.sh"]
+    ports:
+      - 9882:9882
+      - 9864:9864
+
+  ambari-agent-2:
+    image: ambari-arm/build
+    platform: ${DOCKER_PLATFORM:-linux/arm64/v8}
+    volumes:
+      - "${AMBARI_SRC:-/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects}:/tmp/ambari"
+    environment:
+      AMBARI_SERVER_HOST: ambari-server
+    entrypoint: ["/bin/bash", "/tmp/ambari/dev-support/clemlab-tests/entrypoint-agent.sh"]
+    ports:
+      - 9883:9882
+      - 9865:9864
+
+  ambari-agent-3:
+    image: ambari-arm/build
+    platform: ${DOCKER_PLATFORM:-linux/arm64/v8}
+    volumes:
+      - "${AMBARI_SRC:-/Users/lbakalian/luc-data/DPH/ambari-clemlabprojects}:/tmp/ambari"
+    environment:
+      AMBARI_SERVER_HOST: ambari-server
+    entrypoint: ["/bin/bash", "/tmp/ambari/dev-support/clemlab-tests/entrypoint-agent.sh"]
+    ports:
+      - 9884:9882
+      - 9866:9864
+
+volumes:
+  m2-cache:
