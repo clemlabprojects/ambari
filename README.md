@@ -1,6 +1,7 @@
 # Apache Ambari
 
 [![build](https://github.com/clemlabprojects/ambari/actions/workflows/main.yaml/badge.svg)](https://github.com/clemlabprojects/ambari/actions/workflows/main.yaml)
+[![test](https://github.com/clemlabprojects/ambari/actions/workflows/test.yaml/badge.svg)](https://github.com/clemlabprojects/ambari/actions/workflows/test.yaml)
 
 This project is a fork of [Apache Ambari](https://github.com/apache/ambari).
 

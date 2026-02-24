@@ -1,0 +1,97 @@
+name: test
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+  workflow_dispatch:
+
+jobs:
+  test-rocky9:
+    name: Apache Ambari (clemlab) Test Suite
+    runs-on: ubuntu-latest
+
+    container:
+      image: rockylinux:9
+
+    env:
+      MAVEN_OPTS: "-Djava.awt.headless=true -Xmx4g -XX:MaxMetaspaceSize=512m"
+      NEXUS_RELEASES_URL: "https://nexus.clemlab.com/repository/maven-releases/"
+      NEXUS_CENTRAL_URL: "https://nexus.clemlab.com/repository/maven-central/"
+
+    steps:
+      - name: Install test deps (Java 17, Maven, Python)
+        run: |
+          dnf -y update
+          dnf -y install git which tar gzip findutils hostname \
+                         java-17-openjdk-devel java-1.8.0-openjdk-devel \
+                         maven ant python3 python3-pip python3-devel gcc make
+          java -version
+          mvn -version
+          python3 --version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Maven (add public Nexus repository)
+        run: |
+          mkdir -p /root/.m2
+          cat > /root/.m2/settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+            <profiles>
+              <profile>
+                <id>public-nexus</id>
+                <repositories>
+                  <repository>
+                    <id>clemlab-central</id>
+                    <url>${NEXUS_CENTRAL_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                  <repository>
+                    <id>clemlab-releases</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>clemlab-plugins</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+
+            <activeProfiles>
+              <activeProfile>public-nexus</activeProfile>
+            </activeProfiles>
+          </settings>
+          EOF
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: /root/.m2/repository
+          key: ${{ runner.os }}-m2-test-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-test-
+            ${{ runner.os }}-m2-
+
+      - name: Run Ambari Server Python unit tests
+        run: |
+          PYTHONPATH=ambari-common/src/main/python:ambari-server/src/main/python:ambari-server/src/test/python:ambari-agent/src/main/python \
+            python3 ambari-server/src/test/python/unitTests.py
+
+      - name: Run Ambari Server Maven tests
+        run: |
+          mvn -B -pl ambari-server -am -Drat.skip=true test
