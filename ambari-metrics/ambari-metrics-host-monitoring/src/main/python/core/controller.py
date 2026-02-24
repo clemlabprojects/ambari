@@ -22,13 +22,13 @@ import logging
 import threading
 from queue import Queue
 from threading import Timer
-from resource_monitoring.core.application_metric_map import ApplicationMetricMap
-from resource_monitoring.core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
-from resource_monitoring.core.metric_collector import MetricsCollector
-from resource_monitoring.core.emitter import Emitter
-from resource_monitoring.core.host_info import HostInfo
-from resource_monitoring.core.aggregator import Aggregator
-from resource_monitoring.core.aggregator import AggregatorWatchdog
+from core.application_metric_map import ApplicationMetricMap
+from core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
+from core.metric_collector import MetricsCollector
+from core.emitter import Emitter
+from core.host_info import HostInfo
+from core.aggregator import Aggregator
+from core.aggregator import AggregatorWatchdog
 
 
 logger = logging.getLogger()

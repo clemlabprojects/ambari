@@ -18,138 +18,101 @@
 
 package org.apache.ambari.server.api;
 
-// import static org.easymock.EasyMock.capture;
-// import static org.easymock.EasyMock.eq;
-// import static org.easymock.EasyMock.expect;
-// import static org.easymock.EasyMock.expectLastCall;
-// import static org.junit.Assert.assertEquals;
-// import static org.mockito.Mockito.when;
-// import static org.powermock.api.mockito.PowerMockito.mockStatic;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.Map;
 
-// import java.io.IOException;
-// import java.io.PrintWriter;
-// import java.io.StringWriter;
-import java.util.UUID;
-
-//import javax.servlet.RequestDispatcher;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.ambari.server.security.authentication.jwt.JwtAuthenticationProperties;
 import org.apache.ambari.server.security.authentication.jwt.JwtAuthenticationPropertiesProvider;
-//import org.apache.http.HttpStatus;
-// import org.easymock.Capture;
-// import org.easymock.EasyMock;
-import org.easymock.EasyMockSupport;
+import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.server.HttpChannel;
 import org.eclipse.jetty.server.HttpConnection;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
-// import org.junit.Test;
-import org.junit.runner.RunWith;
-// import org.mockito.stubbing.Answer;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.junit.Assert;
+import org.junit.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 
 import com.google.gson.Gson;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({AmbariErrorHandler.class, LoggerFactory.class, HttpConnection.class, UUID.class})
-public class AmbariErrorHandlerTest extends EasyMockSupport {
-  private Gson gson = new Gson();
+public class AmbariErrorHandlerTest {
+  private final Gson gson = new Gson();
 
-  private Logger logger = createNiceMock(Logger.class);
+  @Test
+  public void testHandleInternalServerErrorUsesReason() throws Exception {
+    JwtAuthenticationPropertiesProvider propertiesProvider = Mockito.mock(JwtAuthenticationPropertiesProvider.class);
+    Mockito.when(propertiesProvider.get()).thenReturn(null);
 
-  private HttpConnection httpConnection = createNiceMock(HttpConnection.class);
-  private HttpChannel httpChannel = createNiceMock(HttpChannel.class);
+    HttpConnection httpConnection = Mockito.mock(HttpConnection.class);
+    HttpChannel httpChannel = Mockito.mock(HttpChannel.class);
+    Request baseRequest = Mockito.mock(Request.class);
+    Response response = Mockito.mock(Response.class);
+    HttpServletRequest httpServletRequest = Mockito.mock(HttpServletRequest.class);
+    HttpServletResponse httpServletResponse = Mockito.mock(HttpServletResponse.class);
 
-  private Response response = createNiceMock(Response.class);
-  private Request request = createNiceMock(Request.class);
+    Mockito.when(httpConnection.getHttpChannel()).thenReturn(httpChannel);
+    Mockito.when(httpChannel.getRequest()).thenReturn(baseRequest);
+    Mockito.when(httpChannel.getResponse()).thenReturn(response);
+    Mockito.when(response.getStatus()).thenReturn(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    Mockito.when(response.getReason()).thenReturn("Internal Server Error");
 
-  private HttpServletResponse httpServletResponse = createNiceMock(HttpServletResponse.class);
-  private HttpServletRequest httpServletRequest = createNiceMock(HttpServletRequest.class);
+    StringWriter writer = new StringWriter();
+    Mockito.when(httpServletResponse.getWriter()).thenReturn(new PrintWriter(writer));
 
-  private JwtAuthenticationPropertiesProvider propertiesProvider = createNiceMock(JwtAuthenticationPropertiesProvider.class);
+    try (MockedStatic<HttpConnection> httpConnectionStatic = Mockito.mockStatic(HttpConnection.class)) {
+      httpConnectionStatic.when(HttpConnection::getCurrentConnection).thenReturn(httpConnection);
 
-  final String target = "target";
+      AmbariErrorHandler ambariErrorHandler = new AmbariErrorHandler(gson, propertiesProvider);
+      ambariErrorHandler.handle("target", baseRequest, httpServletRequest, httpServletResponse);
+    }
 
-//  @Test
-//  public void testHandleInternalServerError() throws IOException {
-//    //given
-//    final UUID requestId = UUID.fromString("4db659b2-7902-477b-b8e6-c35261d3334a");
-//
-//    mockStatic(HttpConnection.class, UUID.class, LoggerFactory.class);
-//    when(HttpConnection.getCurrentConnection()).thenAnswer((Answer<HttpConnection>) invocation -> httpConnection);
-//    when(UUID.randomUUID()).thenAnswer((Answer<UUID>) invocation -> requestId);
-//    when(LoggerFactory.getLogger(AmbariErrorHandler.class)).thenAnswer((Answer<Logger>) invocation -> logger);
-//
-//    Throwable th = createNiceMock(Throwable.class);
-//
-//    Capture<String> captureLogMessage = EasyMock.newCapture();
-//    logger.error(capture(captureLogMessage), eq(th));
-//    expectLastCall();
-//
-//    expect(httpConnection.getHttpChannel()).andReturn(httpChannel);
-//    expect(httpChannel.getRequest()).andReturn(request);
-//    expect(httpChannel.getResponse()).andReturn(response).times(2);
-//    expect(response.getStatus()).andReturn(HttpStatus.SC_INTERNAL_SERVER_ERROR);
-//
-//    final String requestUri = "/path/to/target";
-//    expect(httpServletRequest.getRequestURI()).andReturn(requestUri);
-//    expect(httpServletRequest.getAttribute(RequestDispatcher.ERROR_EXCEPTION)).andReturn(th);
-//
-//    final StringWriter writer = new StringWriter();
-//    expect(httpServletResponse.getWriter()).andReturn(new PrintWriter(writer));
-//
-//    expect(propertiesProvider.get()).andReturn(null).anyTimes();
-//
-//    replayAll();
-//
-//    final String expectedResponse = "{\"status\":500,\"message\":\"Internal server error, please refer the exception by " + requestId + " in the server log file\"}";
-//    final String expectedErrorMessage = "Internal server error, please refer the exception by " + requestId + " in the server log file, requestURI: " + requestUri;
-//
-//    AmbariErrorHandler ambariErrorHandler = new AmbariErrorHandler(gson, propertiesProvider);
-//    ambariErrorHandler.setShowStacks(false);
-//
-//    //when
-//    ambariErrorHandler.handle(target, request, httpServletRequest, httpServletResponse);
-//
-//    //then
-//    assertEquals(expectedResponse, writer.toString());
-//    assertEquals(expectedErrorMessage, captureLogMessage.getValue());
-//    verifyAll();
-//  }
-//
-//  @Test
-//  public void testHandleGeneralError() throws Exception {
-//
-//    //given
-//    mockStatic(HttpConnection.class);
-//    when(HttpConnection.getCurrentConnection()).thenReturn(httpConnection);
-//
-//    expect(httpConnection.getHttpChannel()).andReturn(httpChannel);
-//    expect(httpChannel.getRequest()).andReturn(request);
-//    expect(httpChannel.getResponse()).andReturn(response).anyTimes();
-//    expect(response.getStatus()).andReturn(HttpStatus.SC_BAD_REQUEST);
-//
-//    final StringWriter writer = new StringWriter();
-//    expect(httpServletResponse.getWriter()).andReturn(new PrintWriter(writer));
-//
-//    expect(propertiesProvider.get()).andReturn(null).anyTimes();
-//
-//    replayAll();
-//
-//    final String expectedResponse = "{\"status\":400,\"message\":\"Bad Request\"}";
-//
-//    AmbariErrorHandler ambariErrorHandler = new AmbariErrorHandler(gson, propertiesProvider);
-//
-//    //when
-//    ambariErrorHandler.handle(target, request, httpServletRequest, httpServletResponse);
-//    System.out.println(writer.toString());
-//
-//    //then
-//    assertEquals(expectedResponse, writer.toString());
-//    verifyAll();
-//  }
+    Mockito.verify(baseRequest).setHandled(true);
+    Mockito.verify(httpServletResponse).setContentType(MimeTypes.Type.TEXT_PLAIN.asString());
+
+    Map<String, Object> responseMap = gson.fromJson(writer.toString(), Map.class);
+    Assert.assertEquals(Double.valueOf(HttpServletResponse.SC_INTERNAL_SERVER_ERROR), responseMap.get("status"));
+    Assert.assertEquals("Internal Server Error", responseMap.get("message"));
+  }
+
+  @Test
+  public void testHandleUnauthorizedAddsJwtProviderUrl() throws Exception {
+    JwtAuthenticationPropertiesProvider propertiesProvider = Mockito.mock(JwtAuthenticationPropertiesProvider.class);
+    JwtAuthenticationProperties jwtProperties = Mockito.mock(JwtAuthenticationProperties.class);
+    Mockito.when(propertiesProvider.get()).thenReturn(jwtProperties);
+    Mockito.when(jwtProperties.isEnabledForAmbari()).thenReturn(true);
+    Mockito.when(jwtProperties.getAuthenticationProviderUrl()).thenReturn("https://idp.example.com/auth");
+    Mockito.when(jwtProperties.getOriginalUrlQueryParam()).thenReturn("orig");
+
+    HttpConnection httpConnection = Mockito.mock(HttpConnection.class);
+    HttpChannel httpChannel = Mockito.mock(HttpChannel.class);
+    Request baseRequest = Mockito.mock(Request.class);
+    Response response = Mockito.mock(Response.class);
+    HttpServletRequest httpServletRequest = Mockito.mock(HttpServletRequest.class);
+    HttpServletResponse httpServletResponse = Mockito.mock(HttpServletResponse.class);
+
+    Mockito.when(httpConnection.getHttpChannel()).thenReturn(httpChannel);
+    Mockito.when(httpChannel.getRequest()).thenReturn(baseRequest);
+    Mockito.when(httpChannel.getResponse()).thenReturn(response);
+    Mockito.when(response.getStatus()).thenReturn(HttpServletResponse.SC_UNAUTHORIZED);
+    Mockito.when(response.getReason()).thenReturn("Unauthorized");
+
+    StringWriter writer = new StringWriter();
+    Mockito.when(httpServletResponse.getWriter()).thenReturn(new PrintWriter(writer));
+
+    try (MockedStatic<HttpConnection> httpConnectionStatic = Mockito.mockStatic(HttpConnection.class)) {
+      httpConnectionStatic.when(HttpConnection::getCurrentConnection).thenReturn(httpConnection);
+
+      AmbariErrorHandler ambariErrorHandler = new AmbariErrorHandler(gson, propertiesProvider);
+      ambariErrorHandler.handle("target", baseRequest, httpServletRequest, httpServletResponse);
+    }
+
+    Map<String, Object> responseMap = gson.fromJson(writer.toString(), Map.class);
+    Assert.assertEquals(Double.valueOf(HttpServletResponse.SC_UNAUTHORIZED), responseMap.get("status"));
+    Assert.assertEquals("Unauthorized", responseMap.get("message"));
+    Assert.assertEquals("https://idp.example.com/auth?orig=", responseMap.get("jwtProviderUrl"));
+  }
 }

@@ -109,7 +109,7 @@ class TestRangerKMS(RMFTestCase):
       plugin_audit_properties_copy['xasecure.audit.destination.db.password'] = "crypted"
 
     self.assertResourceCalled('XmlConfig', 'ranger-kms-audit.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -118,7 +118,7 @@ class TestRangerKMS(RMFTestCase):
     )
 
     self.assertResourceCalled('XmlConfig', 'ranger-kms-security.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -134,7 +134,7 @@ class TestRangerKMS(RMFTestCase):
         ranger_kms_policymgr_ssl_copy[prop] = "crypted"
 
     self.assertResourceCalled('XmlConfig', 'ranger-policymgr-ssl.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -192,7 +192,7 @@ class TestRangerKMS(RMFTestCase):
                         action = ['create_on_execute'],
                         owner = 'kms',
                         group = 'kms',
-                        mode = 0750,
+                        mode = 0o750,
                         recursive_chmod = True,
                         user = 'hdfs',
                         security_enabled = False,
@@ -584,7 +584,7 @@ class TestRangerKMS(RMFTestCase):
       plugin_audit_properties_copy['xasecure.audit.destination.db.password'] = "crypted"
 
     self.assertResourceCalled('XmlConfig', 'ranger-kms-audit.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -593,7 +593,7 @@ class TestRangerKMS(RMFTestCase):
     )
 
     self.assertResourceCalled('XmlConfig', 'ranger-kms-security.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -609,7 +609,7 @@ class TestRangerKMS(RMFTestCase):
         ranger_kms_policymgr_ssl_copy[prop] = "crypted"
 
     self.assertResourceCalled('XmlConfig', 'ranger-policymgr-ssl.xml',
-      mode = 0744,
+      mode = 0o744,
       owner = 'kms',
       group = 'kms',
       conf_dir = '/usr/hdp/current/ranger-kms/conf',
@@ -667,7 +667,7 @@ class TestRangerKMS(RMFTestCase):
                         action = ['create_on_execute'],
                         owner = 'kms',
                         group = 'kms',
-                        mode = 0750,
+                        mode = 0o750,
                         recursive_chmod = True,
                         user = 'hdfs',
                         security_enabled = True,

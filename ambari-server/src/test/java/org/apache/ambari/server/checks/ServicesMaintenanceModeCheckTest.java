@@ -17,7 +17,6 @@
  */
 package org.apache.ambari.server.checks;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,10 +26,10 @@ import org.apache.ambari.server.controller.PrereqCheckRequest;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.RepositoryType;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.State;
 import org.apache.ambari.server.state.repository.ClusterVersionSummary;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
@@ -74,16 +73,12 @@ public class ServicesMaintenanceModeCheckTest {
   public void setup() throws Exception {
     m_services.clear();
 
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.2.0.0-1234");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.2"));
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   @Test
   public void testIsApplicable() throws Exception {
+    mockRepositoryForServices();
+
     PrereqCheckRequest checkRequest = new PrereqCheckRequest("c1");
     checkRequest.setSourceStackId(new StackId("HDP", "2.2"));
     checkRequest.setTargetRepositoryVersion(m_repositoryVersion);
@@ -92,6 +87,13 @@ public class ServicesMaintenanceModeCheckTest {
     Configuration config = Mockito.mock(Configuration.class);
     smmc.config = config;
     Assert.assertTrue(smmc.isApplicable(checkRequest));
+  }
+
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   @Test
@@ -113,15 +115,14 @@ public class ServicesMaintenanceModeCheckTest {
     };
 
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
-    Mockito.when(cluster.getCurrentStackVersion()).thenReturn(new StackId("HDP", "2.2"));
     Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
     final Service service = Mockito.mock(Service.class);
-    Mockito.when(cluster.getServices()).thenReturn(Collections.singletonMap("service", service));
+    mockRepositoryForServices();
+    m_services.put("service", service);
+    Mockito.when(cluster.getService("service")).thenReturn(service);
     Mockito.when(service.isClientOnlyService()).thenReturn(false);
+    Mockito.when(service.getMaintenanceState()).thenReturn(MaintenanceState.OFF);
 
-    // We don't bother checking service desired state as it's performed by a separate check
-    Mockito.when(service.getDesiredState()).thenReturn(State.UNKNOWN);
     PrerequisiteCheck check = new PrerequisiteCheck(null, null);
 
     PrereqCheckRequest request = new PrereqCheckRequest("cluster");
@@ -130,7 +131,6 @@ public class ServicesMaintenanceModeCheckTest {
     servicesMaintenanceModeCheck.perform(check, request);
     Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
 
-    Mockito.when(service.getDesiredState()).thenReturn(State.STARTED);
     check = new PrerequisiteCheck(null, null);
     servicesMaintenanceModeCheck.perform(check, request);
     Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());

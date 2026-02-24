@@ -157,9 +157,12 @@ App.ajaxQueue = Em.Object.extend({
     if (r && typeof r.done === 'function' && typeof r.fail === 'function') {
       // jQuery Deferred-style (classic $.ajax)
       r.done((data, textStatus, jqXHR) => {
-        this._complete(jqXHR);  // jqXHR gives access to .status
-      }).fail((jqXHR) => {
-        this._complete(jqXHR);  // still call _complete so it knows about failure
+        const effectiveXhr = (jqXHR && typeof jqXHR.status === 'number') ? jqXHR : { status: 200 };
+        this._complete(effectiveXhr);
+      });
+      r.fail((jqXHR) => {
+        const effectiveXhr = (jqXHR && typeof jqXHR.status === 'number') ? jqXHR : { status: 500 };
+        this._complete(effectiveXhr);  // still call _complete so it knows about failure
       });
     } else if (r && typeof r.then === 'function') {
       // Generic Promise (possibly only resolves with `data`)

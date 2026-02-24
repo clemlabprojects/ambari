@@ -31,6 +31,11 @@ from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.get_bare_principal import get_bare_principal
 from resource_management.core.exceptions import Fail
 
+try:
+  unicode
+except NameError:
+  unicode = str
+
 # a map of the Ambari role to the component name
 # for use with <stack-root>/current/<component>
 SERVER_ROLE_DIRECTORY_MAP = {

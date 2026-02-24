@@ -1762,7 +1762,15 @@ describe('App.WizardStep8Controller', function () {
           {name: 'ambari.dispatch.credential.password', value: 'pwd', serviceName: 'MISC', filename: 'alert_notification'},
           {name: 'some_p', value: 'some_v', serviceName: 'MISC', filename: 'alert_notification'}
         ]);
+        sinon.stub(App.router, 'send', Em.K);
+        sinon.stub(installerStep8Controller, 'ajaxQueueFinished', Em.K);
+        installerStep8Controller.set('ajaxRequestsQueue.finishedCallback', installerStep8Controller.ajaxQueueFinished);
         installerStep8Controller.get('ajaxRequestsQueue').clear();
+      });
+
+      afterEach(function () {
+        App.router.send.restore();
+        installerStep8Controller.ajaxQueueFinished.restore();
       });
 
       it('should add request to queue', function () {

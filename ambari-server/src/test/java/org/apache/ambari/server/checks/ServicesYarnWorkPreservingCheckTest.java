@@ -78,10 +78,6 @@ public class ServicesYarnWorkPreservingCheckTest {
     Configuration config = Mockito.mock(Configuration.class);
     servicesYarnWorkPreservingCheck.config = config;
 
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   @Test
@@ -89,10 +85,10 @@ public class ServicesYarnWorkPreservingCheckTest {
     final Cluster cluster = Mockito.mock(Cluster.class);
     final Service service = Mockito.mock(Service.class);
 
+    mockRepositoryForServices();
+
     m_services.put("YARN", service);
 
-    Mockito.when(cluster.getServices()).thenReturn(m_services);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
 
     PrereqCheckRequest request = new PrereqCheckRequest("cluster");
@@ -103,10 +99,16 @@ public class ServicesYarnWorkPreservingCheckTest {
     Assert.assertFalse(servicesYarnWorkPreservingCheck.isApplicable(request));
   }
 
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
+  }
+
   @Test
   public void testPerform() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
 
     final DesiredConfig desiredConfig = Mockito.mock(DesiredConfig.class);

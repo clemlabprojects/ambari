@@ -21,6 +21,8 @@ limitations under the License.
 import unittest
 import os
 import sys
+import platform
+import distro
 from random import shuffle
 import fnmatch
 
@@ -31,6 +33,12 @@ SERVICE_EXCLUDE = ["configs"]
 
 TEST_MASK = '[Tt]est*.py'
 CUSTOM_TEST_MASK = '_[Tt]est*.py'
+
+if not hasattr(platform, "linux_distribution"):
+  # Provide a shim for tests that still patch platform.linux_distribution.
+  def _linux_distribution(*args, **kwargs):
+    return distro.linux_distribution()
+  platform.linux_distribution = _linux_distribution
 
 def get_parent_path(base, directory_name):
   """
@@ -138,4 +146,3 @@ def main():
 
 if __name__ == "__main__":
   sys.exit(main())
-

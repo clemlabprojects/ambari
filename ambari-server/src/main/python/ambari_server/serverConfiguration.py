@@ -375,8 +375,18 @@ class ServerConfigDefaults(object):
   
     self.JAVA_SHARE_PATH = "/usr/share/java"
     self.SHARE_PATH = "/usr/share"
-    # self.OUT_DIR = parse_log4j_file(get_conf_dir() + "/log4j.properties")['ambari.log.dir'].replace("//", "/")
-    self.OUT_DIR = parse_logback_file(get_conf_dir() + "/logback.xml")['properties']['AMBARI_LOG_DIR'].replace("//", "/")
+    conf_dir = get_conf_dir()
+    logback_path = os.path.join(conf_dir, "logback.xml")
+    log4j_path = os.path.join(conf_dir, "log4j.properties")
+    try:
+      self.OUT_DIR = parse_logback_file(logback_path)['properties']['AMBARI_LOG_DIR'].replace("//", "/")
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+      print_warning_msg("Unable to parse logback config at {0}: {1}. Falling back to log4j.".format(logback_path, exc))
+      try:
+        self.OUT_DIR = parse_log4j_file(log4j_path)['ambari.log.dir'].replace("//", "/")
+      except Exception as exc2:
+        print_warning_msg("Unable to parse log4j config at {0}: {1}. Falling back to /var/log/ambari-server.".format(log4j_path, exc2))
+        self.OUT_DIR = "/var/log/ambari-server"
     self.SERVER_OUT_FILE = os.path.join(self.OUT_DIR, "ambari-server.out")
     self.SERVER_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server.log")
     self.SERVER_UPGRADE_LOG_FILE = os.path.join(self.OUT_DIR, "ambari-server-upgrade.log")
@@ -811,7 +821,7 @@ def check_database_name_property(upgrade=False):
 
   version = get_ambari_version(properties)
   if upgrade and (properties[JDBC_DATABASE_PROPERTY] not in ServerDatabases.databases()
-                    or JDBC_RCA_SCHEMA_PROPERTY in properties.items()):
+                    or JDBC_RCA_SCHEMA_PROPERTY in properties):
     # This code exists for historic reasons in which property names changed from Ambari 1.6.1 to 1.7.0
     persistence_type = properties[PERSISTENCE_TYPE_PROPERTY]
     if persistence_type == "remote":

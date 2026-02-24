@@ -2254,6 +2254,11 @@ public class ViewRegistry {
       for (File archiveDir : extractedArchives) {
         if (archiveDir.isDirectory()) {
           ViewConfig uViewConfig = archiveUtility.getViewConfigFromExtractedArchive(archiveDir.getPath(), false);
+          if (uViewConfig == null) {
+            LOG.debug("Skipping extracted view archive {} because no view config could be loaded", archiveDir.getPath());
+            continue;
+          }
+
           if (!uViewConfig.isSystem()) {
             // load prev versions of same view
             if (!uViewConfig.getName().equals(instance.getViewEntity().getViewName())) {

@@ -87,7 +87,7 @@ class TestHiveMetastore(RMFTestCase):
 
   @patch("os.umask")
   def test_start_default_umask_027(self, umask_mock):
-    umask_mock.return_value = 027
+    umask_mock.return_value = 0o27
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/hive_metastore.py",
                        classname = "HiveMetastore",
                        command = "start",
@@ -483,7 +483,7 @@ class TestHiveMetastore(RMFTestCase):
       target = RMFTestCase.TARGET_COMMON_SERVICES,
       call_mocks = [(0, None, ''), (0, None)])
 
-    self.assertEquals(True, RMFTestCase.env.config["params"]["init_metastore_schema"])
+    self.assertEqual(True, RMFTestCase.env.config["params"]["init_metastore_schema"])
 
     self.config_dict = None
     config_file = self.get_src_folder() + "/test/python/stacks/2.0.6/configs/default.json"
@@ -503,7 +503,7 @@ class TestHiveMetastore(RMFTestCase):
       target = RMFTestCase.TARGET_COMMON_SERVICES,
       call_mocks = [(0, None, ''), (0, None)])
 
-    self.assertEquals(False, RMFTestCase.env.config["params"]["init_metastore_schema"])
+    self.assertEqual(False, RMFTestCase.env.config["params"]["init_metastore_schema"])
 
     self.config_dict = None
     config_file = self.get_src_folder() + "/test/python/stacks/2.0.6/configs/default.json"
@@ -521,7 +521,7 @@ class TestHiveMetastore(RMFTestCase):
       target = RMFTestCase.TARGET_COMMON_SERVICES,
       call_mocks = [(0, None, ''), (0, None)])
 
-    self.assertEquals(False, RMFTestCase.env.config["params"]["init_metastore_schema"])
+    self.assertEqual(False, RMFTestCase.env.config["params"]["init_metastore_schema"])
 
 
   @patch("os.path.exists")

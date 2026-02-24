@@ -15,7 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 '''
-
+import imp
 import json
 import os
 from unittest import TestCase
@@ -186,7 +186,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,
+    self.assertEqual(configurations,
                       {'druid-historical': {
                         'properties': {'druid.processing.numThreads': '3',
                                        'druid.server.http.numThreads': '40',
@@ -272,7 +272,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendSPARK2Configurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendSPARK2Configurations_SecurityNotEnabledZeppelinInstalled(self):
     configurations = {
@@ -333,7 +333,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendSPARK2Configurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendSPARK2Configurations_SecurityEnabledZeppelinInstalledExistingValue(self):
     configurations = {
@@ -398,7 +398,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendSPARK2Configurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendSPARK2Configurations_SecurityEnabledZeppelinNotInstalled(self):
     configurations = {
@@ -451,7 +451,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendSPARK2Configurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendZEPPELINConfigurations_SecurityEnabledSPARKInstalled(self):
     configurations = {
@@ -516,7 +516,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendZEPPELINConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendZEPPELINConfigurations_SecurityNotEnabledSparkInstalled(self):
     configurations = {
@@ -573,7 +573,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendZEPPELINConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendZEPPELINConfigurations_SecurityEnabledZeppelinInstalledExistingValue(self):
     configurations = {
@@ -636,7 +636,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendZEPPELINConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendZEPPELINConfigurations_SecurityEnabledSparkNotInstalled(self):
     configurations = {
@@ -679,7 +679,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendZEPPELINConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendDruidConfigurations_WithPostgresql(self):
     return True
@@ -772,7 +772,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,
+    self.assertEqual(configurations,
                       {'druid-historical': {
                         'properties': {'druid.processing.numThreads': '3',
                                        'druid.server.http.numThreads': '40',
@@ -887,7 +887,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,
+    self.assertEqual(configurations,
                       {'druid-historical': {
                         'properties': {'druid.processing.numThreads': '3',
                                        'druid.server.http.numThreads': '40',
@@ -960,7 +960,7 @@ class TestHDP26StackAdvisor(TestCase):
       }
 
       self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-      self.assertEquals(configurations,
+      self.assertEqual(configurations,
                         {}
                         )
 
@@ -1089,7 +1089,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,
+    self.assertEqual(configurations,
                       {'druid-historical': {
                         'properties': {'druid.processing.numThreads': '2',
                                        'druid.server.http.numThreads': '40',
@@ -1239,7 +1239,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendDruidConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,
+    self.assertEqual(configurations,
                     {'druid-historical': {
                       'properties': {'druid.processing.numThreads': '5',
                                      'druid.server.http.numThreads': '40',
@@ -1361,7 +1361,7 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendAtlasConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendRangerConfigurations(self):
     clusterData = {}
@@ -1428,7 +1428,7 @@ class TestHDP26StackAdvisor(TestCase):
     recommendedConfigurations = {}
 
     self.stackAdvisor.recommendRangerConfigurations(recommendedConfigurations, clusterData, services, None)
-    self.assertEquals(recommendedConfigurations, expected)
+    self.assertEqual(recommendedConfigurations, expected)
 
   def test_recommendRangerKMSConfigurations(self):
     clusterData = {}
@@ -1497,7 +1497,7 @@ class TestHDP26StackAdvisor(TestCase):
     recommendedConfigurations = {}
 
     self.stackAdvisor.recommendRangerKMSConfigurations(recommendedConfigurations, clusterData, services, None)
-    self.assertEquals(recommendedConfigurations, expected)
+    self.assertEqual(recommendedConfigurations, expected)
 
   def test_recommendHDFSConfigurations(self):
     ambariHostName = socket.getfqdn()
@@ -1604,14 +1604,14 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendHDFSConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,expected)
+    self.assertEqual(configurations,expected)
     configurations['hadoop-env']['properties']['hdfs_user'] = 'hadoop'
     expected['hadoop-env']['properties']['hdfs_user'] = 'hadoop'
     expected['ranger-hdfs-plugin-properties']['properties']['REPOSITORY_CONFIG_USERNAME'] = 'hadoop'
     expected['core-site']['properties']['hadoop.proxyuser.hadoop.hosts'] = '*'
     expected['core-site']['properties']['hadoop.proxyuser.hadoop.groups'] = '*'
     self.stackAdvisor.recommendHDFSConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations,expected)
+    self.assertEqual(configurations,expected)
 
 
   def test_recommendHiveConfigurations(self):
@@ -1930,7 +1930,7 @@ class TestHDP26StackAdvisor(TestCase):
 
     recommendedConfigurations = {}
     self.stackAdvisor.recommendHIVEConfigurations(recommendedConfigurations, clusterData, services, hosts)
-    self.assertEquals(recommendedConfigurations, expected)
+    self.assertEqual(recommendedConfigurations, expected)
 
     services['configurations']['hive-env']['properties']['hive_user'] = 'hive'
     expected['ranger-hive-plugin-properties']['properties']['REPOSITORY_CONFIG_USERNAME'] = 'hive'
@@ -1951,7 +1951,7 @@ class TestHDP26StackAdvisor(TestCase):
 
     recommendedConfigurations = {}
     self.stackAdvisor.recommendHIVEConfigurations(recommendedConfigurations, clusterData, services, hosts)
-    self.assertEquals(recommendedConfigurations, expected)
+    self.assertEqual(recommendedConfigurations, expected)
 
     # case there are not druid-common configs present
     del services['configurations']['druid-common']
@@ -1962,7 +1962,7 @@ class TestHDP26StackAdvisor(TestCase):
 
     recommendedConfigurations = {}
     self.stackAdvisor.recommendHIVEConfigurations(recommendedConfigurations, clusterData, services, hosts)
-    self.assertEquals(recommendedConfigurations, expected)
+    self.assertEqual(recommendedConfigurations, expected)
 
 
   def test_recommendHBASEConfigurations(self):
@@ -2048,12 +2048,12 @@ class TestHDP26StackAdvisor(TestCase):
       }
     }
     self.stackAdvisor.recommendHBASEConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
     configurations['hbase-env']['properties']['hbase_user'] = 'hbase'
     expected['hbase-env']['properties']['hbase_user'] = 'hbase'
     expected['ranger-hbase-plugin-properties']['properties']['REPOSITORY_CONFIG_USERNAME'] = 'hbase'
     self.stackAdvisor.recommendHBASEConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendYARNConfigurations(self):
     configurations = {
@@ -2152,13 +2152,13 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
     configurations['yarn-env']['properties']['yarn_user'] = 'yarn'
     expected['yarn-env']['properties']['yarn_user'] = 'yarn'
     expected['ranger-yarn-plugin-properties']['properties']['REPOSITORY_CONFIG_USERNAME'] = 'yarn'
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
 
@@ -2273,7 +2273,7 @@ class TestHDP26StackAdvisor(TestCase):
     '''
 
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
 
@@ -2311,7 +2311,7 @@ class TestHDP26StackAdvisor(TestCase):
     expected['yarn-env']['properties']['apptimelineserver_heapsize'] = '2048'
     expected['yarn-site']['properties']['yarn.timeline-service.entity-group-fs-store.app-cache-size'] = '7'
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
 
@@ -2349,7 +2349,7 @@ class TestHDP26StackAdvisor(TestCase):
     expected['yarn-env']['properties']['apptimelineserver_heapsize'] = '4096'
     expected['yarn-site']['properties']['yarn.timeline-service.entity-group-fs-store.app-cache-size'] = '10'
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
 
@@ -2474,7 +2474,7 @@ class TestHDP26StackAdvisor(TestCase):
 
     expected['yarn-env']['properties']['apptimelineserver_heapsize'] = '2048'
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
 
@@ -2540,7 +2540,7 @@ class TestHDP26StackAdvisor(TestCase):
 
     expected['yarn-env']['properties']['apptimelineserver_heapsize'] = '4572'
     self.stackAdvisor.recommendYARNConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 
   def test_recommendKAFKAConfigurations(self):
@@ -2605,12 +2605,12 @@ class TestHDP26StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendKAFKAConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
     configurations['kafka-env']['properties']['kafka_user'] = 'kafka'
     expected['kafka-env']['properties']['kafka_user'] = 'kafka'
     expected['ranger-kafka-plugin-properties']['properties']['REPOSITORY_CONFIG_USERNAME'] = 'kafka'
     self.stackAdvisor.recommendKAFKAConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
 def load_json(self, filename):
   file = os.path.join(self.testDirectory, filename)

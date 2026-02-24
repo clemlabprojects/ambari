@@ -593,11 +593,11 @@ class TestNodeManager(RMFTestCase):
     self.assertTrue(mocks_dict['checked_call'].called)
     self.assertEqual(mocks_dict['checked_call'].call_count,1)
 
-    self.assertEquals(
+    self.assertEqual(
       "yarn node -list -states=RUNNING",
        mocks_dict['checked_call'].call_args_list[0][0][0])
 
-    self.assertEquals( {'user': u'yarn'}, mocks_dict['checked_call'].call_args_list[0][1])
+    self.assertEqual( {'user': u'yarn'}, mocks_dict['checked_call'].call_args_list[0][1])
 
 
   @patch('time.sleep')
@@ -619,7 +619,7 @@ class TestNodeManager(RMFTestCase):
                          mocks_dict = mocks_dict,
       )
       self.fail('Missing NodeManager should have caused a failure')
-    except Fail,fail:
+    except Fail as fail:
       self.assertTrue(mocks_dict['call'].called)
       self.assertEqual(mocks_dict['call'].call_count,12)
 
@@ -643,7 +643,7 @@ class TestNodeManager(RMFTestCase):
                          mocks_dict = mocks_dict,
       )
       self.fail('Invalid return code should cause a failure')
-    except Fail,fail:
+    except Fail as fail:
       self.assertTrue(mocks_dict['call'].called)
       self.assertEqual(mocks_dict['call'].call_count,1)
 

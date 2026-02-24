@@ -20,14 +20,9 @@ package org.apache.hadoop.metrics2.sink.timeline;
 import junit.framework.Assert;
 import org.apache.hadoop.metrics2.sink.timeline.availability.MetricCollectorUnavailableException;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.powermock.api.easymock.PowerMock;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -38,14 +33,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.expect;
-import static org.powermock.api.easymock.PowerMock.expectNew;
-import static org.powermock.api.easymock.PowerMock.replayAll;
-import static org.powermock.api.easymock.PowerMock.verifyAll;
-
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({AbstractTimelineMetricsSink.class, HttpURLConnection.class})
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
 public class AbstractTimelineMetricSinkTest {
 
   @Test
@@ -74,18 +65,15 @@ public class AbstractTimelineMetricSinkTest {
   }
 
   @Test
-  @PrepareForTest({URL.class, OutputStream.class, AbstractTimelineMetricsSink.class, HttpURLConnection.class, TimelineMetric.class})
   public void testEmitMetrics() throws Exception {
-    HttpURLConnection connection = PowerMock.createNiceMock(HttpURLConnection.class);
-    URL url = PowerMock.createNiceMock(URL.class);
-    expectNew(URL.class, anyString()).andReturn(url).anyTimes();
-    expect(url.openConnection()).andReturn(connection).anyTimes();
+    HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
     expect(connection.getResponseCode()).andReturn(200).anyTimes();
-    OutputStream os = PowerMock.createNiceMock(OutputStream.class);
+    OutputStream os = createNiceMock(OutputStream.class);
     expect(connection.getOutputStream()).andReturn(os).anyTimes();
 
 
     TestTimelineMetricsSink sink = new TestTimelineMetricsSink();
+    sink.setConnection(connection);
     TimelineMetrics timelineMetrics = new TimelineMetrics();
     long startTime = System.currentTimeMillis() / 60000 * 60000;
 
@@ -113,7 +101,7 @@ public class AbstractTimelineMetricSinkTest {
 
     timelineMetrics.addOrMergeTimelineMetric(timelineMetric);
 
-    replayAll();
+    replay(connection, os);
     sink.emitMetrics(timelineMetrics);
     Assert.assertEquals(1, sink.getMetricsPostCache().size());
     metricValues = new TreeMap<>();
@@ -192,22 +180,21 @@ public class AbstractTimelineMetricSinkTest {
     sink.emitMetrics(timelineMetrics, true);
 
     Assert.assertEquals(0, sink.getMetricsPostCache().size());
+
+    verify(connection, os);
   }
 
   @Test(expected = MetricCollectorUnavailableException.class)
-  @PrepareForTest({URL.class, AbstractTimelineMetricsSink.class, HttpURLConnection.class, TimelineMetric.class})
   public void testFindLiveCollectorHostsFromKnownCollector() throws Exception {
-    HttpURLConnection connection = PowerMock.createNiceMock(HttpURLConnection.class);
-    URL url = PowerMock.createNiceMock(URL.class);
-    expectNew(URL.class, anyString()).andReturn(url).anyTimes();
-    expect(url.openConnection()).andReturn(connection).anyTimes();
+    HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
     expect(connection.getResponseCode()).andReturn(500).anyTimes();
-    replayAll();
+    replay(connection);
 
     TestTimelineMetricsSink sink = new TestTimelineMetricsSink();
+    sink.setConnection(connection);
     sink.findLiveCollectorHostsFromKnownCollector("host", "1234");
 
-    verifyAll();
+    verify(connection);
   }
 
   @Test
@@ -246,6 +233,17 @@ public class AbstractTimelineMetricSinkTest {
   }
 
   private class TestTimelineMetricsSink extends AbstractTimelineMetricsSink {
+    private HttpURLConnection connection;
+
+    void setConnection(HttpURLConnection connection) {
+      this.connection = connection;
+    }
+
+    @Override
+    protected HttpURLConnection getConnection(String spec) {
+      return connection;
+    }
+
     @Override
     protected String getCollectorUri(String host) {
       return "";

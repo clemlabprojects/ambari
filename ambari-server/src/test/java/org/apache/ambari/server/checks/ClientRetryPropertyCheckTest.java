@@ -29,7 +29,6 @@ import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.RepositoryType;
 import org.apache.ambari.server.state.Service;
-import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.repository.ClusterVersionSummary;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
@@ -79,14 +78,7 @@ public class ClientRetryPropertyCheckTest {
     Configuration config = Mockito.mock(Configuration.class);
     m_check.config = config;
 
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.3.0.0-1234");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.3"));
-
     m_services.clear();
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   /**
@@ -95,10 +87,9 @@ public class ClientRetryPropertyCheckTest {
   @Test
   public void testIsApplicable() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
 
-    Mockito.when(cluster.getServices()).thenReturn(m_services);
+    mockRepositoryForServices();
 
     PrereqCheckRequest request = new PrereqCheckRequest("cluster");
     request.setTargetRepositoryVersion(m_repositoryVersion);
@@ -116,11 +107,17 @@ public class ClientRetryPropertyCheckTest {
     Assert.assertTrue(m_check.isApplicable(request));
   }
 
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
+  }
+
   @Test
   public void testPerform() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
 
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
     Map<String, Service> services = new HashMap<>();
     Mockito.when(cluster.getServices()).thenReturn(services);

@@ -142,7 +142,7 @@ def eligible(service_info):
 def get_eligible_services(properties, admin_login, admin_password, cluster_name):
   print_info_msg("Fetching SSO enabled services")
 
-  safe_cluster_name = urllib2.quote(cluster_name)
+  safe_cluster_name = urllib.parse.quote(cluster_name)
 
   response_code, json_data = get_json_via_rest_api(properties, admin_login, admin_password,
                                                    FETCH_SERVICES_FOR_SSO_ENTRYPOINT % safe_cluster_name)
@@ -319,5 +319,4 @@ def ensure_complete_cert(cert_string):
       cert_string = cert_string + '\n' + CERTIFICATE_FOOTER
 
   return cert_string
-
 

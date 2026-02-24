@@ -21,7 +21,7 @@ limitations under the License.
 import logging
 import time
 import json
-from resource_monitoring.core.instance_type_provider import HostInstanceTypeProvider
+from core.instance_type_provider import HostInstanceTypeProvider
 
 logger = logging.getLogger()
 

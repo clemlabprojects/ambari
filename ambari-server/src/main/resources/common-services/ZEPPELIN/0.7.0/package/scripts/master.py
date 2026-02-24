@@ -512,7 +512,7 @@ class Master(Script):
         del interpreter_settings[key]
 
     hive_interactive_properties_key = 'hive_interactive'
-    for setting_key in interpreter_settings.keys():
+    for setting_key in list(interpreter_settings.keys()):
       interpreter = interpreter_settings[setting_key]
       if interpreter['group'] == 'jdbc' and interpreter['name'] == 'jdbc':
         interpreter['dependencies'] = []
@@ -648,7 +648,7 @@ class Master(Script):
            content=interpreter_json,
            owner=params.zeppelin_user,
            group=params.zeppelin_group,
-           mode=0664)
+           mode=0o664)
 
       if params.conf_stored_in_hdfs:
         params.HdfsResource(self.get_zeppelin_conf_FS(params),

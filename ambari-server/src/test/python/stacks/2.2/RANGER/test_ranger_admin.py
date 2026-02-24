@@ -155,7 +155,7 @@ class TestRangerAdmin(RMFTestCase):
         properties = self.getConfig()['configurations']['ranger-site'],
     )
     self.assertResourceCalled('ModifyPropertiesFile', '/etc/ranger/admin/conf/ranger_webserver.properties',
-        mode = 0744,
+        mode = 0o744,
         properties = self.getConfig()['configurations']['ranger-site']
     )
     self.assertResourceCalled('Directory', '/var/log/ranger/admin',
@@ -200,7 +200,7 @@ class TestRangerAdmin(RMFTestCase):
         properties = self.getConfig()['configurations']['ranger-site'],
     )
     self.assertResourceCalled('ModifyPropertiesFile', '/etc/ranger/admin/conf/ranger_webserver.properties',
-        mode = 0744,
+        mode = 0o744,
         properties = self.getConfig()['configurations']['ranger-site']
     )
     self.assertResourceCalled('Directory', '/var/log/ranger/admin',
@@ -216,7 +216,7 @@ class TestRangerAdmin(RMFTestCase):
     json_content['commandParams']['version'] = '2.3.0.0-1234'
 
     mocks_dict = {}
-    self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/ranger_usersync.py",
+    self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/ranger_admin.py",
                        classname = "RangerAdmin",
                        command = "pre_upgrade_restart",
                        config_dict = json_content,

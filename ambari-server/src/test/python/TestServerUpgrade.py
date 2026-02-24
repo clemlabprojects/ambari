@@ -25,6 +25,7 @@ from unittest import TestCase
 from mock.mock import patch, MagicMock
 from ambari_commons import os_utils
 import platform
+import distro
 import urllib.request, urllib.parse, urllib.error
 
 import shutil

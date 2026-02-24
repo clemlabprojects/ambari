@@ -22,7 +22,7 @@ import tempfile
 from resource_management import *
 from stacks.utils.RMFTestCase import *
 from mock.mock import patch
-from mock.mock import MagicMock
+from mock.mock import MagicMock, ANY
 
 @patch.object(tempfile, "gettempdir", new=MagicMock(return_value="/tmp"))
 @patch("platform.linux_distribution", new = MagicMock(return_value="Linux"))
@@ -145,12 +145,15 @@ class TestKnoxGateway(RMFTestCase):
                        target = RMFTestCase.TARGET_COMMON_SERVICES)
 
     self.assertResourceCalled('Execute', ('tar',
-     '-zchf',
-     '/tmp/knox-upgrade-backup/knox-data-backup.tar',
+     '-h',
+     '-czf',
+     '-',
      '-C',
-     '/usr/hdp/current/knox-server/data',
+     '/usr/odp/current/knox-server/data',
      '.'),
         sudo = True, tries = 3, try_sleep = 1,
+        stdout = ANY,
+        stderr = ANY,
     )
     self.assertResourceCalled('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'knox-server', '2.2.1.0-3242'),
         sudo = True,
@@ -184,12 +187,15 @@ class TestKnoxGateway(RMFTestCase):
                        mocks_dict = mocks_dict)
 
     self.assertResourceCalled('Execute', ('tar',
-     '-zchf',
-     '/tmp/knox-upgrade-backup/knox-data-backup.tar',
+     '-h',
+     '-czf',
+     '-',
      '-C',
-     '/usr/hdp/current/knox-server/data',
+     '/usr/odp/current/knox-server/data',
      '.'),
         sudo = True,  tries = 3, try_sleep = 1,
+        stdout = ANY,
+        stderr = ANY,
     )
     self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'knox-server', version),sudo = True)
     self.assertNoMoreResources()
@@ -242,12 +248,15 @@ class TestKnoxGateway(RMFTestCase):
                        mocks_dict = mocks_dict)
 
     self.assertResourceCalled('Execute', ('tar',
-     '-zchf',
-     '/tmp/knox-upgrade-backup/knox-data-backup.tar',
+     '-h',
+     '-czf',
+     '-',
      '-C',
-     '/usr/hdp/current/knox-server/data',
+     '/usr/odp/current/knox-server/data',
      '.'),
         sudo = True, tries = 3, try_sleep = 1,
+        stdout = ANY,
+        stderr = ANY,
     )
     self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'knox-server', version),sudo = True)
 
@@ -304,12 +313,15 @@ class TestKnoxGateway(RMFTestCase):
                        mocks_dict = mocks_dict)
 
     self.assertResourceCalled('Execute', ('tar',
-     '-zchf',
-     '/tmp/knox-upgrade-backup/knox-data-backup.tar',
+     '-h',
+     '-czf',
+     '-',
      '-C',
-     "/usr/hdp/current/knox-server/data",
+     "/usr/odp/current/knox-server/data",
      '.'),
         sudo = True,  tries = 3, try_sleep = 1,
+        stdout = ANY,
+        stderr = ANY,
     )
 
     '''
@@ -452,4 +464,3 @@ class TestKnoxGateway(RMFTestCase):
                               user = u'knox',)
     self.assertTrue(islink_mock.called)
     self.assertNoMoreResources()
-

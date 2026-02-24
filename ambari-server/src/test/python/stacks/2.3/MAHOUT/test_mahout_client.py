@@ -111,5 +111,5 @@ class TestMahoutClient(RMFTestCase):
 
     import sys
 
-    self.assertEquals("/usr/hdp/2.3.0.0-1234/hadoop/conf",
+    self.assertEqual("/usr/hdp/2.3.0.0-1234/hadoop/conf",
       sys.modules["params"].hadoop_conf_dir)

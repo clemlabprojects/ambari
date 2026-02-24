@@ -31,7 +31,6 @@ import org.apache.ambari.server.state.RepositoryType;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
-import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.repository.ClusterVersionSummary;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
@@ -82,15 +81,7 @@ public class HiveMultipleMetastoreCheckTest {
     Configuration config = Mockito.mock(Configuration.class);
     m_check.config = config;
 
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("1.0.0.0-1234");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "1.0"));
-
     m_services.clear();
-
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   /**
@@ -102,9 +93,9 @@ public class HiveMultipleMetastoreCheckTest {
   public void testIsApplicable() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
 
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
+    mockRepositoryForServices();
+
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
-    Mockito.when(cluster.getServices()).thenReturn(m_services);
 
     m_services.put("HDFS", Mockito.mock(Service.class));
 
@@ -124,11 +115,15 @@ public class HiveMultipleMetastoreCheckTest {
       }
     };
 
-    Mockito.when(repositoryVersionDAO.findByStackNameAndVersion(Mockito.anyString(),
-        Mockito.anyString())).thenReturn(m_repositoryVersion);
-
     // HIVE installed
     Assert.assertTrue(m_check.isApplicable(request));
+  }
+
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   /**
@@ -143,7 +138,6 @@ public class HiveMultipleMetastoreCheckTest {
     Service hive = Mockito.mock(Service.class);
     ServiceComponent metastore = Mockito.mock(ServiceComponent.class);
 
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
     Mockito.when(cluster.getService("HIVE")).thenReturn(hive);
 
@@ -178,7 +172,6 @@ public class HiveMultipleMetastoreCheckTest {
 
     failedOnExpected.add("HIVE");
 
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
     Mockito.when(cluster.getService("HIVE")).thenReturn(hive);
     Mockito.when(hive.getServiceComponent("HIVE_METASTORE")).thenReturn(metastore);

@@ -100,18 +100,12 @@ public class ServicesNamenodeTruncateCheckTest {
       }
     };
 
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("HDP-2.2.0.0");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.2.0"));
-
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
 
   @Test
   public void testIsApplicable() throws Exception {
+    mockRepositoryForServices();
 
     PrereqCheckRequest checkRequest = new PrereqCheckRequest("c1");
     checkRequest.setSourceStackId(new StackId("HDP", "2.2"));
@@ -131,8 +125,6 @@ public class ServicesNamenodeTruncateCheckTest {
     m_configMap.put("dfs.allow.truncate", "true");
     request.setSourceStackId(new StackId("HDP-2.2.4.2"));
 
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.2.8.4");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.2.8.4"));
     request.setTargetRepositoryVersion(m_repositoryVersion);
 
     check = new PrerequisiteCheck(null, null);
@@ -148,8 +140,6 @@ public class ServicesNamenodeTruncateCheckTest {
     m_configMap.put("dfs.allow.truncate", "true");
     request.setSourceStackId(new StackId("HDP-2.2.4.2"));
 
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.3.8.4");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.3.8.4"));
     request.setTargetRepositoryVersion(m_repositoryVersion);
 
     check = new PrerequisiteCheck(null, null);
@@ -160,5 +150,12 @@ public class ServicesNamenodeTruncateCheckTest {
     check = new PrerequisiteCheck(null, null);
     m_check.perform(check, request);
     assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+  }
+
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 }

@@ -83,6 +83,8 @@ public class HostsRepositoryVersionCheckTest {
 
   @Test
   public void testIsApplicable() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(org.apache.ambari.server.state.RepositoryType.STANDARD);
+
     final PrereqCheckRequest request = new PrereqCheckRequest("cluster");
     request.setTargetRepositoryVersion(m_repositoryVersion);
     HostsRepositoryVersionCheck hrvc = new HostsRepositoryVersionCheck();
@@ -147,6 +149,7 @@ public class HostsRepositoryVersionCheckTest {
 
     final RepositoryVersionEntity repositoryVersion = new RepositoryVersionEntity();
     repositoryVersion.setStack(stackEntity);
+    repositoryVersion.setVersion("2.0.6.0");
     
     
 

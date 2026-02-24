@@ -21,44 +21,32 @@ import com.google.gson.Gson;
 import junit.framework.Assert;
 import org.apache.commons.io.IOUtils;
 import org.apache.curator.CuratorZookeeperClient;
-import org.apache.curator.retry.BoundedExponentialBackoffRetry;
+import org.apache.curator.RetryPolicy;
 import org.apache.hadoop.metrics2.sink.timeline.AbstractTimelineMetricsSink;
 import org.apache.zookeeper.ZooKeeper;
-import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.powermock.api.easymock.PowerMock;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.expectLastCall;
-import static org.powermock.api.easymock.PowerMock.createNiceMock;
-import static org.powermock.api.easymock.PowerMock.expectNew;
-import static org.powermock.api.easymock.PowerMock.replayAll;
-import static org.powermock.api.easymock.PowerMock.verifyAll;
+import static org.easymock.EasyMock.createMock;
+import static org.easymock.EasyMock.createNiceMock;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({AbstractTimelineMetricsSink.class, URL.class, HttpURLConnection.class, MetricCollectorHAHelper.class})
 public class MetricCollectorHATest {
 
   @Test
   public void findCollectorUsingZKTest() throws Exception {
     InputStream is = createNiceMock(InputStream.class);
     HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
-    URL url = createNiceMock(URL.class);
     MetricCollectorHAHelper haHelper = createNiceMock(MetricCollectorHAHelper.class);
 
-    expectNew(URL.class, "http://localhost1:2181/ws/v1/timeline/metrics/livenodes").andReturn(url).anyTimes();
-    expectNew(URL.class, "http://localhost2:2181/ws/v1/timeline/metrics/livenodes").andReturn(url).anyTimes();
-    expect(url.openConnection()).andReturn(connection).anyTimes();
     expect(connection.getInputStream()).andReturn(is).anyTimes();
     expect(connection.getResponseCode()).andThrow(new IOException()).anyTimes();
     expect(haHelper.findLiveCollectorHostsFromZNode()).andReturn(
@@ -67,13 +55,13 @@ public class MetricCollectorHATest {
         add("h3");
       }});
 
-    replayAll();
-    TestTimelineMetricsSink sink = new TestTimelineMetricsSink(haHelper);
+    replay(connection, is, haHelper);
+    TestTimelineMetricsSink sink = new TestTimelineMetricsSink(haHelper, connection);
     sink.init();
 
     String host = sink.findPreferredCollectHost();
 
-    verifyAll();
+    verify(connection, is, haHelper);
 
     Assert.assertNotNull(host);
     Assert.assertEquals("h2", host);
@@ -83,14 +71,9 @@ public class MetricCollectorHATest {
 
   @Test
   public void testEmbeddedModeCollectorZK() throws Exception {
-
-
-    BoundedExponentialBackoffRetry retryPolicyMock = PowerMock.createMock(BoundedExponentialBackoffRetry.class);
-    expectNew(BoundedExponentialBackoffRetry.class, 1000, 10000, 1).andReturn(retryPolicyMock);
-
-    CuratorZookeeperClient clientMock = PowerMock.createMock(CuratorZookeeperClient.class);
-    expectNew(CuratorZookeeperClient.class, "zkQ", 10000, 2000, null, retryPolicyMock)
-      .andReturn(clientMock);
+    RetryPolicy retryPolicyMock = createNiceMock(RetryPolicy.class);
+    CuratorZookeeperClient clientMock = createMock(CuratorZookeeperClient.class);
+    ZooKeeper zkMock = createMock(ZooKeeper.class);
 
     clientMock.start();
     expectLastCall().once();
@@ -98,22 +81,22 @@ public class MetricCollectorHATest {
     clientMock.close();
     expectLastCall().once();
 
-    ZooKeeper zkMock = PowerMock.createMock(ZooKeeper.class);
     expect(clientMock.getZooKeeper()).andReturn(zkMock).once();
-
     expect(zkMock.exists("/ambari-metrics-cluster", false)).andReturn(null).once();
 
-    replayAll();
-    MetricCollectorHAHelper metricCollectorHAHelper = new MetricCollectorHAHelper("zkQ", 1, 1000);
+    TestMetricCollectorHAHelper metricCollectorHAHelper = new TestMetricCollectorHAHelper("zkQ", 1, 1000);
+    metricCollectorHAHelper.setRetryPolicy(retryPolicyMock);
+    metricCollectorHAHelper.setClient(clientMock);
+
+    replay(clientMock, zkMock, retryPolicyMock);
     Collection<String> liveInstances = metricCollectorHAHelper.findLiveCollectorHostsFromZNode();
-    verifyAll();
+    verify(clientMock, zkMock, retryPolicyMock);
     Assert.assertTrue(liveInstances.isEmpty());
   }
 
   @Test
   public void findCollectorUsingKnownCollectorTest() throws Exception {
     HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
-    URL url = createNiceMock(URL.class);
     MetricCollectorHAHelper haHelper = createNiceMock(MetricCollectorHAHelper.class);
 
     Gson gson = new Gson();
@@ -123,28 +106,55 @@ public class MetricCollectorHATest {
     output.add("h3");
     InputStream is = IOUtils.toInputStream(gson.toJson(output));
 
-    expectNew(URL.class, "http://localhost1:2181/ws/v1/timeline/metrics/livenodes").andReturn(url).anyTimes();
-    expectNew(URL.class, "http://localhost2:2181/ws/v1/timeline/metrics/livenodes").andReturn(url).anyTimes();
-    expect(url.openConnection()).andReturn(connection).anyTimes();
     expect(connection.getInputStream()).andReturn(is).anyTimes();
     expect(connection.getResponseCode()).andReturn(200).anyTimes();
 
-    replayAll();
-    TestTimelineMetricsSink sink = new TestTimelineMetricsSink(haHelper);
+    replay(connection, haHelper);
+    TestTimelineMetricsSink sink = new TestTimelineMetricsSink(haHelper, connection);
     sink.init();
 
     String host = sink.findPreferredCollectHost();
     Assert.assertNotNull(host);
     Assert.assertEquals("h3", host);
 
-    verifyAll();
+    verify(connection, haHelper);
+  }
+
+  private class TestMetricCollectorHAHelper extends MetricCollectorHAHelper {
+    private RetryPolicy retryPolicy;
+    private CuratorZookeeperClient client;
+
+    TestMetricCollectorHAHelper(String zookeeperConnectionURL, int tryCount, int sleepMsBetweenRetries) {
+      super(zookeeperConnectionURL, tryCount, sleepMsBetweenRetries);
+    }
+
+    void setRetryPolicy(RetryPolicy retryPolicy) {
+      this.retryPolicy = retryPolicy;
+    }
+
+    void setClient(CuratorZookeeperClient client) {
+      this.client = client;
+    }
+
+    @Override
+    protected RetryPolicy createRetryPolicy(int baseSleepMs, int maxSleepMs, int maxRetries) {
+      return retryPolicy;
+    }
+
+    @Override
+    protected CuratorZookeeperClient createCuratorZookeeperClient(String zkConnectionUrl,
+      int sessionTimeoutMs, int connectionTimeoutMs, RetryPolicy retryPolicy) {
+      return client;
+    }
   }
 
   private class TestTimelineMetricsSink extends AbstractTimelineMetricsSink {
     MetricCollectorHAHelper testHelper;
+    private final HttpURLConnection connection;
 
-    TestTimelineMetricsSink(MetricCollectorHAHelper haHelper) {
+    TestTimelineMetricsSink(MetricCollectorHAHelper haHelper, HttpURLConnection connection) {
       testHelper = haHelper;
+      this.connection = connection;
     }
 
     @Override
@@ -156,6 +166,11 @@ public class MetricCollectorHATest {
     @Override
     protected synchronized String findPreferredCollectHost() {
       return super.findPreferredCollectHost();
+    }
+
+    @Override
+    protected HttpURLConnection getConnection(String spec) {
+      return connection;
     }
 
     @Override

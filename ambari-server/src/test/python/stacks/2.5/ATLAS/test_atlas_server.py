@@ -145,7 +145,7 @@ class TestAtlasServer(RMFTestCase):
                               mode=0o644,
     )
     self.assertResourceCalled('File', '/var/log/ambari-infra-solr-client/solr-client.log',
-                              mode=0664,
+                              mode=0o664,
                               content = ''
     )
 

@@ -276,7 +276,7 @@ public class VersionDefinitionResourceProviderTest {
         VersionDefinitionResourceProvider.SHOW_AVAILABLE).equals("true").toPredicate();
 
     Set<Resource> results = versionProvider.getResources(getRequest, predicate);
-    Assert.assertEquals(3, results.size());
+    Assert.assertEquals(4, results.size());
 
     boolean found1 = false;
     boolean found2 = false;

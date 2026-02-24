@@ -17,6 +17,9 @@
  */
 
 module.exports = function(config) {
+  const runningAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const chromeBrowsers = runningAsRoot ? ['ChromeHeadlessNoSandbox'] : ['ChromeHeadless'];
+
   config.set({
 
     // base path, that will be used to resolve files and exclude
@@ -177,6 +180,13 @@ reporters: ['progress', 'coverage'],
     autoWatch: true,
 
 
+    customLaunchers: {
+      ChromeHeadlessNoSandbox: {
+        base: 'ChromeHeadless',
+        flags: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+      }
+    },
+
     // Start these browsers, currently available:
     // - Chrome
     // - ChromeCanary
@@ -184,7 +194,7 @@ reporters: ['progress', 'coverage'],
     // - Opera (has to be installed with `npm install karma-opera-launcher`)
     // - Safari (only Mac; has to be installed with `npm install karma-safari-launcher`)
     // - IE (only Windows; has to be installed with `npm install karma-ie-launcher`)
-    browsers: ['ChromeHeadless'],
+    browsers: chromeBrowsers,
 
     // If browser does not capture in given timeout [ms], kill it
     captureTimeout: 60000,

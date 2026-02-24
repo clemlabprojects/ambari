@@ -131,10 +131,13 @@ def get_ulimit_open_files(properties):
   return open_files
 
 @OsFamilyFuncImpl(OSConst.WINSRV_FAMILY)
-def generate_child_process_param_list(ambari_user, java_exe, class_path, debug_start, suspend_mode):
+def generate_child_process_param_list(ambari_user, java_exe, class_path, debug_start, suspend_mode, extra_jvm_args=""):
   conf_dir = class_path
   if class_path.find(' ') != -1:
     conf_dir = '"' + class_path + '"'
+  jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
+  if extra_jvm_args:
+    jvm_args += extra_jvm_args
   command_base = SERVER_START_CMD_DEBUG_WINDOWS if debug_start else SERVER_START_CMD_WINDOWS
   command = command_base.format(
       java_exe,
@@ -146,7 +149,7 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path, debug_s
 
 @OsFamilyFuncImpl(OsFamilyImpl.DEFAULT)
 def generate_child_process_param_list(ambari_user, java_exe, class_path,
-                                      debug_start, suspend_mode):
+                                      debug_start, suspend_mode, extra_jvm_args=""):
   from ambari_commons.os_linux import ULIMIT_CMD
 
   properties = get_ambari_properties()
@@ -214,6 +217,9 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
   else:
     exception = FatalException(-1, JDK_VERSION_NOT_SUPPORTED.format(JDK_VERSION))
     raise exception
+
+  if extra_jvm_args:
+    jvm_args += extra_jvm_args
 
   if not IS_FOREGROUND:
     SERVER_START_CMD += " &"
@@ -409,9 +415,9 @@ def server_process_main(options, scmStatus=None):
   environ = generate_env(options, ambari_user, current_user)
   class_path = serverClassPath.get_full_ambari_classpath_escaped_for_shell(validate_classpath=True)
 
+  extra_jvm_args = ""
   if options.skip_database_check:
-    global jvm_args
-    jvm_args += " -DskipDatabaseConsistencyCheck"
+    extra_jvm_args += " -DskipDatabaseConsistencyCheck"
     print("Ambari Server is starting with the database consistency check skipped. Do not make any changes to your cluster " \
           "topology or perform a cluster upgrade until you correct the database consistency issues. See \"" \
           + configDefaults.DB_CHECK_LOG + "\" for more details on the consistency issues.")
@@ -419,11 +425,11 @@ def server_process_main(options, scmStatus=None):
   else:
     print("Ambari database consistency check started...")
     if options.fix_database_consistency:
-      jvm_args += " -DfixDatabaseConsistency"
+      extra_jvm_args += " -DfixDatabaseConsistency"
     properties.process_pair(CHECK_DATABASE_SKIPPED_PROPERTY, "false")
 
   update_properties(properties)
-  param_list = generate_child_process_param_list(ambari_user, java_exe, class_path, debug_start, suspend_mode)
+  param_list = generate_child_process_param_list(ambari_user, java_exe, class_path, debug_start, suspend_mode, extra_jvm_args)
 
   # The launched shell process and sub-processes should have a group id that
   # is different from the parent.

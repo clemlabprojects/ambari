@@ -29,6 +29,14 @@ import pprint
 import itertools
 from mock.mock import MagicMock, patch
 import re
+import distro
+import platform
+
+if not hasattr(platform, "linux_distribution"):
+  # Provide a shim for tests that still patch platform.linux_distribution.
+  def _linux_distribution(*args, **kwargs):
+    return distro.linux_distribution()
+  platform.linux_distribution = _linux_distribution
 
 with patch("distro.linux_distribution", return_value = ('Suse','11','Final')):
   with patch("os.geteuid", return_value=45000):  # required to mock sudo and run tests with right scenario
@@ -108,6 +116,9 @@ class RMFTestCase(TestCase):
     if "stack_packages" not in self.config_dict["configurations"]["cluster-env"]:
       self.config_dict["configurations"]["cluster-env"]["stack_packages"] = RMFTestCase.get_stack_packages()
 
+    if "stack_name" not in self.config_dict["configurations"]["cluster-env"]:
+      self.config_dict["configurations"]["cluster-env"]["stack_name"] = "HDP"
+
     if config_overrides:
       for key, value in config_overrides.items():
         self.config_dict[key] = value
@@ -122,7 +133,13 @@ class RMFTestCase(TestCase):
     # get method to execute
     try:
       with patch.object(distro, 'linux_distribution', return_value=os_type):
-        script_module = imp.load_source(classname, script_path)
+        module_name = classname or os.path.splitext(os.path.basename(script_path))[0]
+        spec = importlib.util.spec_from_file_location(module_name, script_path)
+        if spec is None or spec.loader is None:
+          raise RuntimeError("Cannot load module spec for %s" % script_path)
+        script_module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = script_module
+        spec.loader.exec_module(script_module)
         Script.instance = None
         script_class_inst = RMFTestCase._get_attr(script_module, classname)()
         script_class_inst.log_out_files = log_out_files
@@ -130,7 +147,7 @@ class RMFTestCase(TestCase):
         Script.repository_util = RepositoryUtil(self.config_dict, set())
         method = RMFTestCase._get_attr(script_class_inst, command)
     except IOError as err:
-      raise RuntimeError("Cannot load class %s from %s: %s" % (classname, norm_path, err.message))
+      raise RuntimeError("Cannot load class %s from %s: %s" % (classname, norm_path, str(err)))
     
     # Reload params import, otherwise it won't change properties during next import
     if 'params' in sys.modules:  
@@ -173,7 +190,11 @@ class RMFTestCase(TestCase):
     :param config_file:
     :return:
     """
-    config_file_path = os.path.join(configs_path, config_file)
+    if os.path.isabs(config_file):
+      config_file_path = config_file
+    else:
+      config_file_path = os.path.join(configs_path, config_file)
+    config_file_path = os.path.normpath(config_file_path)
 
     try:
       with open(config_file_path, "r") as f:
@@ -325,7 +346,7 @@ class RMFTestCase(TestCase):
         self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "The specified resource was not found in the call stack.")
 
         # take the next resource and try it out
-        resource = list(RMFTestCase.env.resource_list).pop(0)
+        resource = RMFTestCase.env.resource_list.pop(0)
         try:
           self.assertEqual(resource_type, resource.__class__.__name__)
           self.assertEqual(name, resource.name)
@@ -337,7 +358,7 @@ class RMFTestCase(TestCase):
   def assertResourceCalled(self, resource_type, name, **kwargs):
     with patch.object(UnknownConfiguration, '__getattr__', return_value=lambda: "UnknownConfiguration()"):
       self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "There were no more resources executed!")
-      resource = list(RMFTestCase.env.resource_list).pop(0)
+      resource = RMFTestCase.env.resource_list.pop(0)
 
       self.assertEqual(resource_type, resource.__class__.__name__)
       self.assertEqual(name, resource.name)
@@ -350,14 +371,15 @@ class RMFTestCase(TestCase):
       
       self.assertRegex(resource.__class__.__name__, resource_type)
       self.assertRegex(resource.name, name)
-      for key in set(resource.arguments.keys()) | set(kwargs.keys()):
+      for key, expected_value in kwargs.items():
+        if expected_value is None or expected_value == "":
+          continue
         resource_value = resource.arguments.get(key, '')
-        actual_value = kwargs.get(key, '')
         if self.isstring(resource_value):
-          self.assertRegex(resource_value, actual_value,
-                                   msg="Key '%s': '%s' does not match with '%s'" % (key, resource_value, actual_value))
-        else: # check only the type of a custom object
-          self.assertEqual(resource_value.__class__.__name__, actual_value.__class__.__name__)
+          self.assertRegex(resource_value, expected_value,
+                           msg="Key '%s': '%s' does not match with '%s'" % (key, resource_value, expected_value))
+        else:
+          self.assertEqual(resource_value.__class__.__name__, expected_value.__class__.__name__)
 
   def assertRegexpMatches(self, value, pattern, msg=None):
     if not re.match(pattern, value):
@@ -408,7 +430,7 @@ class DownloadSource():
 
 class UnknownConfigurationMock():
   def __eq__(self, other):
-    return isinstance(other, UnknownConfiguration)
+    return isinstance(other, UnknownConfiguration) or other.__class__.__name__ == "UnknownConfiguration"
 
   def __ne__(self, other):
     return not self.__eq__(other)
@@ -455,4 +477,3 @@ def experimental_mock(*args, **kwargs):
       return function(*args, **kwargs)
     return wrapper
   return decorator
-

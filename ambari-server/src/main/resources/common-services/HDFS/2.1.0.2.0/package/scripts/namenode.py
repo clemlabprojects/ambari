@@ -277,7 +277,8 @@ class NameNodeDefault(NameNode):
       # to generate a (relatively) unique cache filename so that we can use it as needed.
       # TODO: params.tmp_dir=/var/lib/ambari-agent/tmp. However hdfs user doesn't have access to this path.
       # TODO: Hence using /tmp
-      ccache_file_name = "hdfs_rebalance_cc_" + HASH_ALGORITHM(format("{hdfs_principal_name}|{hdfs_user_keytab}")).hexdigest()
+      hash_input = format("{hdfs_principal_name}|{hdfs_user_keytab}").encode("utf-8")
+      ccache_file_name = "hdfs_rebalance_cc_" + HASH_ALGORITHM(hash_input).hexdigest()
       ccache_file_path = os.path.join(tempfile.gettempdir(), ccache_file_name)
       rebalance_env['KRB5CCNAME'] = ccache_file_path
 

@@ -425,9 +425,9 @@ public class AlertTargetResourceProvider extends
       entity.setNotificationType(notificationType);
     }
 
-    String properties = s_gson.toJson(extractProperties(requestMap));
-    if (!StringUtils.isEmpty(properties)) {
-      entity.setProperties(properties);
+    Map<String, Object> properties = extractProperties(requestMap);
+    if (!properties.isEmpty()) {
+      entity.setProperties(s_gson.toJson(properties));
     }
 
     // a null alert state implies that the key was not set and no update

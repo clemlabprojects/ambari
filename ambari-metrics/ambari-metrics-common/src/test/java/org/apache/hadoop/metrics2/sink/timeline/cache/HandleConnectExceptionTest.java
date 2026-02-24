@@ -20,7 +20,6 @@ package org.apache.hadoop.metrics2.sink.timeline.cache;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -30,36 +29,26 @@ import org.apache.hadoop.metrics2.sink.timeline.UnableToConnectException;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
-
-import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.expect;
-import static org.powermock.api.easymock.PowerMock.createNiceMock;
-import static org.powermock.api.easymock.PowerMock.expectNew;
-import static org.powermock.api.easymock.PowerMock.replayAll;
+import static org.easymock.EasyMock.replay;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({AbstractTimelineMetricsSink.class, URL.class, HttpURLConnection.class})
 public class HandleConnectExceptionTest {
   private static final String COLLECTOR_URL = "collector";
   private TestTimelineMetricsSink sink;
+  private HttpURLConnection connection;
 
   @Before
   public void init(){
     sink = new TestTimelineMetricsSink();
     OutputStream os = createNiceMock(OutputStream.class);
-    HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
-    URL url = createNiceMock(URL.class);
+    connection = createNiceMock(HttpURLConnection.class);
     AbstractTimelineMetricsSink.NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS = 2;
     try {
-      expectNew(URL.class, anyString()).andReturn(url).anyTimes();
-      expect(url.openConnection()).andReturn(connection).anyTimes();
       expect(connection.getOutputStream()).andReturn(os).anyTimes();
       expect(connection.getResponseCode()).andThrow(new IOException()).anyTimes();
 
-      replayAll();
+      replay(connection, os);
     } catch (Exception e) {
       //no-op
     }
@@ -159,6 +148,11 @@ public class HandleConnectExceptionTest {
     @Override
     protected synchronized String findPreferredCollectHost() {
       return "localhost";
+    }
+
+    @Override
+    protected HttpURLConnection getConnection(String spec) {
+      return connection;
     }
 
   }

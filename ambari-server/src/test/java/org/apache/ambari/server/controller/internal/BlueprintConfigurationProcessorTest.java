@@ -819,7 +819,7 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
     BlueprintConfigurationProcessor configProcessor = new BlueprintConfigurationProcessor(topology);
     configProcessor.doUpdateForBlueprintExport();
 
-    assertTrue(properties.get("hive-site").containsKey("javax.jdo.option.ConnectionURL"));
+    assertFalse(properties.get("hive-site").containsKey("javax.jdo.option.ConnectionURL"));
   }
 
   @Test
@@ -1669,7 +1669,7 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
     assertEquals("hive property not properly exported",
       createExportedAddress(expectedPortNum, expectedHostGroupName), hiveSiteProperties.get("javax.jdo.option.ConnectionURL"));
     assertEquals("hive property not properly exported",
-            expectedHostName + "," + expectedHostNameTwo,
+      createExportedHostName(expectedHostGroupName) + "," + createExportedHostName(expectedHostGroupNameTwo),
       webHCatSiteProperties.get("templeton.hive.properties"));
 
     assertEquals("hive property not properly exported",
@@ -1759,14 +1759,12 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
     // call top-level export method
     configProcessor.doUpdateForBlueprintExport();
 
-    System.out.println("RWN: exported value of hive.metastore.uris = " + hiveSiteProperties.get("hive.metastore.uris"));
-
     assertEquals("hive property not properly exported",
       "thrift://" + createExportedAddress(expectedPortNum, expectedHostGroupName) + "," + "thrift://" + createExportedAddress(expectedPortNum, expectedHostGroupNameTwo), hiveSiteProperties.get("hive.metastore.uris"));
     assertEquals("hive property not properly exported",
       createExportedAddress(expectedPortNum, expectedHostGroupName), hiveSiteProperties.get("javax.jdo.option.ConnectionURL"));
     assertEquals("hive property not properly exported",
-      expectedHostName + "," + expectedHostNameTwo,
+      createExportedHostName(expectedHostGroupName) + "," + createExportedHostName(expectedHostGroupNameTwo),
       webHCatSiteProperties.get("templeton.hive.properties"));
 
     assertEquals("hive property not properly exported",
@@ -2162,7 +2160,7 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
     configProperties.put("storm-site", properties);
 
     // setup properties that include host information including undefined host properties
-    properties.put("storm.zookeeper.servers", expectedHostName);
+    properties.put("storm.zookeeper.servers", "['" + expectedHostName + "']");
     properties.put("nimbus.childopts", "undefined");
     properties.put("worker.childopts", "some other info, undefined, more info");
 
@@ -7463,6 +7461,37 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
   }
 
   @Test
+  public void testKafkaAmsMetricReporters() throws Exception {
+    Map<String, Map<String, String>> properties = new HashMap<>();
+
+    Map<String, String> stormSite = new HashMap<>();
+    stormSite.put("metric.reporters", "");
+    properties.put("kafka-broker", stormSite);
+
+    Map<String, Map<String, String>> parentProperties = new HashMap<>();
+    Configuration parentClusterConfig = new Configuration(parentProperties,
+      emptyMap());
+    Configuration clusterConfig = new Configuration(properties,
+      emptyMap(), parentClusterConfig);
+
+    Collection<String> hgComponents1 = new HashSet<>();
+    hgComponents1.add("METRICS_COLLECTOR");
+    hgComponents1.add("KAFKA_BROKER");
+    TestHostGroup group1 = new TestHostGroup("group1", hgComponents1, Collections.singleton("host1"));
+
+    Collection<TestHostGroup> hostGroups = Collections.singletonList(group1);
+
+    ClusterTopology topology = createClusterTopology(bp, clusterConfig, hostGroups);
+    BlueprintConfigurationProcessor configProcessor = new BlueprintConfigurationProcessor(topology);
+
+    configProcessor.doUpdateForClusterCreate();
+
+    assertEquals("org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter",
+      clusterConfig.getPropertyValue("kafka-broker", "metric.reporters"));
+
+  }
+
+  @Test
   public void testKafkaAmsPropertiesMultipleReporters() throws Exception {
     Map<String, Map<String, String>> properties = new HashMap<>();
 
@@ -7491,6 +7520,37 @@ public class BlueprintConfigurationProcessorTest extends EasyMockSupport {
 
     assertEquals("user.Reporter,org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter",
       clusterConfig.getPropertyValue("kafka-broker", "kafka.metrics.reporters"));
+
+  }
+
+  @Test
+  public void testKafkaAmsMetricReportersMultipleReporters() throws Exception {
+    Map<String, Map<String, String>> properties = new HashMap<>();
+
+    Map<String, String> stormSite = new HashMap<>();
+    stormSite.put("metric.reporters", "user.Reporter");
+    properties.put("kafka-broker", stormSite);
+
+    Map<String, Map<String, String>> parentProperties = new HashMap<>();
+    Configuration parentClusterConfig = new Configuration(parentProperties,
+      emptyMap());
+    Configuration clusterConfig = new Configuration(properties,
+      emptyMap(), parentClusterConfig);
+
+    Collection<String> hgComponents1 = new HashSet<>();
+    hgComponents1.add("METRICS_COLLECTOR");
+    hgComponents1.add("KAFKA_BROKER");
+    TestHostGroup group1 = new TestHostGroup("group1", hgComponents1, Collections.singleton("host1"));
+
+    Collection<TestHostGroup> hostGroups = Collections.singletonList(group1);
+
+    ClusterTopology topology = createClusterTopology(bp, clusterConfig, hostGroups);
+    BlueprintConfigurationProcessor configProcessor = new BlueprintConfigurationProcessor(topology);
+
+    configProcessor.doUpdateForClusterCreate();
+
+    assertEquals("user.Reporter,org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter",
+      clusterConfig.getPropertyValue("kafka-broker", "metric.reporters"));
 
   }
 

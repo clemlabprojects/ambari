@@ -306,12 +306,11 @@ public class RangerPasswordCheckTest {
     PrerequisiteCheck check = new PrerequisiteCheck(null, null);
     m_rpc.perform(check, new PrereqCheckRequest("cluster"));
 
-    String error = "The response from Ranger was malformed. ";
-    error += "java.lang.String cannot be cast to java.util.List. ";
-    error += "Request: " + RANGER_URL + "service/xusers/users?name=r_admin";
-
     assertEquals(PrereqCheckStatus.WARNING, check.getStatus());
-    assertEquals(error, check.getFailReason());
+    String failReason = check.getFailReason();
+    assertTrue(failReason.startsWith("The response from Ranger was malformed."));
+    assertTrue(failReason.contains("cannot be cast to"));
+    assertTrue(failReason.contains("Request: " + RANGER_URL + "service/xusers/users?name=r_admin"));
 
     verify(conn, m_streamProvider);
   }

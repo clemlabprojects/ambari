@@ -209,7 +209,7 @@ class HAWQ200ServiceAdvisor(service_advisor.ServiceAdvisor):
         factor_min = 1
         factor_max = 6
         limit = int(hawq_site["hawq_rm_nvseg_perquery_limit"])
-        factor = limit / numSegments
+        factor = limit // numSegments
         # if too many segments or default limit is too low --> stick with the limit
         if factor < factor_min:
           buckets = limit

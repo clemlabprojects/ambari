@@ -47,15 +47,12 @@ import org.apache.ambari.server.state.stack.PrerequisiteCheck;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 
 import com.google.inject.Provider;
 
@@ -64,8 +61,6 @@ import com.google.inject.Provider;
  * Unit tests for ServicesUpCheck
  *
  */
-@RunWith(PowerMockRunner.class)               // Allow mocking static methods
-@PrepareForTest(HostComponentSummary.class)   // This class has a static method that will be mocked
 public class ServicesUpCheckTest {
   private final Clusters clusters = Mockito.mock(Clusters.class);
   private AmbariMetaInfo ambariMetaInfo = Mockito.mock(AmbariMetaInfo.class);
@@ -113,23 +108,23 @@ public class ServicesUpCheckTest {
 
   @Test
   public void testPerform() throws Exception {
-    PowerMockito.mockStatic(HostComponentSummary.class);
+    try (MockedStatic<HostComponentSummary> hostComponentSummary = Mockito.mockStatic(HostComponentSummary.class)) {
 
-    final ServicesUpCheck servicesUpCheck = new ServicesUpCheck();
-    servicesUpCheck.clustersProvider = new Provider<Clusters>() {
+      final ServicesUpCheck servicesUpCheck = new ServicesUpCheck();
+      servicesUpCheck.clustersProvider = new Provider<Clusters>() {
 
-      @Override
-      public Clusters get() {
-        return clusters;
-      }
-    };
+        @Override
+        public Clusters get() {
+          return clusters;
+        }
+      };
 
-    servicesUpCheck.ambariMetaInfo = new Provider<AmbariMetaInfo>() {
-      @Override
-      public AmbariMetaInfo get() {
-        return ambariMetaInfo;
-      }
-    };
+      servicesUpCheck.ambariMetaInfo = new Provider<AmbariMetaInfo>() {
+        @Override
+        public AmbariMetaInfo get() {
+          return ambariMetaInfo;
+        }
+      };
 
 
     Host host1 = Mockito.mock(Host.class);
@@ -279,12 +274,18 @@ public class ServicesUpCheckTest {
     allHostComponentSummaries.add(hcsMetricsMonitor);
 
     // Mock the static method
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "NAMENODE")).thenReturn(Arrays.asList(hcsNameNode));
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "DATANODE")).thenReturn(Arrays.asList(hcsDataNode1, hcsDataNode2, hcsDataNode3));
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "ZKFC")).thenReturn(Arrays.asList(hcsZKFC));
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("TEZ", "TEZ_CLIENT")).thenReturn(Arrays.asList(hcsTezClient));
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_COLLECTOR")).thenReturn(Arrays.asList(hcsMetricsCollector));
-    Mockito.when(HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_MONITOR")).thenReturn(Arrays.asList(hcsMetricsMonitor));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "NAMENODE"))
+        .thenReturn(Arrays.asList(hcsNameNode));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "DATANODE"))
+        .thenReturn(Arrays.asList(hcsDataNode1, hcsDataNode2, hcsDataNode3));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "ZKFC"))
+        .thenReturn(Arrays.asList(hcsZKFC));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("TEZ", "TEZ_CLIENT"))
+        .thenReturn(Arrays.asList(hcsTezClient));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_COLLECTOR"))
+        .thenReturn(Arrays.asList(hcsMetricsCollector));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_MONITOR"))
+        .thenReturn(Arrays.asList(hcsMetricsMonitor));
 
     // Case 1. Initialize with good values
     for (HostComponentSummary hcs : allHostComponentSummaries) {
@@ -372,5 +373,6 @@ public class ServicesUpCheckTest {
     servicesUpCheck.perform(check, request);
     Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
     Assert.assertFalse(check.getFailedDetail().isEmpty());
+    }
   }
 }

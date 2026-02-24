@@ -3012,7 +3012,8 @@ describe('App.MainAdminStackAndUpgradeController', function() {
     });
 
     it("App.tooltip should be called", function() {
-      controller.addPrecheckMessageTooltip();
+      var localController = App.MainAdminStackAndUpgradeController.create();
+      localController.addPrecheckMessageTooltip();
       expect(App.tooltip.calledOnce).to.be.true;
     });
   });

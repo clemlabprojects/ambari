@@ -3341,6 +3341,10 @@ public class Configuration {
     String javaHome = getProperty(AMBARI_JAVA_HOME);
     Integer javaVersion = -1;
     String versionStr = System.getProperty("ambari.java.version");
+    if (versionStr == null || versionStr.isEmpty()) {
+      // Fall back to the running JVM if no override is provided.
+      versionStr = System.getProperty("java.specification.version");
+    }
 
     if (javaHome != null && !javaHome.isEmpty()) {
       try {
@@ -3369,6 +3373,10 @@ public class Configuration {
       } catch (IOException e) {
         LOG.warn("Unable to determine Java version using 'java --version': {}", e.getMessage());
       }
+    }
+    if (versionStr == null || versionStr.isEmpty()) {
+      LOG.warn("Unable to determine Ambari Java version; defaulting to unsupported.");
+      return -1;
     }
     if (versionStr.startsWith("1.6")) {
       javaVersion =  6;

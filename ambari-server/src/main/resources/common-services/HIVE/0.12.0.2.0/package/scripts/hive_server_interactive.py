@@ -548,7 +548,7 @@ class HiveServerInteractiveDefault(HiveServerInteractive):
       try:
         return self._verify_llap_app_status(llap_app_info, llap_app_name, return_immediately_if_stopped, curr_time)
       except Exception as e:
-        Logger.info(e.message)
+        Logger.info(str(e))
         return False
 
     def get_log_folder(self):

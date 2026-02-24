@@ -4316,6 +4316,7 @@ public class AmbariManagementControllerTest {
     String actionDef2 = getUniqueName();
     String actionDef3 = getUniqueName();
     String actionDef4 = getUniqueName();
+    String actionDef5 = getUniqueName();
 
     controller.getAmbariMetaInfo().addActionDefinition(new ActionDefinition(
         actionDef1, ActionType.SYSTEM, "test,dirName", "", "", "Does file exist",
@@ -4326,7 +4327,7 @@ public class AmbariManagementControllerTest {
         TargetHostType.ANY, Integer.valueOf("100"), null));
 
     controller.getAmbariMetaInfo().addActionDefinition(new ActionDefinition(
-            "update_repo", ActionType.SYSTEM, "", "HDFS", "DATANODE", "Does file exist",
+            actionDef5, ActionType.SYSTEM, "", "HDFS", "DATANODE", "Does file exist",
             TargetHostType.ANY, Integer.valueOf("100"), null));
 
     controller.getAmbariMetaInfo().addActionDefinition(new ActionDefinition(
@@ -10388,5 +10389,4 @@ public class AmbariManagementControllerTest {
         controller, injector, requests, requestProperties, runSmokeTest);
   }
 }
-
 

@@ -92,6 +92,10 @@ public class TimelineMetricsIgniteCache implements TimelineMetricDistributedCach
     IgniteConfiguration igniteConfiguration = new IgniteConfiguration();
     this.metricMetadataManager = metricMetadataManager;
 
+    // Keep consistentId short and deterministic to avoid oversized page-store paths
+    // on hosts with many network interfaces (for example Docker bridges on macOS).
+    igniteConfiguration.setConsistentId(getIgniteConsistentId(timelineMetricConfiguration));
+
     //TODO add config to disable logging
 
     //enable ssl for ignite requests
@@ -170,6 +174,29 @@ public class TimelineMetricsIgniteCache implements TimelineMetricDistributedCach
 
     Ignite igniteNode = Ignition.start(igniteConfiguration);
     igniteCache = igniteNode.getOrCreateCache(cacheConfiguration);
+  }
+
+  private String getIgniteConsistentId(TimelineMetricConfiguration configuration) {
+    String hostPart = "metrics-collector";
+    String portPart = "12001";
+
+    try {
+      hostPart = configuration.getInstanceHostnameFromEnv();
+    } catch (Exception e) {
+      LOG.warn("Unable to resolve AMS instance hostname for Ignite consistentId, using default.", e);
+    }
+
+    try {
+      portPart = configuration.getInstancePort();
+    } catch (Exception e) {
+      LOG.warn("Unable to resolve AMS instance port for Ignite consistentId, using default.", e);
+    }
+
+    String consistentId = (hostPart + "_" + portPart).replaceAll("[^a-zA-Z0-9._-]", "_");
+    if (consistentId.length() > 128) {
+      consistentId = consistentId.substring(0, 128);
+    }
+    return consistentId;
   }
 
   /**

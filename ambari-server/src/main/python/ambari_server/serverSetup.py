@@ -464,14 +464,8 @@ class JDKSetup(object):
       if process.returncode != 0:
         err = "Checking JDK version command returned with exit code %s" % process.returncode
         raise FatalException(process.returncode, err)
-      # the output can be 1.8.x or 17.x.x
-      if re.match(r'^1\.8\.\d+(_\d+)?$', out):
-        actualJdkVersion = 8
-      elif re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
-        actualJdkVersion = 11
-      elif re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
-        actualJdkVersion = 17
-      else:
+      actualJdkVersion = parse_java_major_version(out)
+      if actualJdkVersion is None:
         err = 'Error during parsing of JDK version {0}'.format(out)
         raise FatalException(process.returncode, err)
       return actualJdkVersion
@@ -983,8 +977,26 @@ class JDKSetupLinux(JDKSetup):
       err = "Installation of JDK returned exit code %s" % retcode
       raise FatalException(retcode, err)
 
-    jdk_version = re.search(jdk_cfg.reg_exp, out).group(1)
-    java_home_dir = os.path.join(jdk_inst_dir, jdk_version)
+    match = re.search(jdk_cfg.reg_exp, out or "")
+    if not match:
+      match = re.search(r"(jdk[^/\\s]+)", out or "")
+    if match:
+      jdk_version = match.group(1)
+      java_home_dir = os.path.join(jdk_inst_dir, jdk_version)
+    else:
+      # Fallback when archive extraction output is not verbose or is empty.
+      java_home_dir = None
+      try:
+        candidates = [entry for entry in os.listdir(jdk_inst_dir) if re.match(r"jdk", entry)]
+      except OSError:
+        candidates = []
+      if len(candidates) == 1:
+        java_home_dir = os.path.join(jdk_inst_dir, candidates[0])
+      elif re.match(r"jdk", os.path.basename(jdk_inst_dir)):
+        java_home_dir = jdk_inst_dir
+      if not java_home_dir:
+        err = "Unable to determine installed JDK directory from output: {0}".format(out)
+        raise FatalException(1, err)
 
     print("Successfully installed JDK to {0}".format(jdk_inst_dir))
     return (retcode, out, java_home_dir)
@@ -1453,16 +1465,10 @@ def check_ambari_java_version_is_valid(java_home, java_bin, min_version, propert
       err = "Checking JDK version command returned with exit code %s" % process.returncode
       raise FatalException(process.returncode, err)
     else:
-      # the output can be 1.8.x or 17.x.x
-      if    re.match(r'^1\.8\.\d+(_\d+)?$', out):
-              actual_jdk_version = 8
-      elif  re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
-              actual_jdk_version = 11
-      elif  re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
-              actual_jdk_version = 17
-      else:
-          err = 'Error during parsing of JDK version {0}'.format(out)
-          raise FatalException(process.returncode, err)
+      actual_jdk_version = parse_java_major_version(out)
+      if actual_jdk_version is None:
+        err = 'Error during parsing of JDK version {0}'.format(out)
+        raise FatalException(1, err)
       print('JDK version found: {0}'.format(actual_jdk_version))
       if actual_jdk_version < min_version:
         print('Minimum JDK version is {0} for Ambari. Setup JDK again only for Ambari Server.'.format(min_version))
@@ -1479,6 +1485,19 @@ def check_ambari_java_version_is_valid(java_home, java_bin, min_version, propert
     raise FatalException(1, err)
 
   return result
+
+def parse_java_major_version(version_string):
+  version_string = version_string.strip()
+  if not version_string:
+    return None
+  if version_string.startswith("1."):
+    parts = version_string.split(".")
+    if len(parts) > 1 and parts[1].isdigit():
+      return int(parts[1])
+  match = re.match(r'^(\d+)', version_string)
+  if match:
+    return int(match.group(1))
+  return None
 
 # Return JDK Version as configured from /etc/ambari-server/conf/ambari.properties file
 def getJDKVersion(java_home, java_bin):

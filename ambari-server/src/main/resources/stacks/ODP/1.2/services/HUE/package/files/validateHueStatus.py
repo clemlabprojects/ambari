@@ -34,7 +34,7 @@ def main():
     s = socket.create_connection((options.hostname, int(options.port)),timeout=timeout_seconds)
     print "Successfully connected to %s on port %s" % (options.hostname, options.port)
     s.close()
-  except socket.error, e:
+  except socket.error as e:
     print "Connection to %s on port %s failed: %s" % (options.hostname, options.port, e)
     exit(1)
 

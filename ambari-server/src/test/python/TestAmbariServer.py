@@ -19,6 +19,7 @@ import os
 import sys
 from mock.mock import patch, MagicMock, call
 import importlib
+import distro
 
 with patch.object(os, "geteuid", new=MagicMock(return_value=0)):
   from resource_management.core import sudo
@@ -92,7 +93,7 @@ with patch.object(distro, "linux_distribution", return_value = MagicMock(return_
                     PERSISTENCE_TYPE_PROPERTY, JDBC_URL_PROPERTY, get_conf_dir, JDBC_USER_NAME_PROPERTY, JDBC_PASSWORD_PROPERTY, \
                     JDBC_DATABASE_NAME_PROPERTY, OS_TYPE_PROPERTY, validate_jdk, JDBC_POSTGRES_SCHEMA_PROPERTY, \
                     RESOURCES_DIR_PROPERTY, JDBC_RCA_PASSWORD_ALIAS, JDBC_RCA_SCHEMA_PROPERTY, \
-                    SSL_API, SSL_API_PORT, CLIENT_API_PORT_PROPERTY,\
+                    SSL_API, SSL_API_PORT, SSL_TRUSTSTORE_PASSWORD_PROPERTY, SSL_TRUSTSTORE_PASSWORD_ALIAS, CLIENT_API_PORT_PROPERTY,\
                     JDBC_CONNECTION_POOL_TYPE, LDAP_MGR_PASSWORD_PROPERTY, LDAP_MGR_PASSWORD_ALIAS, JDBC_PASSWORD_FILENAME, NR_USER_PROPERTY, SECURITY_KEY_IS_PERSISTED, \
                     SECURITY_IS_ENCRYPTION_ENABLED, PID_DIR_PROPERTY, \
                     SECURITY_MASTER_KEY_LOCATION, SECURITY_KEYS_DIR, store_password_file, \
@@ -101,16 +102,16 @@ with patch.object(distro, "linux_distribution", return_value = MagicMock(return_
                     COMMON_SERVICES_PATH_PROPERTY, WEBAPP_DIR_PROPERTY, SHARED_RESOURCES_DIR, BOOTSTRAP_SCRIPT, \
                     CUSTOM_ACTION_DEFINITIONS, BOOTSTRAP_SETUP_AGENT_SCRIPT, STACKADVISOR_SCRIPT, BOOTSTRAP_DIR_PROPERTY, MPACKS_STAGING_PATH_PROPERTY, STACK_JAVA_VERSION
                   from ambari_server.serverUtils import is_server_runing, refresh_stack_hash
-                  from ambari_server.serverSetup import check_selinux, check_ambari_user, setup_jdbc, SE_STATUS_DISABLED, SE_MODE_ENFORCING, configure_os_settings, \
+                  from ambari_server.serverSetup import check_selinux, check_ambari_user, SE_STATUS_DISABLED, SE_MODE_ENFORCING, configure_os_settings, \
                     download_and_install_jdk, prompt_db_properties, setup, \
                     AmbariUserChecks, JDKSetup, reset, setup_jce_policy, expand_jce_zip_file, check_ambari_java_version_is_valid
-                  from ambari_server.serverUpgrade import upgrade, run_schema_upgrade, move_user_custom_actions, find_and_copy_custom_services
+                  from ambari_server.serverUpgrade import upgrade, run_schema_upgrade, move_user_custom_actions, find_and_copy_custom_services, SCHEMA_UPGRADE_HELPER_CMD
                   from ambari_server.setupHttps import is_valid_https_port, setup_https, import_cert_and_key_action, get_fqdn, \
                     generate_random_string, get_cert_info, COMMON_NAME_ATTR, is_valid_cert_exp, NOT_AFTER_ATTR, NOT_BEFORE_ATTR, \
                     SSL_DATE_FORMAT, import_cert_and_key, is_valid_cert_host, setup_truststore, \
                     SRVR_ONE_WAY_SSL_PORT_PROPERTY, SRVR_TWO_WAY_SSL_PORT_PROPERTY
                   from ambari_server.setupSecurity import adjust_directory_permissions, get_alias_string, get_ldap_event_spec_names, sync_ldap, \
-                    configure_ldap_password, setup_ldap, REGEX_HOSTNAME_PORT, REGEX_TRUE_FALSE, REGEX_ANYTHING, \
+                    configure_ldap_password, setup_ldap, setup_master_key, REGEX_HOSTNAME_PORT, REGEX_TRUE_FALSE, REGEX_ANYTHING, \
                     setup_ambari_krb5_jaas, LDAP_GENERIC, should_query_ldap_type, LdapPropTemplate, LdapDefault, LdapDefaultMap
                   from ambari_server.userInput import get_YN_input, get_choice_string_input, get_validated_string_input, \
                     read_password
@@ -2791,9 +2792,10 @@ class TestAmbariServer(TestCase):
   @patch("ambari_server.serverSetup.get_resources_location")
   @patch("ambari_server.serverSetup.get_ambari_properties")
   @patch("ambari_server.serverSetup.check_ambari_java_version_is_valid")
+  @patch("ambari_server.serverSetup.JDKSetup._configureAmbariJdk")
   @patch("shutil.copyfile")
   @patch("sys.exit")
-  def test_download_jdk(self, exit_mock, copyfile_mock, check_ambari_java_version_is_valid_mock, get_ambari_properties_mock, get_resources_location_mock, get_JAVA_HOME_mock, \
+  def test_download_jdk(self, exit_mock, copyfile_mock, configure_ambari_jdk_mock, check_ambari_java_version_is_valid_mock, get_ambari_properties_mock, get_resources_location_mock, get_JAVA_HOME_mock, \
                         validate_jdk_mock, print_info_msg_mock, get_validated_string_input_mock, update_properties_mock, \
                         run_os_command_mock, get_YN_input_mock, force_download_file_mock, expand_jce_zip_file_mock,
                         adjust_jce_permissions_mock, os_makedirs_mock,
@@ -2805,14 +2807,14 @@ class TestAmbariServer(TestCase):
       res_location = "resources"
 
       p = Properties()
-      p.process_pair("java.releases", "jdk1")
-      p.process_pair("jdk1.desc", "JDK name")
-      p.process_pair("jdk1.url", "http://somewhere/myjdk.exe")
-      p.process_pair("jdk1.dest-file", "myjdk.exe")
-      p.process_pair("jdk1.jcpol-url", "http://somewhere/some-jcpol.zip")
-      p.process_pair("jdk1.jcpol-file", "some-jcpol.zip")
-      p.process_pair("jdk1.home", "C:\\jdk1")
-      p.process_pair("jdk1.re", "(jdk.*)/jre")
+      p.process_pair("java.releases", "jdk1.8")
+      p.process_pair("jdk1.8.desc", "JDK name")
+      p.process_pair("jdk1.8.url", "http://somewhere/myjdk.exe")
+      p.process_pair("jdk1.8.dest-file", "myjdk.exe")
+      p.process_pair("jdk1.8.jcpol-url", "http://somewhere/some-jcpol.zip")
+      p.process_pair("jdk1.8.jcpol-file", "some-jcpol.zip")
+      p.process_pair("jdk1.8.home", "C:\\jdk1")
+      p.process_pair("jdk1.8.re", "(jdk.*)/jre")
       p.process_pair("jdk.download.supported", "true")
       p.process_pair("jce.download.supported", "true")
 
@@ -2827,14 +2829,14 @@ class TestAmbariServer(TestCase):
       res_location = MagicMock()
 
       p = Properties()
-      p.process_pair("java.releases", "jdk1")
-      p.process_pair("jdk1.desc", "JDK name")
-      p.process_pair("jdk1.url", jdk1_url)
-      p.process_pair("jdk1.dest-file", "somewhere.tar.gz")
-      p.process_pair("jdk1.jcpol-url", "http://somewhere/some-jcpol.tar.gz")
-      p.process_pair("jdk1.jcpol-file", "some-jcpol.tar.gz")
-      p.process_pair("jdk1.home", "/jdk1")
-      p.process_pair("jdk1.re", "(jdk.*)/jre")
+      p.process_pair("java.releases", "jdk1.8")
+      p.process_pair("jdk1.8.desc", "JDK name")
+      p.process_pair("jdk1.8.url", jdk1_url)
+      p.process_pair("jdk1.8.dest-file", "somewhere.tar.gz")
+      p.process_pair("jdk1.8.jcpol-url", "http://somewhere/some-jcpol.tar.gz")
+      p.process_pair("jdk1.8.jcpol-file", "some-jcpol.tar.gz")
+      p.process_pair("jdk1.8.home", "/jdk1")
+      p.process_pair("jdk1.8.re", "(jdk.*)/jre")
       p.process_pair("jdk.download.supported", "true")
       p.process_pair("jce.download.supported", "true")
 
@@ -2845,6 +2847,7 @@ class TestAmbariServer(TestCase):
     args = MagicMock()
     args.java_home = "somewhere"
     args.silent = False
+    args.ambari_java_home = None
 
     p, jdk1_url, res_location, pem_side_effect1 = _init_test_jdk_mocks()
 
@@ -2888,7 +2891,7 @@ class TestAmbariServer(TestCase):
     validate_jdk_mock.return_value = False
     path_existsMock.return_value = False
     get_ambari_properties_mock.return_value = p
-    p.removeProp("jdk1.url")
+    p.removeProp("jdk1.8.url")
     try:
       download_and_install_jdk(args)
       self.fail("Should throw exception")
@@ -2898,7 +2901,7 @@ class TestAmbariServer(TestCase):
 
     # Test case: JDK file does not exist, HTTP response does not
     # contain Content-Length
-    p.process_pair("jdk1.url", jdk1_url)
+    p.process_pair("jdk1.8.url", jdk1_url)
     validate_jdk_mock.return_value = False
     path_existsMock.return_value = False
     get_YN_input_mock.return_value = True
@@ -4463,6 +4466,10 @@ class TestAmbariServer(TestCase):
                  wait_for_ui_start_mock, looking_for_pid_mock, stdout_write_mock, stdout_flush_mock,
                  get_is_active_instance_mock):
 
+    jdk_version_patcher = patch("ambari_server_main.getJDKVersion", return_value=17)
+    jdk_version_patcher.start()
+    self.addCleanup(jdk_version_patcher.stop)
+
     def reset_mocks():
       pexistsMock.reset_mock()
       get_is_active_instance_mock.reset_mock()
@@ -4486,6 +4493,7 @@ class TestAmbariServer(TestCase):
       return args
 
     args = reset_mocks()
+    os_environ_mock.__getitem__.side_effect = KeyError
 
     locate_file_mock.side_effect = lambda *args: '/bin/su' if args[0] == 'su' else '/bin/sh'
     f = MagicMock()
@@ -4955,10 +4963,10 @@ class TestAmbariServer(TestCase):
     java_exe_path_mock.return_value = "/usr/lib/java/bin/java"
     run_os_command_mock.return_value = (0, '{"lzo_enabled":"false"}', None)
     get_conf_dir_mock.return_value = '/etc/conf'
-    command = '/usr/lib/java/bin/java -cp /etc/conf' + os.pathsep + 'test' + os.pathsep + 'path12' + \
-              os.pathsep +'/path/to/jdbc.jar ' \
-              'org.apache.ambari.server.upgrade.SchemaUpgradeHelper ' \
-              '> ' + os.sep + 'var' + os.sep + 'log' + os.sep + 'ambari-server' + os.sep + 'ambari-server.out 2>&1'
+    command = SCHEMA_UPGRADE_HELPER_CMD.format(
+      '/usr/lib/java/bin/java',
+      '/etc/conf' + os.pathsep + 'test' + os.pathsep + 'path12' + os.pathsep + '/path/to/jdbc.jar'
+    )
     environ = {}
     generate_env_mock.return_value = environ
     ensure_can_start_under_current_user_mock.return_value = "root"
@@ -4976,7 +4984,9 @@ class TestAmbariServer(TestCase):
     self.assertTrue(generate_env_mock.called)
     self.assertTrue(read_ambari_user_mock.called)
     self.assertTrue(run_os_command_mock.called)
-    run_os_command_mock.assert_called_with(command, env=environ)
+    run_os_command_mock.assert_called_with(command, env=environ,
+                                           stdoutfile=configDefaults.SERVER_UPGRADE_LOG_FILE,
+                                           stderrfile=configDefaults.SERVER_UPGRADE_ERR_FILE)
 
 
   @not_for_platform(PLATFORM_WINDOWS)
@@ -7158,7 +7168,7 @@ class TestAmbariServer(TestCase):
     properties.process_pair(CLIENT_API_PORT_PROPERTY, '8080')
 
     get_ambari_properties_method.return_value = properties
-    input_mock.side_effect = [LDAP_GENERIC, 'a', '3', 'b', 'b', 'hody', 'b', '2', 'false', 'user', 'uid', 'memberof', 'group', 'cn', 'member', 'dn', 'base', 'follow', 'true', 'skip', 'false', 'false', 'admin']
+    input_mock.side_effect = ['admin', 'a', '3', 'b', 'b', 'hody', 'b', '2', 'false', 'user', 'uid', 'group', 'cn', 'member', 'dn', 'base', 'follow', 'true', 'skip', 'false', 'false']
     get_password_mock.side_effect = ['admin']
     set_silent(False)
     get_YN_input_method.return_value = True
@@ -7191,8 +7201,8 @@ class TestAmbariServer(TestCase):
     self.assertEqual(21, input_mock.call_count)
     self.assertEqual(1, get_password_mock.call_count)
     
-    raw_input_mock.reset_mock()
-    raw_input_mock.side_effect = [LDAP_GENERIC, 'a', '3', '', '', 'b', '2', 'false', 'user', 'uid', 'group', 'cn', 'member', 'dn', 'base', 'follow', 'true', 'skip', 'false', 'false', 'admin']
+    input_mock.reset_mock()
+    input_mock.side_effect = ['admin', 'a', '3', '', '', 'b', '2', 'false', 'user', 'uid', 'group', 'cn', 'member', 'dn', 'base', 'follow', 'true', 'skip', 'false', 'false']
     get_password_mock.reset_mock()
     get_password_mock.side_effect = ['admin']
 
@@ -8860,5 +8870,3 @@ class TestAmbariServer(TestCase):
     options.jaas_principal = None
     options.jaas_keytab = None
     return options
-
-

@@ -75,7 +75,7 @@ public class HostsMasterMaintenanceCheckTest {
 
   @Test
   public void testIsApplicable() throws Exception {
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("1.0.0.0-1234");
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(org.apache.ambari.server.state.RepositoryType.STANDARD);
 
     final PrereqCheckRequest request = new PrereqCheckRequest("cluster");
     request.setTargetRepositoryVersion(m_repositoryVersion);
@@ -94,7 +94,6 @@ public class HostsMasterMaintenanceCheckTest {
   @Test
   public void testPerform() throws Exception {
     Mockito.when(m_repositoryVersion.getVersion()).thenReturn("1.0.0.0-1234");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "1.0"));
 
     final String upgradePackName = "upgrade_pack";
     final HostsMasterMaintenanceCheck hostsMasterMaintenanceCheck = new HostsMasterMaintenanceCheck();

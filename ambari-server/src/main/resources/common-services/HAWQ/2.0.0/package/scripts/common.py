@@ -142,7 +142,7 @@ def __update_limits_file():
   limits_file_content = "#### HAWQ Limits Parameters  ###########\n"
   for key, value in params.hawq_limits.items():
     if not __valid_input(value):
-      raise Exception("Value {0} for parameter {1} contains non-numeric characters which are not allowed (except whitespace), please fix the value and retry".format(value, key))
+      raise Exception("Value {0} for parameter {1} contains non-numeric characters which are not allowed (except whitespace) as please fix the value and retry".format(value, key))
     """
     Content of the file to be written should be of the format
     gpadmin soft nofile 290000
@@ -169,7 +169,7 @@ def __convert_sysctl_dict_to_text():
   sysctl_file_content = "### HAWQ System Parameters ###########\n"
   for key, value in params.hawq_sysctl.items():
     if not __valid_input(value):
-      raise Exception("Value {0} for parameter {1} contains non-numeric characters which are not allowed (except whitespace), please fix the value and retry".format(value, key))
+      raise Exception("Value {0} for parameter {1} contains non-numeric characters which are not allowed (except whitespace) as please fix the value and retry".format(value, key))
     sysctl_file_content += "{0} = {1}\n".format(key, value)
   return sysctl_file_content
 

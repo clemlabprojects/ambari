@@ -73,7 +73,6 @@ class TestMetricsMonitor(RMFTestCase):
     self.assertNoMoreResources()
 
   def assert_ams(self, inmemory_aggregation=False):
-    return True
     self.assertResourceCalled('Directory', '/etc/ambari-metrics-monitor/conf',
                               owner = 'ams',
                               group = 'hadoop',
@@ -141,4 +140,3 @@ class TestMetricsMonitor(RMFTestCase):
                               owner = 'ams',
                               content = InlineTemplate(self.getConfig()['configurations']['ams-env']['content'])
                               )
-

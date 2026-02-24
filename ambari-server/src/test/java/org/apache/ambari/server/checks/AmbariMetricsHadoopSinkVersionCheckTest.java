@@ -19,9 +19,9 @@
 package org.apache.ambari.server.checks;
 
 import static org.apache.ambari.server.checks.AmbariMetricsHadoopSinkVersionCompatibilityCheck.MIN_HADOOP_SINK_VERSION_PROPERTY_NAME;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -60,17 +60,12 @@ import org.apache.ambari.server.state.stack.UpgradePack;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 
 import com.google.inject.Provider;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest ({AmbariServer.class, AbstractControllerResourceProvider.class, PropertyHelper.class})
 public class AmbariMetricsHadoopSinkVersionCheckTest {
   private final Clusters m_clusters = Mockito.mock(Clusters.class);
   private final AmbariMetricsHadoopSinkVersionCompatibilityCheck m_check = new AmbariMetricsHadoopSinkVersionCompatibilityCheck();
@@ -163,121 +158,121 @@ public class AmbariMetricsHadoopSinkVersionCheckTest {
   public void testPerform() throws Exception {
 
     AmbariManagementController ambariManagementControllerMock = Mockito.mock(AmbariManagementController.class);
-    PowerMockito.mockStatic(AmbariServer.class);
-    when(AmbariServer.getController()).thenReturn(ambariManagementControllerMock);
-
     ResourceProvider resourceProviderMock = mock(ResourceProvider.class);
-    PowerMockito.mockStatic(AbstractControllerResourceProvider.class);
-    when(AbstractControllerResourceProvider.getResourceProvider(Mockito.eq(Resource.Type.Request), any(AmbariManagementController.class))).thenReturn(resourceProviderMock);
-
-    PowerMockito.mockStatic(PropertyHelper.class);
     Request requestMock = mock(Request.class);
-    when(PropertyHelper.getCreateRequest(any(), any())).thenReturn(requestMock);
-    when(PropertyHelper.getPropertyId("Requests", "id")).thenReturn("requestIdProp");
+    try (MockedStatic<AmbariServer> ambariServerStatic = Mockito.mockStatic(AmbariServer.class);
+        MockedStatic<AbstractControllerResourceProvider> resourceProviderStatic = Mockito.mockStatic(AbstractControllerResourceProvider.class);
+        MockedStatic<PropertyHelper> propertyHelperStatic = Mockito.mockStatic(PropertyHelper.class)) {
+      ambariServerStatic.when(AmbariServer::getController).thenReturn(ambariManagementControllerMock);
+      resourceProviderStatic.when(() -> AbstractControllerResourceProvider.getResourceProvider(
+          eq(Resource.Type.Request), any(AmbariManagementController.class))).thenReturn(resourceProviderMock);
+      propertyHelperStatic.when(() -> PropertyHelper.getCreateRequest(any(), any())).thenReturn(requestMock);
+      propertyHelperStatic.when(() -> PropertyHelper.getPropertyId("Requests", "id")).thenReturn("requestIdProp");
 
-    RequestStatus requestStatusMock = mock(RequestStatus.class);
-    Resource responseResourceMock = mock(Resource.class);
-    when(resourceProviderMock.createResources(requestMock)).thenReturn(requestStatusMock);
-    when(requestStatusMock.getRequestResource()).thenReturn(responseResourceMock);
-    when(responseResourceMock.getPropertyValue(anyString())).thenReturn(100l);
+      RequestStatus requestStatusMock = mock(RequestStatus.class);
+      Resource responseResourceMock = mock(Resource.class);
+      when(resourceProviderMock.createResources(requestMock)).thenReturn(requestStatusMock);
+      when(requestStatusMock.getRequestResource()).thenReturn(responseResourceMock);
+      when(responseResourceMock.getPropertyValue(anyString())).thenReturn(100l);
 
-    Clusters clustersMock = mock(Clusters.class);
-    when(ambariManagementControllerMock.getClusters()).thenReturn(clustersMock);
-    Cluster clusterMock = mock(Cluster.class);
-    when(clustersMock.getCluster("c1")).thenReturn(clusterMock);
-    when(clusterMock.getHosts(eq("AMBARI_METRICS"), eq("METRICS_MONITOR"))).thenReturn(Collections.singleton("h1"));
+      Clusters clustersMock = mock(Clusters.class);
+      when(ambariManagementControllerMock.getClusters()).thenReturn(clustersMock);
+      Cluster clusterMock = mock(Cluster.class);
+      when(clustersMock.getCluster("c1")).thenReturn(clusterMock);
+      when(clusterMock.getHosts(eq("AMBARI_METRICS"), eq("METRICS_MONITOR"))).thenReturn(Collections.singleton("h1"));
 
-    RequestDAO requestDAOMock = mock(RequestDAO.class);
-    RequestEntity requestEntityMock  = mock(RequestEntity.class);
-    when(requestDAOMock.findByPks(Collections.singleton(100l), true)).thenReturn(Collections.singletonList(requestEntityMock));
-    when(requestEntityMock.getStatus()).thenReturn(HostRoleStatus.IN_PROGRESS).thenReturn(HostRoleStatus.COMPLETED);
+      RequestDAO requestDAOMock = mock(RequestDAO.class);
+      RequestEntity requestEntityMock  = mock(RequestEntity.class);
+      when(requestDAOMock.findByPks(Collections.singleton(100l), true)).thenReturn(Collections.singletonList(requestEntityMock));
+      when(requestEntityMock.getStatus()).thenReturn(HostRoleStatus.IN_PROGRESS).thenReturn(HostRoleStatus.COMPLETED);
 
-    Field requestDaoField = m_check.getClass().getDeclaredField("requestDAO");
-    requestDaoField.setAccessible(true);
-    requestDaoField.set(m_check, requestDAOMock);
+      Field requestDaoField = m_check.getClass().getDeclaredField("requestDAO");
+      requestDaoField.setAccessible(true);
+      requestDaoField.set(m_check, requestDAOMock);
 
-    PrerequisiteCheck check = new PrerequisiteCheck(null, "c1");
-    PrereqCheckRequest request = new PrereqCheckRequest("c1");
-    UpgradePack.PrerequisiteCheckConfig prerequisiteCheckConfig = new UpgradePack.PrerequisiteCheckConfig();
-    UpgradePack.PrerequisiteProperty prerequisiteProperty = new UpgradePack.PrerequisiteProperty();
-    prerequisiteProperty.name = MIN_HADOOP_SINK_VERSION_PROPERTY_NAME;
-    prerequisiteProperty.value = "2.7.0.0";
-    UpgradePack.PrerequisiteCheckProperties prerequisiteCheckProperties = new UpgradePack.PrerequisiteCheckProperties();
-    prerequisiteCheckProperties.name = "org.apache.ambari.server.checks.AmbariMetricsHadoopSinkVersionCompatibilityCheck";
-    prerequisiteCheckProperties.properties = Collections.singletonList(prerequisiteProperty);
-    prerequisiteCheckConfig.prerequisiteCheckProperties = Collections.singletonList(prerequisiteCheckProperties);
-    request.setPrerequisiteCheckConfig(prerequisiteCheckConfig);
-    request.setTargetRepositoryVersion(m_repositoryVersion);
-    m_check.perform(check, request);
+      PrerequisiteCheck check = new PrerequisiteCheck(null, "c1");
+      PrereqCheckRequest request = new PrereqCheckRequest("c1");
+      UpgradePack.PrerequisiteCheckConfig prerequisiteCheckConfig = new UpgradePack.PrerequisiteCheckConfig();
+      UpgradePack.PrerequisiteProperty prerequisiteProperty = new UpgradePack.PrerequisiteProperty();
+      prerequisiteProperty.name = MIN_HADOOP_SINK_VERSION_PROPERTY_NAME;
+      prerequisiteProperty.value = "2.7.0.0";
+      UpgradePack.PrerequisiteCheckProperties prerequisiteCheckProperties = new UpgradePack.PrerequisiteCheckProperties();
+      prerequisiteCheckProperties.name = "org.apache.ambari.server.checks.AmbariMetricsHadoopSinkVersionCompatibilityCheck";
+      prerequisiteCheckProperties.properties = Collections.singletonList(prerequisiteProperty);
+      prerequisiteCheckConfig.prerequisiteCheckProperties = Collections.singletonList(prerequisiteCheckProperties);
+      request.setPrerequisiteCheckConfig(prerequisiteCheckConfig);
+      request.setTargetRepositoryVersion(m_repositoryVersion);
+      m_check.perform(check, request);
 
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+      Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    }
   }
 
   @Test(timeout = 60000)
   public void testPerformFail() throws Exception{
     AmbariManagementController ambariManagementControllerMock = Mockito.mock(AmbariManagementController.class);
-    PowerMockito.mockStatic(AmbariServer.class);
-    when(AmbariServer.getController()).thenReturn(ambariManagementControllerMock);
-
     ResourceProvider resourceProviderMock = mock(ResourceProvider.class);
-    PowerMockito.mockStatic(AbstractControllerResourceProvider.class);
-    when(AbstractControllerResourceProvider.getResourceProvider(Mockito.eq(Resource.Type.Request), any(AmbariManagementController.class))).thenReturn(resourceProviderMock);
-
-    PowerMockito.mockStatic(PropertyHelper.class);
     Request requestMock = mock(Request.class);
-    when(PropertyHelper.getCreateRequest(any(), any())).thenReturn(requestMock);
-    when(PropertyHelper.getPropertyId("Requests", "id")).thenReturn("requestIdProp");
+    try (MockedStatic<AmbariServer> ambariServerStatic = Mockito.mockStatic(AmbariServer.class);
+        MockedStatic<AbstractControllerResourceProvider> resourceProviderStatic = Mockito.mockStatic(AbstractControllerResourceProvider.class);
+        MockedStatic<PropertyHelper> propertyHelperStatic = Mockito.mockStatic(PropertyHelper.class)) {
+      ambariServerStatic.when(AmbariServer::getController).thenReturn(ambariManagementControllerMock);
+      resourceProviderStatic.when(() -> AbstractControllerResourceProvider.getResourceProvider(
+          eq(Resource.Type.Request), any(AmbariManagementController.class))).thenReturn(resourceProviderMock);
+      propertyHelperStatic.when(() -> PropertyHelper.getCreateRequest(any(), any())).thenReturn(requestMock);
+      propertyHelperStatic.when(() -> PropertyHelper.getPropertyId("Requests", "id")).thenReturn("requestIdProp");
 
-    RequestStatus requestStatusMock = mock(RequestStatus.class);
-    Resource responseResourceMock = mock(Resource.class);
-    when(resourceProviderMock.createResources(requestMock)).thenReturn(requestStatusMock);
-    when(requestStatusMock.getRequestResource()).thenReturn(responseResourceMock);
-    when(responseResourceMock.getPropertyValue(anyString())).thenReturn(101l);
+      RequestStatus requestStatusMock = mock(RequestStatus.class);
+      Resource responseResourceMock = mock(Resource.class);
+      when(resourceProviderMock.createResources(requestMock)).thenReturn(requestStatusMock);
+      when(requestStatusMock.getRequestResource()).thenReturn(responseResourceMock);
+      when(responseResourceMock.getPropertyValue(anyString())).thenReturn(101l);
 
-    Clusters clustersMock = mock(Clusters.class);
-    when(ambariManagementControllerMock.getClusters()).thenReturn(clustersMock);
-    Cluster clusterMock = mock(Cluster.class);
-    when(clustersMock.getCluster("c1")).thenReturn(clusterMock);
-    when(clusterMock.getHosts(eq("AMBARI_METRICS"), eq("METRICS_MONITOR"))).thenReturn(Collections.singleton("h1_fail"));
+      Clusters clustersMock = mock(Clusters.class);
+      when(ambariManagementControllerMock.getClusters()).thenReturn(clustersMock);
+      Cluster clusterMock = mock(Cluster.class);
+      when(clustersMock.getCluster("c1")).thenReturn(clusterMock);
+      when(clusterMock.getHosts(eq("AMBARI_METRICS"), eq("METRICS_MONITOR"))).thenReturn(Collections.singleton("h1_fail"));
 
-    RequestDAO requestDAOMock = mock(RequestDAO.class);
-    RequestEntity requestEntityMock  = mock(RequestEntity.class);
-    when(requestDAOMock.findByPks(Collections.singleton(101l), true)).thenReturn(Collections.singletonList(requestEntityMock));
-    when(requestEntityMock.getStatus()).thenReturn(HostRoleStatus.IN_PROGRESS).thenReturn(HostRoleStatus.FAILED);
+      RequestDAO requestDAOMock = mock(RequestDAO.class);
+      RequestEntity requestEntityMock  = mock(RequestEntity.class);
+      when(requestDAOMock.findByPks(Collections.singleton(101l), true)).thenReturn(Collections.singletonList(requestEntityMock));
+      when(requestEntityMock.getStatus()).thenReturn(HostRoleStatus.IN_PROGRESS).thenReturn(HostRoleStatus.FAILED);
 
-    Field requestDaoField = m_check.getClass().getDeclaredField("requestDAO");
-    requestDaoField.setAccessible(true);
-    requestDaoField.set(m_check, requestDAOMock);
+      Field requestDaoField = m_check.getClass().getDeclaredField("requestDAO");
+      requestDaoField.setAccessible(true);
+      requestDaoField.set(m_check, requestDAOMock);
 
 
-    when(requestEntityMock.getRequestId()).thenReturn(101l);
-    HostRoleCommandDAO hostRoleCommandDAOMock = mock(HostRoleCommandDAO.class);
-    HostRoleCommandEntity hrcEntityMock  = mock(HostRoleCommandEntity.class);
-    when(hostRoleCommandDAOMock.findByRequest(101l, true)).thenReturn(Collections.singletonList(hrcEntityMock));
-    when(hrcEntityMock.getStatus()).thenReturn(HostRoleStatus.FAILED);
-    when(hrcEntityMock.getHostName()).thenReturn("h1_fail");
+      when(requestEntityMock.getRequestId()).thenReturn(101l);
+      HostRoleCommandDAO hostRoleCommandDAOMock = mock(HostRoleCommandDAO.class);
+      HostRoleCommandEntity hrcEntityMock  = mock(HostRoleCommandEntity.class);
+      when(hostRoleCommandDAOMock.findByRequest(101l, true)).thenReturn(Collections.singletonList(hrcEntityMock));
+      when(hrcEntityMock.getStatus()).thenReturn(HostRoleStatus.FAILED);
+      when(hrcEntityMock.getHostName()).thenReturn("h1_fail");
 
-    Field hrcDaoField = m_check.getClass().getDeclaredField("hostRoleCommandDAO");
-    hrcDaoField.setAccessible(true);
-    hrcDaoField.set(m_check, hostRoleCommandDAOMock);
+      Field hrcDaoField = m_check.getClass().getDeclaredField("hostRoleCommandDAO");
+      hrcDaoField.setAccessible(true);
+      hrcDaoField.set(m_check, hostRoleCommandDAOMock);
 
-    PrerequisiteCheck check = new PrerequisiteCheck(null, "c1");
-    PrereqCheckRequest request = new PrereqCheckRequest("c1");
-    UpgradePack.PrerequisiteCheckConfig prerequisiteCheckConfig = new UpgradePack.PrerequisiteCheckConfig();
-    UpgradePack.PrerequisiteProperty prerequisiteProperty = new UpgradePack.PrerequisiteProperty();
-    prerequisiteProperty.name = MIN_HADOOP_SINK_VERSION_PROPERTY_NAME;
-    prerequisiteProperty.value = "2.7.0.0";
-    UpgradePack.PrerequisiteCheckProperties prerequisiteCheckProperties = new UpgradePack.PrerequisiteCheckProperties();
-    prerequisiteCheckProperties.name = "org.apache.ambari.server.checks.AmbariMetricsHadoopSinkVersionCompatibilityCheck";
-    prerequisiteCheckProperties.properties = Collections.singletonList(prerequisiteProperty);
-    prerequisiteCheckConfig.prerequisiteCheckProperties = Collections.singletonList(prerequisiteCheckProperties);
-    request.setPrerequisiteCheckConfig(prerequisiteCheckConfig);
-    request.setTargetRepositoryVersion(m_repositoryVersion);
-    m_check.perform(check, request);
+      PrerequisiteCheck check = new PrerequisiteCheck(null, "c1");
+      PrereqCheckRequest request = new PrereqCheckRequest("c1");
+      UpgradePack.PrerequisiteCheckConfig prerequisiteCheckConfig = new UpgradePack.PrerequisiteCheckConfig();
+      UpgradePack.PrerequisiteProperty prerequisiteProperty = new UpgradePack.PrerequisiteProperty();
+      prerequisiteProperty.name = MIN_HADOOP_SINK_VERSION_PROPERTY_NAME;
+      prerequisiteProperty.value = "2.7.0.0";
+      UpgradePack.PrerequisiteCheckProperties prerequisiteCheckProperties = new UpgradePack.PrerequisiteCheckProperties();
+      prerequisiteCheckProperties.name = "org.apache.ambari.server.checks.AmbariMetricsHadoopSinkVersionCompatibilityCheck";
+      prerequisiteCheckProperties.properties = Collections.singletonList(prerequisiteProperty);
+      prerequisiteCheckConfig.prerequisiteCheckProperties = Collections.singletonList(prerequisiteCheckProperties);
+      request.setPrerequisiteCheckConfig(prerequisiteCheckConfig);
+      request.setTargetRepositoryVersion(m_repositoryVersion);
+      m_check.perform(check, request);
 
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
-    Assert.assertTrue(check.getFailReason().contains("upgrade 'ambari-metrics-hadoop-sink'"));
-    Assert.assertEquals(check.getFailedOn().size(), 1);
-    Assert.assertTrue(check.getFailedOn().iterator().next().contains("h1_fail"));
+      Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+      Assert.assertTrue(check.getFailReason().contains("upgrade 'ambari-metrics-hadoop-sink'"));
+      Assert.assertEquals(check.getFailedOn().size(), 1);
+      Assert.assertTrue(check.getFailedOn().iterator().next().contains("h1_fail"));
+    }
   }
 }

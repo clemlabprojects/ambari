@@ -15,9 +15,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 '''
-
+import imp
 import json
 import os
+from functools import reduce
 import socket
 from unittest import TestCase
 
@@ -58,7 +59,7 @@ class TestHDP21StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendOozieConfigurations(configurations, clusterData, {"configurations":{}}, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendOozieConfigurations_withFalconServer(self):
     configurations = {
@@ -103,7 +104,7 @@ class TestHDP21StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendOozieConfigurations(configurations, clusterData, services, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendHiveConfigurations_mapMemoryLessThan2048(self):
     configurations = {}
@@ -128,7 +129,7 @@ class TestHDP21StackAdvisor(TestCase):
 
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, {"configurations": {}, "services": []}, None)
     self.maxDiff = None
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendHiveConfigurations_mapMemoryMoreThan2048(self):
     configurations = {}
@@ -142,7 +143,7 @@ class TestHDP21StackAdvisor(TestCase):
       "hive-site": {
         "properties": {
           "hive.auto.convert.join.noconditionaltask.size": "1048576000",
-          "hive.tez.java.opts": "-server -Xmx2401m -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+UseParallelGC -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps",
+          "hive.tez.java.opts": "-server -Xmx2400m -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+UseParallelGC -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps",
           "hive.tez.container.size": "3000"
         }
       },
@@ -152,7 +153,7 @@ class TestHDP21StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, {"configurations":{}, "services": []}, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_createComponentLayoutRecommendations_mastersIn10nodes(self):
     services = json.load(open(os.path.join(self.testDirectory, 'services.json')))
@@ -178,7 +179,7 @@ class TestHDP21StackAdvisor(TestCase):
     def sort_nested_lists(l):
       return sorted(reduce(lambda x,y: x+y, l))
 
-    self.assertEquals(sort_nested_lists(expected_layout), sort_nested_lists(groups))
+    self.assertEqual(sort_nested_lists(expected_layout), sort_nested_lists(groups))
 
   def test_recommendHiveConfigurations_jdbcUrl(self):
     services = {
@@ -241,38 +242,38 @@ class TestHDP21StackAdvisor(TestCase):
 
     # new mysql
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name?createDatabaseIfNotExist=true")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name?createDatabaseIfNotExist=true")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
 
     # existing Mysql
     services['configurations']['hive-env']['properties']['hive_database'] = 'Existing MySQL Database'
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
 
     # existing postgres
     services['configurations']['hive-env']['properties']['hive_database'] = 'Existing PostgreSQL Database'
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:postgresql://example.com:5432/hive_name")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "org.postgresql.Driver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:postgresql://example.com:5432/hive_name")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "org.postgresql.Driver")
 
     # existing oracle
     services['configurations']['hive-env']['properties']['hive_database'] = 'Existing Oracle Database'
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:oracle:thin:@//example.com:1521/hive_name")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "oracle.jdbc.driver.OracleDriver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:oracle:thin:@//example.com:1521/hive_name")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "oracle.jdbc.driver.OracleDriver")
 
     # existing sqla
     services['configurations']['hive-env']['properties']['hive_database'] = 'Existing SQL Anywhere Database'
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:sqlanywhere:host=example.com;database=hive_name")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "sap.jdbc4.sqlanywhere.IDriver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:sqlanywhere:host=example.com;database=hive_name")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "sap.jdbc4.sqlanywhere.IDriver")
 
     # existing Mysql / MariaDB
     services['configurations']['hive-env']['properties']['hive_database'] = 'Existing MySQL / MariaDB Database'
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name")
-    self.assertEquals(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionURL'], "jdbc:mysql://example.com/hive_name")
+    self.assertEqual(configurations['hive-site']['properties']['javax.jdo.option.ConnectionDriverName'], "com.mysql.jdbc.Driver")
 
   def test_recommendHiveConfigurationsSecure(self):
     services = {
@@ -345,7 +346,7 @@ class TestHDP21StackAdvisor(TestCase):
 
     # new mysql
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals("core-site" in configurations, True)
+    self.assertEqual("core-site" in configurations, True)
     self.assertEqual("hadoop.proxyuser.HTTP.hosts" in configurations["core-site"]["properties"], True)
     self.assertEqual(configurations["core-site"]["properties"]["hadoop.proxyuser.HTTP.hosts"] == "example.com", True)
 
@@ -354,7 +355,7 @@ class TestHDP21StackAdvisor(TestCase):
     configurations["core-site"]["properties"]["hadoop.proxyuser.HTTP.hosts"] = ""
 
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals("core-site" in configurations, True)
+    self.assertEqual("core-site" in configurations, True)
     self.assertEqual("hadoop.proxyuser.HTTP.hosts" in configurations["core-site"]["properties"], True)
 
     fetch_list = sorted(configurations["core-site"]["properties"]["hadoop.proxyuser.HTTP.hosts"].split(","))
@@ -384,7 +385,7 @@ class TestHDP21StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendHiveConfigurations(configurations, clusterData, {"configurations":{}, "services": []}, None)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendHbaseConfigurations(self):
     servicesList = ["HBASE"]
@@ -437,11 +438,11 @@ class TestHDP21StackAdvisor(TestCase):
       }
     }
 
-    clusterData = self.stackAdvisor.getConfigurationClusterSummary(servicesList, hosts, components, None)
-    self.assertEquals(clusterData['hbaseRam'], 8)
+    clusterData = self.stackAdvisor.getConfigurationClusterSummary(servicesList, hosts, components, services)
+    self.assertEqual(clusterData['hbaseRam'], 8)
 
     self.stackAdvisor.recommendHbaseConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_recommendHDFSConfigurations(self):
     configurations = {
@@ -504,7 +505,7 @@ class TestHDP21StackAdvisor(TestCase):
     }
 
     self.stackAdvisor.recommendHDFSConfigurations(configurations, clusterData, services, hosts)
-    self.assertEquals(configurations, expected)
+    self.assertEqual(configurations, expected)
 
   def test_validateHDFSConfigurationsEnv(self):
     configurations = {}
@@ -519,7 +520,7 @@ class TestHDP21StackAdvisor(TestCase):
     res_expected = []
 
     res = self.stackAdvisor.validateHDFSConfigurationsEnv(properties, recommendedDefaults, configurations, '', '')
-    self.assertEquals(res, res_expected)
+    self.assertEqual(res, res_expected)
 
     # 2) fail: namenode_heapsize, namenode_opt_maxnewsize < recommended
     properties['namenode_heapsize'] = '1022'
@@ -536,7 +537,7 @@ class TestHDP21StackAdvisor(TestCase):
                      'type': 'configuration'}]
 
     res = self.stackAdvisor.validateHDFSConfigurationsEnv(properties, recommendedDefaults, configurations, '', '')
-    self.assertEquals(res, res_expected)
+    self.assertEqual(res, res_expected)
 
   def test_validateHiveConfigurations(self):
     configurations = {'yarn-site': {'properties': {'yarn.scheduler.maximum-allocation-mb': '4096'}}}
@@ -551,7 +552,7 @@ class TestHDP21StackAdvisor(TestCase):
     res_expected = []
 
     res = self.stackAdvisor.validateHiveConfigurations(properties, recommendedDefaults, configurations, '', '')
-    self.assertEquals(res, res_expected)
+    self.assertEqual(res, res_expected)
 
     # 2) fail: yarn.scheduler.maximum-allocation-mb < hive.tez.container.size
     configurations = {'yarn-site': {'properties': {'yarn.scheduler.maximum-allocation-mb': '256'}}}
@@ -563,7 +564,7 @@ class TestHDP21StackAdvisor(TestCase):
                     ]
 
     res = self.stackAdvisor.validateHiveConfigurations(properties, recommendedDefaults, configurations, '', '')
-    self.assertEquals(res, res_expected)
+    self.assertEqual(res, res_expected)
 
   def test_modifyComponentLayoutSchemes(self):
     res_expected = {}
@@ -591,4 +592,4 @@ class TestHDP21StackAdvisor(TestCase):
     self.stackAdvisor.modifyComponentLayoutSchemes()
     res = self.stackAdvisor.getComponentLayoutSchemes()
 
-    self.assertEquals(res, res_expected)
+    self.assertEqual(res, res_expected)

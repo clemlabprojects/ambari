@@ -7,7 +7,6 @@ regarding copyright ownership.  The ASF licenses this file
 to you under the Apache License, Version 2.0 (the
 "License"); you may not use this file except in compliance
 with the License.  You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
@@ -20,8 +19,859 @@ limitations under the License.
 
 template = '\n{\n  "interpreterSettings": {\n    "2CKEKWY8Z": {\n      "id": "2CKEKWY8Z",\n      "name": "angular",\n      "group": "angular",\n      "properties": {},\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "angular",\n          "class": "org.apache.zeppelin.angular.AngularInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "editOnDblClick": true\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "shared",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    },\n    "2CKX8WPU1": {\n      "id": "2CKX8WPU1",\n      "name": "spark",\n      "group": "spark",\n      "properties": {\n        "spark.executor.memory": "512m",\n        "args": "",\n        "zeppelin.spark.printREPLOutput": "true",\n        "spark.cores.max": "",\n        "zeppelin.dep.additionalRemoteRepository": "spark-packages,http://dl.bintray.com/spark-packages/maven,false;",\n        "zeppelin.spark.sql.stacktrace": "false",\n        "zeppelin.spark.importImplicit": "true",\n        "zeppelin.spark.concurrentSQL": "false",\n        "zeppelin.spark.useHiveContext": "true",\n        "zeppelin.pyspark.python": "python",\n        "zeppelin.dep.localrepo": "local-repo",\n        "zeppelin.R.knitr": "true",\n        "zeppelin.spark.maxResult": "1000",\n        "master": "yarn-client",\n        "spark.app.name": "Zeppelin",\n        "zeppelin.R.image.width": "100%",\n        "zeppelin.R.render.options": "out.format \\u003d \\u0027html\\u0027, comment \\u003d NA, echo \\u003d FALSE, results \\u003d \\u0027asis\\u0027, message \\u003d F, warning \\u003d F",\n        "zeppelin.R.cmd": "R"\n      },\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "spark",\n          "class": "org.apache.zeppelin.spark.SparkInterpreter",\n          "defaultInterpreter": true,\n          "editor": {\n            "language": "scala"\n          }\n        },\n        {\n          "name": "sql",\n          "class": "org.apache.zeppelin.spark.SparkSqlInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "sql"\n          }\n        },\n        {\n          "name": "dep",\n          "class": "org.apache.zeppelin.spark.DepInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "scala"\n          }\n        },\n        {\n          "name": "pyspark",\n          "class": "org.apache.zeppelin.spark.PySparkInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "python"\n          }\n        },\n        {\n          "name": "r",\n          "class": "org.apache.zeppelin.spark.SparkRInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "r"\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "shared",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    },\n    "2CK8A9MEG": {\n      "id": "2CK8A9MEG",\n      "name": "jdbc",\n      "group": "jdbc",\n      "properties": {\n        "default.password": "",\n        "zeppelin.jdbc.auth.type": "",\n        "common.max_count": "1000",\n        "zeppelin.jdbc.principal": "",\n        "default.user": "gpadmin",\n        "default.url": "jdbc:postgresql://localhost:5432/",\n        "default.driver": "org.postgresql.Driver",\n        "zeppelin.jdbc.keytab.location": "",\n        "zeppelin.jdbc.concurrent.use": "true",\n        "zeppelin.jdbc.concurrent.max_connection": "10"\n      },\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "sql",\n          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "sql",\n            "editOnDblClick": false\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "shared",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    },\n    "2CKX6DGQZ": {\n      "id": "2CKX6DGQZ",\n      "name": "livy",\n      "group": "livy",\n      "properties": {\n        "zeppelin.livy.pull_status.interval.millis": "1000",\n        "livy.spark.executor.memory": "",\n        "zeppelin.livy.session.create_timeout": "120",\n        "zeppelin.livy.principal": "",\n        "zeppelin.livy.spark.sql.maxResult": "1000",\n        "zeppelin.livy.keytab": "",\n        "zeppelin.livy.concurrentSQL": "false",\n        "zeppelin.livy.spark.sql.field.truncate": "true",\n        "livy.spark.executor.cores": "",\n        "zeppelin.livy.displayAppInfo": "false",\n        "zeppelin.livy.url": "http://localhost:8998",\n        "livy.spark.dynamicAllocation.minExecutors": "",\n        "livy.spark.driver.cores": "",\n        "livy.spark.jars.packages": "",\n        "livy.spark.dynamicAllocation.enabled": "",\n        "livy.spark.executor.instances": "",\n        "livy.spark.dynamicAllocation.cachedExecutorIdleTimeout": "",\n        "livy.spark.dynamicAllocation.maxExecutors": "",\n        "livy.spark.dynamicAllocation.initialExecutors": "",\n        "livy.spark.driver.memory": ""\n      },\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "spark",\n          "class": "org.apache.zeppelin.livy.LivySparkInterpreter",\n          "defaultInterpreter": true,\n          "editor": {\n            "language": "scala",\n            "editOnDblClick": false\n          }\n        },\n        {\n          "name": "sql",\n          "class": "org.apache.zeppelin.livy.LivySparkSQLInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "sql",\n            "editOnDblClick": false\n          }\n        },\n        {\n          "name": "pyspark",\n          "class": "org.apache.zeppelin.livy.LivyPySparkInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "python",\n            "editOnDblClick": false\n          }\n        },\n        {\n          "name": "pyspark3",\n          "class": "org.apache.zeppelin.livy.LivyPySpark3Interpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "python",\n            "editOnDblClick": false\n          }\n        },\n        {\n          "name": "sparkr",\n          "class": "org.apache.zeppelin.livy.LivySparkRInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "r",\n            "editOnDblClick": false\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "scoped",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    },\n    "2CKAY1A8Y": {\n      "id": "2CKAY1A8Y",\n      "name": "md",\n      "group": "md",\n      "properties": {\n        "markdown.parser.type": "pegdown"\n      },\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "md",\n          "class": "org.apache.zeppelin.markdown.Markdown",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "markdown",\n            "editOnDblClick": true\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "shared",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    },\n    "2CHS8UYQQ": {\n      "id": "2CHS8UYQQ",\n      "name": "sh",\n      "group": "sh",\n      "properties": {\n        "zeppelin.shell.keytab.location": "",\n        "shell.command.timeout.millisecs": "60000",\n        "zeppelin.shell.principal": "",\n        "zeppelin.shell.auth.type": ""\n      },\n      "status": "READY",\n      "interpreterGroup": [\n        {\n          "name": "sh",\n          "class": "org.apache.zeppelin.shell.ShellInterpreter",\n          "defaultInterpreter": false,\n          "editor": {\n            "language": "sh",\n            "editOnDblClick": false\n          }\n        }\n      ],\n      "dependencies": [],\n      "option": {\n        "remote": true,\n        "port": -1,\n        "perNote": "shared",\n        "perUser": "shared",\n        "isExistingProcess": false,\n        "setPermission": false,\n        "users": [],\n        "isUserImpersonate": false\n      }\n    }\n  },\n  "interpreterBindings": {},\n  "interpreterRepositories": [\n    {\n      "id": "central",\n      "type": "default",\n      "url": "http://repo1.maven.org/maven2/",\n      "releasePolicy": {\n        "enabled": true,\n        "updatePolicy": "daily",\n        "checksumPolicy": "warn"\n      },\n      "snapshotPolicy": {\n        "enabled": true,\n        "updatePolicy": "daily",\n        "checksumPolicy": "warn"\n      },\n      "mirroredRepositories": [],\n      "repositoryManager": false\n    },\n    {\n      "id": "local",\n      "type": "default",\n      "url": "file:///home/zeppelin/.m2/repository",\n      "releasePolicy": {\n        "enabled": true,\n        "updatePolicy": "daily",\n        "checksumPolicy": "warn"\n      },\n      "snapshotPolicy": {\n        "enabled": true,\n        "updatePolicy": "daily",\n        "checksumPolicy": "warn"\n      },\n      "mirroredRepositories": [],\n      "repositoryManager": false\n    }\n  ]\n}\n'
 
-template_after_base = '{\n  "interpreterSettings": {\n    "2CHS8UYQQ": {\n      "status": "READY", \n      "group": "sh", \n      "name": "sh", \n      "id": "2CHS8UYQQ", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sh"\n          }, \n          "defaultInterpreter": false, \n          "name": "sh", \n          "class": "org.apache.zeppelin.shell.ShellInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "shell.command.timeout.millisecs": "60000", \n        "zeppelin.shell.auth.type": "", \n        "zeppelin.shell.keytab.location": "", \n        "zeppelin.shell.principal": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKAY1A8Y": {\n      "status": "READY", \n      "group": "md", \n      "name": "md", \n      "id": "2CKAY1A8Y", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true, \n            "language": "markdown"\n          }, \n          "defaultInterpreter": false, \n          "name": "md", \n          "class": "org.apache.zeppelin.markdown.Markdown"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "markdown.parser.type": "pegdown"\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKX8WPU1": {\n      "status": "READY", \n      "group": "spark", \n      "name": "spark", \n      "id": "2CKX8WPU1", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "language": "scala"\n          }, \n          "defaultInterpreter": true, \n          "name": "spark", \n          "class": "org.apache.zeppelin.spark.SparkInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.spark.SparkSqlInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "scala"\n          }, \n          "defaultInterpreter": false, \n          "name": "dep", \n          "class": "org.apache.zeppelin.spark.DepInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark", \n          "class": "org.apache.zeppelin.spark.PySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "r"\n          }, \n          "defaultInterpreter": false, \n          "name": "r", \n          "class": "org.apache.zeppelin.spark.SparkRInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "zeppelin.dep.additionalRemoteRepository": "spark-packages,http://dl.bintray.com/spark-packages/maven,false;", \n        "zeppelin.dep.localrepo": "local-repo", \n        "zeppelin.spark.useHiveContext": "true", \n        "zeppelin.spark.printREPLOutput": "true", \n        "zeppelin.R.image.width": "100%", \n        "zeppelin.spark.importImplicit": "true", \n        "spark.app.name": "Zeppelin", \n        "args": "", \n        "zeppelin.spark.sql.stacktrace": "false", \n        "zeppelin.spark.concurrentSQL": "false", \n        "zeppelin.R.cmd": "R", \n        "master": "yarn-client", \n        "zeppelin.pyspark.python": "python", \n        "zeppelin.R.knitr": "true", \n        "zeppelin.R.render.options": "out.format = \'html\', comment = NA, echo = FALSE, results = \'asis\', message = F, warning = F", \n        "spark.executor.memory": "512m", \n        "zeppelin.spark.maxResult": "1000", \n        "spark.cores.max": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CK8A9MEG": {\n      "status": "READY", \n      "group": "jdbc", \n      "name": "jdbc", \n      "id": "2CK8A9MEG", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "common.max_count": "1000", \n        "zeppelin.jdbc.keytab.location": "", \n        "zeppelin.jdbc.concurrent.max_connection": "10", \n        "default.user": "gpadmin", \n        "zeppelin.jdbc.auth.type": "", \n        "default.url": "jdbc:postgresql://localhost:5432/", \n        "default.driver": "org.postgresql.Driver", \n        "zeppelin.jdbc.concurrent.use": "true", \n        "default.password": "", \n        "zeppelin.jdbc.principal": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKEKWY8Z": {\n      "status": "READY", \n      "group": "angular", \n      "name": "angular", \n      "id": "2CKEKWY8Z", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true\n          }, \n          "defaultInterpreter": false, \n          "name": "angular", \n          "class": "org.apache.zeppelin.angular.AngularInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {}, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKX6DGQZ": {\n      "status": "READY", \n      "group": "livy", \n      "name": "livy", \n      "id": "2CKX6DGQZ", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "scala"\n          }, \n          "defaultInterpreter": true, \n          "name": "spark", \n          "class": "org.apache.zeppelin.livy.LivySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.livy.LivySparkSQLInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark", \n          "class": "org.apache.zeppelin.livy.LivyPySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark3", \n          "class": "org.apache.zeppelin.livy.LivyPySpark3Interpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "r"\n          }, \n          "defaultInterpreter": false, \n          "name": "sparkr", \n          "class": "org.apache.zeppelin.livy.LivySparkRInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "livy.spark.dynamicAllocation.initialExecutors": "", \n        "zeppelin.livy.keytab": "", \n        "zeppelin.livy.spark.sql.maxResult": "1000", \n        "livy.spark.executor.instances": "", \n        "livy.spark.driver.memory": "", \n        "livy.spark.executor.memory": "", \n        "livy.spark.dynamicAllocation.enabled": "", \n        "livy.spark.dynamicAllocation.cachedExecutorIdleTimeout": "", \n        "livy.spark.driver.cores": "", \n        "zeppelin.livy.session.create_timeout": "120", \n        "zeppelin.livy.principal": "", \n        "livy.spark.jars.packages": "", \n        "livy.spark.dynamicAllocation.maxExecutors": "", \n        "zeppelin.livy.concurrentSQL": "false", \n        "zeppelin.livy.displayAppInfo": "false", \n        "livy.spark.dynamicAllocation.minExecutors": "", \n        "zeppelin.livy.url": "http://localhost:8998", \n        "zeppelin.livy.spark.sql.field.truncate": "true", \n        "zeppelin.livy.pull_status.interval.millis": "1000", \n        "livy.spark.executor.cores": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "scoped", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }\n  }, \n  "interpreterBindings": {}, \n  "interpreterRepositories": [\n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "http://repo1.maven.org/maven2/", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "central"\n    }, \n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "file:///home/zeppelin/.m2/repository", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "local"\n    }\n  ]\n}'
+template_after_base = '''{
+  "interpreterSettings": {
+    "2CKEKWY8Z": {
+      "id": "2CKEKWY8Z",
+      "name": "angular",
+      "group": "angular",
+      "properties": {},
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "angular",
+          "class": "org.apache.zeppelin.angular.AngularInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKX8WPU1": {
+      "id": "2CKX8WPU1",
+      "name": "spark",
+      "group": "spark",
+      "properties": {
+        "spark.executor.memory": "512m",
+        "args": "",
+        "zeppelin.spark.printREPLOutput": "true",
+        "spark.cores.max": "",
+        "zeppelin.dep.additionalRemoteRepository": "spark-packages,http://dl.bintray.com/spark-packages/maven,false;",
+        "zeppelin.spark.sql.stacktrace": "false",
+        "zeppelin.spark.importImplicit": "true",
+        "zeppelin.spark.concurrentSQL": "false",
+        "zeppelin.spark.useHiveContext": "true",
+        "zeppelin.pyspark.python": "python",
+        "zeppelin.dep.localrepo": "local-repo",
+        "zeppelin.R.knitr": "true",
+        "zeppelin.spark.maxResult": "1000",
+        "master": "yarn-client",
+        "spark.app.name": "Zeppelin",
+        "zeppelin.R.image.width": "100%",
+        "zeppelin.R.render.options": "out.format = 'html', comment = NA, echo = FALSE, results = 'asis', message = F, warning = F",
+        "zeppelin.R.cmd": "R"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "spark",
+          "class": "org.apache.zeppelin.spark.SparkInterpreter",
+          "defaultInterpreter": true,
+          "editor": {
+            "language": "scala"
+          }
+        },
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.spark.SparkSqlInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql"
+          }
+        },
+        {
+          "name": "dep",
+          "class": "org.apache.zeppelin.spark.DepInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "scala"
+          }
+        },
+        {
+          "name": "pyspark",
+          "class": "org.apache.zeppelin.spark.PySparkInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python"
+          }
+        },
+        {
+          "name": "r",
+          "class": "org.apache.zeppelin.spark.SparkRInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "r"
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CK8A9MEG": {
+      "id": "2CK8A9MEG",
+      "name": "jdbc",
+      "group": "jdbc",
+      "properties": {
+        "default.password": "",
+        "zeppelin.jdbc.auth.type": "",
+        "common.max_count": "1000",
+        "zeppelin.jdbc.principal": "",
+        "default.user": "gpadmin",
+        "default.url": "jdbc:postgresql://localhost:5432/",
+        "default.driver": "org.postgresql.Driver",
+        "zeppelin.jdbc.keytab.location": "",
+        "zeppelin.jdbc.concurrent.use": "true",
+        "zeppelin.jdbc.concurrent.max_connection": "10"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKX6DGQZ": {
+      "id": "2CKX6DGQZ",
+      "name": "livy",
+      "group": "livy",
+      "properties": {
+        "zeppelin.livy.pull_status.interval.millis": "1000",
+        "livy.spark.executor.memory": "",
+        "zeppelin.livy.session.create_timeout": "120",
+        "zeppelin.livy.principal": "",
+        "zeppelin.livy.spark.sql.maxResult": "1000",
+        "zeppelin.livy.keytab": "",
+        "zeppelin.livy.concurrentSQL": "false",
+        "zeppelin.livy.spark.sql.field.truncate": "true",
+        "livy.spark.executor.cores": "",
+        "zeppelin.livy.displayAppInfo": "false",
+        "zeppelin.livy.url": "http://localhost:8998",
+        "livy.spark.dynamicAllocation.minExecutors": "",
+        "livy.spark.driver.cores": "",
+        "livy.spark.jars.packages": "",
+        "livy.spark.dynamicAllocation.enabled": "",
+        "livy.spark.executor.instances": "",
+        "livy.spark.dynamicAllocation.cachedExecutorIdleTimeout": "",
+        "livy.spark.dynamicAllocation.maxExecutors": "",
+        "livy.spark.dynamicAllocation.initialExecutors": "",
+        "livy.spark.driver.memory": ""
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "spark",
+          "class": "org.apache.zeppelin.livy.LivySparkInterpreter",
+          "defaultInterpreter": true,
+          "editor": {
+            "language": "scala",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.livy.LivySparkSQLInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "pyspark",
+          "class": "org.apache.zeppelin.livy.LivyPySparkInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "pyspark3",
+          "class": "org.apache.zeppelin.livy.LivyPySpark3Interpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "sparkr",
+          "class": "org.apache.zeppelin.livy.LivySparkRInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "r",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "scoped",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKAY1A8Y": {
+      "id": "2CKAY1A8Y",
+      "name": "md",
+      "group": "md",
+      "properties": {
+        "markdown.parser.type": "pegdown"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "md",
+          "class": "org.apache.zeppelin.markdown.Markdown",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "markdown",
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CHS8UYQQ": {
+      "id": "2CHS8UYQQ",
+      "name": "sh",
+      "group": "sh",
+      "properties": {
+        "zeppelin.shell.keytab.location": "",
+        "shell.command.timeout.millisecs": "60000",
+        "zeppelin.shell.principal": "",
+        "zeppelin.shell.auth.type": ""
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sh",
+          "class": "org.apache.zeppelin.shell.ShellInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sh",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    }
+  },
+  "interpreterBindings": {},
+  "interpreterRepositories": [
+    {
+      "id": "central",
+      "type": "default",
+      "url": "http://repo1.maven.org/maven2/",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    },
+    {
+      "id": "local",
+      "type": "default",
+      "url": "file:///home/zeppelin/.m2/repository",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    }
+  ]
+}'''
 
-template_after_without_spark_and_livy = '{\n  "interpreterSettings": {\n    "2CHS8UYQQ": {\n      "status": "READY", \n      "group": "sh", \n      "name": "sh", \n      "id": "2CHS8UYQQ", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sh"\n          }, \n          "defaultInterpreter": false, \n          "name": "sh", \n          "class": "org.apache.zeppelin.shell.ShellInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "shell.command.timeout.millisecs": "60000", \n        "zeppelin.shell.auth.type": "", \n        "zeppelin.shell.keytab.location": "", \n        "zeppelin.shell.principal": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKAY1A8Y": {\n      "status": "READY", \n      "group": "md", \n      "name": "md", \n      "id": "2CKAY1A8Y", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true, \n            "language": "markdown"\n          }, \n          "defaultInterpreter": false, \n          "name": "md", \n          "class": "org.apache.zeppelin.markdown.Markdown"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "markdown.parser.type": "pegdown"\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CK8A9MEG": {\n      "status": "READY", \n      "group": "jdbc", \n      "name": "jdbc", \n      "id": "2CK8A9MEG", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "common.max_count": "1000", \n        "zeppelin.jdbc.keytab.location": "", \n        "zeppelin.jdbc.concurrent.max_connection": "10", \n        "default.user": "gpadmin", \n        "zeppelin.jdbc.auth.type": "", \n        "default.url": "jdbc:postgresql://localhost:5432/", \n        "default.driver": "org.postgresql.Driver", \n        "zeppelin.jdbc.concurrent.use": "true", \n        "default.password": "", \n        "zeppelin.jdbc.principal": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKEKWY8Z": {\n      "status": "READY", \n      "group": "angular", \n      "name": "angular", \n      "id": "2CKEKWY8Z", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true\n          }, \n          "defaultInterpreter": false, \n          "name": "angular", \n          "class": "org.apache.zeppelin.angular.AngularInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {}, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }\n  }, \n  "interpreterBindings": {}, \n  "interpreterRepositories": [\n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "http://repo1.maven.org/maven2/", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "central"\n    }, \n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "file:///home/zeppelin/.m2/repository", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "local"\n    }\n  ]\n}'
+template_after_without_spark_and_livy = '''{
+  "interpreterSettings": {
+    "2CKEKWY8Z": {
+      "id": "2CKEKWY8Z",
+      "name": "angular",
+      "group": "angular",
+      "properties": {},
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "angular",
+          "class": "org.apache.zeppelin.angular.AngularInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CK8A9MEG": {
+      "id": "2CK8A9MEG",
+      "name": "jdbc",
+      "group": "jdbc",
+      "properties": {
+        "default.password": "",
+        "zeppelin.jdbc.auth.type": "",
+        "common.max_count": "1000",
+        "zeppelin.jdbc.principal": "",
+        "default.user": "gpadmin",
+        "default.url": "jdbc:postgresql://localhost:5432/",
+        "default.driver": "org.postgresql.Driver",
+        "zeppelin.jdbc.keytab.location": "",
+        "zeppelin.jdbc.concurrent.use": "true",
+        "zeppelin.jdbc.concurrent.max_connection": "10"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKAY1A8Y": {
+      "id": "2CKAY1A8Y",
+      "name": "md",
+      "group": "md",
+      "properties": {
+        "markdown.parser.type": "pegdown"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "md",
+          "class": "org.apache.zeppelin.markdown.Markdown",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "markdown",
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CHS8UYQQ": {
+      "id": "2CHS8UYQQ",
+      "name": "sh",
+      "group": "sh",
+      "properties": {
+        "zeppelin.shell.keytab.location": "",
+        "shell.command.timeout.millisecs": "60000",
+        "zeppelin.shell.principal": "",
+        "zeppelin.shell.auth.type": ""
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sh",
+          "class": "org.apache.zeppelin.shell.ShellInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sh",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    }
+  },
+  "interpreterBindings": {},
+  "interpreterRepositories": [
+    {
+      "id": "central",
+      "type": "default",
+      "url": "http://repo1.maven.org/maven2/",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    },
+    {
+      "id": "local",
+      "type": "default",
+      "url": "file:///home/zeppelin/.m2/repository",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    }
+  ]
+}'''
 
-template_after_kerberos = '{\n  "interpreterSettings": {\n    "2CHS8UYQQ": {\n      "status": "READY", \n      "group": "sh", \n      "name": "sh", \n      "id": "2CHS8UYQQ", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sh"\n          }, \n          "defaultInterpreter": false, \n          "name": "sh", \n          "class": "org.apache.zeppelin.shell.ShellInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "shell.command.timeout.millisecs": "60000", \n        "zeppelin.shell.auth.type": "KERBEROS", \n        "zeppelin.shell.keytab.location": "/etc/security/keytabs/zeppelin.server.kerberos.keytab", \n        "zeppelin.shell.principal": "zeppelin@EXAMPLE.COM"\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKAY1A8Y": {\n      "status": "READY", \n      "group": "md", \n      "name": "md", \n      "id": "2CKAY1A8Y", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true, \n            "language": "markdown"\n          }, \n          "defaultInterpreter": false, \n          "name": "md", \n          "class": "org.apache.zeppelin.markdown.Markdown"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "markdown.parser.type": "pegdown"\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKX8WPU1": {\n      "status": "READY", \n      "group": "spark", \n      "name": "spark", \n      "id": "2CKX8WPU1", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "language": "scala"\n          }, \n          "defaultInterpreter": true, \n          "name": "spark", \n          "class": "org.apache.zeppelin.spark.SparkInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.spark.SparkSqlInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "scala"\n          }, \n          "defaultInterpreter": false, \n          "name": "dep", \n          "class": "org.apache.zeppelin.spark.DepInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark", \n          "class": "org.apache.zeppelin.spark.PySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "language": "r"\n          }, \n          "defaultInterpreter": false, \n          "name": "r", \n          "class": "org.apache.zeppelin.spark.SparkRInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "zeppelin.dep.additionalRemoteRepository": "spark-packages,http://dl.bintray.com/spark-packages/maven,false;", \n        "zeppelin.dep.localrepo": "local-repo", \n        "zeppelin.spark.useHiveContext": "true", \n        "zeppelin.spark.printREPLOutput": "true", \n        "spark.yarn.principal": "zeppelin@EXAMPLE.COM", \n        "zeppelin.R.image.width": "100%", \n        "zeppelin.spark.importImplicit": "true", \n        "spark.app.name": "Zeppelin", \n        "args": "", \n        "zeppelin.spark.sql.stacktrace": "false", \n        "zeppelin.spark.concurrentSQL": "false", \n        "spark.yarn.keytab": "/etc/security/keytabs/zeppelin.server.kerberos.keytab", \n        "zeppelin.R.cmd": "R", \n        "master": "yarn-client", \n        "zeppelin.pyspark.python": "python", \n        "zeppelin.R.knitr": "true", \n        "zeppelin.R.render.options": "out.format = \'html\', comment = NA, echo = FALSE, results = \'asis\', message = F, warning = F", \n        "spark.executor.memory": "512m", \n        "zeppelin.spark.maxResult": "1000", \n        "spark.cores.max": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CK8A9MEG": {\n      "status": "READY", \n      "group": "jdbc", \n      "name": "jdbc", \n      "id": "2CK8A9MEG", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "common.max_count": "1000", \n        "zeppelin.jdbc.keytab.location": "/etc/security/keytabs/zeppelin.server.kerberos.keytab", \n        "zeppelin.jdbc.concurrent.max_connection": "10", \n        "default.user": "gpadmin", \n        "zeppelin.jdbc.auth.type": "KERBEROS", \n        "default.url": "jdbc:postgresql://localhost:5432/", \n        "default.driver": "org.postgresql.Driver", \n        "zeppelin.jdbc.concurrent.use": "true", \n        "default.password": "", \n        "zeppelin.jdbc.principal": "zeppelin@EXAMPLE.COM"\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKEKWY8Z": {\n      "status": "READY", \n      "group": "angular", \n      "name": "angular", \n      "id": "2CKEKWY8Z", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": true\n          }, \n          "defaultInterpreter": false, \n          "name": "angular", \n          "class": "org.apache.zeppelin.angular.AngularInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {}, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "shared", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }, \n    "2CKX6DGQZ": {\n      "status": "READY", \n      "group": "livy", \n      "name": "livy", \n      "id": "2CKX6DGQZ", \n      "interpreterGroup": [\n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "scala"\n          }, \n          "defaultInterpreter": true, \n          "name": "spark", \n          "class": "org.apache.zeppelin.livy.LivySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "sql"\n          }, \n          "defaultInterpreter": false, \n          "name": "sql", \n          "class": "org.apache.zeppelin.livy.LivySparkSQLInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark", \n          "class": "org.apache.zeppelin.livy.LivyPySparkInterpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "python"\n          }, \n          "defaultInterpreter": false, \n          "name": "pyspark3", \n          "class": "org.apache.zeppelin.livy.LivyPySpark3Interpreter"\n        }, \n        {\n          "editor": {\n            "editOnDblClick": false, \n            "language": "r"\n          }, \n          "defaultInterpreter": false, \n          "name": "sparkr", \n          "class": "org.apache.zeppelin.livy.LivySparkRInterpreter"\n        }\n      ], \n      "dependencies": [], \n      "properties": {\n        "livy.spark.dynamicAllocation.initialExecutors": "", \n        "zeppelin.livy.keytab": "", \n        "zeppelin.livy.spark.sql.maxResult": "1000", \n        "livy.spark.executor.instances": "", \n        "livy.spark.driver.memory": "", \n        "livy.spark.executor.memory": "", \n        "livy.spark.dynamicAllocation.enabled": "", \n        "livy.spark.dynamicAllocation.cachedExecutorIdleTimeout": "", \n        "livy.spark.driver.cores": "", \n        "zeppelin.livy.session.create_timeout": "120", \n        "zeppelin.livy.principal": "", \n        "livy.spark.jars.packages": "", \n        "livy.spark.dynamicAllocation.maxExecutors": "", \n        "zeppelin.livy.concurrentSQL": "false", \n        "zeppelin.livy.displayAppInfo": "false", \n        "livy.spark.dynamicAllocation.minExecutors": "", \n        "zeppelin.livy.url": "http://localhost:8998", \n        "zeppelin.livy.spark.sql.field.truncate": "true", \n        "zeppelin.livy.pull_status.interval.millis": "1000", \n        "livy.spark.executor.cores": ""\n      }, \n      "option": {\n        "setPermission": false, \n        "remote": true, \n        "users": [], \n        "isExistingProcess": false, \n        "perUser": "scoped", \n        "isUserImpersonate": false, \n        "perNote": "shared", \n        "port": -1\n      }\n    }\n  }, \n  "interpreterBindings": {}, \n  "interpreterRepositories": [\n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "http://repo1.maven.org/maven2/", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "central"\n    }, \n    {\n      "releasePolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "mirroredRepositories": [], \n      "snapshotPolicy": {\n        "checksumPolicy": "warn", \n        "enabled": true, \n        "updatePolicy": "daily"\n      }, \n      "url": "file:///home/zeppelin/.m2/repository", \n      "repositoryManager": false, \n      "type": "default", \n      "id": "local"\n    }\n  ]\n}'
+template_after_kerberos = '''{
+  "interpreterSettings": {
+    "2CKEKWY8Z": {
+      "id": "2CKEKWY8Z",
+      "name": "angular",
+      "group": "angular",
+      "properties": {},
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "angular",
+          "class": "org.apache.zeppelin.angular.AngularInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKX8WPU1": {
+      "id": "2CKX8WPU1",
+      "name": "spark",
+      "group": "spark",
+      "properties": {
+        "spark.executor.memory": "512m",
+        "args": "",
+        "zeppelin.spark.printREPLOutput": "true",
+        "spark.cores.max": "",
+        "zeppelin.dep.additionalRemoteRepository": "spark-packages,http://dl.bintray.com/spark-packages/maven,false;",
+        "zeppelin.spark.sql.stacktrace": "false",
+        "zeppelin.spark.importImplicit": "true",
+        "zeppelin.spark.concurrentSQL": "false",
+        "zeppelin.spark.useHiveContext": "true",
+        "zeppelin.pyspark.python": "python",
+        "zeppelin.dep.localrepo": "local-repo",
+        "zeppelin.R.knitr": "true",
+        "zeppelin.spark.maxResult": "1000",
+        "master": "yarn-client",
+        "spark.app.name": "Zeppelin",
+        "zeppelin.R.image.width": "100%",
+        "zeppelin.R.render.options": "out.format = 'html', comment = NA, echo = FALSE, results = 'asis', message = F, warning = F",
+        "zeppelin.R.cmd": "R",
+        "spark.yarn.principal": "zeppelin@EXAMPLE.COM",
+        "spark.yarn.keytab": "/etc/security/keytabs/zeppelin.server.kerberos.keytab"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "spark",
+          "class": "org.apache.zeppelin.spark.SparkInterpreter",
+          "defaultInterpreter": true,
+          "editor": {
+            "language": "scala"
+          }
+        },
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.spark.SparkSqlInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql"
+          }
+        },
+        {
+          "name": "dep",
+          "class": "org.apache.zeppelin.spark.DepInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "scala"
+          }
+        },
+        {
+          "name": "pyspark",
+          "class": "org.apache.zeppelin.spark.PySparkInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python"
+          }
+        },
+        {
+          "name": "r",
+          "class": "org.apache.zeppelin.spark.SparkRInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "r"
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CK8A9MEG": {
+      "id": "2CK8A9MEG",
+      "name": "jdbc",
+      "group": "jdbc",
+      "properties": {
+        "default.password": "",
+        "zeppelin.jdbc.auth.type": "KERBEROS",
+        "common.max_count": "1000",
+        "zeppelin.jdbc.principal": "zeppelin@EXAMPLE.COM",
+        "default.user": "gpadmin",
+        "default.url": "jdbc:postgresql://localhost:5432/",
+        "default.driver": "org.postgresql.Driver",
+        "zeppelin.jdbc.keytab.location": "/etc/security/keytabs/zeppelin.server.kerberos.keytab",
+        "zeppelin.jdbc.concurrent.use": "true",
+        "zeppelin.jdbc.concurrent.max_connection": "10"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.jdbc.JDBCInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKX6DGQZ": {
+      "id": "2CKX6DGQZ",
+      "name": "livy",
+      "group": "livy",
+      "properties": {
+        "zeppelin.livy.pull_status.interval.millis": "1000",
+        "livy.spark.executor.memory": "",
+        "zeppelin.livy.session.create_timeout": "120",
+        "zeppelin.livy.principal": "",
+        "zeppelin.livy.spark.sql.maxResult": "1000",
+        "zeppelin.livy.keytab": "",
+        "zeppelin.livy.concurrentSQL": "false",
+        "zeppelin.livy.spark.sql.field.truncate": "true",
+        "livy.spark.executor.cores": "",
+        "zeppelin.livy.displayAppInfo": "false",
+        "zeppelin.livy.url": "http://localhost:8998",
+        "livy.spark.dynamicAllocation.minExecutors": "",
+        "livy.spark.driver.cores": "",
+        "livy.spark.jars.packages": "",
+        "livy.spark.dynamicAllocation.enabled": "",
+        "livy.spark.executor.instances": "",
+        "livy.spark.dynamicAllocation.cachedExecutorIdleTimeout": "",
+        "livy.spark.dynamicAllocation.maxExecutors": "",
+        "livy.spark.dynamicAllocation.initialExecutors": "",
+        "livy.spark.driver.memory": ""
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "spark",
+          "class": "org.apache.zeppelin.livy.LivySparkInterpreter",
+          "defaultInterpreter": true,
+          "editor": {
+            "language": "scala",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "sql",
+          "class": "org.apache.zeppelin.livy.LivySparkSQLInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sql",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "pyspark",
+          "class": "org.apache.zeppelin.livy.LivyPySparkInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "pyspark3",
+          "class": "org.apache.zeppelin.livy.LivyPySpark3Interpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "python",
+            "editOnDblClick": false
+          }
+        },
+        {
+          "name": "sparkr",
+          "class": "org.apache.zeppelin.livy.LivySparkRInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "r",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "scoped",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CKAY1A8Y": {
+      "id": "2CKAY1A8Y",
+      "name": "md",
+      "group": "md",
+      "properties": {
+        "markdown.parser.type": "pegdown"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "md",
+          "class": "org.apache.zeppelin.markdown.Markdown",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "markdown",
+            "editOnDblClick": true
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    },
+    "2CHS8UYQQ": {
+      "id": "2CHS8UYQQ",
+      "name": "sh",
+      "group": "sh",
+      "properties": {
+        "zeppelin.shell.keytab.location": "/etc/security/keytabs/zeppelin.server.kerberos.keytab",
+        "shell.command.timeout.millisecs": "60000",
+        "zeppelin.shell.principal": "zeppelin@EXAMPLE.COM",
+        "zeppelin.shell.auth.type": "KERBEROS"
+      },
+      "status": "READY",
+      "interpreterGroup": [
+        {
+          "name": "sh",
+          "class": "org.apache.zeppelin.shell.ShellInterpreter",
+          "defaultInterpreter": false,
+          "editor": {
+            "language": "sh",
+            "editOnDblClick": false
+          }
+        }
+      ],
+      "dependencies": [],
+      "option": {
+        "remote": true,
+        "port": -1,
+        "perNote": "shared",
+        "perUser": "shared",
+        "isExistingProcess": false,
+        "setPermission": false,
+        "users": [],
+        "isUserImpersonate": false
+      }
+    }
+  },
+  "interpreterBindings": {},
+  "interpreterRepositories": [
+    {
+      "id": "central",
+      "type": "default",
+      "url": "http://repo1.maven.org/maven2/",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    },
+    {
+      "id": "local",
+      "type": "default",
+      "url": "file:///home/zeppelin/.m2/repository",
+      "releasePolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "snapshotPolicy": {
+        "enabled": true,
+        "updatePolicy": "daily",
+        "checksumPolicy": "warn"
+      },
+      "mirroredRepositories": [],
+      "repositoryManager": false
+    }
+  ]
+}'''

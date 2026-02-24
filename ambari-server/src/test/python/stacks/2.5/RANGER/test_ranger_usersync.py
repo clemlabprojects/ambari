@@ -159,7 +159,7 @@ class TestRangerUsersync(RMFTestCase):
 
     self.assertResourceCalled('File', '/usr/hdp/current/ranger-usersync/native/credValidator.uexe',
       group = 'ranger',
-      mode = 04555
+      mode = 0o4555
     )
 
     self.assertResourceCalled('Execute', ('/usr/jdk64/jdk1.7.0_45/bin/java', '-cp', '/usr/hdp/current/ranger-usersync/lib/*', 'org.apache.ranger.credentialapi.buildks', 'create', 'usersync.ssl.key.password', '-value', 'UnIx529p', '-provider', 'jceks://file/usr/hdp/current/ranger-usersync/conf/ugsync.jceks'),

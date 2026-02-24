@@ -19,12 +19,14 @@ limitations under the License.
 '''
 import json
 
-from mock.mock import MagicMock, patch
+from mock.mock import MagicMock, patch, ANY
 import shutil
 from stacks.utils.RMFTestCase import *
 import tarfile
 import tempfile
 
+@patch("resource_management.libraries.functions.get_user_call_output.get_user_call_output",
+       new=MagicMock(return_value=(0, "", "")))
 @patch("platform.linux_distribution", new = MagicMock(return_value="Linux"))
 @patch.object(tempfile, "gettempdir", new=MagicMock(return_value="/tmp"))
 class TestFalconServer(RMFTestCase):
@@ -239,12 +241,15 @@ class TestFalconServer(RMFTestCase):
       action = ['delete'])
 
     self.assertResourceCalled('Execute', ('tar',
-     '-zchf',
-     '/tmp/falcon-upgrade-backup/falcon-local-backup.tar',
+     '-h',
+     '-czf',
+     '-',
      '-C',
      u'/hadoop/falcon',
      '.'),
         sudo = True, tries = 3, try_sleep = 1,
+        stdout = ANY,
+        stderr = ANY,
     )
     self.assertResourceCalled('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'falcon-server', u'2.2.1.0-2135'),
         sudo = True,

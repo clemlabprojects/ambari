@@ -246,11 +246,11 @@ def ams(name=None, action=None):
           master_components.append(component_name)
 
       if slave_components:
-        new_ams_site['timeline.metrics.initial.configured.slave.components'] = ",".join(slave_components)
+        new_ams_site['timeline.metrics.initial.configured.slave.components'] = ",".join(sorted(slave_components))
       if master_components:
         if 'ambari_server' not in master_components:
           master_components.append('ambari_server')
-        new_ams_site['timeline.metrics.initial.configured.master.components'] = ",".join(master_components)
+        new_ams_site['timeline.metrics.initial.configured.master.components'] = ",".join(sorted(master_components))
 
     hbase_total_heapsize_with_trailing_m = params.hbase_heapsize
     hbase_total_heapsize = int(hbase_total_heapsize_with_trailing_m[:-1]) * 1024 * 1024

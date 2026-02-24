@@ -33,7 +33,27 @@ class TestMetadataServer(RMFTestCase):
   STACK_VERSION = "2.3"
   stack_root = Script.get_stack_root()
   conf_dir = stack_root + "/current/atlas-server/conf"
+
+  def _load_stack_paths(self):
+    config = self.getConfig()
+    cluster_level = config.get('clusterLevelParams', {})
+    configurations = config.get('configurations', {})
+    cluster_env = configurations.get('cluster-env', {})
+    stack_name = cluster_level.get('stack_name') or cluster_env.get('stack_name') or "HDP"
+    stack_root = cluster_env.get('stack_root')
+    if stack_root:
+      try:
+        stack_root_map = json.loads(stack_root)
+        stack_root = stack_root_map.get(stack_name, "/usr/{0}".format(stack_name.lower()))
+      except ValueError:
+        pass
+    else:
+      stack_root = "/usr/{0}".format(stack_name.lower())
+    self.stack_root = stack_root
+    self.conf_dir = stack_root + "/current/atlas-server/conf"
+
   def configureResourcesCalled(self):
+      self._load_stack_paths()
       # Both server and client
       self.assertResourceCalled('Directory', self.conf_dir,
                                 owner='atlas',
@@ -148,7 +168,7 @@ class TestMetadataServer(RMFTestCase):
                                 mode=0o644,
       )
       self.assertResourceCalled('File', '/var/log/ambari-infra-solr-client/solr-client.log',
-                                mode=0664,
+                                mode=0o664,
                                 content=''
       )
       self.assertResourceCalledRegexp('^Execute$', '^ambari-sudo.sh JAVA_HOME=/usr/jdk64/jdk1.7.0_45 /usr/lib/ambari-infra-solr-client/solrCloudCli.sh --zookeeper-connect-string c6401.ambari.apache.org:2181 --znode /infra-solr --check-znode --retry 5 --interval 10')
@@ -169,6 +189,7 @@ class TestMetadataServer(RMFTestCase):
       self.assertResourceCalledRegexp('^Execute$', '^ambari-sudo.sh JAVA_HOME=/usr/jdk64/jdk1.7.0_45 /usr/lib/ambari-infra-solr-client/solrCloudCli.sh --zookeeper-connect-string c6401.ambari.apache.org:2181/infra-solr --create-collection --collection fulltext_index --config-set atlas_configs --shards 1 --replication 1 --max-shards 1 --retry 5 --interval 10')
 
   def configureResourcesCalledSecure(self):
+    self._load_stack_paths()
     # Both server and client
     self.assertResourceCalled('Directory', self.conf_dir,
                               owner='atlas',
@@ -290,7 +311,7 @@ class TestMetadataServer(RMFTestCase):
                               mode=0o644,
                               )
     self.assertResourceCalled('File', '/var/log/ambari-infra-solr-client/solr-client.log',
-                              mode=0664,
+                              mode=0o664,
                               content=''
     )
     self.assertResourceCalledRegexp('^Execute$', '^ambari-sudo.sh JAVA_HOME=/usr/jdk64/jdk1.7.0_45 /usr/lib/ambari-infra-solr-client/solrCloudCli.sh --zookeeper-connect-string c6401.ambari.apache.org:2181 --znode /infra-solr --check-znode --retry 5 --interval 10')
@@ -394,6 +415,7 @@ class TestMetadataServer(RMFTestCase):
                        stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
+    self._load_stack_paths()
     self.assertResourceCalled('Execute', 'source {0}/atlas-env.sh; {1}/current/atlas-server/bin/atlas_stop.py'.format(self.conf_dir,self.stack_root),
                               user = 'atlas',
     )

@@ -89,19 +89,7 @@ public class MapReduce2JobHistoryStatePreservingCheckTest {
     Configuration config = Mockito.mock(Configuration.class);
     m_check.config = config;
 
-    RepositoryVersionEntity rve = Mockito.mock(RepositoryVersionEntity.class);
-    Mockito.when(rve.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersionDao.findByStackNameAndVersion(Mockito.anyString(), Mockito.anyString())).thenReturn(rve);
-
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.3.1.1-1234");
-    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.3"));
-
     m_services.clear();
-
-    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
-    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
-    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
-    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 
   /**
@@ -110,11 +98,9 @@ public class MapReduce2JobHistoryStatePreservingCheckTest {
   @Test
   public void testIsApplicable() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
-    Mockito.when(cluster.getCurrentStackVersion()).thenReturn(new StackId("HDP-2.3"));
 
-    Mockito.when(cluster.getServices()).thenReturn(m_services);
+    mockRepositoryForServices();
 
     PrereqCheckRequest request = new PrereqCheckRequest("cluster");
     request.setSourceStackId(new StackId("HDP", "2.3.0.0"));
@@ -131,7 +117,6 @@ public class MapReduce2JobHistoryStatePreservingCheckTest {
   @Test
   public void testPerform() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
 
     final DesiredConfig desiredConfig = Mockito.mock(DesiredConfig.class);
@@ -171,23 +156,23 @@ public class MapReduce2JobHistoryStatePreservingCheckTest {
   @Test
   public void testIsApplicableMinimumStackVersion() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
-    Mockito.when(cluster.getServices()).thenReturn(new HashMap<String, Service>() {
-      {
-        put("MAPREDUCE2", null);
-      }
-    });
-    Mockito.when(cluster.getCurrentStackVersion()).thenReturn(new StackId("MYSTACK-12.2"));
     Mockito.when(m_clusters.getCluster("c1")).thenReturn(cluster);
     PrereqCheckRequest request = new PrereqCheckRequest("c1");
     request.setTargetRepositoryVersion(m_repositoryVersion);
 
-    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.0.0.1");
+    mockRepositoryForServices();
 
     // MAPREDUCE2 installed
     m_services.put("MAPREDUCE2", Mockito.mock(Service.class));
 
     boolean isApplicable = m_check.isApplicable(request);
     Assert.assertTrue(isApplicable);
+  }
+
+  private void mockRepositoryForServices() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
   }
 }

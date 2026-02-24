@@ -20,8 +20,8 @@ limitations under the License.
 
 import logging
 from time import time
-from resource_monitoring.core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
-from resource_monitoring.core.metering import MeteringMetricHandler
+from core.event_definition import HostMetricCollectEvent, ProcessMetricCollectEvent
+from core.metering import MeteringMetricHandler
 
 logger = logging.getLogger()
 

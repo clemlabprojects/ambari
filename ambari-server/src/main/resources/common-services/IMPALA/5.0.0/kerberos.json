@@ -63,7 +63,7 @@
               }
         },
         {
-          "name": "/smokeuser"
+          "name": "smokeuser"
         }
       ],
       "configurations": [

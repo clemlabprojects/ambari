@@ -513,7 +513,7 @@ public class OrmTestHelper {
     target.setDescription("Target Description");
     target.setNotificationType("EMAIL");
     target.setProperties("Target Properties");
-    target.setTargetName("Target Name " + System.currentTimeMillis());
+    target.setTargetName("Target Name " + UUID.randomUUID().toString());
 
     alertDispatchDAO.create(target);
     return target;
@@ -538,7 +538,7 @@ public class OrmTestHelper {
     target.setDescription("Target Description");
     target.setNotificationType("EMAIL");
     target.setProperties("Target Properties");
-    target.setTargetName("Target Name " + System.currentTimeMillis());
+    target.setTargetName("Target Name " + UUID.randomUUID().toString());
     target.setGlobal(true);
 
     alertDispatchDAO.create(target);

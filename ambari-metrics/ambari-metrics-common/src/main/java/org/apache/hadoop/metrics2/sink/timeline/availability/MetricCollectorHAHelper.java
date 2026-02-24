@@ -65,9 +65,9 @@ public class MetricCollectorHAHelper {
   public Collection<String> findLiveCollectorHostsFromZNode() {
     Set<String> collectors = new HashSet<>();
 
-    RetryPolicy retryPolicy = new BoundedExponentialBackoffRetry(sleepMsBetweenRetries, 10*sleepMsBetweenRetries, tryCount);
-    final CuratorZookeeperClient client = new CuratorZookeeperClient(zookeeperConnectionURL,
-      SESSION_TIMEOUT, CONNECTION_TIMEOUT, null, retryPolicy);
+    RetryPolicy retryPolicy = createRetryPolicy(sleepMsBetweenRetries, 10 * sleepMsBetweenRetries, tryCount);
+    final CuratorZookeeperClient client = createCuratorZookeeperClient(zookeeperConnectionURL,
+      SESSION_TIMEOUT, CONNECTION_TIMEOUT, retryPolicy);
 
     List<String> liveInstances = null;
 
@@ -105,5 +105,14 @@ public class MetricCollectorHAHelper {
     }
 
     return collectors;
+  }
+
+  protected RetryPolicy createRetryPolicy(int baseSleepMs, int maxSleepMs, int maxRetries) {
+    return new BoundedExponentialBackoffRetry(baseSleepMs, maxSleepMs, maxRetries);
+  }
+
+  protected CuratorZookeeperClient createCuratorZookeeperClient(String zkConnectionUrl,
+    int sessionTimeoutMs, int connectionTimeoutMs, RetryPolicy retryPolicy) {
+    return new CuratorZookeeperClient(zkConnectionUrl, sessionTimeoutMs, connectionTimeoutMs, null, retryPolicy);
   }
 }

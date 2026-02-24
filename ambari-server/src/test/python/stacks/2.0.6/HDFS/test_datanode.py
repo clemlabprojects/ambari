@@ -368,7 +368,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/lib/hadoop-hdfs',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0751,
+                              mode = 0o751,
                               create_parents = True,
                               )
     self.assertResourceCalled('Directory', '/var/lib/ambari-agent/data/datanode',
@@ -379,7 +379,7 @@ class TestDatanode(RMFTestCase):
                               owner = 'hdfs',
                               ignore_failures = True,
                               group = 'hadoop',
-                              mode = 0750,
+                              mode = 0o750,
                               create_parents = True,
                               cd_access='a'
                               )
@@ -454,7 +454,7 @@ class TestDatanode(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/lib/hadoop-hdfs',
                               owner = 'hdfs',
                               group = 'hadoop',
-                              mode = 0751,
+                              mode = 0o751,
                               create_parents = True,
                               )
     self.assertResourceCalled('Directory', '/var/lib/ambari-agent/data/datanode',
@@ -465,7 +465,7 @@ class TestDatanode(RMFTestCase):
                               owner = 'hdfs',
                               ignore_failures = True,
                               group = 'hadoop',
-                              mode = 0750,
+                              mode = 0o750,
                               create_parents = True,
                               cd_access='a'
                               )
@@ -573,7 +573,7 @@ class TestDatanode(RMFTestCase):
                          mocks_dict = mocks_dict
       )
       self.fail('Missing DataNode should have caused a failure')
-    except Fail,fail:
+    except Fail as fail:
       self.assertTrue(mocks_dict['call'].called)
       self.assertEqual(mocks_dict['call'].call_count,30)
 
@@ -594,7 +594,7 @@ class TestDatanode(RMFTestCase):
                          mocks_dict = mocks_dict
       )
       self.fail('Invalid return code should cause a failure')
-    except Fail,fail:
+    except Fail as fail:
       self.assertTrue(mocks_dict['call'].called)
       self.assertEqual(mocks_dict['call'].call_count,30)
 
@@ -626,10 +626,10 @@ class TestDatanode(RMFTestCase):
       raise Fail("Expected a fail since datanode didn't report a shutdown")
     except Exception as err:
       expected_message = "DataNode has not yet deregistered from the NameNode..."
-      if str(err.message) != expected_message:
-        self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err.message))
+      if str(err) != expected_message:
+        self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err))
 
-    self.assertEquals(
+    self.assertEqual(
       ('hdfs dfsadmin -fs hdfs://c6401.ambari.apache.org:8020 -D ipc.client.connect.max.retries=5 -D ipc.client.connect.retry.interval=1000 -getDatanodeInfo 0.0.0.0:8010'),
       mocks_dict['checked_call'].call_args_list[0][0][0])
 
@@ -660,10 +660,10 @@ class TestDatanode(RMFTestCase):
       raise Fail("Expected a fail since datanode didn't report a shutdown")
     except Exception as err:
       expected_message = "DataNode has not yet deregistered from the NameNode..."
-      if str(err.message) != expected_message:
-        self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err.message))
+      if str(err) != expected_message:
+        self.fail("Expected this exception to be thrown. " + expected_message + ". Got this instead, " + str(err))
 
-    self.assertEquals(
+    self.assertEqual(
       ('hdfs dfsadmin -fs hdfs://ns1 -D ipc.client.connect.max.retries=5 -D ipc.client.connect.retry.interval=1000 -getDatanodeInfo 0.0.0.0:8010'),
       mocks_dict['checked_call'].call_args_list[0][0][0])
 

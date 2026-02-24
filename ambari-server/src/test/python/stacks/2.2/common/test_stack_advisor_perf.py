@@ -17,6 +17,7 @@ limitations under the License.
 '''
 
 import json
+import imp
 import os
 import time
 import importlib.util
@@ -77,8 +78,6 @@ class TestStackAdvisorPerformance(TestCase):
       start = time.time()
       recommendation = stack_advisor.recommendComponentLayout(services, hosts)
       time_taken = time.time() - start
-      print "Current stack advisor elapsed {0}, allowed {1}".format(time_taken, TestStackAdvisorPerformance.TIME_ALLOWED)
+      print("Current stack advisor elapsed {0}, allowed {1}".format(time_taken, TestStackAdvisorPerformance.TIME_ALLOWED))
 
       self.assertTrue(time_taken < TestStackAdvisorPerformance.TIME_ALLOWED) # Python 2.7: assertLess
-
-

@@ -139,7 +139,7 @@ def execute(configurations={}, parameters={}, host_name=None):
     Execute(command, environment=env)
 
     return (RESULT_CODE_OK, ["Successful connection to {0}".format(oozie_url)])
-  except KerberosPropertiesNotFound, ex:
+  except KerberosPropertiesNotFound as ex:
     return (RESULT_CODE_UNKNOWN, [str(ex)])
   except Exception as ex:
     return (RESULT_CODE_CRITICAL, [str(ex)])

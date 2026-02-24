@@ -39,9 +39,16 @@ SERVICE_EXCLUDE = ["configs"]
 TEST_MASK = '[Tt]est*.py'
 CUSTOM_TEST_MASK = '_[Tt]est*.py'
 
+TEST_ROOT = os.path.abspath(os.path.dirname(__file__))
+os.chdir(TEST_ROOT)
+
 oldtmpdirpath = tempfile.gettempdir()
 newtmpdirpath = os.path.join(oldtmpdirpath, "ambari-test")
 tempfile.tempdir = newtmpdirpath
+
+ambari_conf_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main", "conf"))
+if os.path.isdir(ambari_conf_dir):
+  os.environ["AMBARI_CONF_DIR"] = ambari_conf_dir
 
 def get_parent_path(base, directory_name):
   """
@@ -384,4 +391,3 @@ def main():
 
 if __name__ == "__main__":
   sys.exit(main())
-

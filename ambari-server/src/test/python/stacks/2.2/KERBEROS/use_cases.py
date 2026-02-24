@@ -41,7 +41,7 @@ krb5_conf_template = \
   '\n' \
   '[realms]\n' \
   '  {{realm}} = {\n' \
-  '{%- if kdc_hosts > 0 -%}\n' \
+  '{%- if kdc_hosts and kdc_hosts|length > 0 -%}\n' \
   '{%- set kdc_host_list = kdc_hosts.split(\',\')  -%}\n' \
   '{%- if kdc_host_list and kdc_host_list|length > 0 %}\n' \
   '    admin_server = {{admin_server_host|default(kdc_host_list[0]|trim(), True)}}\n' \

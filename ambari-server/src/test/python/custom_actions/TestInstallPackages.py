@@ -36,8 +36,6 @@ subproc_mock = MagicMock()
 subproc_mock.return_value = MagicMock()
 subproc_stdout = MagicMock()
 subproc_mock.return_value.stdout = subproc_stdout
-
-
 @patch.object(os, "read", new=MagicMock(return_value=None))
 @patch.object(select, "select", new=MagicMock(return_value=([subproc_stdout], None, None)))
 @patch("pty.openpty", new = MagicMock(return_value=(1,5)))
@@ -47,6 +45,20 @@ class TestInstallPackages(RMFTestCase):
 
   def setUp(self):
     self.maxDiff = None
+    self._yum_check_existence_patcher = patch(
+      "ambari_commons.repo_manager.yum_manager.YumManager._check_existence",
+      return_value=False
+    )
+    self._zypper_check_existence_patcher = patch(
+      "ambari_commons.repo_manager.zypper_manager.ZypperManager._check_existence",
+      return_value=False
+    )
+    self._yum_check_existence_patcher.start()
+    self._zypper_check_existence_patcher.start()
+
+  def tearDown(self):
+    self._yum_check_existence_patcher.stop()
+    self._zypper_check_existence_patcher.stop()
 
   @staticmethod
   def _add_packages(*args, **kwargs):

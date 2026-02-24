@@ -140,7 +140,7 @@ def execute(configurations={}, parameters={}, host_name=None):
       try:
         url_response_json = json.loads(url_response)
         live_nodemanagers = json.loads(find_value_in_jmx(url_response_json, "LiveNodeManagers", live_nodemanagers_qry))
-      except ValueError, error:
+      except ValueError as error:
         convert_to_json_failed = True
         logger.exception("[Alert][{0}] Convert response to json failed or json doesn't contain needed data: {1}".
         format("NodeManager Health Summary", str(error)))

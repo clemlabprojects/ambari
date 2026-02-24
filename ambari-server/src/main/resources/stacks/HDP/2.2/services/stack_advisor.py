@@ -453,7 +453,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
       container_size = configurations["hive-site"]["properties"]["hive.tez.container.size"]
       container_size_bytes = int(int(container_size)*0.8*1024*1024) # Xmx == 80% of container
       # Memory
-      putHiveSiteProperty("hive.auto.convert.join.noconditionaltask.size", int(round(container_size_bytes/3)))
+      putHiveSiteProperty("hive.auto.convert.join.noconditionaltask.size", int(container_size_bytes / 3))
       putHiveSitePropertyAttribute("hive.auto.convert.join.noconditionaltask.size", "maximum", container_size_bytes)
       putHiveSiteProperty("hive.exec.reducers.bytes.per.reducer", "67108864")
 
@@ -648,7 +648,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
     hive_client_hosts = self.getHostsWithComponent("HIVE", "HIVE_CLIENT", services, hosts)
 
     if hive_server_hosts is not None and len(hive_server_hosts):
-      hs_host_ram = hive_server_hosts[0]["Hosts"]["total_mem"]/1024
+      hs_host_ram = hive_server_hosts[0]["Hosts"]["total_mem"] // 1024
       putHiveEnvProperty("hive.metastore.heapsize", max(512, int(hs_host_ram*hm_heapsize_multiplier)))
       putHiveEnvProperty("hive.heapsize", max(512, int(hs_host_ram*hs_heapsize_multiplier)))
       putHiveEnvPropertyAttributes("hive.metastore.heapsize", "maximum", max(1024, hs_host_ram))
@@ -817,7 +817,17 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
        for i in hbaseCoProcessorConfigs[key] if
        not i in uniqueCoprocessorRegionClassList
        and (i.strip() not in ['{{hbase_coprocessor_region_classes}}', '{{hbase_coprocessor_master_classes}}', '{{hbase_coprocessor_regionserver_classes}}'])]
-      putHbaseSiteProperty(key, ','.join(set(uniqueCoprocessorRegionClassList)))
+      ordered_coprocessors = uniqueCoprocessorRegionClassList
+      if key == 'hbase.coprocessor.region.classes':
+        security_coprocessors = [
+          'org.apache.hadoop.hbase.security.access.AccessController',
+          'org.apache.hadoop.hbase.security.token.TokenProvider',
+          'org.apache.hadoop.hbase.security.access.SecureBulkLoadEndpoint'
+        ]
+        ordered_security = [item for item in security_coprocessors if item in uniqueCoprocessorRegionClassList]
+        ordered_coprocessors = [item for item in uniqueCoprocessorRegionClassList if item not in security_coprocessors]
+        ordered_coprocessors.extend(ordered_security)
+      putHbaseSiteProperty(key, ','.join(ordered_coprocessors))
 
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
@@ -841,12 +851,22 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
           else:
             coprocessorConfig = services['configurations']['hbase-site']['properties'][hbaseClassConfigs[item]]
           coprocessorClasses = coprocessorConfig.split(",")
-          coprocessorClasses = filter(None, coprocessorClasses) # Removes empty string elements from array
+          coprocessorClasses = list(filter(None, coprocessorClasses)) # Removes empty string elements from array
           if rangerPluginEnabled and rangerPluginEnabled.lower() == 'Yes'.lower():
             if nonRangerClass in coprocessorClasses:
               coprocessorClasses.remove(nonRangerClass)
             if not rangerClass in coprocessorClasses:
               coprocessorClasses.append(rangerClass)
+            if hbaseClassConfigs[item] == 'hbase.coprocessor.region.classes':
+              security_coprocessors = [
+                'org.apache.hadoop.hbase.security.access.AccessController',
+                'org.apache.hadoop.hbase.security.token.TokenProvider',
+                'org.apache.hadoop.hbase.security.access.SecureBulkLoadEndpoint',
+                rangerClass
+              ]
+              ordered_security = [cp for cp in security_coprocessors if cp in coprocessorClasses]
+              ordered_coprocessors = [cp for cp in coprocessorClasses if cp not in security_coprocessors]
+              coprocessorClasses = ordered_coprocessors + ordered_security
             putHbaseSiteProperty(hbaseClassConfigs[item], ','.join(coprocessorClasses))
           elif rangerPluginEnabled and rangerPluginEnabled.lower() == 'No'.lower():
             if rangerClass in coprocessorClasses:
@@ -993,7 +1013,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
 
             if authNameChanged:
               name.text = newAuthName
-              putKnoxTopologyContent('content', ET.tostring(root))
+              putKnoxTopologyContent('content', ET.tostring(root, encoding='unicode'))
 
             if authorizationProviderExists:
               break
@@ -1017,7 +1037,7 @@ class HDP22StackAdvisor(HDP21StackAdvisor):
             enabled.text = "true"
 
             #TODO add pretty format for newly added provider
-            putKnoxTopologyContent('content', ET.tostring(root))
+            putKnoxTopologyContent('content', ET.tostring(root, encoding='unicode'))
 
 
 

@@ -2019,8 +2019,14 @@ yarn.scheduler.capacity.root.{0}.maximum-am-resource-percent=1""".format(llap_qu
       # Check if 'yarn.nodemanager.resource.memory-mb' is input in services array.
       yarn_nm_mem_in_mb = float(yarn_site['yarn.nodemanager.resource.memory-mb'])
 
+    if yarn_nm_mem_in_mb is None:
+      self.logger.warning("'yarn.nodemanager.resource.memory-mb' was not found in configurations; defaulting to 1024")
+      yarn_nm_mem_in_mb = 1024.0
+
     if yarn_nm_mem_in_mb <= 0.0:
       self.logger.warning("'yarn.nodemanager.resource.memory-mb' current value : {0}. Expected value : > 0".format(yarn_nm_mem_in_mb))
+      self.logger.warning("'yarn.nodemanager.resource.memory-mb' value is invalid; defaulting to 1024")
+      yarn_nm_mem_in_mb = 1024.0
 
     return yarn_nm_mem_in_mb
 

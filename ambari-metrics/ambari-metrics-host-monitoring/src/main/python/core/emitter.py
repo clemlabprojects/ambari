@@ -21,10 +21,10 @@ limitations under the License.
 import logging
 import threading
 
-from resource_monitoring.core.security import CachedHTTPSConnection, CachedHTTPConnection
-from resource_monitoring.core.blacklisted_set import BlacklistedSet
-from resource_monitoring.core.config_reader import ROUND_ROBIN_FAILOVER_STRATEGY
-from resource_monitoring.core.spnego_kerberos_auth import SPNEGOKerberosAuth
+from core.security import CachedHTTPSConnection, CachedHTTPConnection
+from core.blacklisted_set import BlacklistedSet
+from core.config_reader import ROUND_ROBIN_FAILOVER_STRATEGY
+from core.spnego_kerberos_auth import SPNEGOKerberosAuth
 
 logger = logging.getLogger()
 
@@ -216,7 +216,6 @@ class Emitter(threading.Thread):
     for i in range(0, length - 1):
       hash = 31*hash + ord(hostname[i])
     return hash
-
 
 
 

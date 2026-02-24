@@ -22,6 +22,7 @@ import locale
 import json
 import logging
 import urllib
+import urllib.parse
 import time
 import urllib.request, urllib.error
 import os
@@ -311,7 +312,7 @@ def execute(configurations={}, parameters={}, host_name=None):
     "grouped": "true",
     }
 
-  encoded_get_metrics_parameters = urllib.urlencode(get_metrics_parameters)
+  encoded_get_metrics_parameters = urllib.parse.urlencode(get_metrics_parameters)
 
   ams_monitor_conf_dir = "/etc/ambari-metrics-monitor/conf"
   metric_truststore_ca_certs='ca.pem'
@@ -384,15 +385,15 @@ def execute(configurations={}, parameters={}, host_name=None):
     Percentage standard deviation - {4}
     """.format(encoded_get_metrics_parameters, data_json, mean_value, stddev, deviation_percent))
 
-  mean_value_localized = locale.format("%.0f", mean_value, grouping=True)
+  mean_value_localized = locale.format_string("%.0f", mean_value, grouping=True)
 
   variance_value = (deviation_percent / 100.0) * mean_value
-  variance_value_localized = locale.format("%.0f", variance_value, grouping=True)
+  variance_value_localized = locale.format_string("%.0f", variance_value, grouping=True)
 
   # check for CRITICAL status
   if deviation_percent > critical_threshold:
     threshold_value = ((critical_threshold / 100.0) * mean_value)
-    threshold_value_localized = locale.format("%.0f", threshold_value, grouping=True)
+    threshold_value_localized = locale.format_string("%.0f", threshold_value, grouping=True)
 
     message = DEVIATION_THRESHOLD_MESSAGE.format(variance_value_localized, metric_units, deviation_percent,
       mean_value_localized, metric_units, threshold_value_localized, metric_units)
@@ -402,7 +403,7 @@ def execute(configurations={}, parameters={}, host_name=None):
   # check for WARNING status
   if deviation_percent > warning_threshold:
     threshold_value = ((warning_threshold / 100.0) * mean_value)
-    threshold_value_localized = locale.format("%.0f", threshold_value, grouping = True)
+    threshold_value_localized = locale.format_string("%.0f", threshold_value, grouping=True)
 
     message = DEVIATION_THRESHOLD_MESSAGE.format(variance_value_localized, metric_units, deviation_percent,
       mean_value_localized, metric_units, threshold_value_localized, metric_units)
@@ -411,7 +412,7 @@ def execute(configurations={}, parameters={}, host_name=None):
 
   # return OK status; use the warning threshold as the value to compare against
   threshold_value = ((warning_threshold / 100.0) * mean_value)
-  threshold_value_localized = locale.format("%.0f", threshold_value, grouping = True)
+  threshold_value_localized = locale.format_string("%.0f", threshold_value, grouping=True)
 
   message = DEVIATION_OK_MESSAGE.format(variance_value_localized, metric_units, warning_threshold,
     mean_value_localized, metric_units, threshold_value_localized, metric_units)
@@ -495,4 +496,3 @@ def _coerce_to_integer(value):
     return int(value)
   except ValueError:
     return int(float(value))
-

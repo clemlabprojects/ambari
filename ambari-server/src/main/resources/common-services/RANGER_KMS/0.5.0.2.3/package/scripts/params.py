@@ -34,6 +34,11 @@ from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import get_kinit_path
 from resource_management.core.exceptions import Fail
 
+try:
+  unicode
+except NameError:
+  unicode = str
+
 config  = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 stack_root = Script.get_stack_root()

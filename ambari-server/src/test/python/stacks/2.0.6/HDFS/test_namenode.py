@@ -1305,7 +1305,7 @@ class TestNamenode(RMFTestCase):
         stack_version = self.STACK_VERSION, target = RMFTestCase.TARGET_COMMON_SERVICES )
 
       self.fail("Expected a failure since the ranger install.properties was missing")
-    except Fail, failure:
+    except Fail as failure:
       pass
 
     self.assertTrue(isfile_mock.called)
@@ -1348,8 +1348,8 @@ class TestNamenode(RMFTestCase):
     self.assertFalse(0 == len(Script.structuredOut))
     self.assertTrue("upgrade_type" in Script.structuredOut)
     self.assertTrue("direction" in Script.structuredOut)
-    self.assertEquals("rolling_upgrade", Script.structuredOut["upgrade_type"])
-    self.assertEquals("UPGRADE", Script.structuredOut["direction"])
+    self.assertEqual("rolling_upgrade", Script.structuredOut["upgrade_type"])
+    self.assertEqual("UPGRADE", Script.structuredOut["direction"])
 
   @patch("resource_management.libraries.script.Script.post_start")
   @patch("resource_management.libraries.functions.namenode_ha_utils.get_namenode_states")
@@ -1623,10 +1623,10 @@ class TestNamenode(RMFTestCase):
                        call_mocks = [(0, None), (0, None), (0, None), (0, None), (0, None), (0, None), (0, None)],
                        mocks_dict = mocks_dict)
     import sys
-    self.assertEquals("/etc/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
-    self.assertEquals("/usr/lib/hadoop/libexec", sys.modules["params"].hadoop_libexec_dir)
-    self.assertEquals("/usr/bin", sys.modules["params"].hadoop_bin_dir)
-    self.assertEquals("/usr/lib/hadoop/sbin", sys.modules["params"].hadoop_bin)
+    self.assertEqual("/etc/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
+    self.assertEqual("/usr/lib/hadoop/libexec", sys.modules["params"].hadoop_libexec_dir)
+    self.assertEqual("/usr/bin", sys.modules["params"].hadoop_bin_dir)
+    self.assertEqual("/usr/lib/hadoop/sbin", sys.modules["params"].hadoop_bin)
 
   @patch.object(shell, "call")
   @patch("resource_management.core.sudo.path_isdir", new = MagicMock(return_value = True))
@@ -1650,10 +1650,10 @@ class TestNamenode(RMFTestCase):
                        call_mocks = [(0, None), (0, None), (0, None), (0, None), (0, None), (0, None), (0, None)],
                        mocks_dict = mocks_dict)
     import sys
-    self.assertEquals("/etc/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
-    self.assertEquals("/usr/hdp/{0}/hadoop/libexec".format(version), sys.modules["params"].hadoop_libexec_dir)
-    self.assertEquals("/usr/hdp/{0}/hadoop/bin".format(version), sys.modules["params"].hadoop_bin_dir)
-    self.assertEquals("/usr/hdp/{0}/hadoop/sbin".format(version), sys.modules["params"].hadoop_bin)
+    self.assertEqual("/etc/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
+    self.assertEqual("/usr/hdp/{0}/hadoop/libexec".format(version), sys.modules["params"].hadoop_libexec_dir)
+    self.assertEqual("/usr/hdp/{0}/hadoop/bin".format(version), sys.modules["params"].hadoop_bin_dir)
+    self.assertEqual("/usr/hdp/{0}/hadoop/sbin".format(version), sys.modules["params"].hadoop_bin)
 
   @patch.object(shell, "call")
   def test_pre_upgrade_restart_23_params(self, call_mock):
@@ -1679,17 +1679,17 @@ class TestNamenode(RMFTestCase):
 
 
     import sys
-    self.assertEquals("/usr/hdp/2.3.0.0-1234/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
-    self.assertEquals("/usr/hdp/2.3.0.0-1234/hadoop/libexec", sys.modules["params"].hadoop_libexec_dir)
-    self.assertEquals("/usr/hdp/2.3.0.0-1234/hadoop/bin", sys.modules["params"].hadoop_bin_dir)
-    self.assertEquals("/usr/hdp/2.3.0.0-1234/hadoop/sbin", sys.modules["params"].hadoop_bin)
+    self.assertEqual("/usr/hdp/2.3.0.0-1234/hadoop/conf", sys.modules["params"].hadoop_conf_dir)
+    self.assertEqual("/usr/hdp/2.3.0.0-1234/hadoop/libexec", sys.modules["params"].hadoop_libexec_dir)
+    self.assertEqual("/usr/hdp/2.3.0.0-1234/hadoop/bin", sys.modules["params"].hadoop_bin_dir)
+    self.assertEqual("/usr/hdp/2.3.0.0-1234/hadoop/sbin", sys.modules["params"].hadoop_bin)
 
 
   @patch("namenode_upgrade.create_upgrade_marker", MagicMock())
   @patch("resource_management.core.sudo.path_isdir", new = MagicMock(return_value = True))
   def test_express_upgrade_skips_safemode_and_directory_creation(self):
     """
-    Tests that we wait for Safemode to be OFF no matter what except for EU. And, because of that,
+    Tests that we wait for Safemode to be OFF no matter what except for EU. And as because of that,
     EUs don't try to create HDFS resources.
 
     :param self:

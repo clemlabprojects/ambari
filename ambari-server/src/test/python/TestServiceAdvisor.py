@@ -17,6 +17,7 @@ limitations under the License.
 '''
 
 import importlib.util
+import imp
 import json
 import os
 from unittest import TestCase
@@ -28,7 +29,7 @@ class TestServiceAdvisor(TestCase):
 
   ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
   with open(ambari_configuration_path, 'rb') as fp:
-    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    spec = importlib.util.spec_from_file_location('ambari_configuration', ambari_configuration_path)
     ambari_configuration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ambari_configuration)
 

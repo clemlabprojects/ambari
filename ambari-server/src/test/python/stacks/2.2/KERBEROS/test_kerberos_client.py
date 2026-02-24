@@ -265,7 +265,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('File', "/etc/security/keytabs/spnego.service.keytab",
                               owner='root',
                               group='hadoop',
-                              mode=0440,
+                              mode=0o440,
                               content=CallFunctionMock(call_result=base64.b64decode("BQIAAABbAAIAC0VYQU1QTEUuQ09NAARIVFRQABdjNjU"
                                                        "wMS5hbWJhcmkuYXBhY2hlLm9yZwAAAAFUodgKAQASAC"
                                                        "A5N4gKUJsizCzwRD11Q/6sdZhJjlJmuuMeMKw/WefIb"
@@ -290,7 +290,7 @@ class TestKerberosClient(RMFTestCase):
     self.assertResourceCalled('File', "/etc/security/keytabs/smokeuser.headless.keytab",
                           owner='ambari-qa',
                           group='hadoop',
-                          mode=0400,
+                          mode=0o400,
                           content=CallFunctionMock(call_result=base64.b64decode("BQIAAABHAAEAC0VYQU1QTEUuQ09NAAlhbWJhcmktcWEAAAA"
                                                    "BVKHYCgEAEgAg3OBDOecGoznTHZiPwmlmK4TI6bdRdrl/6q"
                                                    "TV8Kml2TAAAAA/AAEAC0VYQU1QTEUuQ09NAAlhbWJhcmktc"
@@ -350,11 +350,11 @@ class TestKerberosClient(RMFTestCase):
                        )
 
     # The kdc_hosts is expected to be taken from the JSON configuration data as-is
-    self.assertEquals('c6401.ambari.apache.org, c6402.ambari.apache.org', sys.modules['params'].kdc_hosts)
+    self.assertEqual('c6401.ambari.apache.org, c6402.ambari.apache.org', sys.modules['params'].kdc_hosts)
 
     # The kdc_host is expected to generated using kdc_hosts, but only the first host is used since
     # previous versions only knew how to handle a single KDC host
-    self.assertEquals('c6401.ambari.apache.org', sys.modules['params'].kdc_host)
+    self.assertEqual('c6401.ambari.apache.org', sys.modules['params'].kdc_host)
 
   @patch("resource_management.core.sudo.path_exists")
   def test_find_missing_keytabs(self, path_exists):
@@ -372,7 +372,7 @@ class TestKerberosClient(RMFTestCase):
                        config_dict=json_data,
                        stack_version=self.STACK_VERSION,
                        target=RMFTestCase.TARGET_COMMON_SERVICES)
-    self.assertEquals(Script.structuredOut['missing_keytabs'], [OrderedDict({
+    self.assertEqual(Script.structuredOut['missing_keytabs'], [OrderedDict({
       'keytab_file_path' : '/deleted_keytab',
       'principal' : 'HTTP/c6401.ambari.apache.org@EXAMPLE.COM'
     })])

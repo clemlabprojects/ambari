@@ -28,6 +28,11 @@ from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.functions import get_kinit_path
 from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
 
+try:
+  unicode
+except NameError:
+  unicode = str
+
 config = Script.get_config()
 config_attrs = config['configurationAttributes']
 
@@ -55,7 +60,7 @@ hawq_password = unicode(config['configurations']['hawq-env']['hawq_password'])
 hawqmaster_host = __get_component_host('hawqmaster_hosts')
 hawqstandby_host = __get_component_host('hawqstandby_hosts')
 hawqsegment_hosts = sorted(default('/clusterHostInfo/hawqsegment_hosts', []))
-hawq_master_hosts = [host for host in hawqmaster_host, hawqstandby_host if host]
+hawq_master_hosts = [host for host in (hawqmaster_host, hawqstandby_host) if host]
 hawq_all_hosts = sorted(set(hawq_master_hosts + hawqsegment_hosts))
 
 

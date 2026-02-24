@@ -45,15 +45,12 @@ import org.apache.ambari.server.state.stack.PrerequisiteCheck;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 
 import com.google.inject.Provider;
 
@@ -62,8 +59,6 @@ import com.google.inject.Provider;
  * Unit tests for ComponentsInstallationCheck
  *
  */
-@RunWith(PowerMockRunner.class)               // Allow mocking static methods
-@PrepareForTest(HostComponentSummary.class)   // This class has a static method that will be mocked
 public class ComponentsInstallationCheckTest {
   private final Clusters clusters = Mockito.mock(Clusters.class);
   private AmbariMetaInfo ambariMetaInfo = Mockito.mock(AmbariMetaInfo.class);
@@ -110,23 +105,23 @@ public class ComponentsInstallationCheckTest {
 
   @Test
   public void testPerform() throws Exception {
-    PowerMockito.mockStatic(HostComponentSummary.class);
+    try (MockedStatic<HostComponentSummary> hostComponentSummary = Mockito.mockStatic(HostComponentSummary.class)) {
 
-    final ComponentsInstallationCheck componentsInstallationCheck = new ComponentsInstallationCheck();
-    componentsInstallationCheck.clustersProvider = new Provider<Clusters>() {
+      final ComponentsInstallationCheck componentsInstallationCheck = new ComponentsInstallationCheck();
+      componentsInstallationCheck.clustersProvider = new Provider<Clusters>() {
 
-      @Override
-      public Clusters get() {
-        return clusters;
-      }
-    };
+        @Override
+        public Clusters get() {
+          return clusters;
+        }
+      };
 
-    componentsInstallationCheck.ambariMetaInfo = new Provider<AmbariMetaInfo>() {
-      @Override
-      public AmbariMetaInfo get() {
-        return ambariMetaInfo;
-      }
-    };
+      componentsInstallationCheck.ambariMetaInfo = new Provider<AmbariMetaInfo>() {
+        @Override
+        public AmbariMetaInfo get() {
+          return ambariMetaInfo;
+        }
+      };
 
     final Cluster cluster = Mockito.mock(Cluster.class);
     Mockito.when(cluster.getClusterId()).thenReturn(1L);
@@ -270,12 +265,18 @@ public class ComponentsInstallationCheckTest {
     Mockito.when(hcsMetricsMonitor.getHostName()).thenReturn("host3");
 
     // Mock the static method
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "NAMENODE")).thenReturn(Arrays.asList(hcsNameNode));
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "DATANODE")).thenReturn(Arrays.asList(hcsDataNode1, hcsDataNode2, hcsDataNode3));
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("HDFS", "ZKFC")).thenReturn(Arrays.asList(hcsZKFC));
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("TEZ", "TEZ_CLIENT")).thenReturn(Arrays.asList(hcsTezClient));
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_COLLECTOR")).thenReturn(Arrays.asList(hcsMetricsCollector));
-    PowerMockito.when(HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_MONITOR")).thenReturn(Arrays.asList(hcsMetricsMonitor));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "NAMENODE"))
+        .thenReturn(Arrays.asList(hcsNameNode));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "DATANODE"))
+        .thenReturn(Arrays.asList(hcsDataNode1, hcsDataNode2, hcsDataNode3));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("HDFS", "ZKFC"))
+        .thenReturn(Arrays.asList(hcsZKFC));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("TEZ", "TEZ_CLIENT"))
+        .thenReturn(Arrays.asList(hcsTezClient));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_COLLECTOR"))
+        .thenReturn(Arrays.asList(hcsMetricsCollector));
+    hostComponentSummary.when(() -> HostComponentSummary.getHostComponentSummaries("AMBARI_METRICS", "METRICS_MONITOR"))
+        .thenReturn(Arrays.asList(hcsMetricsMonitor));
     for (String hostName : hosts.keySet()) {
       Mockito.when(clusters.getHost(hostName)).thenReturn(hosts.get(hostName));
     }
@@ -327,5 +328,6 @@ public class ComponentsInstallationCheckTest {
     componentsInstallationCheck.perform(check, request);
     Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
     Assert.assertTrue(check.getFailedDetail().isEmpty());
+    }
   }
 }

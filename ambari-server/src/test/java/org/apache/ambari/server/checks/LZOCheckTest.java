@@ -82,9 +82,7 @@ public class LZOCheckTest {
   public void testIsApplicable() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
 
-    Mockito.when(cluster.getServices()).thenReturn(m_services);
-    Mockito.when(cluster.getClusterId()).thenReturn(1L);
-    Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(org.apache.ambari.server.state.RepositoryType.STANDARD);
 
     PrereqCheckRequest request = new PrereqCheckRequest("cluster");
     request.setTargetRepositoryVersion(m_repositoryVersion);

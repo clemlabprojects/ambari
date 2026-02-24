@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import imp
 import importlib.util
 import json
 import os
@@ -29,7 +30,7 @@ class TestPXF300ServiceAdvisor(TestCase):
 
   ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
   with open(ambari_configuration_path, 'rb') as fp:
-    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    spec = importlib.util.spec_from_file_location('ambari_configuration', ambari_configuration_path)
     ambari_configuration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ambari_configuration)
 
@@ -86,13 +87,13 @@ class TestPXF300ServiceAdvisor(TestCase):
     # Case 1: Test pxf-hbase.jar classpath line was added to content
     expected = "# Some hbase-env content text\n\n#Add pxf-hbase.jar to HBASE_CLASSPATH\n" + self.PXF_PATH
     self.serviceAdvisor.getServiceConfigurationRecommendations(services["configurations"], None, services, None)
-    self.assertEquals(services["configurations"]["hbase-env"]["properties"]["content"], expected)
+    self.assertEqual(services["configurations"]["hbase-env"]["properties"]["content"], expected)
 
     # Case 2: Test pxf-hbase.jar classpath line is not added again if content already has it
     services["configurations"]["hbase-env"]["properties"]["content"] = self.PXF_PATH
     expected = self.PXF_PATH
     self.serviceAdvisor.getServiceConfigurationRecommendations(services["configurations"], None, services, None)
-    self.assertEquals(services["configurations"]["hbase-env"]["properties"]["content"], expected)
+    self.assertEqual(services["configurations"]["hbase-env"]["properties"]["content"], expected)
 
   def test_getConfigurationsValidationItems(self):
     services = {
@@ -137,12 +138,12 @@ class TestPXF300ServiceAdvisor(TestCase):
       }
     ]
     items = self.serviceAdvisor.getServiceConfigurationsValidationItems(properties, properties, services, None)
-    self.assertEquals(items, expected)
+    self.assertEqual(items, expected)
 
     # Case 2: No warning should be generated if PXF_PATH is present in hbase-env
     properties = services["configurations"]["hbase-env"]["properties"]["content"] = self.PXF_PATH
     items = self.serviceAdvisor.getServiceConfigurationsValidationItems(properties, properties, services, None)
-    self.assertEquals(items, [])
+    self.assertEqual(items, [])
 
 
   def test_createComponentLayoutRecommendations_pxf_cluster_install(self):
@@ -201,7 +202,7 @@ class TestPXF300ServiceAdvisor(TestCase):
                   {"name": "PXF"} in hostgroup["components"]]
     hostNames = [host["fqdn"] for hostgroup in recommendations["blueprint_cluster_binding"]["host_groups"] if
                  hostgroup["name"] in hostGroups for host in hostgroup["hosts"]]
-    self.assertEquals(set(hostNames), pxfHosts)
+    self.assertEqual(set(hostNames), pxfHosts)
 
 
   def test_createComponentLayoutRecommendations_pxf_add_service_wizard_to_be_installed(self):
@@ -260,7 +261,7 @@ class TestPXF300ServiceAdvisor(TestCase):
                   {"name": "PXF"} in hostgroup["components"]]
     hostNames = [host["fqdn"] for hostgroup in recommendations["blueprint_cluster_binding"]["host_groups"] if
                  hostgroup["name"] in hostGroups for host in hostgroup["hosts"]]
-    self.assertEquals(set(hostNames), pxfHosts)
+    self.assertEqual(set(hostNames), pxfHosts)
 
 
   def test_createComponentLayoutRecommendations_pxf_add_service_wizard_already_installed(self):
@@ -335,7 +336,7 @@ class TestPXF300ServiceAdvisor(TestCase):
                   {"name": "PXF"} in hostgroup["components"]]
     hostNames = [host["fqdn"] for hostgroup in recommendations["blueprint_cluster_binding"]["host_groups"] if
                  hostgroup["name"] in hostGroups for host in hostgroup["hosts"]]
-    self.assertEquals(set(hostNames), pxfHosts)
+    self.assertEqual(set(hostNames), pxfHosts)
 
   def test_getComponentLayoutValidations_pxf_not_co_located_with_nn(self):
     """ Test warning is generated when PXF is not co-located with NAMENODE """
@@ -352,17 +353,17 @@ class TestPXF300ServiceAdvisor(TestCase):
 
     hosts = self.load_json("hosts-3-hosts.json")
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
-    self.assertEquals(len(hostsList), 3)
+    self.assertEqual(len(hostsList), 3)
 
     validations = [validation for validation in self.serviceAdvisor.getServiceComponentLayoutValidations(services, hosts) if validation["component-name"] == "PXF"]
-    self.assertEquals(len(validations), 1)
+    self.assertEqual(len(validations), 1)
     expected = {
       "type": 'host-component',
       "level": 'WARN',
       "component-name": 'PXF',
       "message": 'PXF must be installed on the NameNode, Standby NameNode and all DataNodes. The following 1 host(s) do not satisfy the colocation recommendation: c6401.ambari.apache.org'
     }
-    self.assertEquals(validations[0], expected)
+    self.assertEqual(validations[0], expected)
 
 
   def test_getComponentLayoutValidations_pxf_not_co_located_with_dn(self):
@@ -380,17 +381,17 @@ class TestPXF300ServiceAdvisor(TestCase):
 
     hosts = self.load_json("hosts-3-hosts.json")
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
-    self.assertEquals(len(hostsList), 3)
+    self.assertEqual(len(hostsList), 3)
 
     validations = [validation for validation in self.serviceAdvisor.getServiceComponentLayoutValidations(services, hosts) if validation["component-name"] == "PXF"]
-    self.assertEquals(len(validations), 1)
+    self.assertEqual(len(validations), 1)
     expected = {
       "type": 'host-component',
       "level": 'WARN',
       "component-name": 'PXF',
       "message": 'PXF must be installed on the NameNode, Standby NameNode and all DataNodes. The following 2 host(s) do not satisfy the colocation recommendation: c6402.ambari.apache.org, c6403.ambari.apache.org'
     }
-    self.assertEquals(validations[0], expected)
+    self.assertEqual(validations[0], expected)
 
 
   def test_getComponentLayoutValidations_pxf_not_co_located_with_nn_or_dn(self):
@@ -408,17 +409,17 @@ class TestPXF300ServiceAdvisor(TestCase):
 
     hosts = self.load_json("hosts-3-hosts.json")
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
-    self.assertEquals(len(hostsList), 3)
+    self.assertEqual(len(hostsList), 3)
 
     validations = [validation for validation in self.serviceAdvisor.getServiceComponentLayoutValidations(services, hosts) if validation["component-name"] == "PXF"]
-    self.assertEquals(len(validations), 1)
+    self.assertEqual(len(validations), 1)
     expected = {
       "type": 'host-component',
       "level": 'WARN',
       "component-name": 'PXF',
       "message": 'PXF must be installed on the NameNode, Standby NameNode and all DataNodes. The following 1 host(s) do not satisfy the colocation recommendation: c6403.ambari.apache.org'
     }
-    self.assertEquals(validations[0], expected)
+    self.assertEqual(validations[0], expected)
 
 
   def test_getComponentLayoutValidations_pxf_co_located_with_nn_and_dn(self):
@@ -436,7 +437,7 @@ class TestPXF300ServiceAdvisor(TestCase):
 
     hosts = self.load_json("hosts-3-hosts.json")
     hostsList = [host["Hosts"]["host_name"] for host in hosts["items"]]
-    self.assertEquals(len(hostsList), 3)
+    self.assertEqual(len(hostsList), 3)
 
     validations = [validation for validation in self.serviceAdvisor.getServiceComponentLayoutValidations(services, hosts) if validation["component-name"] == "PXF"]
-    self.assertEquals(len(validations), 0)
+    self.assertEqual(len(validations), 0)

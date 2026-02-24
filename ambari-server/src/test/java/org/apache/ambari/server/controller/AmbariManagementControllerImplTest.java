@@ -2110,7 +2110,7 @@ public class AmbariManagementControllerImplTest {
     expect(configuration.getJCEName()).andReturn(JCE_NAME);
     expect(configuration.getOjdbcJarName()).andReturn(OJDBC_JAR_NAME);
     expect(configuration.getServerDBName()).andReturn(SERVER_DB_NAME);
-    expect(configuration.getJavaVersion()).andReturn(8);
+    expect(configuration.getJavaVersion()).andReturn(8).anyTimes();
     expect(configuration.areHostsSysPrepped()).andReturn("true");
     expect(configuration.getGplLicenseAccepted()).andReturn(false);
     expect(configuration.getDatabaseConnectorNames()).andReturn(new HashMap<>()).anyTimes();

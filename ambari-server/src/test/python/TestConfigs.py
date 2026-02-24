@@ -17,6 +17,7 @@ limitations under the License.
 '''
 
 import io
+import imp
 import importlib.util
 import os
 import sys

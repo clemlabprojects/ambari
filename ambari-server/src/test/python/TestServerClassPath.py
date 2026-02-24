@@ -111,6 +111,7 @@ class TestConfigs(TestCase):
   @patch("ambari_server.serverConfiguration.get_conf_dir")
   def test_server_class_path_find_all_jars(self, get_conf_dir_mock):
     temp_dir = tempfile.mkdtemp()
+    get_conf_dir_mock.return_value = "/etc/ambari-server/conf"
     sub_dir = tempfile.mkdtemp(dir=temp_dir)
     serverClassPath = ServerClassPath(None, None)
     jar0 = tempfile.NamedTemporaryFile(suffix='.jar')
@@ -139,6 +140,7 @@ class TestConfigs(TestCase):
   @patch("ambari_server.serverConfiguration.get_conf_dir")
   def test_server_class_path_validate_classpath(self, get_conf_dir_mock,
                                                 find_jars_mock):
+    get_conf_dir_mock.return_value = "/etc/ambari-server/conf"
     serverClassPath = ServerClassPath(None, None)
 
     # No jars

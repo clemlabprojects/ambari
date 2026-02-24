@@ -1201,8 +1201,9 @@ class DefaultStackAdvisor(StackAdvisor):
                       if componentHost not in dependentComponentHosts:
                         hostsWithIssues.append(componentHost)
                   if hostsWithIssues:
-                    message = "{0} requires {1} {2} to be co-hosted on following host(s): {3}.".format(componentDisplayName,
-                               dependentComponentDisplayName, notMessagePart, ', '.join(hostsWithIssues))
+                    not_prefix = "not " if notMessagePart else ""
+                    message = "{0} requires {1} {2}to be co-hosted on following host(s): {3}.".format(
+                      componentDisplayName, dependentComponentDisplayName, not_prefix, ', '.join(hostsWithIssues))
                     items.append({ "type": 'host-component', "level": 'ERROR', "message": message,
                                    "component-name": component["StackServiceComponents"]["component_name"]})
                 elif scope == "cluster" and not dependentComponentHosts:
@@ -1255,6 +1256,14 @@ class DefaultStackAdvisor(StackAdvisor):
     Copied from HDP 2.0.6 so that it could be used by Service Advisors.
     :return: Dictionary of memory and CPU attributes in the cluster
     """
+    if services is None:
+      services = {"configurations": {}, "services": []}
+    else:
+      if "configurations" not in services or services["configurations"] is None:
+        services["configurations"] = {}
+      if "services" not in services or services["services"] is None:
+        services["services"] = []
+
     putYarnProperty = self.putProperty(services["configurations"], "yarn-site", services)
     putYarnPropertyAttribute = self.putPropertyAttribute(services["configurations"], "yarn-site")
 
@@ -1330,7 +1339,7 @@ class DefaultStackAdvisor(StackAdvisor):
     totalAvailableRam = cluster["ram"] - cluster["reservedRam"]
     if cluster["hBaseInstalled"]:
       totalAvailableRam -= cluster["hbaseRam"]
-    cluster["totalAvailableRam"] = max(512, totalAvailableRam * 1024)
+    cluster["totalAvailableRam"] = max(1024, totalAvailableRam * 1024)
     self.logger.info("Memory for YARN apps - cluster[totalAvailableRam]: " + str(cluster["totalAvailableRam"]))
 
     suggestedMinContainerRam = 1024   # new smaller value for YARN min container

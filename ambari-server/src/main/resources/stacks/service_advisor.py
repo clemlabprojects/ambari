@@ -48,6 +48,13 @@ convention listed above.
 For examples see: common-services/HAWQ/2.0.0/service_advisor.py
 and common-services/PXF/3.0.0/service_advisor.py
 """
+import os
+import sys
+
+STACKS_DIR = os.path.dirname(os.path.abspath(__file__))
+if STACKS_DIR not in sys.path:
+  sys.path.insert(0, STACKS_DIR)
+
 from stack_advisor import DefaultStackAdvisor
 
 class ServiceAdvisor(DefaultStackAdvisor):

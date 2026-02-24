@@ -614,7 +614,8 @@ public abstract class AbstractTimelineMetricsSink {
     }
   }
 
-  Collection<String> findLiveCollectorHostsFromKnownCollector(String host, String port) throws MetricCollectorUnavailableException {
+  protected Collection<String> findLiveCollectorHostsFromKnownCollector(String host, String port)
+      throws MetricCollectorUnavailableException {
     List<String> collectors = new ArrayList<>();
     HttpURLConnection connection = null;
     StringBuilder sb = new StringBuilder(getCollectorProtocol());

@@ -73,7 +73,7 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     LOG.info("Starting Flume Metrics Sink");
     TimelineMetricsCollector timelineMetricsCollector = new TimelineMetricsCollector();
     if (scheduledExecutorService == null || scheduledExecutorService.isShutdown() || scheduledExecutorService.isTerminated()) {
-      scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+      scheduledExecutorService = createScheduledExecutorService();
     }
     scheduledExecutorService.scheduleWithFixedDelay(timelineMetricsCollector, 0,
         pollFrequency, TimeUnit.MILLISECONDS);
@@ -89,10 +89,11 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
   public void configure(Context context) {
     LOG.info("Context parameters " + context);
     try {
-      hostname = InetAddress.getLocalHost().getHostName();
+      InetAddress localHost = getLocalHost();
+      hostname = getHostName(localHost);
       //If not FQDN , call  DNS
       if ((hostname == null) || (!hostname.contains("."))) {
-        hostname = InetAddress.getLocalHost().getCanonicalHostName();
+        hostname = getCanonicalHostName(localHost);
       }
       hostname = hostname.toLowerCase();
 
@@ -205,8 +206,8 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     public void run() {
       LOG.debug("Collecting Metrics for Flume");
       try {
-        Map<String, Map<String, String>> metricsMap = JMXPollUtil.getAllMBeans();
-        long currentTimeMillis = System.currentTimeMillis();
+        Map<String, Map<String, String>> metricsMap = getAllMBeans();
+        long currentTimeMillis = getCurrentTimeMillis();
         for (String component : metricsMap.keySet()) {
           Map<String, String> attributeMap = metricsMap.get(component);
           LOG.debug("Attributes for component " + component);
@@ -264,6 +265,30 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
       timelineMetric.getMetricValues().put(currentTimeMillis, Double.parseDouble(attributeValue));
       return timelineMetric;
     }
+  }
+
+  protected ScheduledExecutorService createScheduledExecutorService() {
+    return Executors.newSingleThreadScheduledExecutor();
+  }
+
+  protected InetAddress getLocalHost() throws UnknownHostException {
+    return InetAddress.getLocalHost();
+  }
+
+  protected String getHostName(InetAddress address) {
+    return address.getHostName();
+  }
+
+  protected String getCanonicalHostName(InetAddress address) {
+    return address.getCanonicalHostName();
+  }
+
+  protected Map<String, Map<String, String>> getAllMBeans() {
+    return JMXPollUtil.getAllMBeans();
+  }
+
+  protected long getCurrentTimeMillis() {
+    return System.currentTimeMillis();
   }
 
   private boolean isCounterMetric(String attributeName) {

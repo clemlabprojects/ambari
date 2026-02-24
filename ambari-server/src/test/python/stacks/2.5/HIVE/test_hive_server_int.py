@@ -484,7 +484,7 @@ class TestHiveServerInteractive(RMFTestCase):
     del hive_site_conf['hive.enforce.bucketing']
     del hive_site_conf['hive.enforce.sorting']
     del hive_site_conf['hive.llap.io.memory.size']
-    hive_site_conf['hive.llap.io.memory.size'] = 357564416L
+    hive_site_conf['hive.llap.io.memory.size'] = 357564416
 
     hiveserver2_site_conf = {}
     hiveserver2_site_conf.update(self.getConfig()['configurations']['hiveserver2-site'])
@@ -521,7 +521,7 @@ class TestHiveServerInteractive(RMFTestCase):
     self.assertResourceCalled('XmlConfig', 'tez-site.xml',
                               group='hadoop',
                               conf_dir='/etc/tez_hive2/conf',
-                              mode=0664,
+                              mode=0o664,
                               configuration_attributes=UnknownConfigurationMock(),
                               owner='tez',
                               configurations=self.getConfig()['configurations']['tez-interactive-site'],

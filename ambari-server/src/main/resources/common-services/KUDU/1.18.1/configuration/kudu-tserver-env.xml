@@ -6,16 +6,19 @@
     <name>rpc_bind_addresses</name>
     <value>0.0.0.0:7050</value>
     <description>RPC bind interface and port for Kudu tablet server.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>webserver_interface</name>
     <value>0.0.0.0</value>
     <description>Web UI bind interface for Kudu tablet server.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>webserver_port</name>
     <value>8050</value>
     <description>Web UI port for Kudu tablet server.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>tserver_master_addrs</name>
@@ -25,16 +28,19 @@
       <type>string</type>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>fs_wal_dir</name>
     <value>/var/lib/kudu/tserver</value>
     <description>WAL directory for Kudu tablet server.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>fs_data_dirs</name>
     <value>/var/lib/kudu/tserver</value>
     <description>Data directories for Kudu tablet server. Comma-separated for multiple paths.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>tserver_additional_flags</name>
@@ -44,5 +50,6 @@
       <type>string</type>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

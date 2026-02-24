@@ -98,7 +98,7 @@ public class KafkaTimelineMetricsReporterTest {
       "kafka.server:type=FetcherLagMetrics,name=ConsumerLag,topic=test-topic,partition=1,clientId=ReplicaFetcherThread-0-1");
 
     Set<ObjectName> objectNames = Collections.singleton(objectName);
-    Mockito.when(mBeanServer.queryNames((ObjectName) Mockito.anyObject(),
+    Mockito.when(mBeanServer.queryNames((ObjectName) Mockito.any(),
       (javax.management.QueryExp) Mockito.isNull()))
       .thenReturn(objectNames);
 
@@ -114,7 +114,7 @@ public class KafkaTimelineMetricsReporterTest {
     attributes.add(new Attribute("Count", 42L));
     attributes.add(new Attribute("Value", 7.5d));
     attributes.add(new Attribute("OneMinuteRate", 3.0d));
-    Mockito.when(mBeanServer.getAttributes(Mockito.eq(objectName), Mockito.<String[]>anyObject()))
+    Mockito.when(mBeanServer.getAttributes(Mockito.eq(objectName), Mockito.<String[]>any()))
       .thenReturn(attributes);
 
     kafkaTimelineMetricsReporter.configure(configs);

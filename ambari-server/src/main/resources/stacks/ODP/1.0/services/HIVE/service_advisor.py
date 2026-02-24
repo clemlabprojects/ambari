@@ -205,7 +205,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     containerSize = min(clusterData["containers"] * clusterData["ramPerContainer"], containerSize)
     container_size_bytes = int(containerSize)*1024*1024
 
-    putHiveProperty("hive.auto.convert.join.noconditionaltask.size", int(round(container_size_bytes / 3)))
+    putHiveProperty("hive.auto.convert.join.noconditionaltask.size", int(container_size_bytes / 3))
     putHiveProperty("hive.tez.java.opts", "-server -Xmx" + str(int(round((0.8 * containerSize) + 0.5))) + "m " +
                     "-Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+UseParallelGC -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps")
     putHiveProperty("hive.tez.container.size", containerSize)
@@ -278,7 +278,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     tez_container_size_bytes = int(int(tez_container_size)*0.8*1024*1024) # Xmx == 80% of container
 
     # Memory
-    putHiveSiteProperty("hive.auto.convert.join.noconditionaltask.size", int(round(tez_container_size_bytes/3)))
+    putHiveSiteProperty("hive.auto.convert.join.noconditionaltask.size", int(tez_container_size_bytes / 3))
     putHiveSitePropertyAttribute("hive.auto.convert.join.noconditionaltask.size", "maximum", tez_container_size_bytes)
 
     # CBO
@@ -1058,8 +1058,14 @@ class HiveValidator(service_advisor.ServiceAdvisor):
       # Check if "yarn.nodemanager.resource.memory-mb" is input in services array.
       yarn_nm_mem_in_mb = float(yarn_site["yarn.nodemanager.resource.memory-mb"])
 
+    if yarn_nm_mem_in_mb is None:
+      self.logger.warning("'yarn.nodemanager.resource.memory-mb' was not found in configurations; defaulting to 1024")
+      yarn_nm_mem_in_mb = 1024.0
+
     if yarn_nm_mem_in_mb <= 0.0:
       self.logger.warning("'yarn.nodemanager.resource.memory-mb' current value : {0}. Expected value : > 0".format(yarn_nm_mem_in_mb))
+      self.logger.warning("'yarn.nodemanager.resource.memory-mb' value is invalid; defaulting to 1024")
+      yarn_nm_mem_in_mb = 1024.0
 
     return yarn_nm_mem_in_mb
 

@@ -31,7 +31,7 @@ try:
     spec = importlib.util.spec_from_file_location('service_advisor', PARENT_FILE)
     service_advisor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(service_advisor)
-  except Exception as e:
+except Exception as e:
   traceback.print_exc()
   print("Failed to load parent")
 

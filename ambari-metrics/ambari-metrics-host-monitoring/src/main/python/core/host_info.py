@@ -119,7 +119,11 @@ class HostInfo():
     mem_total = self.__host_static_info.get('mem_total')
     swap_total = self.__host_static_info.get('swap_total')
 
-    bytes2kilobytes = lambda x: x / 1024
+    def bytes2kilobytes(value):
+      try:
+        return value / 1024
+      except Exception:
+        return 0
 
     return {
       'mem_total': bytes2kilobytes(mem_total) if mem_total else 0,

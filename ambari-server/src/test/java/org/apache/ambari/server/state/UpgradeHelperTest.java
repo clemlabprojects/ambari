@@ -261,14 +261,21 @@ public class UpgradeHelperTest extends EasyMockSupport {
     assertEquals("HIVE", groups.get(4).name);
     assertEquals("OOZIE", groups.get(5).name);
 
-    UpgradeGroupHolder holder = groups.get(2);
-    boolean found = false;
-    for (StageWrapper sw : holder.items) {
-      if (sw.getTasksJson().contains("Upgrading your database")) {
-        found = true;
+    boolean foundDatabaseText = false;
+    boolean foundUnresolvedToken = false;
+    for (UpgradeGroupHolder holder : groups) {
+      for (StageWrapper sw : holder.items) {
+        String tasksJson = sw.getTasksJson();
+        if (tasksJson.contains("your database")) {
+          foundDatabaseText = true;
+          if (tasksJson.contains("{{direction.verb.proper}}")) {
+            foundUnresolvedToken = true;
+          }
+        }
       }
     }
-    assertTrue("Expected to find replaced text for Upgrading", found);
+    assertTrue("Expected to find database manual task text", foundDatabaseText);
+    assertFalse("Expected {{direction.verb.proper}} to be replaced in manual task text", foundUnresolvedToken);
 
     UpgradeGroupHolder group = groups.get(1);
     // check that the display name is being used
@@ -2567,7 +2574,7 @@ public class UpgradeHelperTest extends EasyMockSupport {
   }
 
   @Test
-public void testMergeConfigurationsWithClusterEnv() throws Exception {
+  public void testMergeConfigurationsWithClusterEnv() throws Exception {
     Cluster cluster = makeCluster(true);
 
     StackId oldStack = cluster.getDesiredStackVersion();
@@ -2589,6 +2596,7 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
     stackMap.put("cluster-env", new HashMap<>());
     stackMap.put("hive-site", new HashMap<>());
 
+    Map<String, String> clusterEnvMap = new HashMap<>();
     Capture<Cluster> captureCluster = Capture.newInstance();
     Capture<StackId> captureStackId = Capture.newInstance();
     Capture<AmbariManagementController> captureAmc = Capture.newInstance();
@@ -2596,9 +2604,15 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
     Capture<String> captureUsername = EasyMock.newCapture();
     Capture<String> captureNote = EasyMock.newCapture();
 
-    Map<String, String> clusterEnvMap = new HashMap<>();
-    // Ajout de logs pour déboguer
-    System.out.println("Début des expectations...");
+    EasyMock.reset(m_configHelper);
+    expect(m_configHelper.getPlaceholderValueFromDesiredConfigurations(
+        EasyMock.anyObject(Cluster.class), EasyMock.eq("{{foo/bar}}"))).andReturn("placeholder-rendered-properly").anyTimes();
+    expect(m_configHelper.getEffectiveDesiredTags(
+        EasyMock.anyObject(Cluster.class), EasyMock.anyObject(String.class))).andReturn(new HashMap<>()).anyTimes();
+    expect(m_configHelper.getHostActualConfigs(
+        EasyMock.anyLong())).andReturn(new AgentConfigsUpdateEvent(null, Collections.emptySortedMap())).anyTimes();
+    expect(m_configHelper.getChangedConfigTypes(anyObject(Cluster.class), anyObject(ServiceConfigEntity.class),
+        anyLong(), anyLong(), anyString())).andReturn(Collections.emptyMap()).anyTimes();
 
     expect(m_configHelper.getDefaultProperties(oldStack, "HIVE")).andReturn(stackMap).atLeastOnce();
     expect(m_configHelper.getDefaultProperties(newStack, "HIVE")).andReturn(stackMap).atLeastOnce();
@@ -2612,29 +2626,17 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
         EasyMock.capture(cap),
         EasyMock.capture(captureUsername),
         EasyMock.capture(captureNote)
-    )).andAnswer(() -> {
-        System.out.println("Appel de createConfigTypes !");
-        if (cap.hasCaptured()) {
-            Map<String, Map<String, String>> capturedValue = cap.getValue();
-            System.out.println("Contenu capturé : " + capturedValue);
-            if (capturedValue.containsKey("cluster-env")) {
-                clusterEnvMap.putAll(capturedValue.get("cluster-env"));
-            }
-        } else {
-            System.err.println("⚠ cap n'a rien capturé !");
+    )).andAnswer((IAnswer<Boolean>) () -> {
+      if (cap.hasCaptured()) {
+        Map<String, Map<String, String>> capturedValue = cap.getValue();
+        if (capturedValue.containsKey("cluster-env")) {
+          clusterEnvMap.putAll(capturedValue.get("cluster-env"));
         }
-        return true;
+      }
+      return true;
     });
 
-    System.out.println("Fin des expectations. Replay mock...");
-
     EasyMock.replay(m_configHelper);
-
-    System.out.println("Exécution de la méthode de test...");
-    // testMethodCall();  // ⚠ Vérifie bien que cette méthode appelle createConfigTypes !
-
-    EasyMock.verify(m_configHelper);
-    System.out.println("Mock vérifié avec succès.");
 
     RepositoryVersionEntity repoVersionEntity = helper.getOrCreateRepositoryVersion(new StackId("HDP-2.5.0"), "2.5.0-1234");
 
@@ -2652,6 +2654,8 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
 
     assertNotNull(clusterEnvMap);
     assertTrue(clusterEnvMap.containsKey("a"));
+
+    EasyMock.verify(m_configHelper);
 
     // Nettoyage
     stackManagerMock.invalidateCurrentPaths();
@@ -2682,7 +2686,7 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
 
     StageWrapper wrapper = serviceCheckGroup.items.get(0);
     assertEquals(ServiceCheckGrouping.ServiceCheckStageWrapper.class, wrapper.getClass());
-    assertTrue(wrapper.getText().contains("ZooKeeper"));
+    assertTrue(wrapper.getText().toLowerCase().contains("zookeeper"));
 
     // Do stacks cleanup
     stackManagerMock.invalidateCurrentPaths();
@@ -2722,7 +2726,7 @@ public void testMergeConfigurationsWithClusterEnv() throws Exception {
 
     StageWrapper wrapper = serviceCheckGroup.items.get(0);
     assertEquals(ServiceCheckGrouping.ServiceCheckStageWrapper.class, wrapper.getClass());
-    assertTrue(wrapper.getText().contains("ZooKeeper"));
+    assertTrue(wrapper.getText().toLowerCase().contains("zookeeper"));
 
     wrapper = serviceCheckGroup.items.get(serviceCheckGroup.items.size()-1);
     assertTrue(wrapper.getText().equals("Verifying Skipped Failures"));

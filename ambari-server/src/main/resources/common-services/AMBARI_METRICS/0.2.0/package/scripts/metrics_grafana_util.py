@@ -52,7 +52,7 @@ def perform_grafana_get_call(url, server):
   if grafana_https_enabled:
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, params.grafana_connect_attempts):
+  for i in range(0, params.grafana_connect_attempts):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -97,7 +97,7 @@ def perform_grafana_put_call(url, id, payload, server):
   if grafana_https_enabled:
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, params.grafana_connect_attempts):
+  for i in range(0, params.grafana_connect_attempts):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -139,7 +139,7 @@ def perform_grafana_post_call(url, payload, server):
   if grafana_https_enabled:
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, params.grafana_connect_attempts):
+  for i in range(0, params.grafana_connect_attempts):
     try:
       Logger.info("Connecting (POST) to %s:%s%s" % (server.host, server.port, url))
       conn = network.get_http_connection(
@@ -185,7 +185,7 @@ def perform_grafana_delete_call(url, server):
   if grafana_https_enabled:
     ca_certs = params.ams_grafana_ca_cert
 
-  for i in xrange(0, params.grafana_connect_attempts):
+  for i in range(0, params.grafana_connect_attempts):
     try:
       conn = network.get_http_connection(
         server.host,
@@ -323,7 +323,7 @@ def create_ams_datasource():
   if response and response.status == 200:
     datasources = response.read()
     datasources_json = json.loads(datasources)
-    for i in xrange(0, len(datasources_json)):
+    for i in range(0, len(datasources_json)):
       datasource_name = datasources_json[i]["name"]
       if datasource_name == METRICS_GRAFANA_DATASOURCE_NAME:
         create_datasource = False # datasource already exists

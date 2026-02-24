@@ -24,11 +24,15 @@
         <name>impala_log_dir</name>
         <value>/var/log/impala</value>
         <description>impala Log dir</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>local_library_dir</name>
         <value>/var/lib/impala/udfs</value>
         <description>User-defined function (UDF) libraries are copied from HDFS into this local directory.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_ranger</name>
@@ -37,6 +41,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_trusted_subnets</name>
@@ -45,21 +51,29 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ranger_app_id</name>
         <value>impala</value>
         <description>Ranger Impala application ID, only applicable if enable_ranger=true</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_authorization_provider</name>
         <value>ranger</value>
         <description>Authorization provider, only applicable if enable_ranger=true</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>trusted_subnets</name>
         <value>0.0.0.0/0</value>
         <description>only applicable if enable_trusted_subnets=true</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_admission_control</name>
@@ -68,6 +82,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_proxy_user_config</name>
@@ -77,48 +93,66 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ranger_service_type</name>
         <value>hive</value>
         <description>Ranger Service Plugin interface for Impala, only applicable if enable_ranger=true</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_scratch_dir</name>
         <value>/tmp/impala_scratch</value>
         <description>impala scratch dir</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_state_store_port</name>
         <value>24000</value>
         <description>IMPALA_STATE_STORE_PORT</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_backend_port</name>
         <value>22000</value>
         <description>IMPALA_BACKEND_PORT</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>kerberos_reinit_interval</name>
         <value>60</value>
         <description>kerberos_reinit_interval</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>mem_limit</name>
         <value>20gb</value>
         <description>memory limit . etc 70%,10mb,10gb,10tb</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_user</name>
         <value>impala</value>
         <property-type>USER</property-type>
         <description>User impala catalog/state-store/daemon runs as</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_group</name>
         <value>hadoop</value>
         <property-type>GROUP</property-type>
         <description>impala group</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_ldap_auth</name>
@@ -127,6 +161,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ldap_uri</name>
@@ -136,6 +172,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_allow_anonymous_binds</name>
@@ -144,6 +182,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_bind_dn</name>
@@ -153,6 +193,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ldap_passwords_in_clear_ok</name>
@@ -161,6 +203,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ldap_bind_password</name>
@@ -171,6 +215,8 @@
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
         <property-type>PASSWORD</property-type>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_ldap_domain</name>
@@ -180,6 +226,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_baseDN</name>
@@ -189,6 +237,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_bind_pattern</name>
@@ -198,6 +248,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_ca_certificate</name>
@@ -207,6 +259,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_tls</name>
@@ -215,6 +269,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_user_filter</name>
@@ -224,6 +280,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_group_filter</name>
@@ -233,6 +291,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_group_dn_pattern</name>
@@ -242,6 +302,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_group_membership_key</name>
@@ -251,6 +313,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_search_bind_authentication</name>
@@ -259,6 +323,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>allow_custom_ldap_filters_with_kerberos_auth</name>
@@ -267,6 +333,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_group_class_key</name>
@@ -276,6 +344,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_user_search_basedn</name>
@@ -285,6 +355,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ldap_group_search_basedn</name>
@@ -294,6 +366,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_disable_kudu</name>
@@ -302,26 +376,36 @@
         <value-attributes>
           <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_idle_query_timeout</name>
         <value>3600</value>
         <description>Idle query timeout in seconds</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_idle_session_timeout</name>
         <value>43200</value>
         <description>Idle session timeout in seconds</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_use_local_tz_for_unix_timestamp_conversions</name>
         <value>true</value>
         <description>Support for local timezone to unix timestamp conversion</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_convert_legacy_hive_parquet_utc_timestamps</name>
         <value>true</value>
         <description>Support for legacy hive parquet UTC timestamp</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>client_services_ssl_enabled</name>
@@ -330,6 +414,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ssl_server_certificate</name>
@@ -339,6 +425,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ssl_private_key</name>
@@ -348,6 +436,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ssl_private_key_password_cmd</name>
@@ -358,6 +448,8 @@
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
         <property-type>PASSWORD</property-type>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>ssl_client_ca_certificate</name>
@@ -367,6 +459,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>webserver_certificate_file</name>
@@ -376,6 +470,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>webserver_private_key_file</name>
@@ -385,6 +481,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>webserver_private_key_password_cmd</name>
@@ -395,6 +493,8 @@
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
         <property-type>PASSWORD</property-type>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_load_balancer</name>
@@ -403,6 +503,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_load_balancer_host</name>
@@ -412,6 +514,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_legacy_avx_support</name>
@@ -420,6 +524,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>load_catalog_in_background</name>
@@ -428,6 +534,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>use_local_catalog</name>
@@ -436,6 +544,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>catalog_topic_mode</name>
@@ -445,11 +555,15 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>hms_event_polling_interval_s</name>
         <value>2</value>
         <description>Set to a positive integer to enable automatic invalidate/refresh of metadata and set the polling frequency in seconds. Recommended to use with tools like Hive and spark with value less than 5 seconds. </description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>load_auth_to_local_rules</name>
@@ -458,41 +572,57 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_subscriber_timeout_s</name>
         <value>30</value>
         <description>The amount of time (in seconds) that may elapse before the connection with the statestore is considered lost.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>num_metadata_loading_threads</name>
         <value>16</value>
         <description>The number of metadata loading threads (degree of parallelism) to use when loading catalog metadata.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>inc_stats_size_limit_bytes</name>
         <value>209715200</value>
         <description>Maximum size of incremental stats the catalog is allowed to serialize per table. This limit is set as a safety check, to prevent the JVM from hitting a maximum array limit of 1GB (or OOM) while building the thrift objects to send to impalads. By default, it's set to 200MB</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>datastream_sender_timeout_ms</name>
         <value>120000</value>
         <description>The time, in ms, that can elapse  before a plan fragment will time-out trying to send the initial row batch</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>rpc_negotiation_thread_count</name>
         <value>64</value>
         <description>Maximum number of threads dedicated to handling RPC connection negotiations.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_result_cache_size</name>
         <value>100000</value>
         <description>Maximum number of query results a client may request to be cached on a per-query basis to support restarting fetches. This option guards against unreasonably large result caches requested by clients. Requests exceeding this maximum will be rejected</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>accepted_cnxn_queue_depth</name>
         <value>100000</value>
         <description>The size of the post-accept, pre-setup connection queue in each thrift server set up to service Impala internal and external connections.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>idle_client_poll_period_s</name>
@@ -500,6 +630,8 @@
         <description>The time, in s, Impala polls to check if a client
             connection is idle and closes it if the connection is idle.When set to 0, idle client connections
             stay open until explicitly closed by the clients</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>minidump_path</name>
@@ -509,11 +641,15 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_minidumps</name>
         <value>9</value>
         <description>Maximum minidump files Impala keeps around at any one time. A zero or negative value is interpreted as "unlimited". </description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>default_query_options</name>
@@ -523,36 +659,50 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_update_frequency_ms</name>
         <value>2000</value>
         <description>Frequency (in ms) with which the statestore sends topic updates to subscribers.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_num_update_threads</name>
         <value>10</value>
         <description>Number of threads used to send topic updates in parallel to all registered subscribers.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>fe_service_threads</name>
         <value>64</value>
         <description>Number of threads available to serve client requests.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_log_files</name>
         <value>4</value>
         <description>The maximum number of log files to keep at each severity level</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_profile_log_file_size</name>
         <value>5000</value>
         <description>The maximum size (in queries) of the profile log file before a new one is created.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_profile_log_files</name>
         <value>10</value>
         <description>Maximum number of profile log files to retain. The most recent log files are retained. If set to 0, all log files are retained.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>profile_log_dir</name>
@@ -562,6 +712,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_audit_event_log</name>
@@ -570,31 +722,43 @@
             <type>boolean</type>
         </value-attributes>
         <description>Enables audit event generation by Impala daemons. The audit log file will be placed in the directory specified by 'audit_event_log_dir' parameter.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_audit_event_log_files</name>
         <value>300</value>
         <description>Maximum queries that will be represented in each audit event log file</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>audit_event_log_dir</name>
         <value>/var/log/impala/audit</value>
         <description>The directory in which Impala Daemon audit event log files are written</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_audit_event_log_file_size</name>
         <value>5000</value>
         <description>The maximum size (in queries) of the Impala Daemon audit event log file before a new one is created.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>disable_pool_max_requests</name>
         <value>false</value>
         <description>Disables all per-pool limits on the maximum number of running requests.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>disable_pool_mem_limits</name>
         <value>false</value>
         <description>Disables all per-pool mem limits.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>default_pool_mem_limit</name>
@@ -604,21 +768,29 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>default_pool_max_queued</name>
         <value>200</value>
         <description>Maximum number of requests allowed to be queued before rejecting requests. A negative value or 0 indicates requests will always be rejected once the maximum number of concurrent requests are executing. Ignored if fair_scheduler_config_path and llama_site_path are set.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>default_pool_max_requests</name>
         <value>-1</value>
         <description>Maximum number of concurrent outstanding requests allowed to run before queueing incoming requests. A negative value indicates no limit. 0 indicates no requests will be admitted. Ignored if fair_scheduler_config_path and llama_site_path are set.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>queue_wait_timeout_ms</name>
         <value>60000</value>
         <description>Maximum amount of time (in milliseconds) that a request will wait to be admitted before timing out.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_core_dumps</name>
@@ -627,6 +799,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>enable_insert_events</name>
@@ -635,6 +809,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>impala_service_java_options</name>
@@ -644,6 +820,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>redaction_rules_file</name>
@@ -653,6 +831,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>disk_spill_encryption</name>
@@ -661,6 +841,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>abort_on_failed_audit_event</name>
@@ -669,6 +851,8 @@
         <value-attributes>
             <type>boolean</type>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>lineage_event_log_dir</name>
@@ -678,21 +862,29 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_lineage_log_file_size</name>
         <value>5000</value>
         <description>The maximum size (in queries) of the lineage event log file before a new one is created (if lineage logging is enabled)</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_heartbeat_frequency_ms</name>
         <value>1000</value>
         <description>(Advanced) Frequency (in ms) with which the statestore sends heartbeat heartbeats to subscribers.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_heartbeat_tcp_timeout_seconds</name>
         <value>3</value>
         <description>(Advanced) The time after which a heartbeat RPC to a subscriber will timeout. This setting protects against badly hung machines that are not able to respond to the heartbeat RPC in short order</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>is_coordinator</name>
@@ -702,6 +894,8 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>is_executor</name>
@@ -711,26 +905,36 @@
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
         </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_max_missed_heartbeats</name>
         <value>10</value>
         <description>Maximum number of consecutive heartbeat messages an impalad can miss before being declared failed by the statestore.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>statestore_num_heartbeat_threads</name>
         <value>10</value>
         <description>(Advanced) Number of threads used to send heartbeats in parallel to all registered subscribers.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>max_cached_file_handles</name>
         <value>20000</value>
         <description>Maximum number of HDFS file handles that will be cached. Disabled if set to 0.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <property>
         <name>unused_file_handle_timeout_sec</name>
         <value>21600</value>
         <description>Maximum time, in seconds, that an unused HDFS file handle will remain in the HDFS file handle cache. When the underlying file for a cached file handle is deleted, the disk space may not be freed until the cached file handle is removed from the cache. Specifying this timeout allows the disk space of deleted files to be freed in a predictable period of time. If set to zero, unused cached HDFS file handles do not time out.</description>
+    <on-ambari-upgrade add="true"/>
+
     </property>
     <!-- /etc/default/impala file -->
     <property>

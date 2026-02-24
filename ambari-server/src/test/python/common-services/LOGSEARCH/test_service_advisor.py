@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import imp
 import importlib.util
 import os
 from unittest import TestCase
@@ -28,7 +29,7 @@ class TestLOGSEARCH050ServiceAdvisor(TestCase):
 
   ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
   with open(ambari_configuration_path, 'rb') as fp:
-    spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+    spec = importlib.util.spec_from_file_location('ambari_configuration', ambari_configuration_path)
     ambari_configuration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ambari_configuration)
 
@@ -147,7 +148,7 @@ class TestLOGSEARCH050ServiceAdvisor(TestCase):
       return ["c6401.ambari.apache.org", "c6402.ambari.apache.org"]
     self.serviceAdvisor.getComponentHostNames = return_c6401_hostname
     self.serviceAdvisor.getServiceConfigurationRecommendations(self.configurations, self.clusterData, services, self.hosts)
-    self.assertEquals(self.configurations, expected)
+    self.assertEqual(self.configurations, expected)
 
   def test_recommendLogsearchConfigurationWhenSolrIsExternal(self):
     expected = {
@@ -203,4 +204,4 @@ class TestLOGSEARCH050ServiceAdvisor(TestCase):
         return []
     self.serviceAdvisor.getComponentHostNames = return_c6401_hostname
     self.serviceAdvisor.getServiceConfigurationRecommendations(self.configurations, self.clusterData, services, self.hosts)
-    self.assertEquals(self.configurations, expected)
+    self.assertEqual(self.configurations, expected)

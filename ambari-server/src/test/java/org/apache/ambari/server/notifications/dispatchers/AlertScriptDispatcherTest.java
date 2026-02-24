@@ -43,10 +43,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-import org.powermock.api.easymock.PowerMock;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
+import org.mockito.Mockito;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
@@ -58,8 +55,6 @@ import junit.framework.Assert;
 /**
  * Tests {@link AlertScriptDispatcher}.
  */
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({ ProcessBuilder.class, AlertScriptDispatcher.class })
 public class AlertScriptDispatcherTest {
 
   private static final String SCRIPT_CONFIG_VALUE = "/foo/script.py";
@@ -302,7 +297,6 @@ public class AlertScriptDispatcherTest {
     dispatcher.dispatch(notification);
 
     EasyMock.verify(callback, dispatcher);
-    PowerMock.verifyAll();
   }
 
   /**
@@ -342,7 +336,6 @@ public class AlertScriptDispatcherTest {
     dispatcher.dispatch(notification);
 
     EasyMock.verify(callback, dispatcher);
-    PowerMock.verifyAll();
   }
 
   /**
@@ -406,7 +399,6 @@ public class AlertScriptDispatcherTest {
     dispatcher.dispatch(notification);
 
     EasyMock.verify(callback, dispatcher);
-    PowerMock.verifyAll();
   }
 
 
@@ -429,19 +421,23 @@ public class AlertScriptDispatcherTest {
     AlertScriptDispatcher dispatcher = (AlertScriptDispatcher) m_dispatchFactory.getDispatcher(TargetType.ALERT_SCRIPT.name());
     m_injector.injectMembers(dispatcher);
 
-    ProcessBuilder powerMockProcessBuilder = m_injector.getInstance(ProcessBuilder.class);
+    ProcessBuilder processBuilderMock = m_injector.getInstance(ProcessBuilder.class);
     EasyMock.expect(dispatcher.getProcessBuilder(SCRIPT_CONFIG_VALUE, notification)).andReturn(
-        powerMockProcessBuilder).once();
+        processBuilderMock).once();
 
-    Process mockProcess = powerMockProcessBuilder.start();
-    EasyMock.expect(mockProcess.exitValue()).andReturn(255).anyTimes();
+    Process mockProcess = Mockito.mock(Process.class);
+    Mockito.when(mockProcess.exitValue()).thenReturn(255);
+    try {
+      Mockito.when(processBuilderMock.start()).thenReturn(mockProcess);
+    } catch (IOException exception) {
+      throw new RuntimeException(exception);
+    }
 
-    EasyMock.replay(callback, dispatcher, mockProcess);
+    EasyMock.replay(callback, dispatcher);
 
     dispatcher.dispatch(notification);
 
     EasyMock.verify(callback, dispatcher);
-    PowerMock.verifyAll();
   }
 
   /**
@@ -566,15 +562,16 @@ public class AlertScriptDispatcherTest {
         // bind the dispatcher to force member injection
         bind(AlertScriptDispatcher.class).toInstance(dispatcher);
 
-        Process processMock = EasyMock.createNiceMock(Process.class);
-
-        // use powermock since EasyMock can't mock final classes
-        ProcessBuilder powerMockProcessBuilder = PowerMock.createNiceMock(ProcessBuilder.class);
-        EasyMock.expect(powerMockProcessBuilder.start()).andReturn(processMock).atLeastOnce();
-        PowerMock.replay(powerMockProcessBuilder);
+        Process processMock = Mockito.mock(Process.class);
+        ProcessBuilder processBuilderMock = Mockito.mock(ProcessBuilder.class);
+        try {
+          Mockito.when(processBuilderMock.start()).thenReturn(processMock);
+        } catch (IOException exception) {
+          throw new RuntimeException(exception);
+        }
 
         // bind the doctored ProcessBuilder so we can use it from anywhere
-        bind(ProcessBuilder.class).toInstance(powerMockProcessBuilder);
+        bind(ProcessBuilder.class).toInstance(processBuilderMock);
       } catch (Exception exception) {
         throw new RuntimeException(exception);
       }

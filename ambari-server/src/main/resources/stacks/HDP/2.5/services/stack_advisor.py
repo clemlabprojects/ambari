@@ -1399,8 +1399,8 @@ class HDP25StackAdvisor(HDP24StackAdvisor):
     putHiveInteractiveSiteProperty('hive.llap.daemon.num.executors', 0)
     putHiveInteractiveSitePropertyAttribute('hive.llap.daemon.num.executors', "minimum", 1)
     putHiveInteractiveSiteProperty('hive.llap.io.threadpool.size', 0)
-    putHiveInteractiveSiteProperty('hive.llap.io.memory.size', 0)
-    putHiveInteractiveEnvProperty('llap_heap_size', 0)
+    putHiveInteractiveSiteProperty('hive.llap.io.memory.size', 1024)
+    putHiveInteractiveEnvProperty('llap_heap_size', 1024)
     putHiveInteractiveEnvProperty('slider_am_container_mb', slider_am_container_size)
 
   def get_num_llap_nodes(self, services, configurations):

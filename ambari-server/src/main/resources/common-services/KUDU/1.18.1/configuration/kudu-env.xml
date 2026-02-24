@@ -22,16 +22,19 @@
     <name>kudu_conf_dir</name>
     <value>/etc/kudu/conf</value>
     <description>Kudu configuration directory.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>kudu_log_dir</name>
     <value>/var/log/kudu</value>
     <description>Kudu log directory.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>kudu_run_dir</name>
     <value>/var/run/kudu</value>
     <description>Kudu pid directory.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>kudu_principal_name</name>

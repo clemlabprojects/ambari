@@ -3168,6 +3168,25 @@ public class BlueprintConfigurationProcessor {
     // KAFKA
     kafkaBrokerMap.put("kafka.ganglia.metrics.host", new OptionalSingleHostTopologyUpdater("GANGLIA_SERVER"));
     // KAFKA AMS integration
+    kafkaBrokerNonTopologyMap.put("metric.reporters", new NonTopologyUpdater() {
+      @Override
+      public String updateForClusterCreate(String propertyName,
+                                           String origValue,
+                                           Map<String, Map<String, String>> properties,
+                                           ClusterTopology topology) {
+
+        if (topology.getBlueprint().getServices().contains("AMBARI_METRICS")) {
+          final String amsReportesClass = "org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter";
+          if (origValue == null || origValue.isEmpty()) {
+            return amsReportesClass;
+          } else if (!origValue.contains(amsReportesClass)) {
+            return String.format("%s,%s", origValue, amsReportesClass);
+          }
+        }
+        return origValue;
+      }
+    });
+
     kafkaBrokerNonTopologyMap.put("kafka.metrics.reporters", new NonTopologyUpdater() {
       @Override
       public String updateForClusterCreate(String propertyName,
@@ -3175,6 +3194,10 @@ public class BlueprintConfigurationProcessor {
                                            Map<String, Map<String, String>> properties,
                                            ClusterTopology topology) {
 
+        if (properties != null && properties.containsKey("kafka-broker")
+          && properties.get("kafka-broker").containsKey("metric.reporters")) {
+          return origValue;
+        }
         if (topology.getBlueprint().getServices().contains("AMBARI_METRICS")) {
           final String amsReportesClass = "org.apache.hadoop.metrics2.sink.kafka.KafkaTimelineMetricsReporter";
           if (origValue == null || origValue.isEmpty()) {

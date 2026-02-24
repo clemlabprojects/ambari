@@ -41,6 +41,11 @@ import re
 import time
 import socket
 
+try:
+  unicode
+except NameError:
+  unicode = str
+
 def password_validation(password, key):
   import params
   if password.strip() == "":

@@ -152,7 +152,7 @@ class AMSServiceCheck(Script):
               pass
 
           if not values_are_present:
-            if i < self.AMS_READ_TRIES - 1:  #range/xrange returns items from start to end-1
+            if i < self.AMS_READ_TRIES - 1:  #range/range returns items from start to end-1
               Logger.info("Values weren't stored yet. Retrying in %s seconds."
                           % (self.AMS_READ_TIMEOUT))
               time.sleep(self.AMS_READ_TIMEOUT)
@@ -209,7 +209,7 @@ def call_curl_krb_request(tmp_dir, user_keytab, user_princ, uri, kinit_path, use
                                                        connection_timeout=connection_timeout, kinit_timer_ms=0,
                                                        method=method, body=metric_json, header=header)
     except Exception as exception:
-      if i < tries - 1:  #range/xrange returns items from start to end-1
+      if i < tries - 1:  #range/range returns items from start to end-1
         time.sleep(connection_timeout)
         Logger.info("Connection failed for %s. Next retry in %s seconds."
                     % (uri, connection_timeout))
@@ -243,7 +243,7 @@ def call_curl_krb_request(tmp_dir, user_keytab, user_princ, uri, kinit_path, use
           pass
 
       if not values_are_present:
-        if i < tries - 1:  #range/xrange returns items from start to end-1
+        if i < tries - 1:  #range/range returns items from start to end-1
           Logger.info("Values weren't stored yet. Retrying in %s seconds."
                       % (tries))
           time.sleep(connection_timeout)
@@ -276,7 +276,7 @@ def post_metrics_to_collector(ams_metrics_post_url, metric_collector_host, metri
       response = conn.getresponse()
       Logger.info("Http response for host %s: %s %s" % (metric_collector_host, response.status, response.reason))
     except (http.client.HTTPException, socket.error) as ex:
-      if i < tries - 1:  #range/xrange returns items from start to end-1
+      if i < tries - 1:  #range/range returns items from start to end-1
         time.sleep(connect_timeout)
         Logger.info("Connection failed for host %s. Next retry in %s seconds."
                     % (metric_collector_host, connect_timeout))
@@ -293,7 +293,7 @@ def post_metrics_to_collector(ams_metrics_post_url, metric_collector_host, metri
       break
     else:
       Logger.info("Metrics were not saved.")
-      if i < tries - 1:  #range/xrange returns items from start to end-1
+      if i < tries - 1:  #range/range returns items from start to end-1
         time.sleep(tries)
         Logger.info("Next retry in %s seconds."
                     % (tries))

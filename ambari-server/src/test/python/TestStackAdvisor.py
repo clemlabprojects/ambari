@@ -15,7 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 '''
-
+import imp
 from unittest import TestCase
 import os
 
@@ -30,7 +30,7 @@ class TestStackAdvisorInitialization(TestCase):
 
     ambari_configuration_path = os.path.abspath(os.path.join(resources_path, 'stacks/ambari_configuration.py'))
     with open(ambari_configuration_path, 'rb') as fp:
-      spec = importlib.util.spec_from_file_location('ambari_configuration', AMBARI_CONFIGURATION_PATH)
+      spec = importlib.util.spec_from_file_location('ambari_configuration', ambari_configuration_path)
       ambari_configuration = importlib.util.module_from_spec(spec)
       spec.loader.exec_module(ambari_configuration)
 

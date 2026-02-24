@@ -38,6 +38,11 @@ from ambari_commons.os_family_impl import OsFamilyImpl, OsFamilyFuncImpl
 from utils import get_dfsadmin_base_command
 from utils import set_up_zkfc_security
 
+try:
+  long
+except NameError:
+  long = int
+
 if OSCheck.is_windows_family():
   from resource_management.libraries.functions.windows_service_utils import check_windows_service_status
 
