@@ -124,6 +124,14 @@
             </configuration>
           </plugin>
           <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <!-- EasyMock/CGLIB needs reflective access on Java 17+ -->
+              <argLine>--add-opens java.base/java.lang=ALL-UNNAMED</argLine>
+            </configuration>
+          </plugin>
+          <plugin>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-maven-plugin</artifactId>
             <version>${spring-boot.version}</version>
