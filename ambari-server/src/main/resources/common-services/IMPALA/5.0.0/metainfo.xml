@@ -64,26 +64,10 @@
             
             <osSpecifics>
               <osSpecific>
-                <osFamily>redhat8,rocky8</osFamily>
+                <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12,redhat8,redhat9</osFamily>
                 <packages>
                   <package>
-                    <name>impala</name>
-                  </package>
-                </packages>
-              </osSpecific>
-              <osSpecific>
-                <osFamily>redhat9</osFamily>
-                <packages>
-                  <package>
-                    <name>impala</name>
-                  </package>
-                </packages>
-              </osSpecific>
-              <osSpecific>
-                <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
-                <packages>
-                  <package>
-                    <name>impala</name>
+                    <name>impala-${stack_version}</name>
                   </package>
                 </packages>
               </osSpecific>
@@ -91,7 +75,7 @@
                 <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24</osFamily>
                 <packages>
                   <package>
-                    <name>impala</name>
+                    <name>impala_${stack_version}</name>
                   </package>
                 </packages>
               </osSpecific>
