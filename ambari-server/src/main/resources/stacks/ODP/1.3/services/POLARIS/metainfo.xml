@@ -54,6 +54,16 @@
             <script>scripts/polaris_client.py</script>
             <scriptType>PYTHON</scriptType>
           </commandScript>
+          <customCommands>
+            <customCommand>
+              <name>TOOLS_SMOKE_CHECK</name>
+              <commandScript>
+                <script>scripts/polaris_client.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>300</timeout>
+              </commandScript>
+            </customCommand>
+          </customCommands>
           <configFiles>
             <configFile>
               <type>properties</type>

@@ -56,6 +56,8 @@ polaris_jaas_context = default("/configurations/polaris-env/polaris_jaas_context
 
 polaris_home = default("/configurations/polaris-env/polaris_home",
                       format("{stack_root}/current/polaris-server"))
+polaris_tools_home = default("/configurations/polaris-env/polaris_tools_home",
+                            format("{stack_root}/current/polaris-tools"))
 
 polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
@@ -67,9 +69,21 @@ polaris_start_command = default("/configurations/polaris-env/polaris_start_comma
 polaris_stop_command = default("/configurations/polaris-env/polaris_stop_command", "").strip()
 
 if not polaris_start_command:
-  polaris_start_command = format("{polaris_home}/bin/polaris")
+  polaris_start_command = format("{polaris_home}/bin/server")
+else:
+  # Backward compatibility: older stacks used bin/polaris as start command.
+  # bin/polaris is now the CLI wrapper; service runtime must use bin/server.
+  start_parts = polaris_start_command.split()
+  if len(start_parts) > 0 and start_parts[0].endswith("/bin/polaris"):
+    start_parts[0] = start_parts[0][:-len("/bin/polaris")] + "/bin/server"
+    polaris_start_command = " ".join(start_parts)
 if not polaris_stop_command:
   polaris_stop_command = None
+else:
+  stop_parts = polaris_stop_command.split()
+  if len(stop_parts) > 0 and stop_parts[0].endswith("/bin/polaris"):
+    stop_parts[0] = stop_parts[0][:-len("/bin/polaris")] + "/bin/server"
+    polaris_stop_command = " ".join(stop_parts)
 
 application_properties = dict(config['configurations']['polaris-application-properties'])
 
