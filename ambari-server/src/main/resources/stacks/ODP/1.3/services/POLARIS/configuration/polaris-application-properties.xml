@@ -35,6 +35,95 @@
     <on-ambari-upgrade add="false"/>
   </property>
 
+  <!-- Persistence / relational database properties -->
+  <property>
+    <name>polaris.persistence.type</name>
+    <display-name>Persistence Type</display-name>
+    <value>in-memory</value>
+    <description>Polaris metadata persistence type. Use relational-jdbc for PostgreSQL-backed persistence.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>in-memory</value>
+          <label>In-Memory</label>
+        </entry>
+        <entry>
+          <value>relational-jdbc</value>
+          <label>Relational JDBC</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.datasource.db-kind</name>
+    <display-name>Datasource DB Kind</display-name>
+    <value>postgresql</value>
+    <description>Quarkus datasource backend type for Polaris relational persistence.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>postgresql</value>
+          <label>PostgreSQL</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.datasource.jdbc.url</name>
+    <display-name>Datasource JDBC URL</display-name>
+    <value>jdbc:postgresql://localhost:5432/polaris</value>
+    <description>JDBC connection URL for Polaris metadata database.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.datasource.jdbc.driver</name>
+    <display-name>Datasource JDBC Driver</display-name>
+    <value>org.postgresql.Driver</value>
+    <description>JDBC driver class for Polaris metadata database.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.datasource.username</name>
+    <display-name>Datasource Username</display-name>
+    <value>polaris</value>
+    <description>Username for Polaris metadata database.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="true">
+    <name>quarkus.datasource.password</name>
+    <display-name>Datasource Password</display-name>
+    <value></value>
+    <description>Password for Polaris metadata database.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.datasource.devservices.enabled</name>
+    <display-name>Datasource DevServices Enabled</display-name>
+    <value>false</value>
+    <description>Enable Quarkus DevServices datasource auto-provisioning.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
   <!-- Authentication mode -->
   <property>
     <name>polaris.authentication.type</name>

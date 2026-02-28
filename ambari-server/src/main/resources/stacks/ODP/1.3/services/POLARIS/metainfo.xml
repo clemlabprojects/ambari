@@ -77,6 +77,25 @@
             </configFile>
           </configFiles>
         </component>
+
+        <component>
+          <name>POLARIS_MCP_SERVER</name>
+          <displayName>Polaris MCP Server</displayName>
+          <category>MASTER</category>
+          <cardinality>0+</cardinality>
+          <versionAdvertised>false</versionAdvertised>
+          <commandScript>
+            <script>scripts/polaris_mcp_server.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>600</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>polaris_mcp_server</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+        </component>
       </components>
 
       <osSpecifics>
@@ -112,6 +131,7 @@
 
       <configuration-dependencies>
         <config-type>polaris-application-properties</config-type>
+        <config-type>polaris-db-properties</config-type>
         <config-type>polaris-env</config-type>
         <config-type>polaris-jaas-conf</config-type>
         <config-type>ranger-polaris-plugin-properties</config-type>
@@ -119,6 +139,13 @@
         <config-type>ranger-polaris-security</config-type>
         <config-type>ranger-polaris-policymgr-ssl</config-type>
       </configuration-dependencies>
+
+      <quickLinksConfigurations>
+        <quickLinksConfiguration>
+          <fileName>quicklinks.json</fileName>
+          <default>true</default>
+        </quickLinksConfiguration>
+      </quickLinksConfigurations>
 
     </service>
   </services>

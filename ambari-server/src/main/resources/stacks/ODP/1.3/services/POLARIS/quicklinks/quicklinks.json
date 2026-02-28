@@ -1,0 +1,61 @@
+{
+  "name": "default",
+  "description": "default quick links configuration",
+  "configuration": {
+    "protocol": {
+      "type": "HTTP_ONLY"
+    },
+    "links": [
+      {
+        "name": "polaris_server_endpoint",
+        "label": "Polaris Server API",
+        "component_name": "POLARIS_SERVER",
+        "requires_user_name": "false",
+        "url": "%@://%@:%@/",
+        "protocol": {
+          "type": "https",
+          "checks": [
+            {
+              "property": "polaris_protocol",
+              "desired": "https",
+              "site": "polaris-env"
+            }
+          ]
+        },
+        "port": {
+          "http_property": "quarkus.http.port",
+          "http_default_port": "8181",
+          "https_property": "quarkus.http.port",
+          "https_default_port": "8181",
+          "regex": "^(\\d+)$",
+          "site": "polaris-application-properties"
+        }
+      },
+      {
+        "name": "polaris_mcp_endpoint",
+        "label": "Polaris MCP Endpoint",
+        "component_name": "POLARIS_MCP_SERVER",
+        "requires_user_name": "false",
+        "url": "%@://%@:%@/mcp",
+        "protocol": {
+          "type": "https",
+          "checks": [
+            {
+              "property": "polaris_mcp_protocol",
+              "desired": "https",
+              "site": "polaris-env"
+            }
+          ]
+        },
+        "port": {
+          "http_property": "polaris_mcp_port",
+          "http_default_port": "8000",
+          "https_property": "polaris_mcp_port",
+          "https_default_port": "8000",
+          "regex": "^(\\d+)$",
+          "site": "polaris-env"
+        }
+      }
+    ]
+  }
+}

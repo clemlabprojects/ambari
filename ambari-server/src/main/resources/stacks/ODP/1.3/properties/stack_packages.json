@@ -618,6 +618,18 @@
             "polaris-server",
             "polaris-tools"
           ]
+        },
+        "POLARIS_MCP_SERVER": {
+          "STACK-SELECT-PACKAGE": "polaris-tools",
+          "INSTALL": [
+            "polaris-tools"
+          ],
+          "PATCH": [
+            "polaris-tools"
+          ],
+          "STANDARD": [
+            "polaris-tools"
+          ]
         }
       },
       "RANGER": {

@@ -58,6 +58,7 @@ polaris_home = default("/configurations/polaris-env/polaris_home",
                       format("{stack_root}/current/polaris-server"))
 polaris_tools_home = default("/configurations/polaris-env/polaris_tools_home",
                             format("{stack_root}/current/polaris-tools"))
+polaris_mcp_home = default("/configurations/polaris-env/polaris_mcp_home", polaris_tools_home)
 
 polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
@@ -93,6 +94,28 @@ polaris_port = int(default("/configurations/polaris-application-properties/quark
 polaris_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
 polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevelParams']['hostname']
 polaris_service_url = "{0}://{1}:{2}".format(polaris_protocol, polaris_service_host, polaris_port)
+
+polaris_mcp_transport = default("/configurations/polaris-env/polaris_mcp_transport", "http")
+polaris_mcp_host = default("/configurations/polaris-env/polaris_mcp_host", "0.0.0.0")
+polaris_mcp_port = int(default("/configurations/polaris-env/polaris_mcp_port", 8000))
+polaris_mcp_protocol = default("/configurations/polaris-env/polaris_mcp_protocol", "http")
+polaris_mcp_pid_file = format("{polaris_pid_dir}/polaris-mcp.pid")
+
+polaris_mcp_base_url = default("/configurations/polaris-env/polaris_mcp_base_url", "").strip()
+if not polaris_mcp_base_url:
+  polaris_mcp_base_url = "{0}/".format(polaris_service_url.rstrip('/'))
+
+polaris_mcp_start_command = default("/configurations/polaris-env/polaris_mcp_start_command", "").strip()
+if not polaris_mcp_start_command:
+  polaris_mcp_start_command = format(
+    "{polaris_mcp_home}/bin/polaris-mcp --transport {polaris_mcp_transport} "
+    "--host {polaris_mcp_host} --port {polaris_mcp_port}"
+  )
+polaris_mcp_stop_command = default("/configurations/polaris-env/polaris_mcp_stop_command", "").strip()
+if not polaris_mcp_stop_command:
+  polaris_mcp_stop_command = None
+
+polaris_mcp_hosts = sorted(default("/clusterHostInfo/polaris_mcp_server_hosts", []))
 
 polaris_jaas_principal = None
 polaris_bare_principal = None

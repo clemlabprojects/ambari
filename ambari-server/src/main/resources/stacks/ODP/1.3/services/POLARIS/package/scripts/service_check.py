@@ -44,6 +44,25 @@ class PolarisServiceCheck(Script):
     if failures == len(params.polaris_hosts):
       raise Fail("All instances of POLARIS_SERVER are down.")
 
+    if params.polaris_mcp_hosts and str(params.polaris_mcp_transport).lower() != "stdio":
+      mcp_path = "/mcp"
+      if str(params.polaris_mcp_transport).lower() == "sse":
+        mcp_path = "/sse"
+
+      mcp_failures = 0
+      for host in params.polaris_mcp_hosts:
+        mcp_url = "{0}://{1}:{2}{3}".format(
+          params.polaris_mcp_protocol, host, params.polaris_mcp_port, mcp_path)
+        mcp_cmd = "curl -k -s -o /dev/null {0}".format(mcp_url)
+        try:
+          Execute(mcp_cmd, user=params.smoke_test_user, tries=5, try_sleep=10)
+        except Exception as err:
+          mcp_failures += 1
+          Logger.error("Polaris MCP service check failed for host {0} with error {1}".format(host, err))
+
+      if mcp_failures == len(params.polaris_mcp_hosts):
+        raise Fail("All instances of POLARIS_MCP_SERVER are down.")
+
 
 if __name__ == "__main__":
   PolarisServiceCheck().execute()

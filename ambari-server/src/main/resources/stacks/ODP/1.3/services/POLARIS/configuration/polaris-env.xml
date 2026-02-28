@@ -155,6 +155,109 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>polaris_mcp_home</name>
+    <display-name>Polaris MCP Home</display-name>
+    <value>/usr/odp/current/polaris-tools</value>
+    <description>Home directory of the Polaris tools package that provides the polaris-mcp launcher.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_transport</name>
+    <display-name>Polaris MCP Transport</display-name>
+    <value>http</value>
+    <description>Transport mode for POLARIS_MCP_SERVER. Use http/sse for managed daemons; stdio is only for interactive clients.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>http</value>
+          <label>HTTP</label>
+        </entry>
+        <entry>
+          <value>sse</value>
+          <label>SSE</label>
+        </entry>
+        <entry>
+          <value>stdio</value>
+          <label>STDIO</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_protocol</name>
+    <display-name>Polaris MCP Protocol</display-name>
+    <value>http</value>
+    <description>Protocol used by Polaris MCP quicklinks and checks.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>http</value>
+          <label>HTTP</label>
+        </entry>
+        <entry>
+          <value>https</value>
+          <label>HTTPS</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_host</name>
+    <display-name>Polaris MCP Bind Host</display-name>
+    <value>0.0.0.0</value>
+    <description>Host interface bound by the MCP server process.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_port</name>
+    <display-name>Polaris MCP Port</display-name>
+    <value>8000</value>
+    <description>Port used by the MCP server for HTTP/SSE transports.</description>
+    <value-attributes>
+      <type>int</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_base_url</name>
+    <display-name>Polaris MCP Base URL</display-name>
+    <value></value>
+    <description>Base URL used by MCP tools to call Polaris REST APIs. Leave empty to auto-derive from POLARIS_SERVER.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_start_command</name>
+    <display-name>Polaris MCP Start Command</display-name>
+    <value></value>
+    <description>Optional full override for the POLARIS_MCP_SERVER start command.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_mcp_stop_command</name>
+    <display-name>Polaris MCP Stop Command</display-name>
+    <value></value>
+    <description>Optional full override for the POLARIS_MCP_SERVER stop command.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>polaris_admin_username</name>
     <display-name>Polaris Admin Username</display-name>
     <value>admin</value>
@@ -205,6 +308,13 @@ export POLARIS_DATA_DIR={{polaris_data_dir}}
 
 # Polaris home
 export POLARIS_HOME={{polaris_home}}
+export POLARIS_TOOLS_HOME={{polaris_tools_home}}
+
+# MCP server defaults
+export POLARIS_BASE_URL={{polaris_mcp_base_url}}
+export POLARIS_MCP_TRANSPORT={{polaris_mcp_transport}}
+export POLARIS_MCP_HOST={{polaris_mcp_host}}
+export POLARIS_MCP_PORT={{polaris_mcp_port}}
 
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}
