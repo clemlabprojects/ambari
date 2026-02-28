@@ -234,6 +234,9 @@ if enable_ranger_polaris:
   polaris_repository_configuration = {
     'username': ranger_plugin_properties['REPOSITORY_CONFIG_USERNAME'],
     'password': ranger_plugin_properties['REPOSITORY_CONFIG_PASSWORD'],
+    # Ranger Polaris service definition requires this field name.
+    'polaris.base.url': polaris_repository_url,
+    # Keep legacy alias for compatibility with older service-def variants.
     'polaris.rest.address': polaris_repository_url,
     'commonNameForCertificate': ranger_plugin_properties['common.name.for.certificate'],
     'ambari.service.check.user': policy_user,
