@@ -592,25 +592,31 @@
         "POLARIS_CLIENT": {
           "STACK-SELECT-PACKAGE": "polaris-server",
           "INSTALL": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ],
           "PATCH": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ],
           "STANDARD": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ]
         },
         "POLARIS_SERVER": {
           "STACK-SELECT-PACKAGE": "polaris-server",
           "INSTALL": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ],
           "PATCH": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ],
           "STANDARD": [
-            "polaris-server"
+            "polaris-server",
+            "polaris-tools"
           ]
         }
       },
