@@ -27,7 +27,7 @@
     <description>Directory for Polaris logs.</description>
     <value-attributes>
       <type>directory</type>
-      <overridable>false</overridable>
+      <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -185,14 +185,17 @@ export JAVA_HOME={{java64_home}}
 # Polaris JAAS configuration (used when Kerberos is enabled)
 export POLARIS_JAAS_FILE={{polaris_jaas_conf}}
 
-# Additional Java opts for Polaris, including Kerberos options when enabled
+# Additional Java opts for Polaris, including Kerberos options when enabled.
+# runtime/distribution/bin/{server,admin} consume POLARIS_JAVA_OPTS.
 export POLARIS_OPTS="{{polaris_opts}} {{polaris_kerberos_opts}}"
+export POLARIS_JAVA_OPTS="{{polaris_opts}} {{polaris_kerberos_opts}}"
 
 # Polaris configuration directory
 export POLARIS_CONF_DIR={{polaris_conf_dir}}
 
 # Where log files are stored
 export POLARIS_LOG_DIR={{polaris_log_dir}}
+export QUARKUS_LOG_FILE_PATH={{polaris_log_dir}}/polaris.log
 
 # PID dir
 export POLARIS_PID_DIR={{polaris_pid_dir}}
