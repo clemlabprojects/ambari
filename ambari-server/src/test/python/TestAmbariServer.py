@@ -104,7 +104,7 @@ with patch.object(distro, "linux_distribution", return_value = MagicMock(return_
                   from ambari_server.serverUtils import is_server_runing, refresh_stack_hash
                   from ambari_server.serverSetup import check_selinux, check_ambari_user, SE_STATUS_DISABLED, SE_MODE_ENFORCING, configure_os_settings, \
                     download_and_install_jdk, prompt_db_properties, setup, \
-                    AmbariUserChecks, JDKSetup, reset, setup_jce_policy, expand_jce_zip_file, check_ambari_java_version_is_valid
+                    AmbariUserChecks, JDKSetup, reset, setup_jce_policy, expand_jce_zip_file, check_ambari_java_version_is_valid, getJDKVersion
                   from ambari_server.serverUpgrade import upgrade, run_schema_upgrade, move_user_custom_actions, find_and_copy_custom_services, SCHEMA_UPGRADE_HELPER_CMD
                   from ambari_server.setupHttps import is_valid_https_port, setup_https, import_cert_and_key_action, get_fqdn, \
                     generate_random_string, get_cert_info, COMMON_NAME_ATTR, is_valid_cert_exp, NOT_AFTER_ATTR, NOT_BEFORE_ATTR, \
@@ -3190,6 +3190,44 @@ class TestAmbariServer(TestCase):
       # expected
       self.assertEqual(e.code, 1)
       pass
+
+  @not_for_platform(PLATFORM_WINDOWS)
+  @patch("ambari_server.serverSetup.get_java_exe_path")
+  @patch.object(subprocess, "Popen")
+  def test_get_jdk_version(self, popenMock, get_java_exe_path_mock):
+    get_java_exe_path_mock.return_value = '/usr/bin/java'
+    p = MagicMock()
+    popenMock.return_value = p
+
+    # case 1: jdk21
+    p.communicate.return_value = ('21.0.6', None)
+    p.returncode = 0
+    self.assertEqual(21, getJDKVersion('/usr/jdk64/jdk-21', 'java'))
+
+    # case 2: unsupported major version
+    p.communicate.return_value = ('19.0.2', None)
+    p.returncode = 0
+    try:
+      getJDKVersion('/usr/jdk64/jdk-19', 'java')
+      self.fail("Should throw exception")
+    except FatalException:
+      # expected
+      pass
+
+  @patch.object(JDKSetup, "_getJavaMajorVersion")
+  def test_enforce_ambari_java_versions(self, get_java_major_version_mock):
+    jdk_setup = JDKSetup()
+
+    get_java_major_version_mock.return_value = 21
+    jdk_setup._enforceAmbariJava17("/usr/jdk64/jdk-21")
+
+    get_java_major_version_mock.return_value = 11
+    try:
+      jdk_setup._enforceAmbariJava17("/usr/jdk64/jdk-11")
+      self.fail("Should throw exception")
+    except FatalException as e:
+      # expected
+      self.assertEqual(1, e.code)
 
   @not_for_platform(PLATFORM_WINDOWS)
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))

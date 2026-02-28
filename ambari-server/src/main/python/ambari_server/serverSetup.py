@@ -83,8 +83,11 @@ JDK_VALID_CHOICES = "^[{0}{1:d}]$"
 
 # implemetation for 7 or 8
 #JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed 's/.*version ".*\.\(.*\)\..*"/\\1/; 1q' 2>&1"""
-# implentation for 7,8, 11 and 17
+# implentation for 7,8, 11, 17 and 21
 JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed -n 's/.*"\([^"]*\)".*/\\1/p' 2>&1"""
+AMBARI_SUPPORTED_JAVA_VERSIONS = (17, 21)
+AMBARI_SUPPORTED_JAVA_VERSIONS_STR = " or ".join([str(version) for version in AMBARI_SUPPORTED_JAVA_VERSIONS])
+SUPPORTED_JDK_VERSIONS = (8, 11, 17, 21)
 
 def get_supported_jdbc_drivers():
   factory = DBMSConfigFactory()
@@ -417,7 +420,7 @@ class JDKSetup(object):
       print_warning_msg("Configured AMBARI_JAVA_HOME {0} is invalid.".format(ambariJavaHome))
       ambariJavaHome = ""
     if ambariJavaHome and not self._isAmbariJava17(ambariJavaHome):
-      print_warning_msg("Configured AMBARI_JAVA_HOME {0} is not JDK 17.".format(ambariJavaHome))
+      print_warning_msg("Configured AMBARI_JAVA_HOME {0} is not JDK {1}.".format(ambariJavaHome, AMBARI_SUPPORTED_JAVA_VERSIONS_STR))
       ambariJavaHome = ""
 
     needsConfigure = not ambariJavaHome
@@ -477,15 +480,15 @@ class JDKSetup(object):
 
   def _isAmbariJava17(self, javaHome):
     try:
-      return self._getJavaMajorVersion(javaHome) == 17
+      return self._getJavaMajorVersion(javaHome) in AMBARI_SUPPORTED_JAVA_VERSIONS
     except FatalException as e:
       print_warning_msg("Failed to verify JDK version for AMBARI_JAVA_HOME {0}: {1}".format(javaHome, e))
       return False
 
   def _enforceAmbariJava17(self, javaHome):
     javaVersion = self._getJavaMajorVersion(javaHome)
-    if javaVersion != 17:
-      err = "Ambari Server requires JDK 17. Detected JDK {0} at {1}.".format(javaVersion, javaHome)
+    if javaVersion not in AMBARI_SUPPORTED_JAVA_VERSIONS:
+      err = "Ambari Server requires JDK {0}. Detected JDK {1} at {2}.".format(AMBARI_SUPPORTED_JAVA_VERSIONS_STR, javaVersion, javaHome)
       raise FatalException(1, err)
 
   #
@@ -1527,16 +1530,10 @@ def getJDKVersion(java_home, java_bin):
       err = "Could not read JDK Version %s" % process.returncode
       raise FatalException(process.returncode, err)
     else:
-      # the output can be 1.8.x or 17.x.x
-      if    re.match(r'^1\.8\.\d+(_\d+)?$', out):
-              actual_jdk_version = 8
-      elif  re.match(r'^11\.\d+\.\d+(_\d+)?$', out):
-              actual_jdk_version = 11
-      elif  re.match(r'^17\.\d+\.\d+(_\d+)?$', out):
-              actual_jdk_version = 17
-      else:
-          err = 'Error during parsing of JDK version {0}'.format(out)
-          raise FatalException(process.returncode, err)
+      actual_jdk_version = parse_java_major_version(out)
+      if actual_jdk_version is None or actual_jdk_version not in SUPPORTED_JDK_VERSIONS:
+        err = 'Error during parsing of JDK version {0}'.format(out)
+        raise FatalException(process.returncode, err)
       print('JDK version found: {0}'.format(actual_jdk_version))
 
   except FatalException as e:

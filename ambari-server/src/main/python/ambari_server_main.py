@@ -198,7 +198,7 @@ def generate_child_process_param_list(ambari_user, java_exe, class_path,
         "-cp {3} " + \
         "org.apache.ambari.server.controller.AmbariServer " \
         "> {4} 2>&1 || echo $? > {5}"
-  elif JDK_VERSION == 17:
+  elif JDK_VERSION in (17, 21):
     jvm_args = os.getenv('AMBARI_JVM_ARGS', '-Xms512m -Xmx2048m')
     SERVER_START_CMD = (
       "{0} "
