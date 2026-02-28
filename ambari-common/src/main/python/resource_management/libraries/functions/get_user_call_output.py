@@ -142,22 +142,21 @@ def get_user_call_output(command, user, quiet=False, is_checked_call=True, **cal
         else:
             raise TypeError("command must be a string or a list/tuple")
 
-        if use_shell:
-            # Use a login shell (keeps behavior you were aiming at); switch to "-c" if you don't want login env.
-            bash_bits = ["bash", "-lc", command_str]
-            if os.geteuid() != 0:
-                argv = [_get_sudo_binary(), "-n", "-u", name, "--"] + _prefix_env_for_sudo(bash_bits, env)
-                preexec = None
+        # For non-root callers keep old semantics: run as login shell for target user.
+        # This avoids Kerberos/session regressions seen with direct `sudo -u ... <argv>`.
+        if os.geteuid() != 0:
+            if use_shell:
+                command_to_run = command_str
             else:
-                argv = bash_bits
-                preexec = _drop_privs
+                command_to_run = shell.string_cmd_from_args_list(argv)
+
+            as_user_command = shell.as_user(command_to_run, name, env=env)
+            argv = ["/bin/bash", "--login", "--noprofile", "-c", as_user_command]
+            preexec = None
         else:
-            # No shell path
-            if os.geteuid() != 0:
-                argv = [_get_sudo_binary(), "-n", "-u", name, "--"] + _prefix_env_for_sudo(argv, env)
-                preexec = None
-            else:
-                preexec = _drop_privs
+            if use_shell:
+                argv = ["bash", "-lc", command_str]
+            preexec = _drop_privs
 
         # ---- spawn ----
         p = subprocess.Popen(

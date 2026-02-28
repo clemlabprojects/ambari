@@ -86,6 +86,12 @@ SHARED_ATLAS_HOOK_CONFIGS = set(
   "atlas.authentication.method.kerberos",
   "atlas.kafka.sasl.kerberos.service.name",
   "atlas.kafka.security.protocol",
+  "atlas.kafka.ssl.truststore.location",
+  "atlas.kafka.ssl.truststore.password",
+  "atlas.kafka.ssl.truststore.type",
+  "atlas.kafka.ssl.keystore.location",
+  "atlas.kafka.ssl.keystore.password",
+  "atlas.kafka.ssl.keystore.type",
   "atlas.jaas.KafkaClient.loginModuleName",
   "atlas.jaas.KafkaClient.loginModuleControlFlag"
   ]
