@@ -59,6 +59,7 @@ polaris_home = default("/configurations/polaris-env/polaris_home",
 polaris_tools_home = default("/configurations/polaris-env/polaris_tools_home",
                             format("{stack_root}/current/polaris-tools"))
 polaris_mcp_home = default("/configurations/polaris-env/polaris_mcp_home", polaris_tools_home)
+polaris_console_home = default("/configurations/polaris-env/polaris_console_home", polaris_tools_home)
 
 polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
@@ -116,6 +117,19 @@ if not polaris_mcp_stop_command:
   polaris_mcp_stop_command = None
 
 polaris_mcp_hosts = sorted(default("/clusterHostInfo/polaris_mcp_server_hosts", []))
+
+polaris_console_protocol = default("/configurations/polaris-env/polaris_console_protocol", "http")
+polaris_console_port = int(default("/configurations/polaris-env/polaris_console_port", 8282))
+polaris_console_pid_file = format("{polaris_pid_dir}/polaris-console.pid")
+
+polaris_console_start_command = default("/configurations/polaris-env/polaris_console_start_command", "").strip()
+if not polaris_console_start_command:
+  polaris_console_start_command = format("{polaris_console_home}/bin/polaris-console")
+polaris_console_stop_command = default("/configurations/polaris-env/polaris_console_stop_command", "").strip()
+if not polaris_console_stop_command:
+  polaris_console_stop_command = None
+
+polaris_console_hosts = sorted(default("/clusterHostInfo/polaris_console_hosts", []))
 
 polaris_jaas_principal = None
 polaris_bare_principal = None

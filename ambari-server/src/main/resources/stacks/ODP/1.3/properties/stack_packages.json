@@ -630,6 +630,18 @@
           "STANDARD": [
             "polaris-tools"
           ]
+        },
+        "POLARIS_CONSOLE": {
+          "STACK-SELECT-PACKAGE": "polaris-tools",
+          "INSTALL": [
+            "polaris-tools"
+          ],
+          "PATCH": [
+            "polaris-tools"
+          ],
+          "STANDARD": [
+            "polaris-tools"
+          ]
         }
       },
       "RANGER": {

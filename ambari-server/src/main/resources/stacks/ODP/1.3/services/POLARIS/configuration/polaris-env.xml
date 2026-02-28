@@ -258,6 +258,67 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>polaris_console_home</name>
+    <display-name>Polaris Console Home</display-name>
+    <value>/usr/odp/current/polaris-tools</value>
+    <description>Home directory of Polaris tools package that provides the polaris-console launcher.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_console_protocol</name>
+    <display-name>Polaris Console Protocol</display-name>
+    <value>http</value>
+    <description>Protocol used by the Polaris Console quicklink.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>http</value>
+          <label>HTTP</label>
+        </entry>
+        <entry>
+          <value>https</value>
+          <label>HTTPS</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_console_port</name>
+    <display-name>Polaris Console Port</display-name>
+    <value>8282</value>
+    <description>Port used by the embedded static Polaris Console web server.</description>
+    <value-attributes>
+      <type>int</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_console_start_command</name>
+    <display-name>Polaris Console Start Command</display-name>
+    <value></value>
+    <description>Optional full override for the POLARIS_CONSOLE start command.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_console_stop_command</name>
+    <display-name>Polaris Console Stop Command</display-name>
+    <value></value>
+    <description>Optional full override for the POLARIS_CONSOLE stop command.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>polaris_admin_username</name>
     <display-name>Polaris Admin Username</display-name>
     <value>admin</value>
@@ -315,6 +376,9 @@ export POLARIS_BASE_URL={{polaris_mcp_base_url}}
 export POLARIS_MCP_TRANSPORT={{polaris_mcp_transport}}
 export POLARIS_MCP_HOST={{polaris_mcp_host}}
 export POLARIS_MCP_PORT={{polaris_mcp_port}}
+
+# Console defaults
+export POLARIS_CONSOLE_PORT={{polaris_console_port}}
 
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}

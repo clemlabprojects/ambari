@@ -55,6 +55,31 @@
           "regex": "^(\\d+)$",
           "site": "polaris-env"
         }
+      },
+      {
+        "name": "polaris_console_ui",
+        "label": "Polaris Console UI",
+        "component_name": "POLARIS_CONSOLE",
+        "requires_user_name": "false",
+        "url": "%@://%@:%@/",
+        "protocol": {
+          "type": "https",
+          "checks": [
+            {
+              "property": "polaris_console_protocol",
+              "desired": "https",
+              "site": "polaris-env"
+            }
+          ]
+        },
+        "port": {
+          "http_property": "polaris_console_port",
+          "http_default_port": "8282",
+          "https_property": "polaris_console_port",
+          "https_default_port": "8282",
+          "regex": "^(\\d+)$",
+          "site": "polaris-env"
+        }
       }
     ]
   }

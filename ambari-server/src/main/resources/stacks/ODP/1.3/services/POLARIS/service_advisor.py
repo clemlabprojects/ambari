@@ -58,6 +58,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     self.recommendPolarisDatabaseConfigurations(configurations, services)
     self.recommendPolarisMcpConfigurations(configurations, services, hosts)
+    self.recommendPolarisConsoleConfigurations(configurations, services)
     self._sync_ranger_plugin_flag(configurations, services)
 
     ranger_plugin_enabled = self._is_ranger_plugin_enabled(configurations, services)
@@ -93,6 +94,15 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     current_mcp_base_url = self._get_property(configurations, services, "polaris-env", "polaris_mcp_base_url")
     if not current_mcp_base_url:
       put_polaris_env("polaris_mcp_base_url", "{0}/".format(polaris_service_url.rstrip('/')))
+
+  def recommendPolarisConsoleConfigurations(self, configurations, services):
+    polaris_env = self._get_site_properties(configurations, services, "polaris-env")
+    put_polaris_env = self.putProperty(configurations, "polaris-env", services)
+
+    if not polaris_env.get("polaris_console_protocol"):
+      put_polaris_env("polaris_console_protocol", "http")
+    if not str(polaris_env.get("polaris_console_port", "")).strip():
+      put_polaris_env("polaris_console_port", "8282")
 
   def _is_ranger_plugin_enabled(self, configurations, services):
     plugin_value = self._get_property(configurations, services, "ranger-polaris-plugin-properties", "ranger-polaris-plugin-enabled")
@@ -265,6 +275,20 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
       validation_items.append({
         "config-name": "polaris_mcp_transport",
         "item": self.getWarnItem("POLARIS_MCP_SERVER should use http or sse transport in managed mode")
+      })
+
+    console_protocol = str(properties.get("polaris_console_protocol", "http")).lower()
+    if console_protocol not in ("http", "https"):
+      validation_items.append({
+        "config-name": "polaris_console_protocol",
+        "item": self.getWarnItem("polaris_console_protocol must be either http or https")
+      })
+
+    console_port = str(properties.get("polaris_console_port", "8282")).strip()
+    if not console_port.isdigit():
+      validation_items.append({
+        "config-name": "polaris_console_port",
+        "item": self.getWarnItem("polaris_console_port must be a valid numeric TCP port")
       })
 
     return self.toConfigurationValidationProblems(validation_items, "polaris-env")

@@ -96,6 +96,25 @@
             </log>
           </logs>
         </component>
+
+        <component>
+          <name>POLARIS_CONSOLE</name>
+          <displayName>Polaris Console</displayName>
+          <category>MASTER</category>
+          <cardinality>0+</cardinality>
+          <versionAdvertised>false</versionAdvertised>
+          <commandScript>
+            <script>scripts/polaris_console.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>600</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>polaris_console</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+        </component>
       </components>
 
       <osSpecifics>
@@ -139,6 +158,13 @@
         <config-type>ranger-polaris-security</config-type>
         <config-type>ranger-polaris-policymgr-ssl</config-type>
       </configuration-dependencies>
+
+      <themes>
+        <theme>
+          <fileName>database.json</fileName>
+          <default>true</default>
+        </theme>
+      </themes>
 
       <quickLinksConfigurations>
         <quickLinksConfiguration>

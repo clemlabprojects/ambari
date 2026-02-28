@@ -63,6 +63,21 @@ class PolarisServiceCheck(Script):
       if mcp_failures == len(params.polaris_mcp_hosts):
         raise Fail("All instances of POLARIS_MCP_SERVER are down.")
 
+    if params.polaris_console_hosts:
+      console_failures = 0
+      for host in params.polaris_console_hosts:
+        console_url = "{0}://{1}:{2}/".format(
+          params.polaris_console_protocol, host, params.polaris_console_port)
+        console_cmd = "curl -k -s -o /dev/null {0}".format(console_url)
+        try:
+          Execute(console_cmd, user=params.smoke_test_user, tries=5, try_sleep=10)
+        except Exception as err:
+          console_failures += 1
+          Logger.error("Polaris Console service check failed for host {0} with error {1}".format(host, err))
+
+      if console_failures == len(params.polaris_console_hosts):
+        raise Fail("All instances of POLARIS_CONSOLE are down.")
+
 
 if __name__ == "__main__":
   PolarisServiceCheck().execute()
