@@ -143,6 +143,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
   def recommendPolarisDatabaseConfigurations(self, configurations, services):
     db_props = self._get_site_properties(configurations, services, "polaris-db-properties")
+    put_db_props = self.putProperty(configurations, "polaris-db-properties", services)
     put_app_props = self.putProperty(configurations, "polaris-application-properties", services)
 
     db_flavor = str(db_props.get("DB_FLAVOR", "POSTGRES")).upper()
@@ -156,6 +157,14 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       db_flavor = "POSTGRES"
 
     db_host_port = db_host if ":" in db_host else "{0}:{1}".format(db_host, db_port)
+    root_jdbc_url = "jdbc:postgresql://{0}/postgres".format(db_host_port)
+
+    if not str(db_props.get("polaris_privelege_user_jdbc_url", "")).strip():
+      put_db_props("polaris_privelege_user_jdbc_url", root_jdbc_url)
+    if "create_db_dbuser" not in db_props:
+      put_db_props("create_db_dbuser", "true")
+    if not str(db_props.get("db_root_user", "")).strip():
+      put_db_props("db_root_user", "postgres")
 
     put_app_props("quarkus.datasource.db-kind", "postgresql")
     put_app_props("quarkus.datasource.jdbc.driver", "org.postgresql.Driver")
@@ -209,6 +218,24 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         "config-name": "DB_FLAVOR",
         "item": self.getWarnItem("Only POSTGRES is supported for Polaris relational persistence in this stack")
       })
+
+    create_db = str(properties.get("create_db_dbuser", "true")).lower() == "true"
+    if create_db:
+      if not str(properties.get("db_root_user", "")).strip():
+        validation_items.append({
+          "config-name": "db_root_user",
+          "item": self.getWarnItem("db_root_user should be set when create_db_dbuser=true")
+        })
+      if not str(properties.get("db_root_password", "")).strip():
+        validation_items.append({
+          "config-name": "db_root_password",
+          "item": self.getWarnItem("db_root_password should be set when create_db_dbuser=true")
+        })
+      if not str(properties.get("polaris_privelege_user_jdbc_url", "")).strip():
+        validation_items.append({
+          "config-name": "polaris_privelege_user_jdbc_url",
+          "item": self.getWarnItem("polaris_privelege_user_jdbc_url should be set when create_db_dbuser=true")
+        })
 
     return self.toConfigurationValidationProblems(validation_items, "polaris-db-properties")
 

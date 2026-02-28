@@ -21,6 +21,29 @@
 -->
 <configuration supports_final="false">
   <property>
+    <name>create_db_dbuser</name>
+    <value>true</value>
+    <display-name>Setup Database and Database User</display-name>
+    <description>If set to Yes, Ambari will create and setup Polaris Database and Database User. This requires a Database Administrator username/password.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <overridable>false</overridable>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>Yes</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>No</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
     <name>DB_FLAVOR</name>
     <value>POSTGRES</value>
     <display-name>Polaris DB Flavor</display-name>
@@ -60,6 +83,56 @@
       <minimum>1</minimum>
       <maximum>65535</maximum>
       <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>polaris_privelege_user_jdbc_url</name>
+    <value>jdbc:postgresql://localhost:5432/postgres</value>
+    <display-name>JDBC connect string for root user</display-name>
+    <description>JDBC connect string used by the DBA/root user for DB bootstrap operations.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_host</name>
+      </property>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_port</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_root_user</name>
+    <value>postgres</value>
+    <display-name>Database Administrator (DBA) Username</display-name>
+    <description>Database admin user used to create the Polaris database and DB user.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="true">
+    <name>db_root_password</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>Database Administrator (DBA) Password</display-name>
+    <description>Database password for the database admin username.</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>

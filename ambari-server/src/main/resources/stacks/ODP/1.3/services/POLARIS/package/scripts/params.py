@@ -88,6 +88,24 @@ else:
     polaris_stop_command = " ".join(stop_parts)
 
 application_properties = dict(config['configurations']['polaris-application-properties'])
+polaris_db_properties = dict(config['configurations']['polaris-db-properties'])
+
+polaris_db_flavor = str(default("/configurations/polaris-db-properties/DB_FLAVOR", "POSTGRES")).upper()
+polaris_create_db_dbuser = str(default("/configurations/polaris-db-properties/create_db_dbuser", "true")).lower() == "true"
+polaris_db_host = str(default("/configurations/polaris-db-properties/db_host", "localhost")).strip() or "localhost"
+polaris_db_port = int(default("/configurations/polaris-db-properties/db_port", 5432))
+if ":" in polaris_db_host and polaris_db_host.count(":") == 1:
+  host_part, port_part = polaris_db_host.rsplit(":", 1)
+  if port_part.isdigit():
+    polaris_db_host = host_part
+    polaris_db_port = int(port_part)
+polaris_db_name = str(default("/configurations/polaris-db-properties/db_name", "polaris")).strip() or "polaris"
+polaris_db_user = str(default("/configurations/polaris-db-properties/db_user", "polaris")).strip() or "polaris"
+polaris_db_password = default("/configurations/polaris-db-properties/db_password", "")
+polaris_db_root_user = str(default("/configurations/polaris-db-properties/db_root_user", "postgres")).strip() or "postgres"
+polaris_db_root_password = default("/configurations/polaris-db-properties/db_root_password", "")
+polaris_privelege_user_jdbc_url = str(default("/configurations/polaris-db-properties/polaris_privelege_user_jdbc_url",
+                                              format("jdbc:postgresql://{polaris_db_host}:{polaris_db_port}/postgres"))).strip()
 
 polaris_protocol = default("/configurations/polaris-env/polaris_protocol", "http")
 polaris_port = int(default("/configurations/polaris-application-properties/quarkus.http.port", 8181))

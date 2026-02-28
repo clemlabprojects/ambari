@@ -1,0 +1,213 @@
+{
+  "name": "default",
+  "description": "Default theme for Polaris service",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "default",
+        "tabs": [
+          {
+            "name": "polaris_database",
+            "display-name": "Database",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-polaris-database",
+                  "display-name": "Database Configurations",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "3",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "3",
+                  "subsections": [
+                    {
+                      "name": "polaris-db-row1-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-db-row1-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "polaris-db-root-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${polaris-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-db-root-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${polaris-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config": "polaris-db-properties/DB_FLAVOR",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_name",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_user",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_host",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/db_port",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/db_password",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/create_db_dbuser",
+          "subsection-name": "polaris-db-row2"
+        },
+        {
+          "config": "polaris-db-properties/db_root_user",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_root_password",
+          "subsection-name": "polaris-db-root-col2"
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "polaris-db-properties/DB_FLAVOR",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_host",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_port",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "polaris-db-properties/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      }
+    ]
+  }
+}

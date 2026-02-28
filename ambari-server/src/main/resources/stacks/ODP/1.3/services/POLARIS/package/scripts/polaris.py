@@ -19,6 +19,7 @@ limitations under the License.
 import os
 
 from resource_management.core.logger import Logger
+from resource_management.core.exceptions import Fail
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.core.source import InlineTemplate
 from resource_management.libraries.functions.format import format
@@ -54,6 +55,7 @@ def polaris(component_type='server'):
                  )
 
   if component_type == 'server':
+    setup_relational_db()
     setup_token_broker()
 
 
@@ -122,6 +124,79 @@ def setup_token_broker():
   Logger.info("Unknown token broker type '%s'; skipping token broker setup." % broker_type)
 
 
+def setup_relational_db():
+  import params
+
+  persistence_type = _normalize(params.application_properties.get("polaris.persistence.type", "in-memory"))
+  if persistence_type != "relational-jdbc":
+    return
+
+  if not params.polaris_create_db_dbuser:
+    Logger.info("create_db_dbuser is disabled; assuming Polaris DB and DB user already exist.")
+    return
+
+  if params.polaris_db_flavor != "POSTGRES":
+    raise Fail("Automatic DB bootstrap only supports POSTGRES for Polaris in this stack.")
+
+  if not str(params.polaris_db_root_password).strip():
+    raise Fail("db_root_password is required when create_db_dbuser=true for Polaris.")
+
+  quoted_db = _sql_identifier(params.polaris_db_name)
+  quoted_user = _sql_identifier(params.polaris_db_user)
+  user_password = _sql_literal(params.polaris_db_password or "")
+  user_name_literal = _sql_literal(params.polaris_db_user)
+  db_name_literal = _sql_literal(params.polaris_db_name)
+
+  # Idempotent PostgreSQL bootstrap: create/alter user, create database if missing, grant privileges.
+  sql = (
+    "DO $$ BEGIN "
+    "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {user_name_literal}) THEN "
+    "CREATE ROLE {quoted_user} LOGIN PASSWORD {user_password}; "
+    "ELSE "
+    "ALTER ROLE {quoted_user} LOGIN PASSWORD {user_password}; "
+    "END IF; "
+    "END $$; "
+    "DO $$ BEGIN "
+    "IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = {db_name_literal}) THEN "
+    "CREATE DATABASE {quoted_db} OWNER {quoted_user}; "
+    "END IF; "
+    "END $$; "
+    "GRANT ALL PRIVILEGES ON DATABASE {quoted_db} TO {quoted_user};"
+  ).format(
+    quoted_db=quoted_db,
+    quoted_user=quoted_user,
+    user_password=user_password,
+    user_name_literal=user_name_literal,
+    db_name_literal=db_name_literal
+  )
+
+  sql_file = format("{polaris_pid_dir}/polaris-db-bootstrap.sql")
+  File(sql_file,
+       content=sql,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o600
+       )
+
+  Execute("command -v psql >/dev/null 2>&1",
+          user=params.polaris_user
+          )
+
+  setup_cmd = format(
+    'psql -v ON_ERROR_STOP=1 '
+    '-h {polaris_db_host} '
+    '-p {polaris_db_port} '
+    '-U {polaris_db_root_user} '
+    '-d postgres '
+    '-f {sql_file}'
+  )
+
+  Execute(setup_cmd,
+          user=params.polaris_user,
+          environment={'PGPASSWORD': params.polaris_db_root_password}
+          )
+
+
 def _configure_kerberos():
   import params
 
@@ -170,6 +245,14 @@ def _normalize(value):
   if value is None:
     return None
   return value.strip().lower()
+
+
+def _sql_identifier(value):
+  return '"{0}"'.format(str(value or "").replace('"', '""'))
+
+
+def _sql_literal(value):
+  return "'{0}'".format(str(value or "").replace("'", "''"))
 
 
 def _ensure_parent_dir(path):

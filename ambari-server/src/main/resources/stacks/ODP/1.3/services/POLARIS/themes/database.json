@@ -7,27 +7,43 @@
       "configs": [
         {
           "config": "polaris-db-properties/DB_FLAVOR",
-          "subsection-name": "polaris-database-configurations-col-1"
+          "subsection-name": "polaris-db-row1-col1"
         },
         {
           "config": "polaris-db-properties/db_name",
-          "subsection-name": "polaris-database-configurations-col-1"
+          "subsection-name": "polaris-db-row1-col1"
         },
         {
           "config": "polaris-db-properties/db_user",
-          "subsection-name": "polaris-database-configurations-col-1"
+          "subsection-name": "polaris-db-row1-col1"
         },
         {
           "config": "polaris-db-properties/db_host",
-          "subsection-name": "polaris-database-configurations-col-2"
+          "subsection-name": "polaris-db-row1-col2"
         },
         {
           "config": "polaris-db-properties/db_port",
-          "subsection-name": "polaris-database-configurations-col-2"
+          "subsection-name": "polaris-db-row1-col2"
         },
         {
           "config": "polaris-db-properties/db_password",
-          "subsection-name": "polaris-database-configurations-col-2"
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/create_db_dbuser",
+          "subsection-name": "polaris-db-row2"
+        },
+        {
+          "config": "polaris-db-properties/db_root_user",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_root_password",
+          "subsection-name": "polaris-db-root-col2"
         }
       ]
     },
@@ -67,6 +83,30 @@
         "widget": {
           "type": "password"
         }
+      },
+      {
+        "config": "polaris-db-properties/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_password",
+        "widget": {
+          "type": "password"
+        }
       }
     ],
     "layouts": [
@@ -75,34 +115,91 @@
         "tabs": [
           {
             "name": "polaris-database",
-            "display-name": "Database",
+            "display-name": "Polaris",
             "layout": {
-              "tab-rows": "1",
-              "tab-columns": "1",
+              "tab-columns": "2",
+              "tab-rows": "2",
               "sections": [
                 {
-                  "name": "polaris-database-configurations",
+                  "name": "section-polaris-database",
                   "display-name": "Database Configurations",
                   "row-index": "0",
                   "column-index": "0",
-                  "row-span": "0",
-                  "column-span": "0",
+                  "row-span": "3",
+                  "column-span": "2",
                   "section-columns": "2",
-                  "section-rows": "1",
+                  "section-rows": "3",
                   "subsections": [
                     {
-                      "name": "polaris-database-configurations-col-1",
+                      "name": "polaris-db-row1-col1",
                       "row-index": "0",
                       "column-index": "0",
                       "row-span": "1",
                       "column-span": "1"
                     },
                     {
-                      "name": "polaris-database-configurations-col-2",
+                      "name": "polaris-db-row1-col2",
                       "row-index": "0",
                       "column-index": "1",
                       "row-span": "1",
                       "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "polaris-db-root-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${polaris-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-db-root-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${polaris-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
