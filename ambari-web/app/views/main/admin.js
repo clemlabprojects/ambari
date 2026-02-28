@@ -46,6 +46,12 @@ App.MainAdminView = Em.View.extend({
           label: Em.I18n.t('common.kerberos'),
           disabled: App.get('upgradeInProgress') || App.get('upgradeHolding')
         });
+        items.push({
+          name: 'oidc',
+          url: 'adminOidc.index',
+          label: Em.I18n.t('common.oidc'),
+          disabled: App.get('upgradeInProgress') || App.get('upgradeHolding')
+        });
       }
     }
     if ((App.isAuthorized('SERVICE.START_STOP, CLUSTER.MODIFY_CONFIGS') && App.isAuthorized('SERVICE.MANAGE_AUTO_START, CLUSTER.MANAGE_AUTO_START')) || (App.get('upgradeInProgress') || App.get('upgradeHolding'))) {
@@ -75,4 +81,3 @@ App.MainAdminView = Em.View.extend({
     this.set('controller.category', null);
   }
 });
-

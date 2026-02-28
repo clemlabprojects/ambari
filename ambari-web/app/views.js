@@ -237,6 +237,7 @@ require('views/main/admin/stack_upgrade/failed_hosts_modal_view');
 require('views/main/admin/stack_and_upgrade_view');
 
 require('views/main/admin/kerberos');
+require('views/main/admin/oidc');
 require('views/main/admin/kerberos/disable_view');
 require('views/main/admin/kerberos/wizard_view');
 require('views/main/admin/kerberos/progress_view');

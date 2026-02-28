@@ -574,6 +574,27 @@ module.exports = Em.Route.extend(App.RouterRedirections, {
       })
     }),
 
+    adminOidc: Em.Route.extend({
+      breadcrumbs: {
+        label: Em.I18n.t('common.oidc')
+      },
+
+      route: '/oidc',
+      enter: function (router) {
+        if (router.get('loggedIn') && (!App.isAuthorized('CLUSTER.TOGGLE_KERBEROS') || !App.supports.enableToggleKerberos)) {
+          router.transitionTo('main.dashboard.index');
+        }
+      },
+      index: Em.Route.extend({
+        route: '/',
+        connectOutlets: function (router) {
+          router.set('mainAdminController.category', 'oidc');
+          router.set('mainAdminController.categoryLabel', Em.I18n.t('common.oidc'));
+          router.get('mainAdminController').connectOutlet('mainAdminOidc');
+        }
+      })
+    }),
+
     stackAndUpgrade: Em.Route.extend({
       route: '/stack',
       breadcrumbs: null,

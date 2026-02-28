@@ -126,6 +126,13 @@ App.MainSideMenuView = Em.CollectionView.extend({
               disabled: App.get('upgradeInProgress') || App.get('upgradeHolding'),
               href: router.urlFor('main.admin.adminKerberos')
             });
+            categories.push({
+              name: 'oidc',
+              url: 'oidc/',
+              label: Em.I18n.t('common.oidc'),
+              disabled: App.get('upgradeInProgress') || App.get('upgradeHolding'),
+              href: router.urlFor('main.admin.adminOidc')
+            });
           }
         }
         if ((App.isAuthorized('SERVICE.START_STOP, CLUSTER.MODIFY_CONFIGS') && App.isAuthorized('SERVICE.MANAGE_AUTO_START, CLUSTER.MANAGE_AUTO_START')) || upg) {

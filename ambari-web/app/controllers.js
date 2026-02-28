@@ -93,6 +93,7 @@ require('controllers/main/admin/stack_upgrade_history_controller');
 require('controllers/main/admin/serviceAccounts_controller');
 require('utils/polling');
 require('controllers/main/admin/kerberos');
+require('controllers/main/admin/oidc');
 require('controllers/main/admin/kerberos/wizard_controller');
 require('controllers/main/admin/kerberos/disable_controller');
 require('controllers/main/admin/kerberos/progress_controller');
