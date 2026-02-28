@@ -55,7 +55,15 @@ class PolarisServer(Script):
     self.configure(env)
 
     no_op_test = format('test -f {polaris_pid_file} && ps -p `cat {polaris_pid_file}` >/dev/null 2>&1')
-    Execute(format('source {polaris_conf_dir}/polaris-env.sh; {polaris_start_command}'),
+    # Polaris runtime launcher is foreground; daemonize it for Ambari service control.
+    start_cmd = format(
+      'source {polaris_conf_dir}/polaris-env.sh; '
+      'nohup {polaris_start_command} >> {polaris_log_dir}/polaris-bootstrap.log 2>&1 & '
+      'echo $! > {polaris_pid_file}; '
+      'sleep 2; '
+      'ps -p `cat {polaris_pid_file}` >/dev/null 2>&1'
+    )
+    Execute(start_cmd,
             user=params.polaris_user,
             not_if=no_op_test
             )
