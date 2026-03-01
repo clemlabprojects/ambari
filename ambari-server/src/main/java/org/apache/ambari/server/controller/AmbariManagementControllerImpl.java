@@ -5843,16 +5843,36 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
     String notManagedHdfsPathList = gson.toJson(notManagedHdfsPathSet);
     clusterLevelParams.put(NOT_MANAGED_HDFS_PATH_LIST, notManagedHdfsPathList);
 
+    SortedMap<String, String> serviceTypesByServiceName = new TreeMap<>();
     for (Service service : cluster.getServices().values()) {
       ServiceInfo serviceInfoInstance = ambariMetaInfo.getService(service);
       String serviceType = serviceInfoInstance.getServiceType();
-      if (serviceType != null) {
-        LOG.debug("Adding {} to command parameters for {}", serviceInfoInstance.getServiceType(),
-          serviceInfoInstance.getName());
-        clusterLevelParams.put(DFS_TYPE, serviceInfoInstance.getServiceType());
-        break;
+      if (StringUtils.isNotBlank(serviceType)) {
+        serviceTypesByServiceName.put(serviceInfoInstance.getName(), serviceType);
       }
     }
+
+    String dfsType = "HDFS";
+    if (!serviceTypesByServiceName.isEmpty()) {
+      if (serviceTypesByServiceName.containsKey("HDFS")) {
+        dfsType = serviceTypesByServiceName.get("HDFS");
+      } else if (serviceTypesByServiceName.containsKey("OZONE")) {
+        dfsType = serviceTypesByServiceName.get("OZONE");
+      } else {
+        dfsType = serviceTypesByServiceName.get(serviceTypesByServiceName.firstKey());
+      }
+    } else {
+      Config coreEnvConfig = cluster.getDesiredConfigByType("core-env");
+      if (coreEnvConfig != null) {
+        String coreFsType = coreEnvConfig.getProperties().get("core_filesystem_type");
+        if (StringUtils.isNotBlank(coreFsType)) {
+          dfsType = coreFsType.toUpperCase();
+        }
+      }
+    }
+
+    LOG.debug("Adding {} to command parameters for services {}", dfsType, serviceTypesByServiceName.keySet());
+    clusterLevelParams.put(DFS_TYPE, dfsType);
 
     return clusterLevelParams;
   }
