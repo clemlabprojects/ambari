@@ -248,15 +248,33 @@ public class KerberosHelperImpl implements KerberosHelper {
                                               RequestStageContainer requestStageContainer,
                                               Boolean manageIdentities)
     throws AmbariException, KerberosOperationException {
+    return toggleKerberos(cluster, securityType, requestStageContainer, manageIdentities, null);
+  }
+
+  @Override
+  public RequestStageContainer toggleKerberos(Cluster cluster, SecurityType securityType,
+                                              RequestStageContainer requestStageContainer,
+                                              Boolean manageIdentities,
+                                              Boolean configureOidc)
+    throws AmbariException, KerberosOperationException {
 
     KerberosDetails kerberosDetails = getKerberosDetails(cluster, manageIdentities);
+    boolean shouldConfigureOidc = (configureOidc == null) || configureOidc;
 
     // Update KerberosDetails with the new security type - the current one in the cluster is the "old" value
     kerberosDetails.setSecurityType(securityType);
 
     if (securityType == SecurityType.KERBEROS) {
       LOG.info("Configuring Kerberos for realm {} on cluster, {}", kerberosDetails.getDefaultRealm(), cluster.getClusterName());
-      requestStageContainer = handle(cluster, kerberosDetails, null, null, null, null, requestStageContainer, new EnableKerberosHandler());
+      requestStageContainer = handle(
+        cluster,
+        kerberosDetails,
+        null,
+        null,
+        null,
+        null,
+        requestStageContainer,
+        new EnableKerberosHandler(shouldConfigureOidc));
     } else if (securityType == SecurityType.NONE) {
       LOG.info("Disabling Kerberos from cluster, {}", cluster.getClusterName());
       requestStageContainer = handle(cluster, kerberosDetails, null, null, null, null, requestStageContainer, new DisableKerberosHandler());
@@ -332,12 +350,65 @@ public class KerberosHelperImpl implements KerberosHelper {
 
               break;
 
+            case CONFIGURE_OIDC_ONLY:
+              if (!"true".equalsIgnoreCase(value)) {
+                throw new AmbariException(String.format(
+                  "Unexpected directive value for %s: %s. Expected: true",
+                  operation.name().toLowerCase(),
+                  value));
+              }
+
+              requestStageContainer = addConfigureOidcOnlyStage(cluster, requestStageContainer);
+              break;
+
             default: // No other operations are currently supported
               throw new AmbariException(String.format("Custom operation not supported: %s", operation.name()));
           }
         }
       }
     }
+
+    return requestStageContainer;
+  }
+
+  private RequestStageContainer addConfigureOidcOnlyStage(Cluster cluster,
+                                                           RequestStageContainer requestStageContainer)
+    throws AmbariException {
+    if (requestStageContainer == null) {
+      requestStageContainer = new RequestStageContainer(
+        actionManager.getNextRequestId(),
+        null,
+        requestFactory,
+        actionManager);
+    }
+
+    Map<String, Set<String>> clusterHostInfo = StageUtils.getClusterHostInfo(cluster);
+    String clusterHostInfoJson = StageUtils.getGson().toJson(clusterHostInfo);
+
+    @Experimental(feature = ExperimentalFeature.MULTI_SERVICE, comment = "The cluster stack id is deprecated")
+    Map<String, String> hostParams = customCommandExecutionHelper.createDefaultHostParams(cluster, cluster.getDesiredStackVersion());
+    String hostParamsJson = StageUtils.getGson().toJson(hostParams);
+    String ambariServerHostname = StageUtils.getHostName();
+    ServiceComponentHostServerActionEvent event = new ServiceComponentHostServerActionEvent(
+      RootComponent.AMBARI_SERVER.name(),
+      ambariServerHostname,
+      System.currentTimeMillis());
+
+    RoleCommandOrder roleCommandOrder = ambariManagementController.getRoleCommandOrder(cluster);
+
+    Map<String, String> commandParameters = new HashMap<>();
+    commandParameters.put(KerberosServerAction.AUTHENTICATED_USER_NAME, ambariManagementController.getAuthName());
+    commandParameters.put(KerberosServerAction.UPDATE_CONFIGURATION_NOTE, "Configure OIDC");
+    commandParameters.put(KerberosServerAction.UPDATE_CONFIGURATION_POLICY, UpdateConfigurationPolicy.ALL.name());
+
+    new EnableKerberosHandler(true).addConfigureOidcStage(
+      cluster,
+      clusterHostInfoJson,
+      hostParamsJson,
+      event,
+      commandParameters,
+      roleCommandOrder,
+      requestStageContainer);
 
     return requestStageContainer;
   }
@@ -2900,6 +2971,15 @@ public class KerberosHelperImpl implements KerberosHelper {
   }
 
   @Override
+  public Boolean getConfigureOidcDirective(Map<String, String> requestProperties) {
+    String value = (requestProperties == null) ? null : requestProperties.get(DIRECTIVE_CONFIGURE_OIDC);
+
+    return (value == null)
+      ? null
+      : !"false".equalsIgnoreCase(value);
+  }
+
+  @Override
   public Map<String, Map<String, String>> getIdentityConfigurations(List<KerberosIdentityDescriptor> identityDescriptors) {
     Map<String, Map<String, String>> map = new HashMap<>();
 
@@ -3395,7 +3475,8 @@ public class KerberosHelperImpl implements KerberosHelper {
    * A enumeration of the supported custom operations
    */
   public enum SupportedCustomOperation {
-    REGENERATE_KEYTABS
+    REGENERATE_KEYTABS,
+    CONFIGURE_OIDC_ONLY
   }
 
   /**
@@ -3989,6 +4070,15 @@ public class KerberosHelperImpl implements KerberosHelper {
    * </ol>
    */
   private class EnableKerberosHandler extends Handler {
+    private final boolean configureOidc;
+
+    EnableKerberosHandler() {
+      this(true);
+    }
+
+    EnableKerberosHandler(Boolean configureOidc) {
+      this.configureOidc = (configureOidc == null) || configureOidc;
+    }
 
     @Override
     public long createStages(Cluster cluster,
@@ -4077,8 +4167,13 @@ public class KerberosHelperImpl implements KerberosHelper {
 
       // *****************************************************************
       // Create stage to configure OIDC clients/configs where applicable
-      addConfigureOidcStage(cluster, clusterHostInfoJson, hostParamsJson, event, commandParameters,
-        roleCommandOrder, requestStageContainer);
+      if (configureOidc) {
+        addConfigureOidcStage(cluster, clusterHostInfoJson, hostParamsJson, event, commandParameters,
+          roleCommandOrder, requestStageContainer);
+      } else {
+        LOG.info("Skipping OIDC configuration stage because directive {}=false was supplied.",
+          DIRECTIVE_CONFIGURE_OIDC);
+      }
 
       return requestStageContainer.getLastStageId();
     }

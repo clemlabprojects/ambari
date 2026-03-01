@@ -136,6 +136,7 @@ module.exports = App.WizardRoute.extend({
       var kerberosStep1controller = router.get('kerberosWizardStep1Controller');
 
       kerberosWizardController.saveKerberosOption(kerberosStep1controller);
+      kerberosWizardController.saveSecurityOptions(kerberosStep1controller);
       kerberosWizardController.clearServiceConfigProperties();
       router.transitionTo('step2');
     }
@@ -168,8 +169,9 @@ module.exports = App.WizardRoute.extend({
     nextTransition: function (router) {
       var kerberosWizardController = router.get('kerberosWizardController');
       var kerberosWizardStep2Controller = router.get('kerberosWizardStep2Controller');
+      var enableKerberos = kerberosWizardController.get('content.enableKerberos') !== false;
 
-      if (kerberosWizardController.get('skipClientInstall')) {
+      if (enableKerberos && kerberosWizardController.get('skipClientInstall')) {
         kerberosWizardStep2Controller.get('stepConfigs')[0].get('configs').findProperty('name', 'manage_identities').set('value', 'false');
         kerberosWizardStep2Controller.get('stepConfigs')[0].get('configs').findProperty('name', 'install_packages').set('value', 'false');
         kerberosWizardStep2Controller.get('stepConfigs')[0].get('configs').findProperty('name', 'manage_krb5_conf').set('value', 'false');
@@ -177,7 +179,10 @@ module.exports = App.WizardRoute.extend({
 
       kerberosWizardController.saveServiceConfigProperties(kerberosWizardStep2Controller, true);
       kerberosWizardController.clearTasksData();
-      if (kerberosWizardController.get('skipClientInstall')) {
+      if (!enableKerberos) {
+        kerberosWizardController.setDBProperty('kerberosDescriptorConfigs', null);
+        router.transitionTo('step5');
+      } else if (kerberosWizardController.get('skipClientInstall')) {
         kerberosWizardController.setDBProperty('kerberosDescriptorConfigs', null);
         router.transitionTo('step4');
       } else {
@@ -279,7 +284,13 @@ module.exports = App.WizardRoute.extend({
       kerberosWizardStep5Controller.getCSVData();
     },
 
-    backTransition: Em.Router.transitionTo('step4'),
+    backTransition: function(router) {
+      if (router.get('kerberosWizardController.content.enableKerberos') === false) {
+        router.transitionTo('step2');
+      } else {
+        router.transitionTo('step4');
+      }
+    },
 
     nextTransition: function (router) {
       var kerberosWizardController = router.get('kerberosWizardController');
@@ -287,7 +298,11 @@ module.exports = App.WizardRoute.extend({
         tasksStatuses: null,
         tasksRequestIds: null
       });
-      router.transitionTo('step6');
+      if (kerberosWizardController.get('content.enableKerberos') === false) {
+        router.transitionTo('step7');
+      } else {
+        router.transitionTo('step6');
+      }
     }
   }),
 
@@ -307,7 +322,13 @@ module.exports = App.WizardRoute.extend({
     unroutePath: function () {
       return false;
     },
-    backTransition: Em.Router.transitionTo('step4'),
+    backTransition: function(router) {
+      if (router.get('kerberosWizardController.content.enableKerberos') === false) {
+        router.transitionTo('step5');
+      } else {
+        router.transitionTo('step4');
+      }
+    },
     nextTransition: function (router) {
       var kerberosWizardController = router.get('kerberosWizardController');
       kerberosWizardController.setDBProperties({
@@ -336,7 +357,13 @@ module.exports = App.WizardRoute.extend({
     unroutePath: function () {
       return false;
     },
-    backTransition: Em.Router.transitionTo('step4'),
+    backTransition: function(router) {
+      if (router.get('kerberosWizardController.content.enableKerberos') === false) {
+        router.transitionTo('step5');
+      } else {
+        router.transitionTo('step4');
+      }
+    },
     nextTransition: function (router) {
       router.transitionTo('step8');
     }

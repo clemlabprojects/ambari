@@ -90,6 +90,14 @@ public interface KerberosHelper {
    */
   String DIRECTIVE_FORCE_TOGGLE_KERBEROS = "force_toggle_kerberos";
   /**
+   * directive used to indicate if OIDC client/config provisioning should run during Kerberos toggle.
+   */
+  String DIRECTIVE_CONFIGURE_OIDC = "configure_oidc";
+  /**
+   * directive used to execute OIDC provisioning only, without Kerberos toggle.
+   */
+  String DIRECTIVE_CONFIGURE_OIDC_ONLY = "configure_oidc_only";
+  /**
    * config type which contains the property used to determine if Kerberos is enabled
    */
   String SECURITY_ENABLED_CONFIG_TYPE = "cluster-env";
@@ -191,6 +199,34 @@ public interface KerberosHelper {
                                        RequestStageContainer requestStageContainer,
                                        Boolean manageIdentities)
       throws AmbariException, KerberosOperationException;
+
+  /**
+   * Toggles Kerberos security and optionally configures OIDC clients/configuration.
+   * <p/>
+   * If <code>configureOidc</code> is null, implementation-specific default behavior applies.
+   *
+   * @param cluster               the relevant Cluster
+   * @param securityType          the SecurityType to handle; this value is expected to be either
+   *                              SecurityType.KERBEROS or SecurityType.NONE
+   * @param requestStageContainer a RequestStageContainer to place generated stages, if needed -
+   *                              if null a new RequestStageContainer will be created.
+   * @param manageIdentities      a Boolean value indicating how to override the configured behavior
+   *                              of managing Kerberos identities; if null the configured behavior
+   *                              will not be overridden
+   * @param configureOidc         a Boolean value indicating whether OIDC should be configured as part
+   *                              of this operation; if null the default behavior is used
+   * @return the updated or a new RequestStageContainer containing the stages that need to be
+   * executed to complete this task; or null if no stages need to be executed.
+   * @throws AmbariException
+   * @throws KerberosOperationException
+   */
+  default RequestStageContainer toggleKerberos(Cluster cluster, SecurityType securityType,
+                                               RequestStageContainer requestStageContainer,
+                                               Boolean manageIdentities,
+                                               Boolean configureOidc)
+      throws AmbariException, KerberosOperationException {
+    return toggleKerberos(cluster, securityType, requestStageContainer, manageIdentities);
+  }
 
   /**
    * Used to execute custom security operations which are sent as directives in URI
@@ -781,6 +817,20 @@ public interface KerberosHelper {
    * @return true if force_toggle_kerberos is "true"; otherwise false
    */
   boolean getForceToggleKerberosDirective(Map<String, String> requestProperties);
+
+  /**
+   * Retrieves the value of the configure_oidc directive from the request properties, if it exists.
+   * <p/>
+   * If configure_oidc does not exist in the map of request properties, null is returned.
+   * <p/>
+   * If configure_oidc does exists in the map of request properties, a Boolean value is returned
+   * indicating whether its value is "false" (Boolean.FALSE) or not (Boolean.TRUE).
+   *
+   * @param requestProperties a map of the request property name/value pairs
+   * @return Boolean.TRUE or Boolean.FALSE if the configure_oidc property exists in the map;
+   * otherwise null
+   */
+  Boolean getConfigureOidcDirective(Map<String, String> requestProperties);
 
   /**
    * Given a list of KerberosIdentityDescriptors, returns a Map fo configuration types to property

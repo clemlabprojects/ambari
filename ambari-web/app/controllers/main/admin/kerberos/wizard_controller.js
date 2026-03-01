@@ -56,11 +56,14 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
    * @type {Boolean}
    */
   skipClientInstall: function() {
+    if (this.get('content.enableKerberos') === false) {
+      return true;
+    }
     if (this.get('content.kerberosOption')) {
       return this.get('content.kerberosOption') === Em.I18n.t('admin.kerberos.wizard.step1.option.manual');
     }
     return false;
-  }.property('content.kerberosOption'),
+  }.property('content.kerberosOption', 'content.enableKerberos'),
 
   kerberosDescriptorConfigs: null,
 
@@ -68,12 +71,22 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
     controllerName: 'kerberosWizardController',
     serviceName: 'KERBEROS',
     kerberosOption: null,
+    enableKerberos: true,
+    configureOidc: true,
     cluster: null,
     services: [],
     advancedServiceConfig: null,
     serviceConfigProperties: [],
     failedTask: null
   }),
+
+  shouldConfigureOidc: function() {
+    if (this.get('content.configureOidc') === false) {
+      return false;
+    }
+
+    return App.StackService.find().someProperty('serviceName', 'OIDC');
+  },
 
   /**
    * set current step
@@ -163,6 +176,16 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
     this.set('content.kerberosOption', stepController.get('selectedItem'));
   },
 
+  saveSecurityOptions: function(stepController) {
+    var enableKerberos = !!stepController.get('enableKerberos');
+    var configureOidc = !!stepController.get('configureOidc');
+
+    this.setDBProperty('enableKerberos', enableKerberos);
+    this.setDBProperty('configureOidc', configureOidc);
+    this.set('content.enableKerberos', enableKerberos);
+    this.set('content.configureOidc', configureOidc);
+  },
+
   /**
    * Override the visibility of a list of form items with a new value
    *
@@ -190,8 +213,35 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
     this.set('content.kerberosOption', this.getDBProperty('kerberosOption'));
   },
 
+  loadSecurityOptions: function() {
+    var enableKerberos = this.getDBProperty('enableKerberos');
+    var configureOidc = this.getDBProperty('configureOidc');
+
+    if (Em.isNone(enableKerberos)) {
+      enableKerberos = true;
+    }
+
+    if (Em.isNone(configureOidc)) {
+      configureOidc = App.StackService.find().someProperty('serviceName', 'OIDC');
+    }
+
+    if (!App.StackService.find().someProperty('serviceName', 'OIDC')) {
+      configureOidc = false;
+    }
+
+    this.set('content.enableKerberos', !!enableKerberos);
+    this.set('content.configureOidc', !!configureOidc);
+  },
+
   createKerberosResources: function (callback) {
     var self = this;
+    var enableKerberos = this.get('content.enableKerberos') !== false;
+
+    if (!enableKerberos) {
+      this.createOidcService().always(callback);
+      return;
+    }
+
     this.createKerberosService().done(function () {
       self.createOidcService().always(function () {
         self.updateAndCreateServiceComponent('KERBEROS_CLIENT').done(function () {
@@ -213,7 +263,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
   },
 
   createOidcService: function () {
-    if (!App.StackService.find().someProperty('serviceName', 'OIDC')) {
+    if (!this.shouldConfigureOidc()) {
       return $.Deferred().resolve().promise();
     }
     return App.ajax.send({
@@ -303,6 +353,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
         type: 'sync',
         callback: function () {
           this.loadKerberosOption();
+          this.loadSecurityOptions();
         }
       }
     ],

@@ -37,7 +37,35 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
 
   selectedItem: Em.I18n.t('admin.kerberos.wizard.step1.option.kdc'),
 
-  isSubmitDisabled: Em.computed.someBy('selectedOption.preConditions', 'satisfied', false),
+  enableKerberos: true,
+
+  configureOidc: true,
+
+  isOidcServiceAvailable: function() {
+    return App.StackService.find().someProperty('serviceName', 'OIDC');
+  }.property('App.StackService.length'),
+
+  isOidcServiceUnavailable: Em.computed.not('isOidcServiceAvailable'),
+
+  isSubmitDisabled: function() {
+    var enableKerberos = this.get('enableKerberos');
+    var configureOidc = this.get('configureOidc');
+
+    if (!enableKerberos && !configureOidc) {
+      return true;
+    }
+
+    if (!enableKerberos) {
+      return false;
+    }
+
+    var selectedOption = this.get('selectedOption');
+    if (!selectedOption) {
+      return true;
+    }
+
+    return selectedOption.get('preConditions').someBy('satisfied', false);
+  }.property('enableKerberos', 'configureOidc', 'selectedOption.preConditions.@each.satisfied'),
 
   options: Em.A([
     Em.Object.create({
@@ -135,6 +163,27 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
 
 
   loadStep: function () {
+    var wizardController = App.router.get('kerberosWizardController');
+    var kerberosOption = wizardController.get('content.kerberosOption');
+    var enableKerberos = wizardController.get('content.enableKerberos');
+    var configureOidc = wizardController.get('content.configureOidc');
+
+    if (kerberosOption) {
+      this.set('selectedItem', kerberosOption);
+    }
+
+    if (Em.isNone(enableKerberos)) {
+      enableKerberos = true;
+    }
+    this.set('enableKerberos', !!enableKerberos);
+
+    if (Em.isNone(configureOidc)) {
+      configureOidc = this.get('isOidcServiceAvailable');
+    }
+    if (!this.get('isOidcServiceAvailable')) {
+      configureOidc = false;
+    }
+    this.set('configureOidc', !!configureOidc);
   },
 
   submit: function () {

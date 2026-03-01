@@ -1584,7 +1584,7 @@ var urls = {
 
   'admin.kerberize.cluster': {
     'type': 'PUT',
-    'real': '/clusters/{clusterName}',
+    'real': '/clusters/{clusterName}?configure_oidc={configureOidc}',
     'mock': '/data/wizard/kerberos/kerberize_cluster.json',
     'format' : function (data) {
       return {
@@ -1608,7 +1608,7 @@ var urls = {
 
   'admin.kerberize.cluster.force': {
     'type': 'PUT',
-    'real': '/clusters/{clusterName}?force_toggle_kerberos=true',
+    'real': '/clusters/{clusterName}?force_toggle_kerberos=true&configure_oidc={configureOidc}',
     'mock': '/data/wizard/kerberos/kerberize_cluster.json',
     'format': function (data) {
       return {
@@ -1618,6 +1618,16 @@ var urls = {
           }
         })
       }
+    }
+  },
+
+  'admin.configure.oidc.only': {
+    'type': 'PUT',
+    'real': '/clusters/{clusterName}?configure_oidc_only=true',
+    'format': function (data) {
+      return {
+        data: JSON.stringify(data.data)
+      };
     }
   },
 

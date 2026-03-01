@@ -37,10 +37,15 @@ App.KerberosWizardStep7Controller = App.KerberosProgressPageController.extend(Ap
    * @param {bool} isRetry
    */
   setRequest: function (isRetry) {
+    var wizardController = App.router.get(this.get('content.controllerName'));
+    var enableKerberos = wizardController.get('content.enableKerberos') !== false;
+    var configureOidc = wizardController.shouldConfigureOidc();
+    var currentSecurityType = App.get('isKerberosEnabled') ? 'KERBEROS' : 'NONE';
     var kerberizeRequest = {
       name: 'KERBERIZE_CLUSTER',
       ajaxName: 'admin.kerberize.cluster',
       ajaxData: {
+        configureOidc: configureOidc,
         data: {
           Clusters: {
             security_type: "KERBEROS"
@@ -49,15 +54,46 @@ App.KerberosWizardStep7Controller = App.KerberosProgressPageController.extend(Ap
       }
     };
     if (isRetry) {
-      // on retry send force update
-      this.set('request', {
-        name: 'KERBERIZE_CLUSTER',
-        ajaxName: 'admin.kerberize.cluster.force'
-      });
+      if (enableKerberos) {
+        // on retry send force update
+        this.set('request', {
+          name: 'KERBERIZE_CLUSTER',
+          ajaxName: 'admin.kerberize.cluster.force',
+          ajaxData: {
+            configureOidc: configureOidc
+          }
+        });
+      } else {
+        this.set('request', {
+          name: 'CONFIGURE_OIDC_ONLY',
+          ajaxName: 'admin.configure.oidc.only',
+          ajaxData: {
+            data: {
+              Clusters: {
+                security_type: currentSecurityType
+              }
+            }
+          }
+        });
+      }
       this.clearStage();
       this.loadStep();
     } else {
-      this.set('request', kerberizeRequest);
+      if (enableKerberos) {
+        this.set('request', kerberizeRequest);
+      } else {
+        this.set('request', {
+          name: 'CONFIGURE_OIDC_ONLY',
+          ajaxName: 'admin.configure.oidc.only',
+          ajaxData: {
+            data: {
+              Clusters: {
+                security_type: currentSecurityType
+              }
+            }
+          }
+        });
+      }
     }
   },
 

@@ -28,32 +28,53 @@
   <div class="panel panel-default">
     <div class="panel-body">
       <div id="kerberos-step1-options-body">
-        {{t admin.kerberos.wizard.step1.body.text}}
-        {{#each option in options}}
-          {{view App.RadioButtonView
-            classNames="radio"
-            name="option.displayName"
-            labelClassNames="kerberos-step1-option-radiobutton"
-            labelBinding="option.displayName"
-            selectionBinding="selectedItem"
-            valueBinding="option.value"}}
-        {{/each}}
+        <h5>{{t admin.kerberos.wizard.step1.security.switches.header}}</h5>
+        <div class="checkbox">
+          <label>
+            {{input type="checkbox" checked=enableKerberos}}
+            {{t admin.kerberos.wizard.step1.security.switch.enableKerberos}}
+          </label>
+        </div>
+        <div class="checkbox">
+          <label>
+            {{input type="checkbox" checked=configureOidc disabled=isOidcServiceUnavailable}}
+            {{t admin.kerberos.wizard.step1.security.switch.configureOidc}}
+          </label>
+        </div>
+        {{#if isOidcServiceUnavailable}}
+          <p class="text-muted">{{t admin.kerberos.wizard.step1.security.switch.configureOidc.unavailable}}</p>
+        {{/if}}
         <br/>
+        {{#if enableKerberos}}
+          {{t admin.kerberos.wizard.step1.body.text}}
+          {{#each option in options}}
+            {{view App.RadioButtonView
+              classNames="radio"
+              name="option.displayName"
+              labelClassNames="kerberos-step1-option-radiobutton"
+              labelBinding="option.displayName"
+              selectionBinding="selectedItem"
+              valueBinding="option.value"}}
+          {{/each}}
+          <br/>
+        {{/if}}
       </div>
-      <div class="alert alert-info" id="kerberos-step1-prerequisites-body">
-        <h5>{{selectedOption.displayName}}:</h5>
-        <b>{{t admin.kerberos.wizard.step1.prerequisites.label}}</b> <br/> <br/>
-        {{#each condition in selectedOption.preConditions}}
-          {{#unless condition.hidden}}
-            {{view App.CheckboxView
-              classNames="checkbox"
-              checkedBinding="condition.checked"
-              labelClassNames="kerberos-step1-prerequiste-checkboxes"
-              labelBinding="condition.displayText"
-            }}
-          {{/unless}}
-        {{/each}}
-      </div>
+      {{#if enableKerberos}}
+        <div class="alert alert-info" id="kerberos-step1-prerequisites-body">
+          <h5>{{selectedOption.displayName}}:</h5>
+          <b>{{t admin.kerberos.wizard.step1.prerequisites.label}}</b> <br/> <br/>
+          {{#each condition in selectedOption.preConditions}}
+            {{#unless condition.hidden}}
+              {{view App.CheckboxView
+                classNames="checkbox"
+                checkedBinding="condition.checked"
+                labelClassNames="kerberos-step1-prerequiste-checkboxes"
+                labelBinding="condition.displayText"
+              }}
+            {{/unless}}
+          {{/each}}
+        </div>
+      {{/if}}
     </div>
   </div>
 </div>

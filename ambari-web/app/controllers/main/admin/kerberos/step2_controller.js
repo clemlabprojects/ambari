@@ -112,6 +112,37 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
 
   serviceConfigTags: [],
 
+  isKerberosEnabledByWizard: function() {
+    return this.get('wizardController.content.enableKerberos') !== false;
+  },
+
+  shouldConfigureOidc: function() {
+    if (this.get('wizardController.content.configureOidc') === false) {
+      return false;
+    }
+
+    return this.isOidcServiceAvailable();
+  },
+
+  getSecurityWizardServiceNames: function() {
+    var serviceNames = [];
+
+    if (this.isKerberosEnabledByWizard()) {
+      serviceNames.push('KERBEROS');
+    }
+    if (this.shouldConfigureOidc()) {
+      serviceNames.push('OIDC');
+    }
+
+    return serviceNames;
+  },
+
+  updateSelectedServiceNames: function() {
+    var serviceNames = this.getSecurityWizardServiceNames();
+    this.set('selectedServiceNames', serviceNames.slice());
+    this.set('allSelectedServiceNames', serviceNames.slice());
+  },
+
   clearStep: function () {
     this._super();
     this.set('configs', []);
@@ -130,19 +161,23 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     if (!App.StackService.find().someProperty('serviceName', 'KERBEROS') || !this.get('isConfigsLoaded')) {
       return false;
     }
+    this.updateSelectedServiceNames();
     this.clearStep();
     App.config.setPreDefinedServiceConfigs(this.get('addMiscTabToPage'));
     var stored = this.get('content.serviceConfigProperties');
+    var enableKerberos = this.isKerberosEnabledByWizard();
 
     this.set('configs', stored ? App.config.mergeStoredValue(this.getKerberosConfigs(), stored) : this.getKerberosConfigs());
 
     this.filterConfigs(this.get('configs'));
-    if (!this.get('wizardController.skipClientInstall')) {
+    if (enableKerberos && !this.get('wizardController.skipClientInstall')) {
       this.initializeKDCStoreProperties(this.get('configs'));
     }
-    this.initializeOIDCAdminProperties(this.get('configs'));
+    if (this.shouldConfigureOidc()) {
+      this.initializeOIDCAdminProperties(this.get('configs'));
+    }
     this.applyServicesConfigs(this.get('configs'));
-    if (!this.get('wizardController.skipClientInstall')) {
+    if (enableKerberos && !this.get('wizardController.skipClientInstall')) {
       this.updateKDCStoreProperties(this.get('stepConfigs').findProperty('serviceName', 'KERBEROS').get('configs'));
     }
   },
@@ -152,9 +187,14 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
    * @returns {Array.<T>|*}
    */
   getKerberosConfigs: function() {
-    var serviceNames = ['KERBEROS', 'OIDC'];
+    var serviceNames = this.getSecurityWizardServiceNames();
     var configTypes = [];
     var predefinedConfigs = App.config.get('preDefinedServiceConfigs');
+
+    if (!serviceNames.length) {
+      return [];
+    }
+
     serviceNames.forEach(function(serviceName) {
       var service = predefinedConfigs.findProperty('serviceName', serviceName);
       if (service) {
@@ -178,11 +218,20 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     var kdcType = this.get('content.kerberosOption');
     var kerberosWizardController = this.get('controllers.kerberosWizardController');
     var manageIdentitiesConfig = configs.findProperty('name', 'manage_identities');
-    configs.filterProperty('serviceName', 'KERBEROS').setEach('isVisible', true);
+    var enableKerberos = this.isKerberosEnabledByWizard();
+
+    configs.filterProperty('serviceName', 'KERBEROS').setEach('isVisible', enableKerberos);
+    if (this.shouldConfigureOidc()) {
+      this.applyOIDCConfigsFilter(configs);
+    }
+
+    if (!enableKerberos) {
+      return;
+    }
+
     this.setKDCTypeProperty(configs);
-    this.applyOIDCConfigsFilter(configs);
     if (kdcType !== Em.I18n.t('admin.kerberos.wizard.step1.option.ad')) {
-        kerberosWizardController.overrideVisibility(configs, false, kerberosWizardController.get('exceptionsForNonAdOption'), true);
+      kerberosWizardController.overrideVisibility(configs, false, kerberosWizardController.get('exceptionsForNonAdOption'), true);
     }
     if (kdcType === Em.I18n.t('admin.kerberos.wizard.step1.option.manual')) {
       if (kerberosWizardController.get('skipClientInstall')) {
@@ -204,7 +253,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   },
 
   initializeOIDCAdminProperties: function(configs) {
-    if (!this.isOidcServiceAvailable()) {
+    if (!this.shouldConfigureOidc()) {
       return;
     }
 
@@ -271,6 +320,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   configureKerberos: function () {
     var self = this;
     var wizardController = App.router.get(this.get('content.controllerName'));
+    var enableKerberos = wizardController.get('content.enableKerberos') !== false;
     var callback = function () {
       self.createConfigurations().done(function () {
         self.createKerberosAdminSession().done(function () {
@@ -279,7 +329,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
         });
       });
     };
-    if (wizardController.get('skipClientInstall')) {
+    if (enableKerberos && wizardController.get('skipClientInstall')) {
       callback();
     } else {
       wizardController.createKerberosResources(callback);
@@ -287,10 +337,14 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   },
 
   createConfigurations: function () {
-    var serviceNames = ['KERBEROS', 'OIDC'],
+    var serviceNames = this.getSecurityWizardServiceNames(),
         serviceConfigTags = [],
         allConfigData = [],
         serviceConfigData = [];
+
+    if (!serviceNames.length) {
+      return $.Deferred().resolve().promise();
+    }
 
     serviceNames.forEach(function(serviceName) {
       var service = App.StackService.find().findProperty('serviceName', serviceName);
@@ -404,7 +458,9 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   createKerberosAdminSession: function (configs) {
     configs = configs || this.getAllStepConfigs();
     var sessionRequest;
-    if (!this.get('wizardController.skipClientInstall')) {
+    if (!this.isKerberosEnabledByWizard()) {
+      sessionRequest = $.Deferred().resolve().promise();
+    } else if (!this.get('wizardController.skipClientInstall')) {
       sessionRequest = this.createKDCCredentials(configs);
     } else {
       var adminPrincipalValue = configs.findProperty('name', 'admin_principal').value;
@@ -429,7 +485,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   },
 
   createOIDCCredentials: function(configs) {
-    if (!this.isOidcServiceAvailable()) {
+    if (!this.shouldConfigureOidc()) {
       return $.Deferred().resolve().promise();
     }
 

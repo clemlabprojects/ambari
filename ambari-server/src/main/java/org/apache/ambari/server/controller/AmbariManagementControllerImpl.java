@@ -2033,6 +2033,7 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
         // If force_toggle_kerberos is not specified, null will be returned. Therefore, perform an
         // equals check to yield true if the result is Boolean.TRUE, otherwise false.
         boolean forceToggleKerberos = kerberosHelper.getForceToggleKerberosDirective(requestProperties);
+        Boolean configureOidc = kerberosHelper.getConfigureOidcDirective(requestProperties);
 
         if (forceToggleKerberos || (cluster.getSecurityType() != securityType)) {
           LOG.info("Received cluster security type change request from {} to {} (forced: {})",
@@ -2048,7 +2049,7 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
             // or not depending the current state of the cluster.
             try {
               requestStageContainer = kerberosHelper.toggleKerberos(cluster, securityType, requestStageContainer,
-                  kerberosHelper.getManageIdentitiesDirective(requestProperties));
+                  kerberosHelper.getManageIdentitiesDirective(requestProperties), configureOidc);
             } catch (KerberosOperationException e) {
               throw new IllegalArgumentException(e.getMessage(), e);
             }

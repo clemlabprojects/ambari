@@ -24,11 +24,9 @@ import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_VERS
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.NOT_MANAGED_HDFS_PATH_LIST;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_NAME;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_VERSION;
-import static org.easymock.EasyMock.anyBoolean;
 import static org.easymock.EasyMock.anyLong;
 import static org.easymock.EasyMock.anyObject;
 import static org.easymock.EasyMock.capture;
-import static org.easymock.EasyMock.captureBoolean;
 import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.createMockBuilder;
 import static org.easymock.EasyMock.createNiceMock;
@@ -818,10 +816,14 @@ public class AmbariManagementControllerImplTest {
     expect(kerberosHelper.getForceToggleKerberosDirective(null))
         .andReturn(false)
         .once();
+    expect(kerberosHelper.getConfigureOidcDirective(EasyMock.isNull()))
+        .andReturn(null)
+        .once();
     expect(kerberosHelper.getManageIdentitiesDirective(null))
         .andReturn(null)
         .once();
-    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class), anyObject(RequestStageContainer.class), anyBoolean()))
+    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class),
+      anyObject(RequestStageContainer.class), anyObject(Boolean.class), anyObject(Boolean.class)))
         .andReturn(null)
         .once();
 
@@ -915,10 +917,14 @@ public class AmbariManagementControllerImplTest {
     expect(kerberosHelper.getForceToggleKerberosDirective(EasyMock.anyObject()))
         .andReturn(false)
         .once();
+    expect(kerberosHelper.getConfigureOidcDirective(EasyMock.anyObject()))
+        .andReturn(null)
+        .once();
     expect(kerberosHelper.getManageIdentitiesDirective(EasyMock.anyObject()))
         .andReturn(manageIdentities)
         .once();
-    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class), anyObject(RequestStageContainer.class), captureBoolean(manageIdentitiesCapture)))
+    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class),
+      anyObject(RequestStageContainer.class), capture(manageIdentitiesCapture), anyObject(Boolean.class)))
         .andReturn(null)
         .once();
 
@@ -987,10 +993,14 @@ public class AmbariManagementControllerImplTest {
     expect(kerberosHelper.getForceToggleKerberosDirective(EasyMock.anyObject()))
         .andReturn(false)
         .once();
+    expect(kerberosHelper.getConfigureOidcDirective(EasyMock.anyObject()))
+        .andReturn(null)
+        .once();
     expect(kerberosHelper.getManageIdentitiesDirective(EasyMock.anyObject()))
         .andReturn(null)
         .once();
-    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class), anyObject(RequestStageContainer.class), anyBoolean()))
+    expect(kerberosHelper.toggleKerberos(anyObject(Cluster.class), anyObject(SecurityType.class),
+      anyObject(RequestStageContainer.class), anyObject(Boolean.class), anyObject(Boolean.class)))
         .andThrow(new IllegalArgumentException("bad args!"))
         .once();
 
