@@ -41,8 +41,8 @@
           "type": "https",
           "checks": [
             {
-              "property": "polaris_mcp_protocol",
-              "desired": "https",
+              "property": "polaris_mcp_tls_enabled",
+              "desired": "true",
               "site": "polaris-env"
             }
           ]
@@ -66,8 +66,8 @@
           "type": "https",
           "checks": [
             {
-              "property": "polaris_console_protocol",
-              "desired": "https",
+              "property": "polaris_console_tls_enabled",
+              "desired": "true",
               "site": "polaris-env"
             }
           ]

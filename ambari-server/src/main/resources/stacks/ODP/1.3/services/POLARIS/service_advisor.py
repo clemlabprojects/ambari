@@ -95,15 +95,27 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     if not polaris_service_url:
       return
 
+    polaris_env = self._get_site_properties(configurations, services, "polaris-env")
     put_polaris_env = self.putProperty(configurations, "polaris-env", services)
     current_mcp_base_url = self._get_property(configurations, services, "polaris-env", "polaris_mcp_base_url")
     if not current_mcp_base_url:
       put_polaris_env("polaris_mcp_base_url", "{0}/".format(polaris_service_url.rstrip('/')))
 
+    if not str(polaris_env.get("polaris_mcp_host", "")).strip():
+      put_polaris_env("polaris_mcp_host", "0.0.0.0")
+    if not str(polaris_env.get("polaris_mcp_port", "")).strip():
+      put_polaris_env("polaris_mcp_port", "8000")
+    if not str(polaris_env.get("polaris_mcp_transport", "")).strip():
+      put_polaris_env("polaris_mcp_transport", "http")
+    if not str(polaris_env.get("polaris_mcp_protocol", "")).strip():
+      put_polaris_env("polaris_mcp_protocol", "http")
+
   def recommendPolarisConsoleConfigurations(self, configurations, services):
     polaris_env = self._get_site_properties(configurations, services, "polaris-env")
     put_polaris_env = self.putProperty(configurations, "polaris-env", services)
 
+    if not str(polaris_env.get("polaris_console_host", "")).strip():
+      put_polaris_env("polaris_console_host", "0.0.0.0")
     if not polaris_env.get("polaris_console_protocol"):
       put_polaris_env("polaris_console_protocol", "http")
     if not str(polaris_env.get("polaris_console_port", "")).strip():
@@ -125,6 +137,41 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       put_polaris_env("polaris_ssl_truststore_password", "changeit")
 
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
+
+    if "polaris_mcp_tls_enabled" not in polaris_env:
+      put_polaris_env("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
+    if "polaris_mcp_tls_auto_generate" not in polaris_env:
+      put_polaris_env("polaris_mcp_tls_auto_generate", "true")
+    if not str(polaris_env.get("polaris_mcp_tls_cert_file", "")).strip():
+      put_polaris_env("polaris_mcp_tls_cert_file", "/etc/polaris/conf/tls/polaris-mcp-cert.pem")
+    if not str(polaris_env.get("polaris_mcp_tls_key_file", "")).strip():
+      put_polaris_env("polaris_mcp_tls_key_file", "/etc/polaris/conf/tls/polaris-mcp-key.pem")
+
+    if "polaris_console_tls_enabled" not in polaris_env:
+      put_polaris_env("polaris_console_tls_enabled", "true" if ssl_enabled else "false")
+    if "polaris_console_tls_auto_generate" not in polaris_env:
+      put_polaris_env("polaris_console_tls_auto_generate", "true")
+    if not str(polaris_env.get("polaris_console_tls_cert_file", "")).strip():
+      put_polaris_env("polaris_console_tls_cert_file", "/etc/polaris/conf/tls/polaris-console-cert.pem")
+    if not str(polaris_env.get("polaris_console_tls_key_file", "")).strip():
+      put_polaris_env("polaris_console_tls_key_file", "/etc/polaris/conf/tls/polaris-console-key.pem")
+
+    mcp_tls_enabled = str(
+      polaris_env.get("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
+    ).strip().lower() == "true"
+    if mcp_tls_enabled:
+      put_polaris_env("polaris_mcp_protocol", "https")
+    elif str(polaris_env.get("polaris_mcp_protocol", "http")).strip().lower() == "https":
+      put_polaris_env("polaris_mcp_protocol", "http")
+
+    console_tls_enabled = str(
+      polaris_env.get("polaris_console_tls_enabled", "true" if ssl_enabled else "false")
+    ).strip().lower() == "true"
+    if console_tls_enabled:
+      put_polaris_env("polaris_console_protocol", "https")
+    elif str(polaris_env.get("polaris_console_protocol", "http")).strip().lower() == "https":
+      put_polaris_env("polaris_console_protocol", "http")
+
     if ssl_enabled:
       put_polaris_env("polaris_protocol", "https")
 

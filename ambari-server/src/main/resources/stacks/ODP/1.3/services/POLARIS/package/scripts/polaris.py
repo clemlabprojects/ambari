@@ -55,6 +55,8 @@ def polaris(component_type='server'):
                  mode=0o640
                  )
 
+  setup_tools_tls()
+
   if component_type == 'server':
     setup_server_tls()
     setup_relational_db()
@@ -156,6 +158,25 @@ def setup_server_tls():
        group=params.user_group,
        mode=0o640,
        only_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
+
+
+def setup_tools_tls():
+  import params
+
+  _setup_pem_tls(
+    enabled=params.polaris_mcp_tls_enabled,
+    auto_generate=params.polaris_mcp_tls_auto_generate,
+    cert_file=params.polaris_mcp_tls_cert_file,
+    key_file=params.polaris_mcp_tls_key_file,
+    label="Polaris MCP"
+  )
+  _setup_pem_tls(
+    enabled=params.polaris_console_tls_enabled,
+    auto_generate=params.polaris_console_tls_auto_generate,
+    cert_file=params.polaris_console_tls_cert_file,
+    key_file=params.polaris_console_tls_key_file,
+    label="Polaris Console"
+  )
 
 
 def setup_token_broker():
@@ -406,3 +427,51 @@ def _ensure_parent_dir(path):
             group=params.user_group,
             create_parents=True
             )
+
+
+def _setup_pem_tls(enabled, auto_generate, cert_file, key_file, label):
+  import params
+
+  if not enabled:
+    return
+
+  cert_file = str(cert_file or "").strip()
+  key_file = str(key_file or "").strip()
+  if not cert_file or not key_file:
+    raise Fail("{0} TLS is enabled but certificate/key file is not configured.".format(label))
+
+  _ensure_parent_dir(cert_file)
+  _ensure_parent_dir(key_file)
+
+  if auto_generate:
+    hostname = str(getattr(params, "polaris_hostname", "") or "localhost")
+    subject = "/CN={0}/OU=ODP/O=ODP/L=Unknown/ST=Unknown/C=US".format(hostname)
+    generate_cmd = " ".join([
+      "openssl", "req",
+      "-x509",
+      "-newkey", "rsa:2048",
+      "-nodes",
+      "-keyout", shlex.quote(key_file),
+      "-out", shlex.quote(cert_file),
+      "-days", "3650",
+      "-subj", shlex.quote(subject),
+    ])
+    Execute(generate_cmd,
+            user=params.polaris_user,
+            not_if="test -f {0} -a -f {1}".format(shlex.quote(cert_file), shlex.quote(key_file)))
+  else:
+    Execute("test -f {0}".format(shlex.quote(cert_file)),
+            user=params.polaris_user)
+    Execute("test -f {0}".format(shlex.quote(key_file)),
+            user=params.polaris_user)
+
+  File(cert_file,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o644,
+       only_if="test -f {0}".format(shlex.quote(cert_file)))
+  File(key_file,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o600,
+       only_if="test -f {0}".format(shlex.quote(key_file)))

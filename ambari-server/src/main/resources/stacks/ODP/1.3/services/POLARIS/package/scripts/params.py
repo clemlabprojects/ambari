@@ -92,6 +92,15 @@ polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris
 polaris_ssl_truststore_password = str(default("/configurations/polaris-env/polaris_ssl_truststore_password", "changeit"))
 polaris_ssl_keystore_password_escaped = polaris_ssl_keystore_password.replace("'", "'\"'\"'")
 polaris_ssl_truststore_password_escaped = polaris_ssl_truststore_password.replace("'", "'\"'\"'")
+polaris_mcp_tls_enabled = _to_bool(default("/configurations/polaris-env/polaris_mcp_tls_enabled", "false"), False)
+polaris_mcp_tls_auto_generate = _to_bool(default("/configurations/polaris-env/polaris_mcp_tls_auto_generate", "true"), True)
+polaris_mcp_tls_cert_file = str(default("/configurations/polaris-env/polaris_mcp_tls_cert_file", "/etc/polaris/conf/tls/polaris-mcp-cert.pem")).strip()
+polaris_mcp_tls_key_file = str(default("/configurations/polaris-env/polaris_mcp_tls_key_file", "/etc/polaris/conf/tls/polaris-mcp-key.pem")).strip()
+polaris_mcp_tls_ca_file = str(default("/configurations/polaris-env/polaris_mcp_tls_ca_file", "")).strip()
+polaris_console_tls_enabled = _to_bool(default("/configurations/polaris-env/polaris_console_tls_enabled", "false"), False)
+polaris_console_tls_auto_generate = _to_bool(default("/configurations/polaris-env/polaris_console_tls_auto_generate", "true"), True)
+polaris_console_tls_cert_file = str(default("/configurations/polaris-env/polaris_console_tls_cert_file", "/etc/polaris/conf/tls/polaris-console-cert.pem")).strip()
+polaris_console_tls_key_file = str(default("/configurations/polaris-env/polaris_console_tls_key_file", "/etc/polaris/conf/tls/polaris-console-key.pem")).strip()
 polaris_jaas_conf_template = config['configurations']['polaris-jaas-conf']['content']
 
 polaris_start_command = default("/configurations/polaris-env/polaris_start_command", "").strip()
@@ -254,7 +263,12 @@ polaris_ssl_truststore_file_type = str(application_properties.get("quarkus.http.
 polaris_mcp_transport = default("/configurations/polaris-env/polaris_mcp_transport", "http")
 polaris_mcp_host = default("/configurations/polaris-env/polaris_mcp_host", "0.0.0.0")
 polaris_mcp_port = int(default("/configurations/polaris-env/polaris_mcp_port", 8000))
-polaris_mcp_protocol = default("/configurations/polaris-env/polaris_mcp_protocol", "http")
+polaris_mcp_protocol_requested = str(default("/configurations/polaris-env/polaris_mcp_protocol", "http")).strip().lower()
+if polaris_mcp_protocol_requested not in ("http", "https"):
+  polaris_mcp_protocol_requested = "http"
+polaris_mcp_protocol = "https" if polaris_mcp_tls_enabled else (
+  "http" if polaris_mcp_protocol_requested == "https" else polaris_mcp_protocol_requested
+)
 polaris_mcp_pid_file = format("{polaris_pid_dir}/polaris-mcp.pid")
 
 polaris_mcp_base_url = default("/configurations/polaris-env/polaris_mcp_base_url", "").strip()
@@ -267,19 +281,49 @@ if not polaris_mcp_start_command:
     "{polaris_mcp_home}/bin/polaris-mcp --transport {polaris_mcp_transport} "
     "--host {polaris_mcp_host} --port {polaris_mcp_port}"
   )
+  if polaris_mcp_tls_enabled:
+    tls_parts = ["--tls-enabled"]
+    if polaris_mcp_tls_cert_file:
+      tls_parts.extend(["--tls-cert-file", polaris_mcp_tls_cert_file])
+    if polaris_mcp_tls_key_file:
+      tls_parts.extend(["--tls-key-file", polaris_mcp_tls_key_file])
+    if polaris_mcp_tls_ca_file:
+      tls_parts.extend(["--tls-ca-file", polaris_mcp_tls_ca_file])
+    polaris_mcp_start_command = "{0} {1}".format(
+      polaris_mcp_start_command,
+      " ".join(tls_parts)
+    )
 polaris_mcp_stop_command = default("/configurations/polaris-env/polaris_mcp_stop_command", "").strip()
 if not polaris_mcp_stop_command:
   polaris_mcp_stop_command = None
 
 polaris_mcp_hosts = sorted(default("/clusterHostInfo/polaris_mcp_server_hosts", []))
 
-polaris_console_protocol = default("/configurations/polaris-env/polaris_console_protocol", "http")
+polaris_console_host = default("/configurations/polaris-env/polaris_console_host", "0.0.0.0")
+polaris_console_protocol_requested = str(default("/configurations/polaris-env/polaris_console_protocol", "http")).strip().lower()
+if polaris_console_protocol_requested not in ("http", "https"):
+  polaris_console_protocol_requested = "http"
+polaris_console_protocol = "https" if polaris_console_tls_enabled else (
+  "http" if polaris_console_protocol_requested == "https" else polaris_console_protocol_requested
+)
 polaris_console_port = int(default("/configurations/polaris-env/polaris_console_port", 8282))
 polaris_console_pid_file = format("{polaris_pid_dir}/polaris-console.pid")
 
 polaris_console_start_command = default("/configurations/polaris-env/polaris_console_start_command", "").strip()
 if not polaris_console_start_command:
-  polaris_console_start_command = format("{polaris_console_home}/bin/polaris-console")
+  polaris_console_start_command = format(
+    "{polaris_console_home}/bin/polaris-console --host {polaris_console_host} --port {polaris_console_port}"
+  )
+  if polaris_console_tls_enabled:
+    tls_parts = ["--tls-enabled"]
+    if polaris_console_tls_cert_file:
+      tls_parts.extend(["--tls-cert-file", polaris_console_tls_cert_file])
+    if polaris_console_tls_key_file:
+      tls_parts.extend(["--tls-key-file", polaris_console_tls_key_file])
+    polaris_console_start_command = "{0} {1}".format(
+      polaris_console_start_command,
+      " ".join(tls_parts)
+    )
 polaris_console_stop_command = default("/configurations/polaris-env/polaris_console_stop_command", "").strip()
 if not polaris_console_stop_command:
   polaris_console_stop_command = None
