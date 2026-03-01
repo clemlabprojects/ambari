@@ -77,15 +77,11 @@ App.FileSystem = Ember.ObjectProxy.extend({
 
   isSelected: function(key, aBoolean) {
     if (arguments.length > 1) {
-      this.clearAllSelection();
       this.get('content').set('isSelected', aBoolean);
+      return aBoolean;
     }
     return this.get('content.isSelected');
-  }.property('content.isSelected', 'services.@each.isSelected'),
-
-  clearAllSelection: function() {
-    this.get('services').setEach('isSelected', false);
-  }
+  }.property('content.isSelected')
 });
 
 /**
@@ -118,6 +114,18 @@ App.StackService = DS.Model.extend({
   isDisabled: function () {
     return this.get('isInstalled') || (this.get('isMandatory') && !App.get('router.clusterInstallCompleted'));
   }.property('isMandatory', 'isInstalled', 'App.router.clusterInstallCompleted'),
+
+  /**
+   * Dynamic disable flag used by install-step constraints (e.g. HDFS-only services).
+   */
+  fsSelectionDisabled: false,
+
+  /**
+   * A service may be disabled either by stack rules or by wizard runtime constraints.
+   */
+  isSelectionDisabled: function () {
+    return this.get('isDisabled') || this.get('fsSelectionDisabled');
+  }.property('isDisabled', 'fsSelectionDisabled'),
 
   /**
    * @type {String[]}

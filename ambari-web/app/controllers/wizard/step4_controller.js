@@ -34,11 +34,12 @@ App.WizardStep4Controller = Em.ArrayController.extend({
    */
   isAllChecked: function(key, value) {
     if (arguments.length > 1) {
-      this.filterProperty('isDisabled', false).filterProperty('isDFS', false).setEach('isSelected', value);
+      this.filterProperty('isSelectionDisabled', false).filterProperty('isDFS', false).setEach('isSelected', value);
       return value;
     }
     return this.filterProperty('isInstalled', false).
       filterProperty('isHiddenOnSelectServicePage', false).
+      filterProperty('isSelectionDisabled', false).
       filterProperty('isDFS', false).
       everyProperty('isSelected', true);
   }.property('@each.isSelected'),
@@ -77,6 +78,11 @@ App.WizardStep4Controller = Em.ArrayController.extend({
       this.set('errorStack', []);
     }
   }.observes('@each.isSelected'),
+
+  /**
+   * Services that must keep hard dependency on HDFS.
+   */
+  hdfsOnlyServices: ['HBASE', 'RANGER_KMS'],
 
   /**
    * Check if multiple distributed file systems were selected
@@ -334,37 +340,33 @@ App.WizardStep4Controller = Em.ArrayController.extend({
    * @method isFileSystemCheckFailed
    */
   fileSystemServiceValidation: function(callback) {
-    if(this.isDFSStack()){
-      var primaryDFS = this.findProperty('isPrimaryDFS',true);
-      if (primaryDFS) {
-        var primaryDfsDisplayName = primaryDFS.get('displayNameOnSelectServicePage');
-        var primaryDfsServiceName = primaryDFS.get('serviceName');
-        if (this.multipleDFSs()) {
-          var dfsServices = this.filterProperty('isDFS',true).filterProperty('isSelected',true).mapProperty('serviceName');
-          var services = dfsServices.map(function (item){
-            return {
-              serviceName: item,
-              selected: item === primaryDfsServiceName
-            };
-          });
-          this.addValidationError({
-            id: 'multipleDFS',
-            callback: this.needToAddServicePopup,
-            callbackParams: [services, 'multipleDFS', primaryDfsDisplayName, callback]
-          });
-        }
-        else
-        {
-          //if multiple DFS are not selected, remove the related error from the error array
-          var fsError = this.get('errorStack').filterProperty('id',"multipleDFS");
-          if(fsError)
-          {
-             this.get('errorStack').removeObject(fsError[0]);
-          }
-        }
-      }
+    if (this.isDFSStack()) {
+      this.applyHdfsOnlyServiceConstraints();
+    }
+    var fsError = this.get('errorStack').filterProperty('id',"multipleDFS");
+    if (fsError) {
+      this.get('errorStack').removeObject(fsError[0]);
     }
   },
+
+  applyHdfsOnlyServiceConstraints: function() {
+    var hdfsService = this.findProperty('serviceName', 'HDFS');
+    var hdfsSelected = !!(hdfsService && hdfsService.get('isSelected'));
+
+    this.forEach(function(service) {
+      if (!service || service.get('isInstalled')) {
+        return;
+      }
+
+      var requiredServices = service.get('requiredServices') || [];
+      var requiresHdfs = this.get('hdfsOnlyServices').contains(service.get('serviceName')) || requiredServices.contains('HDFS');
+
+      service.set('fsSelectionDisabled', requiresHdfs && !hdfsSelected);
+      if (requiresHdfs && !hdfsSelected && service.get('isSelected')) {
+        service.set('isSelected', false);
+      }
+    }, this);
+  }.observes('@each.isSelected'),
 
   /**
    * Checks if a dependent service is selected without selecting the main service.
