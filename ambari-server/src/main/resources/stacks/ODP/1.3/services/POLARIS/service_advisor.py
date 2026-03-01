@@ -59,6 +59,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     services_list = self.get_services_list(services)
 
+    self.recommendPolarisAuthConfigurations(configurations, services)
     self.recommendPolarisDatabaseConfigurations(configurations, services)
     self.recommendPolarisMcpConfigurations(configurations, services, hosts)
     self.recommendPolarisConsoleConfigurations(configurations, services)
@@ -107,9 +108,63 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     if not str(polaris_env.get("polaris_console_port", "")).strip():
       put_polaris_env("polaris_console_port", "8282")
 
+  def recommendPolarisAuthConfigurations(self, configurations, services):
+    polaris_env = self._get_site_properties(configurations, services, "polaris-env")
+    app_props = self._get_site_properties(configurations, services, "polaris-application-properties")
+    oidc_env = self._get_site_properties(configurations, services, "oidc-env")
+
+    put_polaris_env = self.putProperty(configurations, "polaris-env", services)
+    put_app_props = self.putProperty(configurations, "polaris-application-properties", services)
+
+    if not str(app_props.get("quarkus.log.console.enabled", "")).strip():
+      put_app_props("quarkus.log.console.enabled", "false")
+    if not str(app_props.get("quarkus.log.file.enabled", "")).strip():
+      put_app_props("quarkus.log.file.enabled", "true")
+
+    auth_type = str(app_props.get("polaris.authentication.type", "internal")).strip().lower()
+    if auth_type not in ("internal", "external", "mixed"):
+      auth_type = "internal"
+      put_app_props("polaris.authentication.type", auth_type)
+
+    security_enabled = self._is_security_enabled(configurations, services)
+    oidc_admin_url = str(oidc_env.get("oidc_admin_url", "")).strip()
+    oidc_realm = str(oidc_env.get("oidc_realm", "")).strip()
+    oidc_available = security_enabled and oidc_admin_url != "" and oidc_realm != ""
+
+    auto_external = str(polaris_env.get("polaris_auth_auto_external", "true")).strip().lower() == "true"
+    if auth_type == "internal" and auto_external and oidc_available:
+      auth_type = "external"
+      put_app_props("polaris.authentication.type", auth_type)
+
+    if not str(polaris_env.get("polaris_bootstrap_realms", "")).strip():
+      default_realms = str(app_props.get("polaris.realm-context.realms", "POLARIS")).strip() or "POLARIS"
+      put_polaris_env("polaris_bootstrap_realms", default_realms)
+
+    if "polaris_auth_auto_external" not in polaris_env:
+      put_polaris_env("polaris_auth_auto_external", "true")
+    if "polaris_oidc_use_cluster_config" not in polaris_env:
+      put_polaris_env("polaris_oidc_use_cluster_config", "true")
+
+    if auth_type in ("external", "mixed"):
+      put_app_props("quarkus.oidc.tenant-enabled", "true")
+      if not str(app_props.get("quarkus.oidc.application-type", "")).strip():
+        put_app_props("quarkus.oidc.application-type", "service")
+
+      use_cluster_oidc = str(polaris_env.get("polaris_oidc_use_cluster_config", "true")).strip().lower() == "true"
+      if use_cluster_oidc and oidc_available:
+        put_app_props("quarkus.oidc.auth-server-url", "{0}/realms/{1}".format(oidc_admin_url.rstrip('/'), oidc_realm))
+        cluster_name = services.get("clusterName", "cluster")
+        put_app_props("quarkus.oidc.client-id", "{0}-polaris".format(cluster_name))
+    else:
+      put_app_props("quarkus.oidc.tenant-enabled", "false")
+
   def _is_ranger_plugin_enabled(self, configurations, services):
     plugin_value = self._get_property(configurations, services, "ranger-polaris-plugin-properties", "ranger-polaris-plugin-enabled")
     return str(plugin_value).lower() == "yes"
+
+  def _is_security_enabled(self, configurations, services):
+    security_flag = self._get_property(configurations, services, "cluster-env", "security_enabled")
+    return str(security_flag).strip().lower() == "true"
 
   def _get_polaris_service_url(self, configurations, services, hosts):
     polaris_hosts = self.getHostsWithComponent("POLARIS", "POLARIS_SERVER", services, hosts)
@@ -146,6 +201,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
   def recommendPolarisDatabaseConfigurations(self, configurations, services):
     db_props = self._get_site_properties(configurations, services, "polaris-db-properties")
+    app_props = self._get_site_properties(configurations, services, "polaris-application-properties")
     put_db_props = self.putProperty(configurations, "polaris-db-properties", services)
     put_app_props = self.putProperty(configurations, "polaris-application-properties", services)
 
@@ -168,6 +224,9 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       put_db_props("create_db_dbuser", "true")
     if not str(db_props.get("db_root_user", "")).strip():
       put_db_props("db_root_user", "postgres")
+
+    if not str(app_props.get("polaris.persistence.type", "")).strip():
+      put_app_props("polaris.persistence.type", "relational-jdbc")
 
     put_app_props("quarkus.datasource.db-kind", "postgresql")
     put_app_props("quarkus.datasource.jdbc.driver", "org.postgresql.Driver")
@@ -245,6 +304,43 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
   def validatePolarisApplicationProperties(self, properties, recommendedDefaults, configurations, services, hosts):
     validation_items = []
 
+    if "quarkus.log.console.enable" in properties:
+      validation_items.append({
+        "config-name": "quarkus.log.console.enable",
+        "item": self.getWarnItem("quarkus.log.console.enable is deprecated; use quarkus.log.console.enabled")
+      })
+    if "quarkus.log.file.enable" in properties:
+      validation_items.append({
+        "config-name": "quarkus.log.file.enable",
+        "item": self.getWarnItem("quarkus.log.file.enable is deprecated; use quarkus.log.file.enabled")
+      })
+
+    auth_type = str(properties.get("polaris.authentication.type", "internal")).strip().lower()
+    if auth_type not in ("internal", "external", "mixed"):
+      validation_items.append({
+        "config-name": "polaris.authentication.type",
+        "item": self.getWarnItem("polaris.authentication.type must be one of: internal, external, mixed")
+      })
+      auth_type = "internal"
+
+    if auth_type in ("external", "mixed"):
+      tenant_enabled = str(properties.get("quarkus.oidc.tenant-enabled", "false")).strip().lower()
+      if tenant_enabled != "true":
+        validation_items.append({
+          "config-name": "quarkus.oidc.tenant-enabled",
+          "item": self.getWarnItem("quarkus.oidc.tenant-enabled should be true when using external or mixed authentication")
+        })
+      if not str(properties.get("quarkus.oidc.auth-server-url", "")).strip():
+        validation_items.append({
+          "config-name": "quarkus.oidc.auth-server-url",
+          "item": self.getWarnItem("quarkus.oidc.auth-server-url should be set when using external or mixed authentication")
+        })
+      if not str(properties.get("quarkus.oidc.client-id", "")).strip():
+        validation_items.append({
+          "config-name": "quarkus.oidc.client-id",
+          "item": self.getWarnItem("quarkus.oidc.client-id should be set when using external or mixed authentication")
+        })
+
     persistence_type = str(properties.get("polaris.persistence.type", "in-memory")).lower()
     if persistence_type == "relational-jdbc":
       required_props = [
@@ -320,5 +416,62 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         "config-name": "polaris_console_port",
         "item": self.getWarnItem("polaris_console_port must be a valid numeric TCP port")
       })
+
+    app_props = {}
+    if "polaris-application-properties" in configurations and "properties" in configurations["polaris-application-properties"]:
+      app_props = configurations["polaris-application-properties"]["properties"]
+    else:
+      app_defaults = self.getServicesSiteProperties(services, "polaris-application-properties")
+      if app_defaults:
+        app_props = app_defaults
+
+    auth_type = str(app_props.get("polaris.authentication.type", "internal")).strip().lower()
+    if auth_type in ("internal", "mixed"):
+      if not str(properties.get("polaris_admin_username", "")).strip():
+        validation_items.append({
+          "config-name": "polaris_admin_username",
+          "item": self.getWarnItem("polaris_admin_username must be set when using internal or mixed authentication")
+        })
+      if not str(properties.get("polaris_admin_password", "")).strip():
+        validation_items.append({
+          "config-name": "polaris_admin_password",
+          "item": self.getWarnItem("polaris_admin_password should be set when using internal or mixed authentication")
+        })
+      if not str(properties.get("polaris_bootstrap_realms", "")).strip():
+        validation_items.append({
+          "config-name": "polaris_bootstrap_realms",
+          "item": self.getWarnItem("polaris_bootstrap_realms should be set when using internal or mixed authentication")
+        })
+
+    if auth_type in ("external", "mixed"):
+      use_cluster_oidc = str(properties.get("polaris_oidc_use_cluster_config", "true")).strip().lower() == "true"
+      if use_cluster_oidc:
+        oidc_env = self.getServicesSiteProperties(services, "oidc-env") or {}
+        if not str(oidc_env.get("oidc_admin_url", "")).strip():
+          validation_items.append({
+            "config-name": "polaris_oidc_use_cluster_config",
+            "item": self.getWarnItem("Cluster OIDC admin URL is missing while polaris_oidc_use_cluster_config=true")
+          })
+        if not str(oidc_env.get("oidc_realm", "")).strip():
+          validation_items.append({
+            "config-name": "polaris_oidc_use_cluster_config",
+            "item": self.getWarnItem("Cluster OIDC realm is missing while polaris_oidc_use_cluster_config=true")
+          })
+      else:
+        if not str(properties.get("polaris_oidc_override_auth_server_url", "")).strip():
+          validation_items.append({
+            "config-name": "polaris_oidc_override_auth_server_url",
+            "item": self.getWarnItem("polaris_oidc_override_auth_server_url should be set when not using cluster OIDC config")
+          })
+        if not str(properties.get("polaris_oidc_override_client_id", "")).strip():
+          validation_items.append({
+            "config-name": "polaris_oidc_override_client_id",
+            "item": self.getWarnItem("polaris_oidc_override_client_id should be set when not using cluster OIDC config")
+          })
+        if not str(properties.get("polaris_oidc_override_client_secret", "")).strip():
+          validation_items.append({
+            "config-name": "polaris_oidc_override_client_secret",
+            "item": self.getWarnItem("polaris_oidc_override_client_secret should be set when not using cluster OIDC config")
+          })
 
     return self.toConfigurationValidationProblems(validation_items, "polaris-env")

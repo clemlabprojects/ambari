@@ -98,6 +98,208 @@
                 }
               ]
             }
+          },
+          {
+            "name": "polaris_authentication",
+            "display-name": "Authentication",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-polaris-authentication",
+                  "display-name": "Authentication and OIDC",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "4",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "5",
+                  "subsections": [
+                    {
+                      "name": "polaris-auth-row0-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-auth-row0-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-auth-row1-col1",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-auth-row1-col2",
+                      "row-index": "1",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "polaris-auth-internal-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type"
+                          ],
+                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-auth-internal-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type"
+                          ],
+                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-auth-oidc-col1",
+                      "row-index": "3",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type"
+                          ],
+                          "if": "${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-auth-oidc-col2",
+                      "row-index": "3",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type"
+                          ],
+                          "if": "${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-auth-oidc-override-col1",
+                      "row-index": "4",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type",
+                            "polaris-env/polaris_oidc_use_cluster_config"
+                          ],
+                          "if": "(${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-env/polaris_oidc_use_cluster_config} === false",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "polaris-auth-oidc-override-col2",
+                      "row-index": "4",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "polaris-application-properties/polaris.authentication.type",
+                            "polaris-env/polaris_oidc_use_cluster_config"
+                          ],
+                          "if": "(${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-env/polaris_oidc_use_cluster_config} === false",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
           }
         ]
       }
@@ -144,6 +346,54 @@
         {
           "config": "polaris-db-properties/db_root_password",
           "subsection-name": "polaris-db-root-col2"
+        },
+        {
+          "config": "polaris-application-properties/polaris.authentication.type",
+          "subsection-name": "polaris-auth-row0-col1"
+        },
+        {
+          "config": "polaris-env/polaris_auth_auto_external",
+          "subsection-name": "polaris-auth-row0-col2"
+        },
+        {
+          "config": "polaris-application-properties/polaris.realm-context.realms",
+          "subsection-name": "polaris-auth-row1-col1"
+        },
+        {
+          "config": "polaris-application-properties/polaris.realm-context.require-header",
+          "subsection-name": "polaris-auth-row1-col2"
+        },
+        {
+          "config": "polaris-env/polaris_bootstrap_realms",
+          "subsection-name": "polaris-auth-internal-col1"
+        },
+        {
+          "config": "polaris-env/polaris_admin_username",
+          "subsection-name": "polaris-auth-internal-col1"
+        },
+        {
+          "config": "polaris-env/polaris_admin_password",
+          "subsection-name": "polaris-auth-internal-col2"
+        },
+        {
+          "config": "polaris-env/polaris_oidc_use_cluster_config",
+          "subsection-name": "polaris-auth-oidc-col1"
+        },
+        {
+          "config": "polaris-application-properties/quarkus.oidc.tenant-enabled",
+          "subsection-name": "polaris-auth-oidc-col2"
+        },
+        {
+          "config": "polaris-env/polaris_oidc_override_auth_server_url",
+          "subsection-name": "polaris-auth-oidc-override-col1"
+        },
+        {
+          "config": "polaris-env/polaris_oidc_override_client_id",
+          "subsection-name": "polaris-auth-oidc-override-col1"
+        },
+        {
+          "config": "polaris-env/polaris_oidc_override_client_secret",
+          "subsection-name": "polaris-auth-oidc-override-col2"
         }
       ]
     },
@@ -204,6 +454,78 @@
       },
       {
         "config": "polaris-db-properties/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "polaris-application-properties/polaris.authentication.type",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_auth_auto_external",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-application-properties/polaris.realm-context.realms",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-application-properties/polaris.realm-context.require-header",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_bootstrap_realms",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_admin_username",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_admin_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_oidc_use_cluster_config",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-application-properties/quarkus.oidc.tenant-enabled",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_oidc_override_auth_server_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_oidc_override_client_id",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-env/polaris_oidc_override_client_secret",
         "widget": {
           "type": "password"
         }

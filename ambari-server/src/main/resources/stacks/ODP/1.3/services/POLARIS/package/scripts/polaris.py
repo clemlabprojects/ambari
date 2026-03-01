@@ -17,6 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import os
+import shlex
 
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import Fail
@@ -56,6 +57,7 @@ def polaris(component_type='server'):
 
   if component_type == 'server':
     setup_relational_db()
+    setup_metastore_bootstrap()
     setup_token_broker()
 
 
@@ -195,6 +197,41 @@ def setup_relational_db():
           user=params.polaris_user,
           environment={'PGPASSWORD': params.polaris_db_root_password}
           )
+
+
+def setup_metastore_bootstrap():
+  import params
+
+  persistence_type = _normalize(params.application_properties.get("polaris.persistence.type", "in-memory"))
+  if persistence_type != "relational-jdbc":
+    return
+
+  realms_source = str(getattr(params, "polaris_bootstrap_realms_raw", "")).strip()
+  if not realms_source:
+    realms_source = str(params.application_properties.get("polaris.realm-context.realms", "POLARIS")).strip()
+  realms = [realm.strip() for realm in realms_source.split(",") if realm.strip()]
+  if not realms:
+    Logger.info("Skipping Polaris metastore bootstrap; no realms configured.")
+    return
+
+  auth_type = _normalize(params.application_properties.get("polaris.authentication.type", "internal")) or "internal"
+  bootstrap_env = {}
+  if params.polaris_bootstrap_credentials:
+    bootstrap_env["POLARIS_BOOTSTRAP_CREDENTIALS"] = params.polaris_bootstrap_credentials
+  elif auth_type in ("internal", "mixed"):
+    raise Fail("POLARIS bootstrap credentials are required for internal/mixed auth in relational-jdbc mode.")
+
+  bootstrap_cmd_parts = [format("{polaris_home}/bin/admin"), "bootstrap"]
+  for realm in realms:
+    bootstrap_cmd_parts.extend(["-r", realm])
+  bootstrap_cmd = " ".join(shlex.quote(part) for part in bootstrap_cmd_parts)
+
+  Logger.info("Running Polaris metastore bootstrap for realms: {0}".format(", ".join(realms)))
+  Execute(
+    "source {0}/polaris-env.sh; {1}".format(params.polaris_conf_dir, bootstrap_cmd),
+    user=params.polaris_user,
+    environment=bootstrap_env
+  )
 
 
 def _configure_kerberos():

@@ -35,12 +35,34 @@
     <on-ambari-upgrade add="false"/>
   </property>
 
+  <property>
+    <name>quarkus.log.console.enabled</name>
+    <display-name>Console Logging Enabled</display-name>
+    <value>false</value>
+    <description>Enable console logging for Polaris server process output.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.log.file.enabled</name>
+    <display-name>File Logging Enabled</display-name>
+    <value>true</value>
+    <description>Enable file logging for Polaris server logs.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
   <!-- Persistence / relational database properties -->
   <property>
     <name>polaris.persistence.type</name>
     <display-name>Persistence Type</display-name>
-    <value>in-memory</value>
-    <description>Polaris metadata persistence type. Use relational-jdbc for PostgreSQL-backed persistence.</description>
+    <value>relational-jdbc</value>
+    <description>Polaris metadata persistence type. Default is relational-jdbc for production PostgreSQL-backed persistence.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>

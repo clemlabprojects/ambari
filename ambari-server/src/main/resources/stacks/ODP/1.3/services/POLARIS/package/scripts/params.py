@@ -29,6 +29,13 @@ from resource_management.libraries.functions.setup_ranger_plugin_xml import gene
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.stack_features import check_stack_feature, get_stack_feature_version
 
+
+def _to_bool(value, default=False):
+  if value is None:
+    return default
+  return str(value).strip().lower() in ("true", "yes", "1", "on")
+
+
 config = Script.get_config()
 stack_root = Script.get_stack_root()
 
@@ -65,6 +72,12 @@ polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
 polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_username']
 polaris_admin_password = config['configurations']['polaris-env']['polaris_admin_password']
+polaris_bootstrap_realms_raw = str(default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS")).strip()
+polaris_auth_auto_external = _to_bool(default("/configurations/polaris-env/polaris_auth_auto_external", "true"), True)
+polaris_oidc_use_cluster_config = _to_bool(default("/configurations/polaris-env/polaris_oidc_use_cluster_config", "true"), True)
+polaris_oidc_override_auth_server_url = str(default("/configurations/polaris-env/polaris_oidc_override_auth_server_url", "")).strip()
+polaris_oidc_override_client_id = str(default("/configurations/polaris-env/polaris_oidc_override_client_id", "")).strip()
+polaris_oidc_override_client_secret = str(default("/configurations/polaris-env/polaris_oidc_override_client_secret", "")).strip()
 polaris_jaas_conf_template = config['configurations']['polaris-jaas-conf']['content']
 
 polaris_start_command = default("/configurations/polaris-env/polaris_start_command", "").strip()
@@ -89,6 +102,68 @@ else:
 
 application_properties = dict(config['configurations']['polaris-application-properties'])
 polaris_db_properties = dict(config['configurations']['polaris-db-properties'])
+cluster_name = config.get('clusterName', "cluster")
+
+oidc_admin_url = str(default("/configurations/oidc-env/oidc_admin_url", "")).strip()
+oidc_realm = str(default("/configurations/oidc-env/oidc_realm", "")).strip()
+oidc_available = security_enabled and oidc_admin_url != "" and oidc_realm != ""
+
+# Normalize deprecated Quarkus logging keys to current *.enabled variants.
+if "quarkus.log.console.enable" in application_properties:
+  if "quarkus.log.console.enabled" not in application_properties:
+    application_properties["quarkus.log.console.enabled"] = application_properties["quarkus.log.console.enable"]
+  del application_properties["quarkus.log.console.enable"]
+if "quarkus.log.file.enable" in application_properties:
+  if "quarkus.log.file.enabled" not in application_properties:
+    application_properties["quarkus.log.file.enabled"] = application_properties["quarkus.log.file.enable"]
+  del application_properties["quarkus.log.file.enable"]
+
+if "quarkus.log.console.enabled" not in application_properties:
+  application_properties["quarkus.log.console.enabled"] = "false"
+if "quarkus.log.file.enabled" not in application_properties:
+  application_properties["quarkus.log.file.enabled"] = "true"
+
+polaris_auth_type = str(application_properties.get("polaris.authentication.type", "internal")).strip().lower()
+if polaris_auth_type not in ("internal", "external", "mixed"):
+  polaris_auth_type = "internal"
+
+if polaris_auth_type == "internal" and polaris_auth_auto_external and oidc_available:
+  polaris_auth_type = "external"
+
+application_properties["polaris.authentication.type"] = polaris_auth_type
+
+if polaris_auth_type in ("external", "mixed"):
+  application_properties["quarkus.oidc.tenant-enabled"] = "true"
+  if not str(application_properties.get("quarkus.oidc.application-type", "")).strip():
+    application_properties["quarkus.oidc.application-type"] = "service"
+
+  if polaris_oidc_use_cluster_config and oidc_available:
+    application_properties["quarkus.oidc.auth-server-url"] = "{0}/realms/{1}".format(
+      oidc_admin_url.rstrip('/'),
+      oidc_realm
+    )
+    application_properties["quarkus.oidc.client-id"] = "{0}-polaris".format(cluster_name)
+  else:
+    if polaris_oidc_override_auth_server_url:
+      application_properties["quarkus.oidc.auth-server-url"] = polaris_oidc_override_auth_server_url
+    if polaris_oidc_override_client_id:
+      application_properties["quarkus.oidc.client-id"] = polaris_oidc_override_client_id
+    if polaris_oidc_override_client_secret:
+      application_properties["quarkus.oidc.credentials.secret"] = polaris_oidc_override_client_secret
+else:
+  application_properties["quarkus.oidc.tenant-enabled"] = "false"
+
+bootstrap_realms_source = polaris_bootstrap_realms_raw
+if not bootstrap_realms_source:
+  bootstrap_realms_source = str(application_properties.get("polaris.realm-context.realms", "POLARIS")).strip()
+bootstrap_realms = [r.strip() for r in bootstrap_realms_source.split(',') if r.strip()]
+polaris_bootstrap_credentials = ""
+if polaris_auth_type in ("internal", "mixed") and bootstrap_realms:
+  entries = []
+  for realm in bootstrap_realms:
+    entries.append("{0},{1},{2}".format(realm, polaris_admin_username, polaris_admin_password))
+  polaris_bootstrap_credentials = ";".join(entries)
+polaris_bootstrap_credentials_escaped = polaris_bootstrap_credentials.replace("'", "'\"'\"'")
 
 polaris_db_flavor = str(default("/configurations/polaris-db-properties/DB_FLAVOR", "POSTGRES")).upper()
 polaris_create_db_dbuser = str(default("/configurations/polaris-db-properties/create_db_dbuser", "true")).lower() == "true"

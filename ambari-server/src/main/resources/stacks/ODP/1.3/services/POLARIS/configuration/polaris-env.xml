@@ -345,18 +345,77 @@
   </property>
   <property>
     <name>polaris_admin_username</name>
-    <display-name>Polaris Admin Username</display-name>
-    <value>admin</value>
-    <description>Default Polaris internal admin username.</description>
+    <display-name>Polaris Bootstrap Client ID</display-name>
+    <value>root</value>
+    <description>Client ID used to bootstrap Polaris internal root credentials.</description>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>polaris_admin_password</name>
-    <display-name>Polaris Admin Password</display-name>
-    <value>admin</value>
-    <description>Default Polaris internal admin password.</description>
+    <display-name>Polaris Bootstrap Client Secret</display-name>
+    <value>s3cr3t</value>
+    <description>Client secret used to bootstrap Polaris internal root credentials.</description>
     <value-attributes>
       <type>password</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_bootstrap_realms</name>
+    <display-name>Bootstrap Realms</display-name>
+    <value>POLARIS</value>
+    <description>Comma-separated list of realms to bootstrap with Polaris internal credentials.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_auth_auto_external</name>
+    <display-name>Auto Switch To External Auth</display-name>
+    <value>true</value>
+    <description>When cluster security and OIDC are configured, switch Polaris authentication type from internal to external by default.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_oidc_use_cluster_config</name>
+    <display-name>Use Cluster OIDC Configuration</display-name>
+    <value>true</value>
+    <description>Use cluster-level OIDC settings (oidc-env) to configure Polaris external authentication.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_oidc_override_auth_server_url</name>
+    <display-name>Polaris OIDC Auth Server URL Override</display-name>
+    <value></value>
+    <description>Override auth server URL for Polaris OIDC when not using cluster OIDC configuration.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_oidc_override_client_id</name>
+    <display-name>Polaris OIDC Client ID Override</display-name>
+    <value></value>
+    <description>Override client id for Polaris OIDC when not using cluster OIDC configuration.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_oidc_override_client_secret</name>
+    <display-name>Polaris OIDC Client Secret Override</display-name>
+    <value></value>
+    <description>Override client secret for Polaris OIDC when not using cluster OIDC configuration.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -408,6 +467,11 @@ export POLARIS_CONSOLE_PORT={{polaris_console_port}}
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}
 export POLARIS_ADMIN_PASSWORD={{polaris_admin_password}}
+
+# Optional pre-seeded bootstrap credentials for internal/mixed auth.
+{% if polaris_bootstrap_credentials %}
+export POLARIS_BOOTSTRAP_CREDENTIALS='{{polaris_bootstrap_credentials_escaped}}'
+{% endif %}
     </value>
     <value-attributes>
       <type>content</type>
