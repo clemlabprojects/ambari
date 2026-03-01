@@ -25,8 +25,8 @@
         "port": {
           "http_property": "quarkus.http.port",
           "http_default_port": "8181",
-          "https_property": "quarkus.http.port",
-          "https_default_port": "8181",
+          "https_property": "quarkus.http.ssl-port",
+          "https_default_port": "8443",
           "regex": "^(\\d+)$",
           "site": "polaris-application-properties"
         }

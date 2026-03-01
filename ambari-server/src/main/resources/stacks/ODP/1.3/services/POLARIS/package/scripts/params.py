@@ -36,6 +36,13 @@ def _to_bool(value, default=False):
   return str(value).strip().lower() in ("true", "yes", "1", "on")
 
 
+def _to_int(value, default):
+  try:
+    return int(str(value).strip())
+  except Exception:
+    return default
+
+
 config = Script.get_config()
 stack_root = Script.get_stack_root()
 
@@ -72,12 +79,19 @@ polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
 polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_username']
 polaris_admin_password = config['configurations']['polaris-env']['polaris_admin_password']
+polaris_admin_password_escaped = str(polaris_admin_password or "").replace("'", "'\"'\"'")
 polaris_bootstrap_realms_raw = str(default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS")).strip()
 polaris_auth_auto_external = _to_bool(default("/configurations/polaris-env/polaris_auth_auto_external", "true"), True)
 polaris_oidc_use_cluster_config = _to_bool(default("/configurations/polaris-env/polaris_oidc_use_cluster_config", "true"), True)
 polaris_oidc_override_auth_server_url = str(default("/configurations/polaris-env/polaris_oidc_override_auth_server_url", "")).strip()
 polaris_oidc_override_client_id = str(default("/configurations/polaris-env/polaris_oidc_override_client_id", "")).strip()
 polaris_oidc_override_client_secret = str(default("/configurations/polaris-env/polaris_oidc_override_client_secret", "")).strip()
+polaris_ssl_enabled = _to_bool(default("/configurations/polaris-env/polaris_ssl_enabled", "false"), False)
+polaris_ssl_auto_generate = _to_bool(default("/configurations/polaris-env/polaris_ssl_auto_generate", "true"), True)
+polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris_ssl_keystore_password", "changeit"))
+polaris_ssl_truststore_password = str(default("/configurations/polaris-env/polaris_ssl_truststore_password", "changeit"))
+polaris_ssl_keystore_password_escaped = polaris_ssl_keystore_password.replace("'", "'\"'\"'")
+polaris_ssl_truststore_password_escaped = polaris_ssl_truststore_password.replace("'", "'\"'\"'")
 polaris_jaas_conf_template = config['configurations']['polaris-jaas-conf']['content']
 
 polaris_start_command = default("/configurations/polaris-env/polaris_start_command", "").strip()
@@ -122,6 +136,36 @@ if "quarkus.log.console.enabled" not in application_properties:
   application_properties["quarkus.log.console.enabled"] = "false"
 if "quarkus.log.file.enabled" not in application_properties:
   application_properties["quarkus.log.file.enabled"] = "true"
+
+# Polaris TLS settings are modeled in polaris-env; map to Quarkus TLS properties.
+if polaris_ssl_enabled:
+  if not str(application_properties.get("quarkus.http.ssl-port", "")).strip():
+    application_properties["quarkus.http.ssl-port"] = "8443"
+
+  insecure_requests = str(application_properties.get("quarkus.http.insecure-requests", "")).strip().lower()
+  if insecure_requests not in ("enabled", "redirect", "disabled"):
+    application_properties["quarkus.http.insecure-requests"] = "redirect"
+
+  if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.key-store-file"] = "/etc/polaris/conf/tls/polaris-server-keystore.p12"
+  if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-file-type", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.key-store-file-type"] = "PKCS12"
+  if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.key-store-key-alias"] = "polaris"
+
+  if not str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.trust-store-file"] = "/etc/polaris/conf/tls/polaris-server-truststore.p12"
+  if not str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.trust-store-file-type"] = "PKCS12"
+
+  application_properties["quarkus.http.ssl.certificate.key-store-password"] = "${POLARIS_SSL_KEYSTORE_PASSWORD}"
+  if str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
+    application_properties["quarkus.http.ssl.certificate.trust-store-password"] = "${POLARIS_SSL_TRUSTSTORE_PASSWORD}"
+else:
+  if "quarkus.http.ssl.certificate.key-store-password" in application_properties:
+    del application_properties["quarkus.http.ssl.certificate.key-store-password"]
+  if "quarkus.http.ssl.certificate.trust-store-password" in application_properties:
+    del application_properties["quarkus.http.ssl.certificate.trust-store-password"]
 
 polaris_auth_type = str(application_properties.get("polaris.authentication.type", "internal")).strip().lower()
 if polaris_auth_type not in ("internal", "external", "mixed"):
@@ -182,12 +226,30 @@ polaris_db_root_password = default("/configurations/polaris-db-properties/db_roo
 polaris_privelege_user_jdbc_url = str(default("/configurations/polaris-db-properties/polaris_privelege_user_jdbc_url",
                                               format("jdbc:postgresql://{polaris_db_host}:{polaris_db_port}/postgres"))).strip()
 
-polaris_protocol = default("/configurations/polaris-env/polaris_protocol", "http")
-polaris_port = int(default("/configurations/polaris-application-properties/quarkus.http.port", 8181))
+polaris_protocol_requested = str(default("/configurations/polaris-env/polaris_protocol", "http")).strip().lower()
+if polaris_protocol_requested not in ("http", "https"):
+  polaris_protocol_requested = "http"
+
+if polaris_ssl_enabled:
+  polaris_protocol = "https"
+else:
+  # Keep runtime coherent: HTTPS protocol requires TLS to be enabled.
+  polaris_protocol = "http" if polaris_protocol_requested == "https" else polaris_protocol_requested
+
+polaris_http_port = _to_int(default("/configurations/polaris-application-properties/quarkus.http.port", 8181), 8181)
+polaris_https_port = _to_int(default("/configurations/polaris-application-properties/quarkus.http.ssl-port", 8443), 8443)
+polaris_port = polaris_https_port if polaris_protocol == "https" else polaris_http_port
 
 polaris_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
 polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevelParams']['hostname']
+polaris_hostname = config['agentLevelParams']['hostname']
 polaris_service_url = "{0}://{1}:{2}".format(polaris_protocol, polaris_service_host, polaris_port)
+
+polaris_ssl_keystore_file = str(application_properties.get("quarkus.http.ssl.certificate.key-store-file", "")).strip()
+polaris_ssl_keystore_file_type = str(application_properties.get("quarkus.http.ssl.certificate.key-store-file-type", "PKCS12")).strip() or "PKCS12"
+polaris_ssl_keystore_alias = str(application_properties.get("quarkus.http.ssl.certificate.key-store-key-alias", "polaris")).strip() or "polaris"
+polaris_ssl_truststore_file = str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip()
+polaris_ssl_truststore_file_type = str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file-type", "PKCS12")).strip() or "PKCS12"
 
 polaris_mcp_transport = default("/configurations/polaris-env/polaris_mcp_transport", "http")
 polaris_mcp_host = default("/configurations/polaris-env/polaris_mcp_host", "0.0.0.0")

@@ -36,6 +36,113 @@
   </property>
 
   <property>
+    <name>quarkus.http.ssl-port</name>
+    <display-name>HTTPS Port</display-name>
+    <value>8443</value>
+    <description>HTTPS port for the Polaris server when TLS is enabled.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>65535</maximum>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.insecure-requests</name>
+    <display-name>HTTP Insecure Requests</display-name>
+    <value>redirect</value>
+    <description>Behavior for HTTP requests when TLS is enabled.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>enabled</value>
+          <label>Enabled</label>
+        </entry>
+        <entry>
+          <value>redirect</value>
+          <label>Redirect</label>
+        </entry>
+        <entry>
+          <value>disabled</value>
+          <label>Disabled</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.ssl.certificate.key-store-file</name>
+    <display-name>TLS Keystore File</display-name>
+    <value>/etc/polaris/conf/tls/polaris-server-keystore.p12</value>
+    <description>Path to the TLS keystore used by Polaris HTTPS endpoint.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.ssl.certificate.key-store-file-type</name>
+    <display-name>TLS Keystore Type</display-name>
+    <value>PKCS12</value>
+    <description>TLS keystore type.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>PKCS12</value>
+          <label>PKCS12</label>
+        </entry>
+        <entry>
+          <value>JKS</value>
+          <label>JKS</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.ssl.certificate.key-store-key-alias</name>
+    <display-name>TLS Keystore Key Alias</display-name>
+    <value>polaris</value>
+    <description>Alias of the TLS key/certificate entry to use.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.ssl.certificate.trust-store-file</name>
+    <display-name>TLS Truststore File</display-name>
+    <value>/etc/polaris/conf/tls/polaris-server-truststore.p12</value>
+    <description>Path to the TLS truststore used by Polaris.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.ssl.certificate.trust-store-file-type</name>
+    <display-name>TLS Truststore Type</display-name>
+    <value>PKCS12</value>
+    <description>TLS truststore type.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>PKCS12</value>
+          <label>PKCS12</label>
+        </entry>
+        <entry>
+          <value>JKS</value>
+          <label>JKS</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
     <name>quarkus.log.console.enabled</name>
     <display-name>Console Logging Enabled</display-name>
     <value>false</value>

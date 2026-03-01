@@ -145,6 +145,52 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>polaris_ssl_enabled</name>
+    <display-name>Enable Polaris TLS</display-name>
+    <value>false</value>
+    <description>Enable HTTPS/TLS for Polaris server.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ssl_auto_generate</name>
+    <display-name>Auto-generate Self-signed Certificate</display-name>
+    <value>true</value>
+    <description>Generate a self-signed server keystore automatically when TLS is enabled and keystore file is missing.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ssl_keystore_password</name>
+    <display-name>Polaris TLS Keystore Password</display-name>
+    <value>changeit</value>
+    <description>Password used for Polaris TLS server keystore.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>false</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ssl_truststore_password</name>
+    <display-name>Polaris TLS Truststore Password</display-name>
+    <value>changeit</value>
+    <description>Password used for Polaris TLS truststore.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>false</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>polaris_filesystem_type</name>
     <display-name>Polaris Filesystem Type</display-name>
     <description>Preferred filesystem for Polaris storage and integration paths.</description>
@@ -455,6 +501,12 @@ export POLARIS_DATA_DIR={{polaris_data_dir}}
 export POLARIS_HOME={{polaris_home}}
 export POLARIS_TOOLS_HOME={{polaris_tools_home}}
 
+# Polaris TLS secret material
+export POLARIS_SSL_ENABLED={{polaris_ssl_enabled}}
+export POLARIS_SSL_AUTO_GENERATE={{polaris_ssl_auto_generate}}
+export POLARIS_SSL_KEYSTORE_PASSWORD='{{polaris_ssl_keystore_password_escaped}}'
+export POLARIS_SSL_TRUSTSTORE_PASSWORD='{{polaris_ssl_truststore_password_escaped}}'
+
 # MCP server defaults
 export POLARIS_BASE_URL={{polaris_mcp_base_url}}
 export POLARIS_MCP_TRANSPORT={{polaris_mcp_transport}}
@@ -466,7 +518,7 @@ export POLARIS_CONSOLE_PORT={{polaris_console_port}}
 
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}
-export POLARIS_ADMIN_PASSWORD={{polaris_admin_password}}
+export POLARIS_ADMIN_PASSWORD='{{polaris_admin_password_escaped}}'
 
 # Optional pre-seeded bootstrap credentials for internal/mixed auth.
 {% if polaris_bootstrap_credentials %}

@@ -42,7 +42,7 @@ def polaris(component_type='server'):
        content=InlineTemplate(params.polaris_env_content),
        owner=params.polaris_user,
        group=params.user_group,
-       mode=0o755
+       mode=0o640
        )
 
   if params.security_enabled:
@@ -56,9 +56,106 @@ def polaris(component_type='server'):
                  )
 
   if component_type == 'server':
+    setup_server_tls()
     setup_relational_db()
     setup_metastore_bootstrap()
     setup_token_broker()
+
+
+def setup_server_tls():
+  import params
+
+  if not params.polaris_ssl_enabled:
+    return
+
+  if not params.polaris_ssl_keystore_file:
+    raise Fail("TLS is enabled but quarkus.http.ssl.certificate.key-store-file is not configured.")
+
+  _ensure_parent_dir(params.polaris_ssl_keystore_file)
+
+  keytool_bin = os.path.join(params.java64_home, "bin", "keytool")
+  if not os.path.exists(keytool_bin):
+    keytool_bin = "keytool"
+
+  keystore_password = str(params.polaris_ssl_keystore_password or "changeit")
+  truststore_password = str(params.polaris_ssl_truststore_password or keystore_password)
+  key_alias = str(params.polaris_ssl_keystore_alias or "polaris")
+  keystore_type = str(params.polaris_ssl_keystore_file_type or "PKCS12")
+  hostname = str(getattr(params, "polaris_hostname", "") or "localhost")
+
+  if params.polaris_ssl_auto_generate:
+    dname = "CN={0}, OU=ODP, O=ODP, L=Unknown, ST=Unknown, C=US".format(hostname)
+    san = "SAN=dns:{0},dns:localhost,ip:127.0.0.1".format(hostname)
+    gen_cmd = " ".join([
+      shlex.quote(keytool_bin),
+      "-genkeypair",
+      "-alias", shlex.quote(key_alias),
+      "-keyalg", "RSA",
+      "-keysize", "2048",
+      "-validity", "3650",
+      "-storetype", shlex.quote(keystore_type),
+      "-keystore", shlex.quote(params.polaris_ssl_keystore_file),
+      "-storepass", shlex.quote(keystore_password),
+      "-keypass", shlex.quote(keystore_password),
+      "-dname", shlex.quote(dname),
+      "-ext", shlex.quote(san),
+    ])
+    Execute(gen_cmd,
+            user=params.polaris_user,
+            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)))
+  else:
+    Execute("test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)),
+            user=params.polaris_user)
+
+  File(params.polaris_ssl_keystore_file,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o640,
+       only_if="test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)))
+
+  if not params.polaris_ssl_truststore_file:
+    return
+
+  _ensure_parent_dir(params.polaris_ssl_truststore_file)
+  cert_export_file = format("{polaris_pid_dir}/polaris-server-cert.pem")
+
+  if params.polaris_ssl_auto_generate:
+    export_cmd = " ".join([
+      shlex.quote(keytool_bin),
+      "-exportcert",
+      "-rfc",
+      "-alias", shlex.quote(key_alias),
+      "-keystore", shlex.quote(params.polaris_ssl_keystore_file),
+      "-storepass", shlex.quote(keystore_password),
+      "-file", shlex.quote(cert_export_file),
+    ])
+    import_cmd = " ".join([
+      shlex.quote(keytool_bin),
+      "-importcert",
+      "-noprompt",
+      "-alias", shlex.quote(key_alias),
+      "-file", shlex.quote(cert_export_file),
+      "-keystore", shlex.quote(params.polaris_ssl_truststore_file),
+      "-storetype", shlex.quote(params.polaris_ssl_truststore_file_type),
+      "-storepass", shlex.quote(truststore_password),
+    ])
+
+    Execute(export_cmd,
+            user=params.polaris_user,
+            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
+    Execute(import_cmd,
+            user=params.polaris_user,
+            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
+    File(cert_export_file, action="delete")
+  else:
+    Execute("test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)),
+            user=params.polaris_user)
+
+  File(params.polaris_ssl_truststore_file,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o640,
+       only_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
 
 
 def setup_token_broker():
