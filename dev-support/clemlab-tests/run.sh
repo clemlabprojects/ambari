@@ -10,7 +10,14 @@ MAVEN_SETTINGS_TEMPLATE="${MAVEN_SETTINGS_TEMPLATE:-${COMPOSE_DIR}/maven-setting
 PROJECT_NAME="${PROJECT_NAME:-ambari-dev}"
 INCLUDE_KEYCLOAK="${INCLUDE_KEYCLOAK:-1}"
 INIT_AMBARI_DDL="${INIT_AMBARI_DDL:-1}"
-AMBARI_DDL_FILE="${AMBARI_DDL_FILE:-${COMPOSE_DIR}/Ambari-DDL-Postgres-CREATE.sql}"
+AMBARI_DDL_FILE="${AMBARI_DDL_FILE:-${ROOT_DIR}/ambari-server/src/main/resources/Ambari-DDL-Postgres-CREATE.sql}"
+AMBARI_DB_VERSION_SYNC="${AMBARI_DB_VERSION_SYNC:-1}"
+
+PROJECT_VERSION="$(awk -F'[<>]' '/<version>/{print $3; exit}' "${ROOT_DIR}/pom.xml")"
+if [ -z "${PROJECT_VERSION}" ]; then
+  PROJECT_VERSION="2.8.2.0.0"
+fi
+AMBARI_SCHEMA_VERSION="${AMBARI_SCHEMA_VERSION:-${PROJECT_VERSION}}"
 
 export AMBARI_SRC="${ROOT_DIR}"
 
@@ -91,12 +98,30 @@ GRANT ALL PRIVILEGES ON DATABASE ambari_db TO ambari_user;
 EOSQL"
 
   if [ "${INIT_AMBARI_DDL}" = "1" ] && [ -f "${AMBARI_DDL_FILE}" ]; then
+    local ddl_to_apply="${AMBARI_DDL_FILE}"
+    local rendered_ddl=""
+    if grep -q '\${ambariSchemaVersion}' "${AMBARI_DDL_FILE}"; then
+      rendered_ddl="$(mktemp /tmp/ambari-ddl.XXXXXX.sql)"
+      sed "s/\${ambariSchemaVersion}/${AMBARI_SCHEMA_VERSION}/g" "${AMBARI_DDL_FILE}" > "${rendered_ddl}"
+      ddl_to_apply="${rendered_ddl}"
+    fi
+
     if docker exec "${cid}" bash -lc "psql -h localhost -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='ambari_schema' AND table_name='stack'\" --username ambari_user --dbname ambari_db" | grep -q 1; then
-      echo "Ambari DDL already applied; skipping."
+      local current_schema_version=""
+      current_schema_version="$(docker exec "${cid}" bash -lc "psql -h localhost -tAc \"SELECT metainfo_value FROM ambari_schema.metainfo WHERE metainfo_key='version'\" --username ambari_user --dbname ambari_db" | tr -d '[:space:]')"
+      echo "Ambari DDL already applied (schema version: ${current_schema_version:-unknown}, target: ${AMBARI_SCHEMA_VERSION})."
+      if [ "${AMBARI_DB_VERSION_SYNC}" = "1" ] && [ -n "${current_schema_version}" ] && [ "${current_schema_version}" != "${AMBARI_SCHEMA_VERSION}" ]; then
+        echo "Synchronizing Ambari schema version metadata to ${AMBARI_SCHEMA_VERSION} for local compose runtime..."
+        run_cmd docker exec "${cid}" bash -lc "psql -h localhost -v ON_ERROR_STOP=1 --username ambari_user --dbname ambari_db -c \"UPDATE ambari_schema.metainfo SET metainfo_value='${AMBARI_SCHEMA_VERSION}' WHERE metainfo_key='version';\""
+      fi
     else
-      echo "Applying Ambari DDL from ${AMBARI_DDL_FILE}..."
-      run_cmd docker cp "${AMBARI_DDL_FILE}" "${cid}:/tmp/Ambari-DDL-Postgres-CREATE.sql"
+      echo "Applying Ambari DDL from ${AMBARI_DDL_FILE} (schema version ${AMBARI_SCHEMA_VERSION})..."
+      run_cmd docker cp "${ddl_to_apply}" "${cid}:/tmp/Ambari-DDL-Postgres-CREATE.sql"
       run_cmd docker exec "${cid}" bash -lc "psql -h localhost -v ON_ERROR_STOP=1 --username ambari_user --dbname ambari_db -f /tmp/Ambari-DDL-Postgres-CREATE.sql"
+    fi
+
+    if [ -n "${rendered_ddl}" ] && [ -f "${rendered_ddl}" ]; then
+      rm -f "${rendered_ddl}"
     fi
   fi
 }
