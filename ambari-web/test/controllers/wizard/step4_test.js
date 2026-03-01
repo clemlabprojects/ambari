@@ -103,13 +103,12 @@ describe('App.WizardStep4Controller', function () {
       expect(controller.get('fileSystems').mapProperty('serviceName')).to.contain('HDFS');
     });
 
-    it('allows selecting only one DFS at a time', function () {
+    it('allows selecting multiple DFS services at the same time', function () {
       var fileSystems = controller.get('fileSystems');
       fileSystems[0].set('isSelected', true);
       expect(fileSystems[0].get('isSelected')).to.equal(true);
-      expect(fileSystems[1].get('isSelected')).to.equal(false);
       fileSystems[1].set('isSelected', true);
-      expect(fileSystems[0].get('isSelected')).to.equal(false);
+      expect(fileSystems[0].get('isSelected')).to.equal(true);
       expect(fileSystems[1].get('isSelected')).to.equal(true);
     });
   });
@@ -125,6 +124,35 @@ describe('App.WizardStep4Controller', function () {
     it('should return false if HDFS is selected and GLUSTERFS is not selected', function () {
       controller.set('content', generateSelectedServicesContent(['HDFS']));
       expect(controller.multipleDFSs()).to.equal(false);
+    });
+  });
+
+  describe('#applyHdfsOnlyServiceConstraints()', function () {
+    beforeEach(function () {
+      controller.clear();
+      controller.set('content', [
+        App.StackService.createRecord({serviceName: 'HDFS', isSelected: false, isInstalled: false, isDFS: true}),
+        App.StackService.createRecord({serviceName: 'HBASE', isSelected: true, isInstalled: false}),
+        App.StackService.createRecord({serviceName: 'RANGER_KMS', isSelected: true, isInstalled: false}),
+        App.StackService.createRecord({serviceName: 'YARN', isSelected: true, isInstalled: false, requiredServices: ['HDFS']})
+      ]);
+      controller.applyHdfsOnlyServiceConstraints();
+    });
+
+    it('disables HDFS-only services when HDFS is not selected', function () {
+      expect(controller.findProperty('serviceName', 'HBASE').get('isSelectionDisabled')).to.equal(true);
+      expect(controller.findProperty('serviceName', 'RANGER_KMS').get('isSelectionDisabled')).to.equal(true);
+      expect(controller.findProperty('serviceName', 'YARN').get('isSelectionDisabled')).to.equal(true);
+      expect(controller.findProperty('serviceName', 'HBASE').get('isSelected')).to.equal(false);
+      expect(controller.findProperty('serviceName', 'RANGER_KMS').get('isSelected')).to.equal(false);
+      expect(controller.findProperty('serviceName', 'YARN').get('isSelected')).to.equal(false);
+    });
+
+    it('enables HDFS-only services when HDFS is selected', function () {
+      controller.findProperty('serviceName', 'HDFS').set('isSelected', true);
+      controller.applyHdfsOnlyServiceConstraints();
+      expect(controller.findProperty('serviceName', 'HBASE').get('isSelectionDisabled')).to.equal(false);
+      expect(controller.findProperty('serviceName', 'RANGER_KMS').get('isSelectionDisabled')).to.equal(false);
     });
   });
 
@@ -298,7 +326,7 @@ describe('App.WizardStep4Controller', function () {
         },
         {
           services: ['HDFS', 'GLUSTERFS', 'ZOOKEEPER', 'HIVE'],
-          errorsExpected: ['serviceCheck_YARN', 'multipleDFS', 'ambariMetricsCheck', 'smartSenseCheck', 'rangerCheck', 'atlasCheck']
+          errorsExpected: ['serviceCheck_YARN', 'ambariMetricsCheck', 'smartSenseCheck', 'rangerCheck', 'atlasCheck']
         },
         {
           services: ['HDFS','ZOOKEEPER', 'GANGLIA'],
@@ -330,7 +358,7 @@ describe('App.WizardStep4Controller', function () {
         },
         {
           services: ['HDFS', 'GLUSTERFS', 'ZOOKEEPER', 'HIVE', 'AMBARI_METRICS'],
-          errorsExpected: ['serviceCheck_YARN', 'multipleDFS', 'smartSenseCheck', 'rangerCheck', 'atlasCheck']
+          errorsExpected: ['serviceCheck_YARN', 'smartSenseCheck', 'rangerCheck', 'atlasCheck']
         },
         {
           services: ['HDFS','ZOOKEEPER', 'GANGLIA', 'AMBARI_METRICS'],
@@ -449,7 +477,7 @@ describe('App.WizardStep4Controller', function () {
       {
         services: ['HDFS', 'GLUSTERFS', 'ZOOKEEPER', 'HIVE'],
         confirmPopupCount: 2,
-        errorsExpected: ['serviceCheck_YARN', 'serviceCheck_TEZ', 'multipleDFS']
+        errorsExpected: ['serviceCheck_YARN', 'serviceCheck_TEZ']
       },
       {
         services: ['HDFS','ZOOKEEPER', 'GANGLIA'],

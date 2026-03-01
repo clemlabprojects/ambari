@@ -75,3 +75,56 @@ class TestServiceAdvisor(TestCase):
 
     validations = self.serviceAdvisor.getServiceComponentCardinalityValidations(services, hosts, "HDFS")
     self.assertEqual(len(validations), 0)
+
+  def test_getPreferredFilesystemType(self):
+    self.assertEqual("HDFS", self.serviceAdvisor.getPreferredFilesystemType({
+      "services": [{"StackServices": {"service_name": "HDFS"}}]
+    }))
+    self.assertEqual("OZONE", self.serviceAdvisor.getPreferredFilesystemType({
+      "services": [{"StackServices": {"service_name": "OZONE"}}]
+    }))
+    self.assertEqual("EXTERNAL", self.serviceAdvisor.getPreferredFilesystemType({
+      "services": [{"StackServices": {"service_name": "YARN"}}]
+    }))
+
+  def test_getCoreFilesystemTypeFallsBackToExternalWithoutFsServices(self):
+    services = {
+      "services": [{"StackServices": {"service_name": "YARN"}}],
+      "configurations": {
+        "core-env": {
+          "properties": {
+            "core_filesystem_type": "HDFS"
+          }
+        }
+      }
+    }
+
+    self.assertEqual("EXTERNAL", self.serviceAdvisor.getCoreFilesystemType({}, services))
+
+  def test_getServiceDefaultFsForExternal(self):
+    services = {
+      "services": [{"StackServices": {"service_name": "YARN"}}],
+      "configurations": {
+        "core-env": {
+          "properties": {
+            "core_filesystem_type": "EXTERNAL",
+            "core_external_default_fs": "s3a://warehouse"
+          }
+        },
+        "hive-env": {
+          "properties": {
+            "hive_filesystem_type": "EXTERNAL"
+          }
+        }
+      }
+    }
+
+    self.assertEqual(
+      "s3a://warehouse",
+      self.serviceAdvisor.getServiceDefaultFs({}, services, "hive-env", "hive_filesystem_type")
+    )
+
+  def test_qualifyPathWithFs(self):
+    self.assertEqual("s3a://warehouse/user/hive", self.serviceAdvisor.qualifyPathWithFs("s3a://warehouse", "/user/hive"))
+    self.assertEqual("s3a://warehouse/user/hive", self.serviceAdvisor.qualifyPathWithFs("s3a://warehouse", "hdfs://nn:8020/user/hive"))
+    self.assertEqual("{{my_var}}", self.serviceAdvisor.qualifyPathWithFs("s3a://warehouse", "{{my_var}}"))
