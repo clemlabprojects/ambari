@@ -49,6 +49,7 @@ For examples see: common-services/HAWQ/2.0.0/service_advisor.py
 and common-services/PXF/3.0.0/service_advisor.py
 """
 import os
+import re
 import sys
 
 STACKS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -247,3 +248,102 @@ class ServiceAdvisor(DefaultStackAdvisor):
       "EXISTING SQL ANYWHERE DATABASE": "sqla"
     }
     return driverDict.get(databaseType.upper())
+
+  def getConfigProperty(self, configurations, services, configType, propertyName, defaultValue=None):
+    """
+    Return property value from current recommendations first, then existing service configs.
+    """
+    if configurations and configType in configurations and "properties" in configurations[configType] and propertyName in configurations[configType]["properties"]:
+      return configurations[configType]["properties"][propertyName]
+    if services and "configurations" in services and configType in services["configurations"] and propertyName in services["configurations"][configType]["properties"]:
+      return services["configurations"][configType]["properties"][propertyName]
+    return defaultValue
+
+  def getPreferredFilesystemType(self, services):
+    """
+    HDFS is preferred when both HDFS and OZONE are installed.
+    """
+    servicesList = self.get_services_list(services)
+    if "HDFS" in servicesList:
+      return "HDFS"
+    if "OZONE" in servicesList:
+      return "OZONE"
+    return "EXTERNAL"
+
+  def getCoreFilesystemType(self, configurations, services):
+    """
+    Return cluster-wide filesystem preference from CORE service when available.
+    """
+    coreFsType = self.getConfigProperty(configurations, services, "core-env", "core_filesystem_type")
+    if coreFsType:
+      coreFsType = str(coreFsType).upper()
+      servicesList = self.get_services_list(services)
+      if coreFsType in ("HDFS", "OZONE") and "HDFS" not in servicesList and "OZONE" not in servicesList:
+        return "EXTERNAL"
+      return coreFsType
+    return self.getPreferredFilesystemType(services)
+
+  def getOzoneDefaultFs(self, services, configurations):
+    """
+    Build a stable Ozone filesystem URI from service configs.
+    """
+    existing_default_fs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS")
+    if existing_default_fs and (existing_default_fs.startswith("ofs://") or existing_default_fs.startswith("o3fs://")):
+      return existing_default_fs
+
+    service_id = self.getConfigProperty(configurations, services, "ozone-site", "ozone.om.internal.service.id")
+    if not service_id:
+      service_ids = self.getConfigProperty(configurations, services, "ozone-site", "ozone.om.service.ids")
+      if service_ids:
+        service_id = str(service_ids).split(",")[0].strip()
+    if service_id:
+      return "ofs://{0}".format(service_id)
+
+    return "ofs://omservice1"
+
+  def getServiceDefaultFs(self, configurations, services, selectorConfigType, selectorPropertyName):
+    """
+    Resolve filesystem URI from a service-level selector with deterministic fallback.
+    """
+    selectorValue = self.getConfigProperty(configurations, services, selectorConfigType, selectorPropertyName, self.getCoreFilesystemType(configurations, services))
+    selectorValue = str(selectorValue).upper()
+    default_fs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS")
+
+    if selectorValue == "OZONE":
+      return self.getOzoneDefaultFs(services, configurations)
+
+    if selectorValue == "EXTERNAL":
+      core_external_default_fs = self.getConfigProperty(configurations, services, "core-env", "core_external_default_fs", default_fs)
+      if core_external_default_fs:
+        return core_external_default_fs
+      return "file:///"
+
+    if selectorValue == "HDFS":
+      if default_fs and str(default_fs).strip().lower().startswith("hdfs://"):
+        return default_fs
+      return "hdfs://localhost:8020"
+
+    if default_fs:
+      return default_fs
+
+    return "file:///"
+
+  def qualifyPathWithFs(self, defaultFs, path):
+    """
+    Prefix path with target filesystem while preserving the path suffix.
+    """
+    if not path or not defaultFs:
+      return path
+
+    path_value = str(path).strip()
+    if path_value.startswith("{{"):
+      return path_value
+
+    uri_match = re.match(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://[^/]*(/.*)?$', path_value)
+    if uri_match:
+      path_value = uri_match.group(1) if uri_match.group(1) else "/"
+
+    if not path_value.startswith("/"):
+      path_value = "/" + path_value
+
+    return defaultFs.rstrip("/") + path_value
