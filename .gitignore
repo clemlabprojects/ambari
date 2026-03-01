@@ -34,3 +34,9 @@ createDDL.jdbc
 ambari_python.egg-info
 db-ambari-test
 .org.chromium.*
+.tmp*
+*.diff
+*.patch
+.flattened-pom.xml
+*/.flattened-pom.xml
+*/*/.flattened-pom.xml
