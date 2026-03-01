@@ -190,23 +190,23 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     :type hosts dict
     """
     putClusterProperties = self.putProperty(configurations, "flink-conf", services)
+    putFlinkEnvProperty = self.putProperty(configurations, "flink-env", services)
     #Logger.info("No Recommendation vailable for Flink Recommendation Stack advisor")
     #            (self.__class__.__name__, inspect.stack()[0][3]))
-    
-    ## Get HDFS Default Scheme
+
+    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
+    putFlinkEnvProperty("flink_filesystem_type", preferred_fs_type)
+
     if 'flink-conf' in services["configurations"]:
-      isHDFS = False
-      defaultFs = "file:///"
-      defaultScheme = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
-      completedJobs = services["configurations"]['flink-conf']["properties"]["jobmanager.archive.fs.dir"]
-      if "core-site" in services["configurations"] and \
-        "fs.defaultFS" in services["configurations"]["core-site"]["properties"]:
-        defaultFs = services["configurations"]["core-site"]["properties"]["fs.defaultFS"]
-      if not completedJobs.startswith("hdfs:"):
-        completedJobs = re.sub("^file:///|/", defaultFs, completedJobs, count=1)
-      completedJobsReplaced = re.sub("^hdfs:\/\/localhost([:\d]*)", defaultFs, completedJobs, count=1)
+      defaultFs = self.getServiceDefaultFs(configurations, services, "flink-env", "flink_filesystem_type")
+      completedJobs = self.getConfigProperty(configurations, services, "flink-conf", "jobmanager.archive.fs.dir", "/apps/flink/completed-jobs")
+      checkpointsDir = self.getConfigProperty(configurations, services, "flink-conf", "state.checkpoints.dir", "/apps/odp/flink/flink-checkpoints")
+      savepointsDir = self.getConfigProperty(configurations, services, "flink-conf", "state.savepoints.dir", "/apps/odp/flink/flink-checkpoints")
+
       putClusterProperties("fs.default-scheme", defaultFs)
-      putClusterProperties("jobmanager.archive.fs.dir", completedJobsReplaced)
+      putClusterProperties("jobmanager.archive.fs.dir", self.qualifyPathWithFs(defaultFs, completedJobs))
+      putClusterProperties("state.checkpoints.dir", self.qualifyPathWithFs(defaultFs, checkpointsDir))
+      putClusterProperties("state.savepoints.dir", self.qualifyPathWithFs(defaultFs, savepointsDir))
 
       ## configure HighAvailability with Zookeeper
       zk_host_port = self.getZKHostPortString(services)
@@ -238,8 +238,9 @@ class FlinkValidator(service_advisor.ServiceAdvisor):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     include_hdfs = "HDFS" in servicesList
     defaultFS = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
+    flinkFsType = self.getConfigProperty(configurations, services, "flink-env", "flink_filesystem_type", self.getCoreFilesystemType(configurations, services))
     validationItems = []
-    if include_hdfs and defaultFS.startswith('file:///'):
+    if include_hdfs and str(flinkFsType).upper() == "HDFS" and defaultFS.startswith('file:///'):
       # TODO: Memory Settings Recommendation
       validationItems.extends([
         {
@@ -247,5 +248,11 @@ class FlinkValidator(service_advisor.ServiceAdvisor):
           "item": self.getWarnItem("You should use hdfs:// FS for Production Flink Cluster ")
         }
       ])
+    if str(flinkFsType).upper() == "HDFS" and not include_hdfs:
+      validationItems.extends([
+        {
+          "config-name": 'flink_filesystem_type',
+          "item": self.getWarnItem("HDFS is not installed. Select OZONE or EXTERNAL for flink-env/flink_filesystem_type.")
+        }
+      ])
     return self.toConfigurationValidationProblems(validationItems, "flink-conf")
-

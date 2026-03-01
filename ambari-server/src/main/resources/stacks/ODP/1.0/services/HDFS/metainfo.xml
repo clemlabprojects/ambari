@@ -457,6 +457,10 @@
         <timeout>300</timeout>
       </commandScript>
 
+      <requiredServices>
+        <service>CORE</service>
+      </requiredServices>
+
       <configuration-dependencies>
         <config-type>core-site</config-type>
         <config-type>viewfs-mount-table</config-type>

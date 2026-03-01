@@ -148,6 +148,10 @@
         <timeout>300</timeout>
       </commandScript>
 
+      <requiredServices>
+        <service>CORE</service>
+      </requiredServices>
+
       <configuration-dependencies>
         <config-type>polaris-application-properties</config-type>
         <config-type>polaris-db-properties</config-type>

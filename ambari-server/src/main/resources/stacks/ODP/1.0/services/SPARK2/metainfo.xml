@@ -33,7 +33,7 @@
           <versionAdvertised>true</versionAdvertised>
           <dependencies>
             <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
+              <name>CORE/CORE_CLIENT</name>
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
@@ -81,7 +81,7 @@
           <versionAdvertised>true</versionAdvertised>
           <dependencies>
             <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
+              <name>CORE/CORE_CLIENT</name>
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
@@ -129,7 +129,7 @@
           <versionAdvertised>true</versionAdvertised>
           <dependencies>
             <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
+              <name>CORE/CORE_CLIENT</name>
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
@@ -193,7 +193,7 @@
               </auto-deploy>
             </dependency>
             <dependency>
-              <name>HDFS/HDFS_CLIENT</name>
+              <name>CORE/CORE_CLIENT</name>
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
@@ -243,7 +243,7 @@
       </commandScript>
 
       <requiredServices>
-        <service>HDFS</service>
+        <service>CORE</service>
         <service>YARN</service>
         <service>HIVE</service>
       </requiredServices>

@@ -39,6 +39,31 @@
     </depends-on>
   </property>
   <property>
+    <name>sqoop_filesystem_type</name>
+    <display-name>Sqoop Filesystem Type</display-name>
+    <description>Preferred filesystem for Sqoop data transfer paths.</description>
+    <value>HDFS</value>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>HDFS</value>
+          <label>HDFS</label>
+        </entry>
+        <entry>
+          <value>OZONE</value>
+          <label>Ozone</label>
+        </entry>
+        <entry>
+          <value>EXTERNAL</value>
+          <label>External</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>content</name>
     <display-name>sqoop-env template</display-name>
     <description>This is the jinja template for sqoop-env.sh file</description>

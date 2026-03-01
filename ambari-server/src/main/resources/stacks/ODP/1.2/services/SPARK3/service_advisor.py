@@ -192,6 +192,10 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     """
     putSparkProperty = self.putProperty(configurations, "spark3-defaults", services)
     putSparkThriftSparkConf = self.putProperty(configurations, "spark3-thrift-sparkconf", services)
+    putSparkEnvProperty = self.putProperty(configurations, "spark3-env", services)
+
+    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
+    putSparkEnvProperty("spark3_filesystem_type", preferred_fs_type)
 
     spark_queue = self.recommendYarnQueue(services, "spark3-defaults", "spark.yarn.queue")
     if spark_queue is not None:
@@ -200,6 +204,23 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     spark_thrift_queue = self.recommendYarnQueue(services, "spark3-thrift-sparkconf", "spark.yarn.queue")
     if spark_thrift_queue is not None:
       putSparkThriftSparkConf("spark.yarn.queue", spark_thrift_queue)
+
+    defaultFs = self.getServiceDefaultFs(configurations, services, "spark3-env", "spark3_filesystem_type")
+    historyDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.history.fs.logDirectory", "/spark3-history/")
+    eventLogDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.eventLog.dir", "/spark3-history/")
+    warehouseDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.sql.warehouse.dir", "/apps/spark/warehouse")
+
+    qualifiedHistoryDir = self.qualifyPathWithFs(defaultFs, historyDir)
+    qualifiedEventLogDir = self.qualifyPathWithFs(defaultFs, eventLogDir)
+    qualifiedWarehouseDir = self.qualifyPathWithFs(defaultFs, warehouseDir)
+
+    putSparkProperty("spark.history.fs.logDirectory", qualifiedHistoryDir)
+    putSparkProperty("spark.eventLog.dir", qualifiedEventLogDir)
+    putSparkProperty("spark.sql.warehouse.dir", qualifiedWarehouseDir)
+
+    putSparkThriftSparkConf("spark.history.fs.logDirectory", qualifiedHistoryDir)
+    putSparkThriftSparkConf("spark.eventLog.dir", qualifiedEventLogDir)
+    putSparkThriftSparkConf("spark.sql.warehouse.dir", qualifiedWarehouseDir)
 
 
   def recommendSPARK3ConfigurationsFromHDP26(self, configurations, clusterData, services, hosts):
@@ -384,12 +405,19 @@ class Spark3Validator(service_advisor.ServiceAdvisor):
 
 
   def validateSpark3DefaultsFromHDP25(self, properties, recommendedDefaults, configurations, services, hosts):
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    spark3FsType = self.getConfigProperty(configurations, services, "spark3-env", "spark3_filesystem_type", self.getCoreFilesystemType(configurations, services))
     validationItems = [
       {
         "config-name": 'spark.yarn.queue',
         "item": self.validatorYarnQueue(properties, recommendedDefaults, 'spark.yarn.queue', services)
       }
     ]
+    if str(spark3FsType).upper() == "HDFS" and "HDFS" not in servicesList:
+      validationItems.append({
+        "config-name": "spark3_filesystem_type",
+        "item": self.getWarnItem("HDFS is not installed. Select OZONE or EXTERNAL for spark3-env/spark3_filesystem_type.")
+      })
     return self.toConfigurationValidationProblems(validationItems, "spark3-defaults")
 
 

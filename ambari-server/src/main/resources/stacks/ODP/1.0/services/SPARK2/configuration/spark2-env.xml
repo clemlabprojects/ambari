@@ -72,6 +72,31 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>spark2_filesystem_type</name>
+    <display-name>Spark2 Filesystem Type</display-name>
+    <description>Filesystem used for Spark2 event logs and warehouse paths.</description>
+    <value>HDFS</value>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>HDFS</value>
+          <label>HDFS</label>
+        </entry>
+        <entry>
+          <value>OZONE</value>
+          <label>Ozone</label>
+        </entry>
+        <entry>
+          <value>EXTERNAL</value>
+          <label>External</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>spark_daemon_memory</name>
     <value>2048</value>
     <description>Memory for Master, Worker and history server (default: 2G)</description>

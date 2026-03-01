@@ -20,6 +20,7 @@
   <services>
     <service>
       <name>OZONE</name>
+      <serviceType>HCFS</serviceType>
       <displayName>Ozone</displayName>
       <comment>Apache Ozone is a distributed, scalable, and high performance object store, 
       available with the Hadoop Open Source Data Platform. Use case to separate storage from compute.
@@ -220,6 +221,7 @@
           <name>OZONE_CLIENT</name>
           <displayName>Ozone Client Gateway</displayName>
           <category>CLIENT</category>
+          <componentType>HCFS_CLIENT</componentType>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
           <commandScript>
@@ -400,6 +402,10 @@
         <scriptType>PYTHON</scriptType>
         <timeout>300</timeout>
       </commandScript>
+
+      <requiredServices>
+        <service>CORE</service>
+      </requiredServices>
       
       <configuration-dependencies>
         <config-type>ozone-site</config-type>

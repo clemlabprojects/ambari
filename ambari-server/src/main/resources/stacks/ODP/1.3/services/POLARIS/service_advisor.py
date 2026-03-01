@@ -54,6 +54,9 @@ class PolarisServiceAdvisor(service_advisor.ServiceAdvisor):
 class PolarisRecommender(service_advisor.ServiceAdvisor):
 
   def recommendPolarisConfigurations(self, configurations, clusterData, services, hosts):
+    put_polaris_env = self.putProperty(configurations, "polaris-env", services)
+    put_polaris_env("polaris_filesystem_type", self.getCoreFilesystemType(configurations, services))
+
     services_list = self.get_services_list(services)
 
     self.recommendPolarisDatabaseConfigurations(configurations, services)

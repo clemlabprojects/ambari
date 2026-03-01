@@ -283,11 +283,14 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
       putRangerEnvProperty = self.putProperty(configurations, "ranger-env", services)
       include_hdfs = "HDFS" in servicesList
+      putRangerEnvProperty("ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
       if include_hdfs:
         if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
           default_fs = services['configurations']['core-site']['properties']['fs.defaultFS']
           default_fs += '/ranger/audit/%app-type%/%time:yyyyMMdd%'
           putRangerEnvProperty('xasecure.audit.destination.hdfs.dir', default_fs)
+      else:
+        putRangerEnvProperty('xasecure.audit.destination.hdfs', 'false')
 
       # Recommend Ranger Audit properties for ranger supported services
       # For Ranger version 0.4.0
@@ -471,10 +474,13 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
 
     # Recommend ranger.audit.solr.zookeepers and xasecure.audit.destination.hdfs.dir
     include_hdfs = "HDFS" in servicesList
+    putRangerEnvProperty('ranger_audit_filesystem_type', self.getCoreFilesystemType(configurations, services))
     if include_hdfs:
       if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
         default_fs = services['configurations']['core-site']['properties']['fs.defaultFS']
         putRangerEnvProperty('xasecure.audit.destination.hdfs.dir', '{0}/{1}/{2}'.format(default_fs,'ranger','audit'))
+    else:
+      putRangerEnvProperty('xasecure.audit.destination.hdfs', 'false')
 
     # Recommend Ranger supported service's audit properties
     ranger_services = [
@@ -708,6 +714,9 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
 
         if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
           xasecure_audit_destination_hdfs_dir = '{0}/{1}/{2}'.format(services['configurations']['core-site']['properties']['fs.defaultFS'] ,'ranger','audit')
+        elif "HDFS" not in servicesList:
+          xasecure_audit_destination_hdfs = 'false'
+          xasecure_audit_destination_hdfs_dir = ''
 
         if 'xasecure.audit.destination.solr' in configurations['ranger-env']['properties']:
           xasecure_audit_destination_solr = configurations['ranger-env']['properties']['xasecure.audit.destination.solr']
@@ -808,11 +817,25 @@ class RangerValidator(service_advisor.ServiceAdvisor):
     ranger_env_properties = properties
     validationItems = []
     security_enabled = RangerServiceAdvisor.isKerberosEnabled(services, configurations)
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    include_hdfs = "HDFS" in servicesList
 
     if "ranger-kafka-plugin-enabled" in ranger_env_properties and ranger_env_properties["ranger-kafka-plugin-enabled"].lower() == 'yes' and not security_enabled:
       validationItems.append({"config-name": "ranger-kafka-plugin-enabled",
                               "item": self.getWarnItem(
                                 "Ranger Kafka plugin should not be enabled in non-kerberos environment.")})
+
+    ranger_audit_fs_type = str(ranger_env_properties.get("ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))).upper()
+    if not include_hdfs and ranger_audit_fs_type == "HDFS":
+      validationItems.append({"config-name": "ranger_audit_filesystem_type",
+                              "item": self.getWarnItem(
+                                "HDFS is not installed. Select OZONE or EXTERNAL for ranger-env/ranger_audit_filesystem_type.")})
+
+    hdfs_audit_enabled = str(ranger_env_properties.get("xasecure.audit.destination.hdfs", "false")).lower() == "true"
+    if not include_hdfs and hdfs_audit_enabled:
+      validationItems.append({"config-name": "xasecure.audit.destination.hdfs",
+                              "item": self.getWarnItem(
+                                "HDFS audit destination requires HDFS. Disable xasecure.audit.destination.hdfs or install HDFS.")})
 
     validationProblems = self.toConfigurationValidationProblems(validationItems, "ranger-env")
     return validationProblems
