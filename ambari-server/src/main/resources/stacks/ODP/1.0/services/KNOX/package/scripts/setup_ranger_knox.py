@@ -23,6 +23,7 @@ from resource_management.libraries.functions.setup_ranger_plugin_xml import setu
 from resource_management.core.resources import File
 from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.get_stack_version import get_stack_version
 
 def setup_ranger_knox(upgrade_type=None):
   import params
@@ -75,6 +76,12 @@ def setup_ranger_knox(upgrade_type=None):
           File(format('{knox_conf_dir}/hdfs-site.xml'), action="delete")
 
     api_version = 'v2'
+    ranger_plugin_stack_version = stack_version if stack_version is not None else get_stack_version('knox-server')
+    cred_lib_path_override = format(
+      '{params.stack_root}/{ranger_plugin_stack_version}/ranger-knox-plugin/install/lib/*:'
+      '{params.stack_root}/{ranger_plugin_stack_version}/hadoop/share/hadoop/common/*:'
+      '{params.stack_root}/{ranger_plugin_stack_version}/hadoop/share/hadoop/common/lib/*'
+    )
 
     setup_ranger_plugin('knox-server', 'knox', params.previous_jdbc_jar,
                         params.downloaded_custom_connector, params.driver_curl_source,
@@ -94,7 +101,8 @@ def setup_ranger_knox(upgrade_type=None):
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
                         component_user_principal=params.knox_principal_name if params.security_enabled else None,
-                        component_user_keytab=params.knox_keytab_path if params.security_enabled else None)
+                        component_user_keytab=params.knox_keytab_path if params.security_enabled else None,
+                        cred_lib_path_override=cred_lib_path_override)
 
     if params.stack_supports_core_site_for_ranger_plugin and params.enable_ranger_knox and params.security_enabled:
       if params.has_namenode:
