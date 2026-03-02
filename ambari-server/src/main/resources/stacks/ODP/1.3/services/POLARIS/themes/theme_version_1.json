@@ -7,82 +7,6 @@
         "name": "default",
         "tabs": [
           {
-            "name": "polaris_runtime",
-            "display-name": "Runtime",
-            "layout": {
-              "tab-columns": "2",
-              "tab-rows": "4",
-              "sections": [
-                {
-                  "name": "section-polaris-runtime",
-                  "display-name": "Server Runtime",
-                  "row-index": "0",
-                  "column-index": "0",
-                  "row-span": "2",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "2",
-                  "subsections": [
-                    {
-                      "name": "runtime-core-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "runtime-core-col2",
-                      "row-index": "0",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "runtime-logging-col1",
-                      "row-index": "1",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "runtime-memory-col2",
-                      "row-index": "1",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1"
-                    }
-                  ]
-                },
-                {
-                  "name": "section-polaris-tools-runtime",
-                  "display-name": "MCP and Console Endpoints",
-                  "row-index": "2",
-                  "column-index": "0",
-                  "row-span": "2",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "2",
-                  "subsections": [
-                    {
-                      "name": "runtime-tools-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "runtime-tools-col2",
-                      "row-index": "0",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1"
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          {
             "name": "polaris_database",
             "display-name": "Database",
             "layout": {
@@ -174,723 +98,6 @@
                 }
               ]
             }
-          },
-          {
-            "name": "polaris_security",
-            "display-name": "Security",
-            "layout": {
-              "tab-columns": "2",
-              "tab-rows": "4",
-              "sections": [
-                {
-                  "name": "section-polaris-authentication",
-                  "display-name": "Authentication and OIDC",
-                  "row-index": "0",
-                  "column-index": "0",
-                  "row-span": "3",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "5",
-                  "subsections": [
-                    {
-                      "name": "security-mode-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "security-mode-col2",
-                      "row-index": "0",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "security-internal-col1",
-                      "row-index": "1",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-internal-col2",
-                      "row-index": "1",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-oidc-col1",
-                      "row-index": "2",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-oidc-col2",
-                      "row-index": "2",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-oidc-override-col1",
-                      "row-index": "3",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type",
-                            "polaris-env/polaris_oidc_use_cluster_config"
-                          ],
-                          "if": "(${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-env/polaris_oidc_use_cluster_config} === false",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-oidc-override-col2",
-                      "row-index": "3",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type",
-                            "polaris-env/polaris_oidc_use_cluster_config"
-                          ],
-                          "if": "(${polaris-application-properties/polaris.authentication.type} === external || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-env/polaris_oidc_use_cluster_config} === false",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "name": "section-polaris-token-broker",
-                  "display-name": "Token Broker",
-                  "row-index": "3",
-                  "column-index": "0",
-                  "row-span": "2",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "2",
-                  "subsections": [
-                    {
-                      "name": "security-token-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-token-col2",
-                      "row-index": "0",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type"
-                          ],
-                          "if": "${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-token-rsa-col1",
-                      "row-index": "1",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type",
-                            "polaris-application-properties/polaris.authentication.token-broker.type"
-                          ],
-                          "if": "(${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-application-properties/polaris.authentication.token-broker.type} === rsa-key-pair",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "security-token-symmetric-col2",
-                      "row-index": "1",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-application-properties/polaris.authentication.type",
-                            "polaris-application-properties/polaris.authentication.token-broker.type"
-                          ],
-                          "if": "(${polaris-application-properties/polaris.authentication.type} === internal || ${polaris-application-properties/polaris.authentication.type} === mixed) && ${polaris-application-properties/polaris.authentication.token-broker.type} === symmetric-key",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "name": "polaris_tls",
-            "display-name": "TLS",
-            "layout": {
-              "tab-columns": "2",
-              "tab-rows": "3",
-              "sections": [
-                {
-                  "name": "section-polaris-tls",
-                  "display-name": "HTTPS / TLS",
-                  "row-index": "0",
-                  "column-index": "0",
-                  "row-span": "3",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "4",
-                  "subsections": [
-                    {
-                      "name": "tls-enable-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "tls-enable-col2",
-                      "row-index": "0",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "tls-core-col1",
-                      "row-index": "1",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "tls-core-col2",
-                      "row-index": "1",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "tls-store-col1",
-                      "row-index": "2",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "tls-store-col2",
-                      "row-index": "2",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "tls-secrets-col1",
-                      "row-index": "3",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "tls-secrets-col2",
-                      "row-index": "3",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "polaris-env/polaris_ssl_enabled"
-                          ],
-                          "if": "${polaris-env/polaris_ssl_enabled}",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "name": "polaris_ranger",
-            "display-name": "Ranger",
-            "layout": {
-              "tab-columns": "2",
-              "tab-rows": "4",
-              "sections": [
-                {
-                  "name": "section-polaris-ranger",
-                  "display-name": "Ranger Plugin",
-                  "row-index": "0",
-                  "column-index": "0",
-                  "row-span": "4",
-                  "column-span": "2",
-                  "section-columns": "2",
-                  "section-rows": "5",
-                  "subsections": [
-                    {
-                      "name": "ranger-enable-col1",
-                      "row-index": "0",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1"
-                    },
-                    {
-                      "name": "ranger-repo-col1",
-                      "row-index": "1",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-repo-col2",
-                      "row-index": "1",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-policy-col1",
-                      "row-index": "2",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-policy-col2",
-                      "row-index": "2",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-ssl-col1",
-                      "row-index": "3",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-ssl-col2",
-                      "row-index": "3",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-audit-col1",
-                      "row-index": "4",
-                      "column-index": "0",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "name": "ranger-audit-col2",
-                      "row-index": "4",
-                      "column-index": "1",
-                      "row-span": "1",
-                      "column-span": "1",
-                      "depends-on": [
-                        {
-                          "configs": [
-                            "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled"
-                          ],
-                          "if": "${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === Yes || ${ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled} === true",
-                          "then": {
-                            "property_value_attributes": {
-                              "visible": true
-                            }
-                          },
-                          "else": {
-                            "property_value_attributes": {
-                              "visible": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
           }
         ]
       }
@@ -898,185 +105,109 @@
     "placement": {
       "configuration-layout": "default",
       "configs": [
-        { "config": "polaris-env/polaris_log_dir", "subsection-name": "runtime-core-col1" },
-        { "config": "polaris-env/polaris_pid_dir", "subsection-name": "runtime-core-col1" },
-        { "config": "polaris-env/polaris_data_dir", "subsection-name": "runtime-core-col1" },
-        { "config": "polaris-application-properties/quarkus.http.port", "subsection-name": "runtime-core-col2" },
-        { "config": "polaris-env/polaris_protocol", "subsection-name": "runtime-core-col2" },
-        { "config": "polaris-application-properties/quarkus.log.console.enabled", "subsection-name": "runtime-logging-col1" },
-        { "config": "polaris-application-properties/quarkus.log.file.enabled", "subsection-name": "runtime-logging-col1" },
-        { "config": "polaris-env/polaris_opts", "subsection-name": "runtime-memory-col2" },
-        { "config": "polaris-env/polaris_mcp_transport", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_protocol", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_host", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_port", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_tls_enabled", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_tls_auto_generate", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_tls_cert_file", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_tls_key_file", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_tls_ca_file", "subsection-name": "runtime-tools-col1" },
-        { "config": "polaris-env/polaris_mcp_base_url", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_host", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_protocol", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_port", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_tls_enabled", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_tls_auto_generate", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_tls_cert_file", "subsection-name": "runtime-tools-col2" },
-        { "config": "polaris-env/polaris_console_tls_key_file", "subsection-name": "runtime-tools-col2" },
-
-        { "config": "polaris-db-properties/DB_FLAVOR", "subsection-name": "polaris-db-row1-col1" },
-        { "config": "polaris-db-properties/db_name", "subsection-name": "polaris-db-row1-col1" },
-        { "config": "polaris-db-properties/db_user", "subsection-name": "polaris-db-row1-col1" },
-        { "config": "polaris-db-properties/db_host", "subsection-name": "polaris-db-row1-col2" },
-        { "config": "polaris-db-properties/db_port", "subsection-name": "polaris-db-row1-col2" },
-        { "config": "polaris-db-properties/db_password", "subsection-name": "polaris-db-row1-col2" },
-        { "config": "polaris-db-properties/create_db_dbuser", "subsection-name": "polaris-db-row2" },
-        { "config": "polaris-db-properties/db_root_user", "subsection-name": "polaris-db-root-col1" },
-        { "config": "polaris-db-properties/polaris_privelege_user_jdbc_url", "subsection-name": "polaris-db-root-col1" },
-        { "config": "polaris-db-properties/db_root_password", "subsection-name": "polaris-db-root-col2" },
-
-        { "config": "polaris-application-properties/polaris.authentication.type", "subsection-name": "security-mode-col1" },
-        { "config": "polaris-env/polaris_auth_auto_external", "subsection-name": "security-mode-col2" },
-        { "config": "polaris-application-properties/polaris.realm-context.realms", "subsection-name": "security-mode-col1" },
-        { "config": "polaris-application-properties/polaris.realm-context.require-header", "subsection-name": "security-mode-col2" },
-        { "config": "polaris-env/polaris_bootstrap_realms", "subsection-name": "security-internal-col1" },
-        { "config": "polaris-env/polaris_admin_username", "subsection-name": "security-internal-col1" },
-        { "config": "polaris-env/polaris_admin_password", "subsection-name": "security-internal-col2" },
-        { "config": "polaris-env/polaris_oidc_use_cluster_config", "subsection-name": "security-oidc-col1" },
-        { "config": "polaris-application-properties/quarkus.oidc.tenant-enabled", "subsection-name": "security-oidc-col2" },
-        { "config": "polaris-application-properties/quarkus.oidc.auth-server-url", "subsection-name": "security-oidc-col1" },
-        { "config": "polaris-application-properties/quarkus.oidc.client-id", "subsection-name": "security-oidc-col2" },
-        { "config": "polaris-env/polaris_oidc_override_auth_server_url", "subsection-name": "security-oidc-override-col1" },
-        { "config": "polaris-env/polaris_oidc_override_client_id", "subsection-name": "security-oidc-override-col1" },
-        { "config": "polaris-env/polaris_oidc_override_client_secret", "subsection-name": "security-oidc-override-col2" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.type", "subsection-name": "security-token-col1" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.max-token-generation", "subsection-name": "security-token-col2" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.rsa-key-pair.public-key-file", "subsection-name": "security-token-rsa-col1" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.rsa-key-pair.private-key-file", "subsection-name": "security-token-rsa-col1" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.symmetric-key.file", "subsection-name": "security-token-symmetric-col2" },
-        { "config": "polaris-application-properties/polaris.authentication.token-broker.symmetric-key.secret", "subsection-name": "security-token-symmetric-col2" },
-
-        { "config": "polaris-env/polaris_ssl_enabled", "subsection-name": "tls-enable-col1" },
-        { "config": "polaris-env/polaris_ssl_auto_generate", "subsection-name": "tls-enable-col2" },
-        { "config": "polaris-application-properties/quarkus.http.ssl-port", "subsection-name": "tls-core-col1" },
-        { "config": "polaris-application-properties/quarkus.http.insecure-requests", "subsection-name": "tls-core-col2" },
-        { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-file", "subsection-name": "tls-store-col1" },
-        { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-file-type", "subsection-name": "tls-store-col1" },
-        { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-key-alias", "subsection-name": "tls-store-col1" },
-        { "config": "polaris-application-properties/quarkus.http.ssl.certificate.trust-store-file", "subsection-name": "tls-store-col2" },
-        { "config": "polaris-application-properties/quarkus.http.ssl.certificate.trust-store-file-type", "subsection-name": "tls-store-col2" },
-        { "config": "polaris-env/polaris_ssl_keystore_password", "subsection-name": "tls-secrets-col1" },
-        { "config": "polaris-env/polaris_ssl_truststore_password", "subsection-name": "tls-secrets-col2" },
-
-        { "config": "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled", "subsection-name": "ranger-enable-col1" },
-        { "config": "ranger-polaris-plugin-properties/policy_user", "subsection-name": "ranger-repo-col1" },
-        { "config": "ranger-polaris-plugin-properties/polaris.service.url", "subsection-name": "ranger-repo-col1" },
-        { "config": "ranger-polaris-plugin-properties/REPOSITORY_CONFIG_USERNAME", "subsection-name": "ranger-repo-col2" },
-        { "config": "ranger-polaris-plugin-properties/REPOSITORY_CONFIG_PASSWORD", "subsection-name": "ranger-repo-col2" },
-        { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.rest.url", "subsection-name": "ranger-policy-col1" },
-        { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.pollIntervalMs", "subsection-name": "ranger-policy-col1" },
-        { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.cache.dir", "subsection-name": "ranger-policy-col2" },
-        { "config": "ranger-polaris-security/xasecure.add-hadoop-authorization", "subsection-name": "ranger-policy-col2" },
-        { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.keystore", "subsection-name": "ranger-ssl-col1" },
-        { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.keystore.password", "subsection-name": "ranger-ssl-col1" },
-        { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.truststore", "subsection-name": "ranger-ssl-col2" },
-        { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.truststore.password", "subsection-name": "ranger-ssl-col2" },
-        { "config": "ranger-polaris-audit/xasecure.audit.is.enabled", "subsection-name": "ranger-audit-col1" },
-        { "config": "ranger-polaris-audit/xasecure.audit.destination.hdfs", "subsection-name": "ranger-audit-col1" },
-        { "config": "ranger-polaris-audit/xasecure.audit.destination.hdfs.dir", "subsection-name": "ranger-audit-col1" },
-        { "config": "ranger-polaris-audit/xasecure.audit.destination.solr", "subsection-name": "ranger-audit-col2" },
-        { "config": "ranger-polaris-audit/xasecure.audit.destination.solr.urls", "subsection-name": "ranger-audit-col2" }
+        {
+          "config": "polaris-db-properties/DB_FLAVOR",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_name",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_user",
+          "subsection-name": "polaris-db-row1-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_host",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/db_port",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/db_password",
+          "subsection-name": "polaris-db-row1-col2"
+        },
+        {
+          "config": "polaris-db-properties/create_db_dbuser",
+          "subsection-name": "polaris-db-row2"
+        },
+        {
+          "config": "polaris-db-properties/db_root_user",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+          "subsection-name": "polaris-db-root-col1"
+        },
+        {
+          "config": "polaris-db-properties/db_root_password",
+          "subsection-name": "polaris-db-root-col2"
+        }
       ]
     },
     "widgets": [
-      { "config": "polaris-env/polaris_log_dir", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_pid_dir", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_data_dir", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.http.port", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_protocol", "widget": { "type": "combo" } },
-      { "config": "polaris-application-properties/quarkus.log.console.enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-application-properties/quarkus.log.file.enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_opts", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_transport", "widget": { "type": "combo" } },
-      { "config": "polaris-env/polaris_mcp_protocol", "widget": { "type": "combo" } },
-      { "config": "polaris-env/polaris_mcp_host", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_port", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_tls_enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_mcp_tls_auto_generate", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_mcp_tls_cert_file", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_tls_key_file", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_tls_ca_file", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_mcp_base_url", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_console_host", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_console_protocol", "widget": { "type": "combo" } },
-      { "config": "polaris-env/polaris_console_port", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_console_tls_enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_console_tls_auto_generate", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_console_tls_cert_file", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_console_tls_key_file", "widget": { "type": "text-field" } },
-
-      { "config": "polaris-db-properties/DB_FLAVOR", "widget": { "type": "combo" } },
-      { "config": "polaris-db-properties/db_name", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/db_user", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/db_host", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/db_port", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/db_password", "widget": { "type": "password" } },
-      { "config": "polaris-db-properties/create_db_dbuser", "widget": { "type": "toggle" } },
-      { "config": "polaris-db-properties/db_root_user", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/polaris_privelege_user_jdbc_url", "widget": { "type": "text-field" } },
-      { "config": "polaris-db-properties/db_root_password", "widget": { "type": "password" } },
-
-      { "config": "polaris-application-properties/polaris.authentication.type", "widget": { "type": "combo" } },
-      { "config": "polaris-env/polaris_auth_auto_external", "widget": { "type": "toggle" } },
-      { "config": "polaris-application-properties/polaris.realm-context.realms", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/polaris.realm-context.require-header", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_bootstrap_realms", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_admin_username", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_admin_password", "widget": { "type": "password" } },
-      { "config": "polaris-env/polaris_oidc_use_cluster_config", "widget": { "type": "toggle" } },
-      { "config": "polaris-application-properties/quarkus.oidc.tenant-enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-application-properties/quarkus.oidc.auth-server-url", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.oidc.client-id", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_oidc_override_auth_server_url", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_oidc_override_client_id", "widget": { "type": "text-field" } },
-      { "config": "polaris-env/polaris_oidc_override_client_secret", "widget": { "type": "password" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.type", "widget": { "type": "combo" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.max-token-generation", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.rsa-key-pair.public-key-file", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.rsa-key-pair.private-key-file", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.symmetric-key.file", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/polaris.authentication.token-broker.symmetric-key.secret", "widget": { "type": "password" } },
-
-      { "config": "polaris-env/polaris_ssl_enabled", "widget": { "type": "toggle" } },
-      { "config": "polaris-env/polaris_ssl_auto_generate", "widget": { "type": "toggle" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl-port", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.http.insecure-requests", "widget": { "type": "combo" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-file", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-file-type", "widget": { "type": "combo" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl.certificate.key-store-key-alias", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl.certificate.trust-store-file", "widget": { "type": "text-field" } },
-      { "config": "polaris-application-properties/quarkus.http.ssl.certificate.trust-store-file-type", "widget": { "type": "combo" } },
-      { "config": "polaris-env/polaris_ssl_keystore_password", "widget": { "type": "password" } },
-      { "config": "polaris-env/polaris_ssl_truststore_password", "widget": { "type": "password" } },
-
-      { "config": "ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled", "widget": { "type": "toggle" } },
-      { "config": "ranger-polaris-plugin-properties/policy_user", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-plugin-properties/polaris.service.url", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-plugin-properties/REPOSITORY_CONFIG_USERNAME", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-plugin-properties/REPOSITORY_CONFIG_PASSWORD", "widget": { "type": "password" } },
-      { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.rest.url", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.pollIntervalMs", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-security/ranger.plugin.polaris.policy.cache.dir", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-security/xasecure.add-hadoop-authorization", "widget": { "type": "toggle" } },
-      { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.keystore", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.keystore.password", "widget": { "type": "password" } },
-      { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.truststore", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-policymgr-ssl/xasecure.policymgr.clientssl.truststore.password", "widget": { "type": "password" } },
-      { "config": "ranger-polaris-audit/xasecure.audit.is.enabled", "widget": { "type": "toggle" } },
-      { "config": "ranger-polaris-audit/xasecure.audit.destination.hdfs", "widget": { "type": "toggle" } },
-      { "config": "ranger-polaris-audit/xasecure.audit.destination.hdfs.dir", "widget": { "type": "text-field" } },
-      { "config": "ranger-polaris-audit/xasecure.audit.destination.solr", "widget": { "type": "toggle" } },
-      { "config": "ranger-polaris-audit/xasecure.audit.destination.solr.urls", "widget": { "type": "text-field" } }
+      {
+        "config": "polaris-db-properties/DB_FLAVOR",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_host",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_port",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "polaris-db-properties/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "polaris-db-properties/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      }
     ]
   }
 }
