@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<configuration supports_final="true" supports_do_not_extend="true">
+  <property>
+    <name>kudu_user</name>
+    <display-name>Kudu User</display-name>
+    <value>kudu</value>
+    <property-type>USER</property-type>
+    <description>Kudu service user.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_group</name>
+    <display-name>Kudu Group</display-name>
+    <value>kudu</value>
+    <property-type>GROUP</property-type>
+    <description>Kudu service group.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_conf_dir</name>
+    <value>/etc/kudu/conf</value>
+    <description>Kudu configuration directory.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_log_dir</name>
+    <value>/var/log/kudu</value>
+    <description>Kudu log directory.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_run_dir</name>
+    <value>/var/run/kudu</value>
+    <description>Kudu pid directory.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_principal_name</name>
+    <value>kudu/_HOST@EXAMPLE.COM</value>
+    <description>Kudu Kerberos principal used when cluster security is enabled.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_keytab</name>
+    <value>/etc/security/keytabs/kudu.service.keytab</value>
+    <description>Kudu keytab path used when cluster security is enabled.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

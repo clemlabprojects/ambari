@@ -1,0 +1,12 @@
+{
+  "general_deps" : {
+    "_comment" : "dependencies for IMPALA",
+    "IMPALA_CATALOG_SERVICE-START" : ["HIVE_METASTORE-START"],
+    "IMPALA_STATE_STORE-START" : ["IMPALA_CATALOG_SERVICE-START"],
+    "IMPALA_DAEMON-START" : [
+      "IMPALA_CATALOG_SERVICE-START",
+      "KUDU_MASTER-START",
+      "KUDU_TSERVER-START"
+    ]
+  }
+}

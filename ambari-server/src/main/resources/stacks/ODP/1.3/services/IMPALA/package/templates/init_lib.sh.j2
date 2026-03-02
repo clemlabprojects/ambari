@@ -1,0 +1,162 @@
+stack_version=`/usr/bin/odp-select --version`
+impala_path=`echo -e /usr/odp/${stack_version}`
+
+
+#htrace-core4 not packaged in hadoop 3.3.6
+#Remove duplicate symlink hive-service-rpc
+
+SYMLINKS=(
+"/usr/lib/impala/lib/hadoop-shaded-avro_*.jar"
+"/usr/lib/impala/lib/hadoop-shaded-protobuf_*.jar"
+"/usr/lib/impala/lib/htrace-core4-*.jar"
+"/usr/lib/impala/lib/hive-service-rpc.jar"
+"/usr/lib/impala/lib/hbase-shaded-netty.jar"
+)
+
+for link in "${SYMLINKS[@]}"; do
+  if [ -L "$link" ]; then
+    unlink "$link"
+  fi
+done
+
+ln -sf `echo -e ${impala_path}'/usr/lib/libhdfs.so /usr/lib/impala/lib/libhdfs.so' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/usr/lib/libhdfs.so.0.0.0 /usr/lib/impala/lib/libhdfs.so.0.0.0' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/avro-[1-9]*.jar /usr/lib/impala/lib/avro.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/hadoop-auth.jar /usr/lib/impala/lib/hadoop-auth.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/hadoop-annotations.jar /usr/lib/impala/lib/hadoop-annotations.jar '| tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/hadoop-common.jar /usr/lib/impala/lib/hadoop-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/lib/native/libhadoop.so /usr/lib/impala/lib/libhadoop.so' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/lib/native/libhadoop.so.1.0.0 /usr/lib/impala/lib/libhadoop.so.1.0.0' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/lib/native/libsnappy.so.1 /usr/lib/impala/lib/libsnappy.so.1' | tr -d '\r' | tr -d '?'`
+#ln -sf `echo -e ${impala_path}'/hadoop/lib/htrace-core4-4.1.0-incubating.jar /usr/lib/impala/lib/htrace-core4-4.1.0-incubating.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/lib/native/libsnappy.so /usr/lib/impala/lib/libsnappy.so' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/lib/native/libsnappy.so.1.1.[1-9] /usr/lib/impala/lib/libsnappy.so.1.1.4' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-hdfs/hadoop-hdfs.jar /usr/lib/impala/lib/hadoop-hdfs.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-hdfs/hadoop-hdfs-client.jar /usr/lib/impala/lib/hadoop-hdfs-client.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-aws.jar /usr/lib/impala/lib/hadoop-aws.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-azure-datalake.jar /usr/lib/impala/lib/hadoop-azure-datalake.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-mapreduce-client-common.jar /usr/lib/impala/lib/hadoop-mapreduce-client-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-mapreduce-client-core.jar /usr/lib/impala/lib/hadoop-mapreduce-client-core.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-mapreduce-client-jobclient.jar /usr/lib/impala/lib/hadoop-mapreduce-client-jobclient.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-mapreduce-client-shuffle.jar /usr/lib/impala/lib/hadoop-mapreduce-client-shuffle.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-api.jar /usr/lib/impala/lib/hadoop-yarn-api.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-client.jar /usr/lib/impala/lib/hadoop-yarn-client.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-common.jar /usr/lib/impala/lib/hadoop-yarn-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-server-applicationhistoryservice.jar /usr/lib/impala/lib/hadoop-yarn-server-applicationhistoryservice.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-server-common.jar /usr/lib/impala/lib/hadoop-yarn-server-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-server-nodemanager.jar /usr/lib/impala/lib/hadoop-yarn-server-nodemanager.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-server-resourcemanager.jar /usr/lib/impala/lib/hadoop-yarn-server-resourcemanager.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-registry.jar /usr/lib/impala/lib/hadoop-yarn-registry.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/hadoop-azure.jar /usr/lib/impala/lib/hadoop-azure.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-yarn/hadoop-yarn-server-web-proxy.jar /usr/lib/impala/lib/hadoop-yarn-server-web-proxy.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop-mapreduce/hadoop-aliyun.jar /usr/lib/impala/lib/hadoop-aliyun.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/hadoop-registry.jar /usr/lib/impala/lib/hadoop-registry.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hadoop/client/shaded/hadoop-client-api-*.jar /usr/lib/impala/lib/hadoop-client-api.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-unsafe-*.jar /usr/lib/impala/lib/hbase-unsafe.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/tez/lib/hadoop-cos-*.jar /usr/lib/impala/lib/hadoop-cos.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/tez/lib/hadoop-shaded-guava-[1-9]*.jar /usr/lib/impala/lib/hadoop-shaded-guava.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-annotations.jar /usr/lib/impala/lib/hbase-annotations.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-client.jar /usr/lib/impala/lib/hbase-client.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-common.jar /usr/lib/impala/lib/hbase-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-hadoop-compat.jar /usr/lib/impala/lib/hbase-hadoop-compat.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-hadoop2-compat.jar /usr/lib/impala/lib/hbase-hadoop2-compat.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-logging.jar /usr/lib/impala/lib/hbase-logging.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-metrics-api.jar /usr/lib/impala/lib/hbase-metrics-api.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-metrics.jar /usr/lib/impala/lib/hbase-metrics.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-protocol-shaded.jar /usr/lib/impala/lib/hbase-protocol-shaded.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-protocol.jar /usr/lib/impala/lib/hbase-protocol.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-shaded-gson-*.jar /usr/lib/impala/lib/hbase-shaded-gson.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-shaded-miscellaneous-*.jar /usr/lib/impala/lib/hbase-shaded-miscellaneous.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-shaded-netty-[1-9]*.jar  /usr/lib/impala/lib/hbase-shaded-netty.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/hbase-shaded-protobuf-*.jar /usr/lib/impala/lib/hbase-shaded-protobuf.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hbase/lib/shaded-clients/hbase-shaded-client-[0-9].[0-9].[0-9].*.jar /usr/lib/impala/lib/hbase-shaded-client.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/ant-1.10.13.jar /usr/lib/impala/lib/hive-ant.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-beeline.jar /usr/lib/impala/lib/hive-beeline.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-common.jar /usr/lib/impala/lib/hive-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-classification.jar /usr/lib/impala/lib/hive-classification.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-hbase-handler.jar /usr/lib/impala/lib/hive-hbase-handler.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-service.jar /usr/lib/impala/lib/hive-service.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-storage-api.jar /usr/lib/impala/lib/hive-storage-api.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-hcatalog-core.jar /usr/lib/impala/lib/hive-hcatalog-core-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-hcatalog-server-extensions.jar /usr/lib/impala/lib/hive-hcatalog-server-extensions-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-hplsql.jar /usr/lib/impala/lib/hive-hplsql-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-client.jar /usr/lib/impala/lib/hive-llap-client-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-common-*-tests.jar /usr/lib/impala/lib/hive-llap-common-tests.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-common.jar /usr/lib/impala/lib/hive-llap-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-server.jar /usr/lib/impala/lib/hive-llap-server-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-tez.jar /usr/lib/impala/lib/hive-llap-tez-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-metastore.jar /usr/lib/impala/lib/hive-metastore-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-service.jar /usr/lib/impala/lib/hive-service-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-service-rpc.jar /usr/lib/impala/lib/hive-service-rpc-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-shims.jar /usr/lib/impala/lib/hive-shims-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-shims-common.jar /usr/lib/impala/lib/hive-shims-common-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+# HIVE-27131: Remove empty module shims/scheduler from Hive 4.0.0 onwards
+#ln -sf `echo -e ${impala_path}'/hive/lib/hive-shims-scheduler.jar /usr/lib/impala/lib/hive-shims-scheduler-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-standalone-metastore-common.jar /usr/lib/impala/lib/hive-standalone-metastore-common-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-standalone-metastore-server.jar /usr/lib/impala/lib/hive-standalone-metastore-server-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-storage-api.jar /usr/lib/impala/lib/hive-storage-api-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-vector-code-gen.jar /usr/lib/impala/lib/hive-vector-code-gen-alpha-1.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/parquet-hadoop-bundle-[0-9].[0-9][0-9].[0-9].jar /usr/lib/impala/lib/parquet-hadoop-bundle.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-cli.jar /usr/lib/impala/lib/hive-cli.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/tez/lib/hadoop-cloud-storage-*.jar /usr/lib/impala/lib/hadoop-cloud-storage.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-client.jar /usr/lib/impala/lib/hive-llap-client.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-exec.jar /usr/lib/impala/lib/hive-exec.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-hcatalog-server-extensions.jar /usr/lib/impala/lib/hive-hcatalog-server-extensions.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-metastore.jar /usr/lib/impala/lib/hive-metastore.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-standalone-metastore-server.jar /usr/lib/impala/lib/hive-standalone-metastore-server.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-standalone-metastore-common.jar /usr/lib/impala/lib/hive-standalone-metastore-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-serde.jar /usr/lib/impala/lib/hive-serde.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive-hcatalog/share/hcatalog/hive-hcatalog-core.jar /usr/lib/impala/lib/hive-hcatalog-core.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-shims-common.jar /usr/lib/impala/lib/hive-shims-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-shims.jar /usr/lib/impala/lib/hive-shims.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-tez.jar /usr/lib/impala/lib/hive-llap-tez.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-vector-code-gen.jar /usr/lib/impala/lib/hive-vector-code-gen.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-server.jar /usr/lib/impala/lib/hive-llap-server.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-common.jar /usr/lib/impala/lib/hive-llap-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/hive/lib/hive-llap-common-tests.jar /usr/lib/impala/lib/hive-llap-common-tests.jar' | tr -d '\r' | tr -d '?'`
+
+ln -sf `echo -e ${impala_path}'/zookeeper/zookeeper.jar /usr/lib/impala/lib/zookeeper.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/zookeeper/zookeeper-jute.jar /usr/lib/impala/lib/zookeeper-jute.jar' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/usr/lib/impala/lib/solr-*.jar' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/usr/lib/impala/lib/lucene-*.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e ${impala_path}'/ranger-hive-plugin/lib/ranger-hive-plugin-impl/solr-solrj-*.jar /usr/lib/impala/lib/solr-solrj.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-backward-codecs-*.jar /usr/lib/impala/lib/lucene-backward-codecs.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-classification-*.jar /usr/lib/impala/lib/' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-core-*.jar /usr/lib/impala/lib/lucene-core.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-sandbox-*.jar /usr/lib/impala/lib/lucene-sandbox.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-spatial-extras-*.jar /usr/lib/impala/lib/lucene-spatial-extras.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-analyzers-common-*.jar /usr/lib/impala/lib/lucene-analyzers-common.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-spatial3d-*.jar /usr/lib/impala/lib/lucene-spatial3d.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-suggest-*.jar /usr/lib/impala/lib/lucene-suggest.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-queries-*.jar /usr/lib/impala/lib/lucene-queries.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-grouping-*.jar /usr/lib/impala/lib/lucene-grouping.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-queryparser-*.jar /usr/lib/impala/lib/lucene-queryparser.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-highlighter-*.jar /usr/lib/impala/lib/lucene-highlighter.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-join-*.jar /usr/lib/impala/lib/lucene-join.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-memory-*.jar /usr/lib/impala/lib/lucene-memory.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/server/solr-webapp/webapp/WEB-INF/lib/lucene-misc-*.jar /usr/lib/impala/lib/lucene-misc.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-test-framework-*.jar /usr/lib/impala/lib/solr-test-framework.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-analysis-extras-*.jar /usr/lib/impala/lib/solr-analysis-extras.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-analytics-*.jar /usr/lib/impala/lib/solr-analytics.jar' | tr -d '\r' | tr -d '?'`
+#solr-clustering jar not available /usr/lib/ambari-infra-solr
+#ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-clustering-*.jar /usr/lib/impala/lib/solr-clustering.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-dataimporthandler-extras-*.jar /usr/lib/impala/lib/solr-dataimporthandler-extras.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-dataimporthandler-[1-9]*.jar /usr/lib/impala/lib/solr-dataimporthandler.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-cell-*.jar /usr/lib/impala/lib/solr-cell.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-langid-*.jar /usr/lib/impala/lib/solr-langid.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-ltr-*.jar /usr/lib/impala/lib/solr-ltr.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-prometheus-exporter-*.jar /usr/lib/impala/lib/solr-prometheus-exporter.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-velocity-*.jar /usr/lib/impala/lib/solr-velocity.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-core-*.jar /usr/lib/impala/lib/solr-core.jar' | tr -d '\r' | tr -d '?'`
+ln -sf `echo -e '/usr/lib/ambari-infra-solr/dist/solr-solrj-*.jar /usr/lib/impala/lib/solr-solrj.jar' | tr -d '\r' | tr -d '?'`
+cp `echo -e ${impala_path}'/hive/lib/*.jar /var/lib/impala/' | tr -d '\r' | tr -d '?'`
+cp `echo -e ${impala_path}'/hadoop/client/shaded/hadoop-client-runtime-* /var/lib/impala/' | tr -d '\r' | tr -d '?'`
+cp `echo -e ${impala_path}'/hadoop/client/shaded/hadoop-client-runtime-*  /usr/lib/impala/lib/' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/var/lib/impala/guava-27.0-jre.jar /var/lib/impala/hive-metastore*.jar /var/lib/impala/hive-serde*.jar /var/lib/impala/hive-shim*.jar' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/var/lib/impala/commons-compiler*.jar /var/lib/impala/commons-compress*.jar /var/lib/impala/commons-compiler*.jar /var/lib/impala/commons-compress*.jar /var/lib/impala/commons-lang3-*.jar /var/lib/impala/commons-logging-*.jar' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/var/lib/impala/commons-math-*.jar /var/lib/impala/commons-vfs2-*.jar /var/lib/impala/compress-lzf-*.jar /var/lib/impala/curator-framework-*.jar /var/lib/impala/curator-recipes-*.jar /var/lib/impala/derby-*.jar /var/lib/impala/hive-exec*.jar' | tr -d '\r' | tr -d '?'`
+rm -rf `echo -e '/var/lib/impala/flatbuffers-*.jar /usr/lib/impala/lib/flatbuffers-1.2.0-3f79e055.jar' | tr -d '\r' | tr -d '?'`
+
+#htrace-core4 not packaged in hadoop 3.3.6
+#cp `echo -e ${impala_path}'/hadoop/lib/htrace-core4-*-incubating.jar /var/lib/impala/' | tr -d '\r' | tr -d '?'`
+cp `echo -e ${impala_path}'/hadoop-hdfs/hadoop-hdfs-3*.jar /var/lib/impala/' | tr -d '\r' | tr -d '?'`
