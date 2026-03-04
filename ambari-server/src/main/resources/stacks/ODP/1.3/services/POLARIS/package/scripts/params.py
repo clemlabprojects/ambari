@@ -499,6 +499,37 @@ if enable_ranger_polaris:
     'type': 'polaris',
   }
 
+  # Keep Ranger runtime keys available when the plugin is enabled, without
+  # forcing the selected Polaris authorization backend.
+  application_properties["polaris.authorization.ranger.service-name"] = repo_name
+  if not str(application_properties.get("polaris.authorization.ranger.app-id", "")).strip():
+    application_properties["polaris.authorization.ranger.app-id"] = "polaris"
+
+  ranger_config_files = [
+    format("{polaris_conf_dir}/ranger-polaris-security.xml"),
+    format("{polaris_conf_dir}/ranger-polaris-audit.xml"),
+    format("{polaris_conf_dir}/ranger-policymgr-ssl.xml"),
+  ]
+  for idx, cfg_file in enumerate(ranger_config_files):
+    application_properties["polaris.authorization.ranger.config-files[{0}]".format(idx)] = cfg_file
+
+  policy_source_impl = str(
+    ranger_polaris_security.get("ranger.plugin.polaris.policy.source.impl", "")
+  ).strip()
+  if policy_source_impl and not policy_source_impl.startswith("{{"):
+    application_properties["polaris.authorization.ranger.policy-source-impl"] = policy_source_impl
+
+  for ranger_key, ranger_value in ranger_polaris_security.items():
+    if not ranger_key.startswith("ranger.plugin.polaris."):
+      continue
+    plugin_suffix = ranger_key[len("ranger.plugin.polaris."):]
+    if not plugin_suffix:
+      continue
+    plugin_value = str(ranger_value).strip()
+    if not plugin_value or plugin_value.startswith("{{"):
+      continue
+    application_properties["polaris.authorization.ranger.plugin.{0}".format(plugin_suffix)] = plugin_value
+
   if has_namenode:
     hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
     hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab']
@@ -526,5 +557,4 @@ if enable_ranger_polaris:
       immutable_paths=get_not_managed_resources(),
       dfs_type=dfs_type,
     )
-
 smoke_test_user = config['configurations']['cluster-env']['smokeuser']

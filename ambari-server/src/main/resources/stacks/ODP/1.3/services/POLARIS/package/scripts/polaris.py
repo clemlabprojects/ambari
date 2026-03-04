@@ -205,13 +205,25 @@ def setup_console_runtime_config():
     port = str(getattr(params, "polaris_port", "8181")).strip()
     api_url = "{0}://{1}:{2}".format(protocol, host, port)
 
+  access_control_mode = str(
+    params.application_properties.get("polaris.authorization.type", "internal")
+  ).strip().lower()
+  if not access_control_mode:
+    access_control_mode = "internal"
+
   app_config = {
     "VITE_POLARIS_API_URL": api_url,
     "VITE_POLARIS_REALM": default_realm,
     "VITE_POLARIS_PRINCIPAL_SCOPE": "PRINCIPAL_ROLE:ALL",
     "VITE_OAUTH_TOKEN_URL": "{0}/api/catalog/v1/oauth/tokens".format(api_url),
     "VITE_POLARIS_REALM_HEADER_NAME": "Polaris-Realm",
+    "VITE_POLARIS_ACCESS_CONTROL_MODE": access_control_mode,
   }
+  if access_control_mode == "ranger":
+    app_config["VITE_POLARIS_ACCESS_CONTROL_NOTICE"] = (
+      "Authorization backend is Ranger. Manage authorization policies in Apache Ranger; "
+      "Polaris Access Control is read-only in this mode."
+    )
 
   config_js_path = os.path.join(console_dist_dir, "config.js")
   File(

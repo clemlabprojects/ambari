@@ -19,6 +19,7 @@ limitations under the License.
 import os
 
 from resource_management.core.resources.system import Execute, File
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.stack_features import check_stack_feature
@@ -62,6 +63,25 @@ class PolarisServer(Script):
     }
 
     app_props = params.application_properties
+    authz_type = str(app_props.get("polaris.authorization.type", "internal")).strip().lower() or "internal"
+    if authz_type == "ranger":
+      ranger_service_name = str(
+        app_props.get("polaris.authorization.ranger.service-name", "")
+      ).strip() or "<unset>"
+      ranger_config_files = sorted(
+        key for key in app_props.keys()
+        if key.startswith("polaris.authorization.ranger.config-files[")
+      )
+      ranger_config_summary = ", ".join(ranger_config_files) if ranger_config_files else "<none>"
+      Logger.info(
+        "Polaris authorization backend: ranger (service-name={0}, config-keys={1})".format(
+          ranger_service_name,
+          ranger_config_summary
+        )
+      )
+    else:
+      Logger.info("Polaris authorization backend: {0}".format(authz_type))
+
     persistence_type = str(app_props.get("polaris.persistence.type", "")).strip()
     if persistence_type:
       runtime_env["POLARIS_PERSISTENCE_TYPE"] = persistence_type

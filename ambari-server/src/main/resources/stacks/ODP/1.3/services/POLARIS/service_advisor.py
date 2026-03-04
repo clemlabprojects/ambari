@@ -67,6 +67,10 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     self._sync_ranger_plugin_flag(configurations, services)
 
     ranger_plugin_enabled = self._is_ranger_plugin_enabled(configurations, services)
+    put_app_props = self.putProperty(configurations, "polaris-application-properties", services)
+    if ranger_plugin_enabled:
+      put_app_props("polaris.authorization.type", "ranger")
+
     if not ranger_plugin_enabled or "RANGER" not in services_list:
       return
 
@@ -441,6 +445,29 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         "item": self.getWarnItem("polaris.authentication.type must be one of: internal, external, mixed")
       })
       auth_type = "internal"
+
+    authz_type = str(properties.get("polaris.authorization.type", "internal")).strip().lower()
+    if authz_type not in ("internal", "opa", "ranger"):
+      validation_items.append({
+        "config-name": "polaris.authorization.type",
+        "item": self.getWarnItem("polaris.authorization.type must be one of: internal, opa, ranger")
+      })
+      authz_type = "internal"
+
+    ranger_plugin_props = self.getSiteProperties(configurations, "ranger-polaris-plugin-properties")
+    if not ranger_plugin_props:
+      ranger_plugin_props = self.getServicesSiteProperties(services, "ranger-polaris-plugin-properties")
+    ranger_plugin_enabled = str(
+      (ranger_plugin_props or {}).get("ranger-polaris-plugin-enabled", "No")
+    ).strip().lower() == "yes"
+
+    if not ranger_plugin_enabled and authz_type == "ranger":
+      validation_items.append({
+        "config-name": "polaris.authorization.type",
+        "item": self.getWarnItem(
+          "polaris.authorization.type=ranger requires ranger-polaris-plugin-enabled=true"
+        )
+      })
 
     if auth_type in ("external", "mixed"):
       tenant_enabled = str(properties.get("quarkus.oidc.tenant-enabled", "false")).strip().lower()
