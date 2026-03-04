@@ -2,8 +2,70 @@
   "services": [
     {
       "name": "IMPALA",
-      "identities": [
-	    {
+      "configurations": [
+        {
+          "core-site": {
+            "hadoop.proxyuser.${impala/user}.groups": "*",
+            "hadoop.proxyuser.${impala/user}.hosts": "*",
+            "hadoop.proxyuser.${impala/user}.users": "*"
+          }
+        }
+      ],
+      "components": [
+        {
+          "name": "IMPALA_STATE_STORE",
+          "identities": [
+            {
+              "name": "impala_state_store",
+              "principal": {
+                "value": "${impala-env/impala_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "impala-env/impala_principal_name"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/impala.service.keytab",
+                "owner": {
+                  "name": "${impala-env/impala_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${impala-env/impala_group}",
+                  "access": ""
+                },
+                "configuration": "impala-env/impala_keytab"
+              }
+            }
+          ]
+        },
+        {
+          "name": "IMPALA_CATALOG_SERVICE",
+          "identities": [
+            {
+              "name": "impala_catalog_service",
+              "principal": {
+                "value": "${impala-env/impala_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "impala-env/impala_principal_name"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/impala.service.keytab",
+                "owner": {
+                  "name": "${impala-env/impala_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${impala-env/impala_group}",
+                  "access": ""
+                },
+                "configuration": "impala-env/impala_keytab"
+              }
+            }
+          ]
+        },
+        {
+          "name": "IMPALA_DAEMON",
+          "identities": [
+            {
               "name": "impala_daemon",
               "principal": {
                 "value": "${impala-env/impala_user}/_HOST@${realm}",
@@ -22,27 +84,28 @@
                 },
                 "configuration": "impala-env/impala_keytab"
               }
-        },        {
-          "name": "impala_load_balancer",
-          "principal": {
-            "value": "${impala-env/impala_user}/${impala-env/impala_load_balancer_host}@${realm}",
-            "type": "service",
-            "configuration": "impala-env/load_balancer_principal_name"
-          },
-          "keytab": {
-            "file": "${keytab_dir}/impala.service.keytab",
-            "owner": {
-              "name": "${impala-env/impala_user}",
-              "access": "r"
             },
-            "group": {
-              "name": "${impala-env/impala_group}",
-              "access": ""
+            {
+              "name": "impala_load_balancer",
+              "principal": {
+                "value": "${impala-env/impala_user}/${impala-env/impala_load_balancer_host}@${realm}",
+                "type": "service",
+                "configuration": "impala-env/load_balancer_principal_name"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/impala.service.keytab",
+                "owner": {
+                  "name": "${impala-env/impala_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${impala-env/impala_group}",
+                  "access": ""
+                },
+                "configuration": "impala-env/load_balancer_keytab"
+              }
             },
-            "configuration": "impala-env/load_balancer_keytab"
-          }
-        },
-		{
+            {
               "name": "impala_http",
               "principal": {
                 "value": "HTTP/_HOST@${realm}",
@@ -51,7 +114,7 @@
               },
               "keytab": {
                 "file": "${keytab_dir}/impala-http.service.keytab",
-				"owner": {
+                "owner": {
                   "name": "${impala-env/impala_user}",
                   "access": "r"
                 },
@@ -61,19 +124,17 @@
                 },
                 "configuration": "impala-env/http_keytab"
               }
+            }
+          ]
         },
         {
-          "name": "smokeuser"
-        }
-      ],
-      "configurations": [
-        {
-          "core-site": {
-            "hadoop.proxyuser.${impala/user}.groups": "*",
-            "hadoop.proxyuser.${impala/user}.hosts": "*",
-            "hadoop.proxyuser.${impala/user}.users": "*"
-
-          }
+          "name": "IMPALA_CLIENT",
+          "identities": [
+            {
+              "name": "impala_smokeuser",
+              "reference": "/smokeuser"
+            }
+          ]
         }
       ]
     }

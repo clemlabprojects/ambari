@@ -2,26 +2,65 @@
   "services": [
     {
       "name": "KUDU",
-      "identities": [
+      "components": [
         {
-          "name": "kudu_service",
-          "principal": {
-            "value": "${kudu-env/kudu_user}/_HOST@${realm}",
-            "type": "service",
-            "configuration": "kudu-env/kudu_principal_name"
-          },
-          "keytab": {
-            "file": "${keytab_dir}/kudu.service.keytab",
-            "owner": {
-              "name": "${kudu-env/kudu_user}",
-              "access": "r"
-            },
-            "group": {
-              "name": "${kudu-env/kudu_group}",
-              "access": ""
-            },
-            "configuration": "kudu-env/kudu_keytab"
-          }
+          "name": "KUDU_MASTER",
+          "identities": [
+            {
+              "name": "kudu_master_service",
+              "principal": {
+                "value": "${kudu-env/kudu_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "kudu-env/kudu_principal_name"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/kudu.service.keytab",
+                "owner": {
+                  "name": "${kudu-env/kudu_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${kudu-env/kudu_group}",
+                  "access": ""
+                },
+                "configuration": "kudu-env/kudu_keytab"
+              }
+            }
+          ]
+        },
+        {
+          "name": "KUDU_TSERVER",
+          "identities": [
+            {
+              "name": "kudu_tserver_service",
+              "principal": {
+                "value": "${kudu-env/kudu_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "kudu-env/kudu_principal_name"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/kudu.service.keytab",
+                "owner": {
+                  "name": "${kudu-env/kudu_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${kudu-env/kudu_group}",
+                  "access": ""
+                },
+                "configuration": "kudu-env/kudu_keytab"
+              }
+            }
+          ]
+        },
+        {
+          "name": "KUDU_CLIENT",
+          "identities": [
+            {
+              "name": "kudu_smokeuser",
+              "reference": "/smokeuser"
+            }
+          ]
         }
       ]
     }
