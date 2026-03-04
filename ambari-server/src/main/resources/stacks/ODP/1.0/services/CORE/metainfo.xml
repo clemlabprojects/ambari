@@ -30,7 +30,7 @@
           <displayName>Core Client</displayName>
           <category>CLIENT</category>
           <cardinality>1+</cardinality>
-          <versionAdvertised>true</versionAdvertised>
+          <versionAdvertised>false</versionAdvertised>
           <commandScript>
             <script>scripts/core_client.py</script>
             <scriptType>PYTHON</scriptType>
