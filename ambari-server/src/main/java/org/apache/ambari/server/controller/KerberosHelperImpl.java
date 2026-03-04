@@ -4132,7 +4132,7 @@ public class KerberosHelperImpl implements KerberosHelper {
       addPrepareEnableKerberosOperationsStage(cluster, clusterHostInfoJson, hostParamsJson, event, commandParameters,
         roleCommandOrder, requestStageContainer);
 
-      if (kerberosDetails.manageIdentities()) {
+      if (kerberosDetails.manageIdentities() && (dataDirectory != null)) {
         List<String> hostsToInclude = calculateHosts(cluster, serviceComponentHosts, hostsWithValidKerberosClient, false);
 
         commandParameters.put(KerberosServerAction.KDC_TYPE, kerberosDetails.getKdcType().name());
@@ -4158,6 +4158,8 @@ public class KerberosHelperImpl implements KerberosHelper {
         // Create stage to distribute keytabs
         addDistributeKeytabFilesStage(cluster, clusterHostInfoJson, hostParamsJson, commandParameters,
           roleCommandOrder, requestStageContainer, hostsToInclude);
+      } else if (kerberosDetails.manageIdentities()) {
+        LOG.info("Skipping Kerberos identity stages because there are no matching identities to process.");
       }
 
       // *****************************************************************
@@ -4413,12 +4415,12 @@ public class KerberosHelperImpl implements KerberosHelper {
 
       List<String> hostsToInclude = calculateHosts(cluster, serviceComponentHosts, hostsWithValidKerberosClient, forceAllHosts);
 
-      // *****************************************************************
-      // Create stage to create principals
-      addPrepareKerberosIdentitiesStage(cluster, clusterHostInfoJson, hostParamsJson, event,
-        commandParameters, roleCommandOrder, requestStageContainer);
+      if (kerberosDetails.manageIdentities() && (dataDirectory != null)) {
+        // *****************************************************************
+        // Create stage to create principals
+        addPrepareKerberosIdentitiesStage(cluster, clusterHostInfoJson, hostParamsJson, event,
+          commandParameters, roleCommandOrder, requestStageContainer);
 
-      if (kerberosDetails.manageIdentities()) {
         commandParameters.put(KerberosServerAction.KDC_TYPE, kerberosDetails.getKdcType().name());
 
         if (operationType != KerberosServerAction.OperationType.RECREATE_ALL) {
@@ -4447,6 +4449,8 @@ public class KerberosHelperImpl implements KerberosHelper {
         // Create stage to distribute keytabs
         addDistributeKeytabFilesStage(cluster, clusterHostInfoJson, hostParamsJson, commandParameters,
           roleCommandOrder, requestStageContainer, hostsToInclude);
+      } else if (kerberosDetails.manageIdentities()) {
+        LOG.info("Skipping Kerberos principal/keytab stages because there are no matching identities to process.");
       }
 
       if (updateConfigurationPolicy != UpdateConfigurationPolicy.NONE) {
