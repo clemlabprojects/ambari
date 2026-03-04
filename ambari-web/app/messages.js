@@ -2376,6 +2376,7 @@ Em.I18n.translations = {
   'services.service.config.database.msg.jdbcSetup.detailed': 'To use {0} with {6}, you must <a rel="noopener noreferrer" href="{3}" target="_blank">' +
     'download the {4} from {0}</a>. Once downloaded to the Ambari Server host, run: <br/>' +
     '<b>ambari-server setup --jdbc-db={1} --jdbc-driver=/path/to/{1}/{2}</b>',
+  'services.service.config.database.msg.polaris.manualDbPrivileges': 'When <b>Setup Database and Database User</b> is set to No, administrators must pre-create the Polaris database/user and grant required privileges manually, including <b>USAGE, CREATE ON SCHEMA public</b> for the Polaris DB user.',
 
   'services.service.widgets.list-widget.nothingSelected': 'Nothing selected',
 

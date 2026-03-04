@@ -26,6 +26,13 @@ App.ToggleConfigWidgetView = App.ConfigWidgetView.extend({
   templateName: require('templates/common/configs/widgets/toggle_config_widget'),
   classNames: ['widget-config', 'toggle-widget'],
 
+  customWarningServiceMapping: [
+    {
+      serviceName: 'POLARIS',
+      configName: 'create_db_dbuser'
+    }
+  ],
+
   /**
    * Saved switcher for current config.
    *
@@ -91,6 +98,33 @@ App.ToggleConfigWidgetView = App.ConfigWidgetView.extend({
     }.bind(this), 10);
     this.addObserver('switcherValue', this, this.updateConfigValue);
     this._super();
+    this.addCustomWarningMessage();
+  },
+
+  addCustomWarningMessage: function () {
+    if (!this.isCustomWarningRequired()) {
+      return;
+    }
+    this.set('config.additionalView', Em.View.extend({
+      template: Em.Handlebars.compile(
+        '{{#if view.showMessage}}<div class="alert alert-warning enhanced-configs">{{{view.message}}}</div>{{/if}}'
+      ),
+      showMessage: function () {
+        return String(this.get('config.value')).toLowerCase() === 'false';
+      }.property('config.value'),
+      message: function () {
+        return Em.I18n.t('services.service.config.database.msg.polaris.manualDbPrivileges');
+      }.property(),
+      config: this.get('config')
+    }));
+  },
+
+  isCustomWarningRequired: function () {
+    var self = this;
+    return this.get('customWarningServiceMapping').find(function (configMap) {
+      return configMap.serviceName.toLowerCase() === self.get('config.serviceName').toLowerCase() &&
+        configMap.configName.toLowerCase() === self.get('config.name').toLowerCase();
+    });
   },
 
   /**

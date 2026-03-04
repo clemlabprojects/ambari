@@ -220,17 +220,10 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     oidc_realm = str(oidc_env.get("oidc_realm", "")).strip()
     oidc_available = security_enabled and oidc_admin_url != "" and oidc_realm != ""
 
-    auto_external = str(polaris_env.get("polaris_auth_auto_external", "true")).strip().lower() == "true"
-    if auth_type == "internal" and auto_external and oidc_available:
-      auth_type = "external"
-      put_app_props("polaris.authentication.type", auth_type)
-
     if not str(polaris_env.get("polaris_bootstrap_realms", "")).strip():
       default_realms = str(app_props.get("polaris.realm-context.realms", "POLARIS")).strip() or "POLARIS"
       put_polaris_env("polaris_bootstrap_realms", default_realms)
 
-    if "polaris_auth_auto_external" not in polaris_env:
-      put_polaris_env("polaris_auth_auto_external", "true")
     if "polaris_oidc_use_cluster_config" not in polaris_env:
       put_polaris_env("polaris_oidc_use_cluster_config", "true")
 
@@ -301,17 +294,18 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     return {}
 
   def recommendPolarisDatabaseConfigurations(self, configurations, services):
-    db_props = self._get_site_properties(configurations, services, "polaris-db-properties")
-    app_props = self._get_site_properties(configurations, services, "polaris-application-properties")
     put_db_props = self.putProperty(configurations, "polaris-db-properties", services)
     put_app_props = self.putProperty(configurations, "polaris-application-properties", services)
 
-    db_flavor = str(db_props.get("DB_FLAVOR", "POSTGRES")).upper()
-    db_host = str(db_props.get("db_host", "localhost")).strip() or "localhost"
-    db_port = str(db_props.get("db_port", "5432")).strip() or "5432"
-    db_name = str(db_props.get("db_name", "polaris")).strip() or "polaris"
-    db_user = str(db_props.get("db_user", "polaris")).strip() or "polaris"
-    db_password = db_props.get("db_password", None)
+    db_flavor = str(self._get_property(configurations, services, "polaris-db-properties", "DB_FLAVOR") or "POSTGRES").upper()
+    db_host = str(self._get_property(configurations, services, "polaris-db-properties", "db_host") or "localhost").strip() or "localhost"
+    db_port = str(self._get_property(configurations, services, "polaris-db-properties", "db_port") or "5432").strip() or "5432"
+    db_name = str(self._get_property(configurations, services, "polaris-db-properties", "db_name") or "polaris").strip() or "polaris"
+    db_user = str(self._get_property(configurations, services, "polaris-db-properties", "db_user") or "polaris").strip() or "polaris"
+    db_password = self._get_property(configurations, services, "polaris-db-properties", "db_password")
+    create_db_dbuser = self._get_property(configurations, services, "polaris-db-properties", "create_db_dbuser")
+    db_root_user = self._get_property(configurations, services, "polaris-db-properties", "db_root_user")
+    persistence_type = self._get_property(configurations, services, "polaris-application-properties", "polaris.persistence.type")
 
     if db_flavor != "POSTGRES":
       db_flavor = "POSTGRES"
@@ -319,14 +313,13 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     db_host_port = db_host if ":" in db_host else "{0}:{1}".format(db_host, db_port)
     root_jdbc_url = "jdbc:postgresql://{0}/postgres".format(db_host_port)
 
-    if not str(db_props.get("polaris_privelege_user_jdbc_url", "")).strip():
-      put_db_props("polaris_privelege_user_jdbc_url", root_jdbc_url)
-    if "create_db_dbuser" not in db_props:
+    put_db_props("polaris_privelege_user_jdbc_url", root_jdbc_url)
+    if create_db_dbuser is None:
       put_db_props("create_db_dbuser", "true")
-    if not str(db_props.get("db_root_user", "")).strip():
+    if not str(db_root_user or "").strip():
       put_db_props("db_root_user", "postgres")
 
-    if not str(app_props.get("polaris.persistence.type", "")).strip():
+    if not str(persistence_type or "").strip():
       put_app_props("polaris.persistence.type", "relational-jdbc")
 
     put_app_props("quarkus.datasource.db-kind", "postgresql")
@@ -399,6 +392,13 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           "config-name": "polaris_privelege_user_jdbc_url",
           "item": self.getWarnItem("polaris_privelege_user_jdbc_url should be set when create_db_dbuser=true")
         })
+    else:
+      validation_items.append({
+        "config-name": "create_db_dbuser",
+        "item": self.getWarnItem(
+          "When create_db_dbuser=false, DB/user/grants must be pre-created manually (including CREATE on the Polaris DB)."
+        )
+      })
 
     return self.toConfigurationValidationProblems(validation_items, "polaris-db-properties")
 

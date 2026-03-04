@@ -513,16 +513,6 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>polaris_auth_auto_external</name>
-    <display-name>Auto Switch To External Auth</display-name>
-    <value>true</value>
-    <description>When cluster security and OIDC are configured, switch Polaris authentication type from internal to external by default.</description>
-    <value-attributes>
-      <type>boolean</type>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>polaris_oidc_use_cluster_config</name>
     <display-name>Use Cluster OIDC Configuration</display-name>
     <value>true</value>
@@ -584,6 +574,12 @@ export POLARIS_JAVA_OPTS="{{polaris_opts}} {{polaris_kerberos_opts}}"
 
 # Polaris configuration directory
 export POLARIS_CONF_DIR={{polaris_conf_dir}}
+if [ -z "${QUARKUS_CONFIG_LOCATIONS:-}" ]; then
+  export QUARKUS_CONFIG_LOCATIONS=${POLARIS_CONF_DIR}/application.properties,${POLARIS_CONF_DIR}/admin.properties
+fi
+if [ -z "${SMALLRYE_CONFIG_LOCATIONS:-}" ]; then
+  export SMALLRYE_CONFIG_LOCATIONS=${QUARKUS_CONFIG_LOCATIONS}
+fi
 
 # Where log files are stored
 export POLARIS_LOG_DIR={{polaris_log_dir}}
@@ -627,11 +623,6 @@ export POLARIS_CONSOLE_TLS_KEY_FILE={{polaris_console_tls_key_file}}
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}
 export POLARIS_ADMIN_PASSWORD='{{polaris_admin_password_escaped}}'
-
-# Optional pre-seeded bootstrap credentials for internal/mixed auth.
-{% if polaris_bootstrap_credentials %}
-export POLARIS_BOOTSTRAP_CREDENTIALS='{{polaris_bootstrap_credentials_escaped}}'
-{% endif %}
     </value>
     <value-attributes>
       <type>content</type>

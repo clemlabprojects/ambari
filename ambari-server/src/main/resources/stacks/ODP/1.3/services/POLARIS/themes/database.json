@@ -34,6 +34,10 @@
           "subsection-name": "polaris-db-row2"
         },
         {
+          "config": "polaris-application-properties/quarkus.datasource.jdbc.url",
+          "subsection-name": "polaris-db-row2"
+        },
+        {
           "config": "polaris-db-properties/db_root_user",
           "subsection-name": "polaris-db-root-col1"
         },
@@ -88,6 +92,12 @@
         "config": "polaris-db-properties/create_db_dbuser",
         "widget": {
           "type": "toggle"
+        }
+      },
+      {
+        "config": "polaris-application-properties/quarkus.datasource.jdbc.url",
+        "widget": {
+          "type": "text-field"
         }
       },
       {

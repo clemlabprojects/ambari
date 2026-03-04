@@ -64,6 +64,9 @@ App.ComboConfigWidgetView = App.ConfigWidgetView.extend({
     },
     {
       serviceName: 'RANGER_KMS', dbConfigName: 'DB_FLAVOR'
+    },
+    {
+      serviceName: 'POLARIS', dbConfigName: 'DB_FLAVOR'
     }
   ],
 

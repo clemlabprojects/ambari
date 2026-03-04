@@ -53,6 +53,8 @@ retry_enabled = default("/commandParams/command_retry_enabled", False)
 polaris_user = config['configurations']['polaris-env']['polaris_user']
 user_group = config['configurations']['cluster-env']['user_group']
 java64_home = config['ambariLevelParams']['java_home']
+jdk_location = default("/ambariLevelParams/jdk_location", "/usr/share/java")
+custom_postgres_jdbc_name = default("/ambariLevelParams/custom_postgres_jdbc_name", None)
 
 security_enabled = str(default("/configurations/cluster-env/security_enabled", "false")).lower() == "true"
 kinit_path_local = get_kinit_path(default("/configurations/kerberos-env/executable_search_paths", None))
@@ -81,7 +83,6 @@ polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_
 polaris_admin_password = config['configurations']['polaris-env']['polaris_admin_password']
 polaris_admin_password_escaped = str(polaris_admin_password or "").replace("'", "'\"'\"'")
 polaris_bootstrap_realms_raw = str(default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS")).strip()
-polaris_auth_auto_external = _to_bool(default("/configurations/polaris-env/polaris_auth_auto_external", "true"), True)
 polaris_oidc_use_cluster_config = _to_bool(default("/configurations/polaris-env/polaris_oidc_use_cluster_config", "true"), True)
 polaris_oidc_override_auth_server_url = str(default("/configurations/polaris-env/polaris_oidc_override_auth_server_url", "")).strip()
 polaris_oidc_override_client_id = str(default("/configurations/polaris-env/polaris_oidc_override_client_id", "")).strip()
@@ -126,6 +127,15 @@ else:
 application_properties = dict(config['configurations']['polaris-application-properties'])
 polaris_db_properties = dict(config['configurations']['polaris-db-properties'])
 cluster_name = config.get('clusterName', "cluster")
+
+# Backward compatibility: this key was used in older Polaris auth wiring but in
+# current Polaris it is interpreted as a realm type and breaks config parsing.
+for legacy_auth_key in (
+  "polaris.authentication.active-roles-provider.type",
+  "polaris.active-roles-provider.type",
+):
+  if legacy_auth_key in application_properties:
+    del application_properties[legacy_auth_key]
 
 oidc_admin_url = str(default("/configurations/oidc-env/oidc_admin_url", "")).strip()
 oidc_realm = str(default("/configurations/oidc-env/oidc_realm", "")).strip()
@@ -180,9 +190,6 @@ polaris_auth_type = str(application_properties.get("polaris.authentication.type"
 if polaris_auth_type not in ("internal", "external", "mixed"):
   polaris_auth_type = "internal"
 
-if polaris_auth_type == "internal" and polaris_auth_auto_external and oidc_available:
-  polaris_auth_type = "external"
-
 application_properties["polaris.authentication.type"] = polaris_auth_type
 
 if polaris_auth_type in ("external", "mixed"):
@@ -234,6 +241,20 @@ polaris_db_root_user = str(default("/configurations/polaris-db-properties/db_roo
 polaris_db_root_password = default("/configurations/polaris-db-properties/db_root_password", "")
 polaris_privelege_user_jdbc_url = str(default("/configurations/polaris-db-properties/polaris_privelege_user_jdbc_url",
                                               format("jdbc:postgresql://{polaris_db_host}:{polaris_db_port}/postgres"))).strip()
+
+# Keep datasource runtime settings aligned with polaris-db-properties so agent-side
+# config generation does not depend on UI recommendation payload completeness.
+persistence_type = str(application_properties.get("polaris.persistence.type", "in-memory")).strip().lower()
+if persistence_type == "relational-jdbc":
+  db_host_port = "{0}:{1}".format(polaris_db_host, polaris_db_port)
+  application_properties["quarkus.datasource.db-kind"] = "postgresql"
+  application_properties["quarkus.datasource.jdbc.driver"] = "org.postgresql.Driver"
+  application_properties["quarkus.datasource.jdbc.url"] = "jdbc:postgresql://{0}/{1}".format(
+    db_host_port, polaris_db_name
+  )
+  application_properties["quarkus.datasource.username"] = polaris_db_user
+  if str(polaris_db_password).strip():
+    application_properties["quarkus.datasource.password"] = polaris_db_password
 
 polaris_protocol_requested = str(default("/configurations/polaris-env/polaris_protocol", "http")).strip().lower()
 if polaris_protocol_requested not in ("http", "https"):
@@ -329,6 +350,32 @@ if not polaris_console_stop_command:
   polaris_console_stop_command = None
 
 polaris_console_hosts = sorted(default("/clusterHostInfo/polaris_console_hosts", []))
+
+# Polaris Console performs direct browser calls to Polaris REST API, so CORS must
+# be enabled server-side for the console origin.
+console_origin_host = polaris_console_hosts[0] if polaris_console_hosts else polaris_hostname
+if not console_origin_host or console_origin_host in ("0.0.0.0", "::", "localhost"):
+  console_origin_host = polaris_hostname
+console_origin = "{0}://{1}:{2}".format(
+  polaris_console_protocol,
+  console_origin_host,
+  polaris_console_port
+)
+
+if "quarkus.http.cors.enabled" not in application_properties:
+  application_properties["quarkus.http.cors.enabled"] = "true"
+if not str(application_properties.get("quarkus.http.cors.origins", "")).strip():
+  application_properties["quarkus.http.cors.origins"] = console_origin
+if not str(application_properties.get("quarkus.http.cors.methods", "")).strip():
+  application_properties["quarkus.http.cors.methods"] = "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+if not str(application_properties.get("quarkus.http.cors.headers", "")).strip():
+  application_properties["quarkus.http.cors.headers"] = "Content-Type,Authorization,Polaris-Realm,X-Request-ID"
+if not str(application_properties.get("quarkus.http.cors.exposed-headers", "")).strip():
+  application_properties["quarkus.http.cors.exposed-headers"] = "*"
+if "quarkus.http.cors.access-control-allow-credentials" not in application_properties:
+  application_properties["quarkus.http.cors.access-control-allow-credentials"] = "true"
+if not str(application_properties.get("quarkus.http.cors.access-control-max-age", "")).strip():
+  application_properties["quarkus.http.cors.access-control-max-age"] = "PT10M"
 
 polaris_jaas_principal = None
 polaris_bare_principal = None

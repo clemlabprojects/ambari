@@ -54,6 +54,32 @@ class PolarisServer(Script):
     env.set_params(params)
     self.configure(env)
 
+    app_cfg = "{0}/{1}".format(params.polaris_conf_dir, params.polaris_conf_file)
+    admin_cfg = "{0}/admin.properties".format(params.polaris_conf_dir)
+    quarkus_locations = "{0},{1}".format(app_cfg, admin_cfg)
+    runtime_env = {
+      "QUARKUS_CONFIG_LOCATIONS": quarkus_locations,
+      "SMALLRYE_CONFIG_LOCATIONS": quarkus_locations,
+    }
+
+    app_props = params.application_properties
+    persistence_type = str(app_props.get("polaris.persistence.type", "")).strip()
+    if persistence_type:
+      runtime_env["POLARIS_PERSISTENCE_TYPE"] = persistence_type
+
+    jdbc_url = str(app_props.get("quarkus.datasource.jdbc.url", "")).strip()
+    jdbc_user = str(app_props.get("quarkus.datasource.username", "")).strip()
+    jdbc_password = str(app_props.get("quarkus.datasource.password", "")).strip()
+    if not jdbc_password:
+      jdbc_password = str(getattr(params, "polaris_db_password", "")).strip()
+
+    if jdbc_url:
+      runtime_env["QUARKUS_DATASOURCE_JDBC_URL"] = jdbc_url
+    if jdbc_user:
+      runtime_env["QUARKUS_DATASOURCE_USERNAME"] = jdbc_user
+    if jdbc_password:
+      runtime_env["QUARKUS_DATASOURCE_PASSWORD"] = jdbc_password
+
     no_op_test = format('test -f {polaris_pid_file} && ps -p `cat {polaris_pid_file}` >/dev/null 2>&1')
     # Polaris runtime launcher is foreground; daemonize it for Ambari service control.
     start_cmd = format(
@@ -65,6 +91,7 @@ class PolarisServer(Script):
     )
     Execute(start_cmd,
             user=params.polaris_user,
+            environment=runtime_env,
             not_if=no_op_test
             )
 

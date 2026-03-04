@@ -24,7 +24,7 @@
     <name>create_db_dbuser</name>
     <value>true</value>
     <display-name>Setup Database and Database User</display-name>
-    <description>If set to Yes, Ambari will create and setup Polaris Database and Database User. This requires a Database Administrator username/password.</description>
+    <description>If set to Yes, Ambari will create and setup Polaris Database and Database User. This requires a Database Administrator username/password. If set to No, you must pre-create the database, user, and required grants (including CREATE on the Polaris database) before starting Polaris.</description>
     <value-attributes>
       <type>value-list</type>
       <overridable>false</overridable>

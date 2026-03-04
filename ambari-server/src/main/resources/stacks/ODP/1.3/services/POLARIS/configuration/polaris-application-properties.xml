@@ -210,6 +210,24 @@
     <display-name>Datasource JDBC URL</display-name>
     <value>jdbc:postgresql://localhost:5432/polaris</value>
     <description>JDBC connection URL for Polaris metadata database.</description>
+    <depends-on>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_host</name>
+      </property>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_port</name>
+      </property>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_name</name>
+      </property>
+    </depends-on>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -226,6 +244,12 @@
     <display-name>Datasource Username</display-name>
     <value>polaris</value>
     <description>Username for Polaris metadata database.</description>
+    <depends-on>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_user</name>
+      </property>
+    </depends-on>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -239,6 +263,12 @@
       <type>password</type>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
+    <depends-on>
+      <property>
+        <type>polaris-db-properties</type>
+        <name>db_password</name>
+      </property>
+    </depends-on>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -285,14 +315,6 @@
     <display-name>Authenticator Type</display-name>
     <value>default</value>
     <description>Authenticator implementation for Polaris.</description>
-    <on-ambari-upgrade add="false"/>
-  </property>
-
-  <property>
-    <name>polaris.authentication.active-roles-provider.type</name>
-    <display-name>Active Roles Provider Type</display-name>
-    <value>default</value>
-    <description>Active roles provider implementation for Polaris.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
