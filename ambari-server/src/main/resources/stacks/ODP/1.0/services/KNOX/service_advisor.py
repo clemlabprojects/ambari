@@ -24,7 +24,6 @@ import traceback
 import re
 import socket
 import fnmatch
-from lxml import etree
 import xml.etree.ElementTree as ET
 
 
@@ -172,7 +171,6 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
 
       # check if authorization provider already added
       topologyContent = services["configurations"]["topology"]["properties"]["content"]
-      import xml.etree.ElementTree as ET
       root = ET.fromstring(topologyContent)
       authorizationProviderExists = False
       authNameChanged = False
@@ -196,8 +194,7 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
 
             if authNameChanged:
               name.text = newAuthName
-              import xml.etree.ElementTree as ET
-              putKnoxTopologyContent('content', ET.tostring(root).decode('utf-8'))
+              putKnoxTopologyContent('content', ET.tostring(root, encoding='unicode'))
 
             if authorizationProviderExists:
               break
@@ -221,7 +218,7 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
             enabled.text = "true"
 
             #TODO add pretty format for newly added provider
-            putKnoxTopologyContent('content', ET.tostring(root))
+            putKnoxTopologyContent('content', ET.tostring(root, encoding='unicode'))
 
 
   def recommendKnoxConfigurationsFromODP12(self, configurations, clusterData, services, hosts):
@@ -277,7 +274,6 @@ class KnoxValidator(service_advisor.ServiceAdvisor):
                                 "item": self.getWarnItem(
                                   "ranger-knox-plugin-properties/ranger-knox-plugin-enabled must correspond ranger-env/ranger-knox-plugin-enabled")})
     return self.toConfigurationValidationProblems(validationItems, "ranger-knox-plugin-properties")
-
 
 
 

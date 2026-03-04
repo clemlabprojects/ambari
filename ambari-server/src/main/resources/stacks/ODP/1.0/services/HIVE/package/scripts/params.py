@@ -453,6 +453,11 @@ mysql_deluser_path = format("{tmp_dir}/removeMysqlUser.sh")
 # initialize the schema only if not in an upgrade/downgrade
 init_metastore_schema = upgrade_direction is None
 
+# bound schematool execution to avoid indefinite hangs and allow transient retries
+hive_schema_tool_timeout = int(default("/configurations/hive-env/hive_schema_tool_timeout", 600))
+hive_schema_tool_tries = int(default("/configurations/hive-env/hive_schema_tool_tries", 5))
+hive_schema_tool_try_sleep = int(default("/configurations/hive-env/hive_schema_tool_try_sleep", 10))
+
 #Hive log4j properties
 hive_log_level = default("/configurations/hive-env/hive.log.level", "INFO")
 hive_zookeeper_log_level = default("/configurations/hive-env/hive.zookeeper.log.level", "ERROR")

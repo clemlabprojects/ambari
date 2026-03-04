@@ -139,12 +139,17 @@ def setup_hiveserver2():
         content=InlineTemplate(params.hive_env_sh_template),
         mode=0o755
     )
-    hiveserver2_site = get_config("hiveserver2-site")
-    hive_config = hive_site_config.update(hiveserver2_site_config)
+    hiveserver2_site_config = get_config("hiveserver2-site")
+    hive_config = dict(params.hive_site_config)
+    if hiveserver2_site_config:
+      hive_config.update(hiveserver2_site_config)
+    hive_config_attributes = dict(params.config['configurationAttributes'].get('hive-site', {}))
+    if hiveserver2_site_config:
+      hive_config_attributes.update(params.config['configurationAttributes'].get('hiveserver2-site', {}))
     XmlConfig("hive-site.xml",
-            conf_dir=params.params.hive_server_conf_dir,
+            conf_dir=params.hive_server_conf_dir,
             configurations=hive_config,
-            configuration_attributes=params.config['configurationAttributes']['hiveserver2-site'],
+            configuration_attributes=hive_config_attributes,
             owner=params.hive_user,
             group=params.user_group,
             mode=0o600)
@@ -365,7 +370,6 @@ def setup_metastore():
   import params
   
   hive_conf_dir = params.hive_server_conf_dir
-  print("params.version_for_stack_feature_checks:")
   if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
     hive_conf_dir = params.hive_metastore_conf_dir
 
@@ -381,12 +385,17 @@ def setup_metastore():
         content=InlineTemplate(params.hive_env_sh_template),
         mode=0o755
     )
-    hivemetastore_site = get_config("hivemetastore-site")
-    hive_config = hive_site_config.update(hivemetastore_site_config)
+    hivemetastore_site_config = get_config("hivemetastore-site")
+    hive_config = dict(params.hive_site_config)
+    if hivemetastore_site_config:
+      hive_config.update(hivemetastore_site_config)
+    hive_config_attributes = dict(params.config['configurationAttributes'].get('hive-site', {}))
+    if hivemetastore_site_config:
+      hive_config_attributes.update(params.config['configurationAttributes'].get('hivemetastore-site', {}))
     XmlConfig("hive-site.xml",
-            conf_dir=params.hive_conf_dir,
+            conf_dir=hive_conf_dir,
             configurations=hive_config,
-            configuration_attributes=params.config['configurationAttributes']['hivemetastore-site'],
+            configuration_attributes=hive_config_attributes,
             owner=params.hive_user,
             group=params.user_group,
             mode=0o600)
@@ -453,6 +462,9 @@ def refresh_yarn():
 def create_hive_metastore_schema():
   import params
   hive_conf_dir = params.hive_server_conf_dir
+  schema_tool_timeout = params.hive_schema_tool_timeout
+  schema_tool_tries = params.hive_schema_tool_tries
+  schema_tool_try_sleep = params.hive_schema_tool_try_sleep
   if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
     hive_conf_dir = params.hive_metastore_conf_dir
   SYS_DB_CREATED_FILE = "/etc/hive/sys.db.created"
@@ -461,7 +473,11 @@ def create_hive_metastore_schema():
     Logger.info("Sys DB is already created")
     return
 
+  Logger.info("Hive schematool settings (sys DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
+      schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
+
   create_hive_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                  "timeout {schema_tool_timeout}s "
                                   "{hive_schematool_bin}/schematool -initSchema "
                                   "-dbType hive "
                                   "-metaDbType {hive_metastore_db_type} "
@@ -470,6 +486,7 @@ def create_hive_metastore_schema():
                                   "-verbose")
 
   check_hive_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                          "timeout {schema_tool_timeout}s "
                                           "{hive_schematool_bin}/schematool -info "
                                           "-dbType hive "
                                           "-metaDbType {hive_metastore_db_type} "
@@ -495,7 +512,9 @@ def create_hive_metastore_schema():
 
     Execute(create_hive_schema_cmd,
             not_if = check_hive_schema_created_cmd,
-            user = params.hive_user
+            user = params.hive_user,
+            tries = schema_tool_tries,
+            try_sleep = schema_tool_try_sleep
     )
     Execute("touch " + SYS_DB_CREATED_FILE, user = "root")
     Logger.info("Sys DB is set up")
@@ -506,15 +525,22 @@ def create_hive_metastore_schema():
 def create_metastore_schema():
   import params
   hive_conf_dir = params.hive_server_conf_dir
+  schema_tool_timeout = params.hive_schema_tool_timeout
+  schema_tool_tries = params.hive_schema_tool_tries
+  schema_tool_try_sleep = params.hive_schema_tool_try_sleep
   if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
     hive_conf_dir = params.hive_metastore_conf_dir
+  Logger.info("Hive schematool settings (metastore DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
+      schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
   create_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+                             "timeout {schema_tool_timeout}s "
                              "{hive_schematool_bin}/schematool -initSchema "
                              "-dbType {hive_metastore_db_type} "
                              "-userName {hive_metastore_user_name} "
                              "-passWord {hive_metastore_user_passwd!p} -verbose")
 
   check_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                    "timeout {schema_tool_timeout}s "
                                     "{hive_schematool_bin}/schematool -info "
                                     "-dbType {hive_metastore_db_type} "
                                     "-userName {hive_metastore_user_name} "
@@ -531,7 +557,9 @@ def create_metastore_schema():
 
   Execute(create_schema_cmd,
           not_if = check_schema_created_cmd,
-          user = params.hive_user
+          user = params.hive_user,
+          tries = schema_tool_tries,
+          try_sleep = schema_tool_try_sleep
   )
 
 """
