@@ -40,3 +40,5 @@ db-ambari-test
 .flattened-pom.xml
 */.flattened-pom.xml
 */*/.flattened-pom.xml
+.mvn*
+.venv*
