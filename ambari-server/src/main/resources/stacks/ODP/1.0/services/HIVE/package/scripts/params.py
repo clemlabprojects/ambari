@@ -457,6 +457,16 @@ init_metastore_schema = upgrade_direction is None
 hive_schema_tool_timeout = int(default("/configurations/hive-env/hive_schema_tool_timeout", 600))
 hive_schema_tool_tries = int(default("/configurations/hive-env/hive_schema_tool_tries", 5))
 hive_schema_tool_try_sleep = int(default("/configurations/hive-env/hive_schema_tool_try_sleep", 10))
+hive_sys_schema_init_enabled = default("/configurations/hive-env/hive_sys_schema_init_enabled", None)
+
+if hive_sys_schema_init_enabled is None:
+  # The ODP-specific SYS schema init path (schematool -dbType hive) is unstable on
+  # newer stacks (Hive 4.x in ODP 1.3+); keep legacy behavior only on older stacks.
+  hive_sys_schema_init_enabled = not check_stack_feature(
+      StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE,
+      version_for_stack_feature_checks)
+else:
+  hive_sys_schema_init_enabled = str(hive_sys_schema_init_enabled).lower() == "true"
 
 #Hive log4j properties
 hive_log_level = default("/configurations/hive-env/hive.log.level", "INFO")

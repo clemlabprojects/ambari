@@ -461,16 +461,21 @@ def refresh_yarn():
 
 def create_hive_metastore_schema():
   import params
+  # dbType=hive uses HiveServer2-side schema tooling; keep HS2 conf even when
+  # metastore and HS2 have separated conf directories.
   hive_conf_dir = params.hive_server_conf_dir
   schema_tool_timeout = params.hive_schema_tool_timeout
   schema_tool_tries = params.hive_schema_tool_tries
   schema_tool_try_sleep = params.hive_schema_tool_try_sleep
-  if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
-    hive_conf_dir = params.hive_metastore_conf_dir
   SYS_DB_CREATED_FILE = "/etc/hive/sys.db.created"
 
   if os.path.isfile(SYS_DB_CREATED_FILE):
     Logger.info("Sys DB is already created")
+    return
+
+  if not params.hive_sys_schema_init_enabled:
+    Logger.info("Skipping Sys DB initialization (hive_sys_schema_init_enabled=false).")
+    Execute("touch " + SYS_DB_CREATED_FILE, user = "root")
     return
 
   Logger.info("Hive schematool settings (sys DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
@@ -519,8 +524,17 @@ def create_hive_metastore_schema():
     Execute("touch " + SYS_DB_CREATED_FILE, user = "root")
     Logger.info("Sys DB is set up")
   except:
+    error_output = traceback.format_exc()
+
+    # Hive 4 can return AlreadyExists when SYS schema objects were already
+    # created by a previous run. Treat this as initialized to avoid retries.
+    if "AlreadyExistsException" in error_output:
+      Logger.warning("Sys DB objects already exist; marking Sys DB as initialized.")
+      Execute("touch " + SYS_DB_CREATED_FILE, user = "root")
+      return
+
     Logger.error("Could not create Sys DB.")
-    Logger.error(traceback.format_exc())
+    Logger.error(error_output)
 
 def create_metastore_schema():
   import params
