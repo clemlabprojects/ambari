@@ -290,6 +290,22 @@ module.exports = {
   },
 
   /**
+   * Check that credentials for a specific alias are stored as <b>persisted</b>.
+   *
+   * @member utils.credentials
+   * @param {object[]} credentials credentials list retrieved from API @see credentials
+   * @param {string} alias credential alias
+   * @returns {boolean} <code>true</code> if credentials are persisted
+   */
+  isCredentialsPersistedByAlias: function(credentials, alias) {
+    var storedCredentials = credentials.findProperty('alias', alias);
+    if (storedCredentials) {
+      return Em.getWithDefault(storedCredentials, 'type', this.STORE_TYPES.TEMPORARY) === this.STORE_TYPES.PERSISTENT;
+    }
+    return false;
+  },
+
+  /**
    * Check that KDC credentials stored as <b>persisted</b> and not <b>temporary</b> from specified credentials list.
    *
    * @member utils.credentials
@@ -297,10 +313,6 @@ module.exports = {
    * @returns {boolean} <code>true</code> if credentials are persisted
    */
   isKDCCredentialsPersisted: function(credentials) {
-    var kdcCredentials = credentials.findProperty('alias', this.ALIAS.KDC_CREDENTIALS);
-    if (kdcCredentials) {
-      return Em.getWithDefault(kdcCredentials, 'type', this.STORE_TYPES.TEMPORARY) === this.STORE_TYPES.PERSISTENT;
-    }
-    return false;
+    return this.isCredentialsPersistedByAlias(credentials, this.ALIAS.KDC_CREDENTIALS);
   }
 };

@@ -18,6 +18,7 @@
 
 var App = require('app');
 require('controllers/main/admin/kerberos');
+var credentialsUtils = require('utils/credentials');
 
 function getFilename(config) {
   return config && (Em.get(config, 'filename') || config.filename);
@@ -25,6 +26,8 @@ function getFilename(config) {
 
 App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   name: 'mainAdminOidcController',
+
+  oidcCredentialAlias: credentialsUtils.ALIAS.OIDC_CREDENTIALS,
 
   /**
    * Keep OIDC flow on the OIDC admin page.
@@ -98,6 +101,36 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
       },
       success: '_updateConfigs',
       error: 'createKerberosDescriptor'
+    });
+  },
+
+  showManageOIDCCredentialsPopup: function() {
+    return App.showManageOidcCredentialsPopup();
+  },
+
+  runOidcProvisioning: function() {
+    var securityType = this.get('securityEnabled') ? 'KERBEROS' : 'NONE';
+    var self = this;
+
+    return App.ajax.send({
+      name: 'admin.configure.oidc.only',
+      sender: this,
+      data: {
+        clusterName: App.get('clusterName'),
+        data: {
+          Clusters: {
+            security_type: securityType
+          }
+        }
+      }
+    }).done(function() {
+      App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
+        if (initValue) {
+          App.router.get('backgroundOperationsController').showPopup();
+        }
+      });
+      App.showAlertPopup(Em.I18n.t('common.success'), Em.I18n.t('admin.oidc.provisioning.request.accepted'));
+      self.loadStep();
     });
   }
 });

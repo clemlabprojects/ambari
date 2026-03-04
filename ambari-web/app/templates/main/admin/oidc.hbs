@@ -21,8 +21,16 @@
       <span class="text-success">{{t admin.security.enabled}}</span>
       {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
         {{#if App.supports.enableToggleKerberos}}
+          <button href="#" {{action showManageOIDCCredentialsPopup target="controller"}}
+            class="btn btn-default pull-right">
+            {{t admin.oidc.button.manageCredentials}}
+          </button>
+          <button href="#" {{action runOidcProvisioning target="controller"}}
+            class="btn btn-default pull-right mrm">
+            {{t admin.oidc.button.runProvisioning}}
+          </button>
           <button href="#" {{action makeConfigsEditable target="controller"}}
-            {{bindAttr class="controller.isEditMode:hidden :btn :btn-default :pull-right"}}>
+            {{bindAttr class="controller.isEditMode:hidden :btn :btn-default :pull-right :mrm"}}>
             {{t common.edit}}
           </button>
         {{/if}}
@@ -44,6 +52,7 @@
         {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
           {{#if App.supports.enableToggleKerberos}}
             <a class="btn btn-padding btn-success admin-enable-security-btn" {{action checkAndStartKerberosWizard target="controller"}}>{{t admin.oidc.button.enableSecurity}} </a>
+            <a class="btn btn-padding btn-default admin-enable-security-btn" {{action showManageOIDCCredentialsPopup target="controller"}}>{{t admin.oidc.button.manageCredentials}} </a>
             <br/>
           {{/if}}
         {{/isAuthorized}}

@@ -287,11 +287,9 @@ describe('App.KerberosWizardController', function() {
 
     beforeEach(function() {
       sinon.stub(mock, 'callback');
+      sinon.stub(controller, 'createOidcResources').callsArg(0);
       sinon.stub(controller, 'createKerberosService').returns({
         done: Em.clb
-      });
-      sinon.stub(controller, 'createOidcService').returns({
-        always: Em.clb
       });
       sinon.stub(controller, 'updateAndCreateServiceComponent').returns({
         done: Em.clb
@@ -305,7 +303,7 @@ describe('App.KerberosWizardController', function() {
     afterEach(function() {
       controller.createKerberosHostComponents.restore();
       controller.updateAndCreateServiceComponent.restore();
-      controller.createOidcService.restore();
+      controller.createOidcResources.restore();
       controller.createKerberosService.restore();
       mock.callback.restore();
     });
@@ -314,16 +312,96 @@ describe('App.KerberosWizardController', function() {
       expect(controller.createKerberosService.calledOnce).to.be.true;
     });
 
+    it("createOidcResources should be called", function() {
+      expect(controller.createOidcResources.calledOnce).to.be.true;
+    });
+
     it("updateAndCreateServiceComponent should be called", function() {
       expect(controller.updateAndCreateServiceComponent.calledWith('KERBEROS_CLIENT')).to.be.true;
+    });
+
+    it("createKerberosHostComponents should be called", function() {
+      expect(controller.createKerberosHostComponents.calledOnce).to.be.true;
+    });
+
+    it("callback should be called", function() {
+      expect(mock.callback.calledOnce).to.be.true;
+    });
+  });
+
+  describe("#createOidcResources()", function () {
+    var mock = {
+      callback: Em.K
+    };
+
+    beforeEach(function() {
+      sinon.stub(mock, 'callback');
+      sinon.stub(controller, 'shouldConfigureOidc').returns(true);
+      sinon.stub(controller, 'createOidcService').returns({
+        always: Em.clb
+      });
+      sinon.stub(controller, 'updateAndCreateServiceComponent').returns({
+        done: Em.clb
+      });
+      sinon.stub(controller, 'createOidcHostComponents').returns({
+        done: Em.clb
+      });
+      sinon.stub(controller, 'installOidcService').returns({
+        always: Em.clb
+      });
+      controller.createOidcResources(mock.callback);
+    });
+
+    afterEach(function() {
+      controller.installOidcService.restore();
+      controller.createOidcHostComponents.restore();
+      controller.updateAndCreateServiceComponent.restore();
+      controller.createOidcService.restore();
+      controller.shouldConfigureOidc.restore();
+      mock.callback.restore();
     });
 
     it("createOidcService should be called", function() {
       expect(controller.createOidcService.calledOnce).to.be.true;
     });
 
-    it("createKerberosHostComponents should be called", function() {
-      expect(controller.createKerberosHostComponents.calledOnce).to.be.true;
+    it("updateAndCreateServiceComponent should be called with OIDC_CLIENT", function() {
+      expect(controller.updateAndCreateServiceComponent.calledWith('OIDC_CLIENT')).to.be.true;
+    });
+
+    it("createOidcHostComponents should be called", function() {
+      expect(controller.createOidcHostComponents.calledOnce).to.be.true;
+    });
+
+    it("installOidcService should be called", function() {
+      expect(controller.installOidcService.calledOnce).to.be.true;
+    });
+
+    it("callback should be called", function() {
+      expect(mock.callback.calledOnce).to.be.true;
+    });
+  });
+
+  describe("#createOidcResources() when OIDC is not requested", function () {
+    var mock = {
+      callback: Em.K
+    };
+
+    beforeEach(function() {
+      sinon.stub(mock, 'callback');
+      sinon.stub(controller, 'shouldConfigureOidc').returns(false);
+      sinon.stub(controller, 'createOidcService');
+      controller.createOidcResources(mock.callback);
+    });
+
+    afterEach(function() {
+      controller.createOidcService.restore();
+      controller.shouldConfigureOidc.restore();
+      mock.callback.restore();
+    });
+
+    it("createOidcService should not be called", function() {
+      expect(controller.createOidcService.called).to.be.false;
     });
 
     it("callback should be called", function() {

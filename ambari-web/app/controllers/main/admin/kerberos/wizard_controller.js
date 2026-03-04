@@ -236,16 +236,34 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
   createKerberosResources: function (callback) {
     var self = this;
     var enableKerberos = this.get('content.enableKerberos') !== false;
+    callback = callback || Em.K;
+    this.createOidcResources(function () {
+      if (!enableKerberos) {
+        callback();
+        return;
+      }
 
-    if (!enableKerberos) {
-      this.createOidcService().always(callback);
+      self.createKerberosService().done(function () {
+        self.updateAndCreateServiceComponent('KERBEROS_CLIENT').done(function () {
+          self.createKerberosHostComponents().done(callback);
+        });
+      });
+    });
+  },
+
+  createOidcResources: function (callback) {
+    var self = this;
+    callback = callback || Em.K;
+
+    if (!this.shouldConfigureOidc()) {
+      callback();
       return;
     }
 
-    this.createKerberosService().done(function () {
-      self.createOidcService().always(function () {
-        self.updateAndCreateServiceComponent('KERBEROS_CLIENT').done(function () {
-          self.createKerberosHostComponents().done(callback);
+    this.createOidcService().always(function () {
+      self.updateAndCreateServiceComponent('OIDC_CLIENT').done(function () {
+        self.createOidcHostComponents().done(function () {
+          self.installOidcService().always(callback);
         });
       });
     });
@@ -272,6 +290,25 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
       data: {
         data: '{"ServiceInfo": { "service_name": "OIDC"}}',
         cluster: App.get('clusterName')
+      }
+    });
+  },
+
+  installOidcService: function () {
+    if (!this.shouldConfigureOidc()) {
+      return $.Deferred().resolve().promise();
+    }
+
+    return App.ajax.send({
+      name: 'common.service.update',
+      sender: this,
+      data: {
+        clusterName: App.get('clusterName'),
+        serviceName: 'OIDC',
+        context: Em.I18n.t('requestInfo.oidcService'),
+        ServiceInfo: {
+          state: 'INSTALLED'
+        }
       }
     });
   },
@@ -314,6 +351,18 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
   },
 
   createKerberosHostComponents: function () {
+    return this.createHostComponentsOnAllHosts('KERBEROS_CLIENT');
+  },
+
+  createOidcHostComponents: function () {
+    if (!this.shouldConfigureOidc()) {
+      return $.Deferred().resolve().promise();
+    }
+
+    return this.createHostComponentsOnAllHosts('OIDC_CLIENT');
+  },
+
+  createHostComponentsOnAllHosts: function (componentName) {
     var hostNames = App.get('allHostNames');
     var queryStr = '';
     hostNames.forEach(function (hostName) {
@@ -330,7 +379,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
         "host_components": [
           {
             "HostRoles": {
-              "component_name": 'KERBEROS_CLIENT'
+              "component_name": componentName
             }
           }
         ]
