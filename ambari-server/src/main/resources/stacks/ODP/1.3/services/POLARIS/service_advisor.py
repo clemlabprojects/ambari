@@ -196,6 +196,17 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     else:
       if str(polaris_env.get("polaris_protocol", "http")).strip().lower() == "https":
         put_polaris_env("polaris_protocol", "http")
+      put_app_props("quarkus.http.insecure-requests", "enabled")
+      # Keep TLS-specific Quarkus keys empty when Polaris TLS is disabled.
+      for tls_key in (
+        "quarkus.http.ssl.certificate.key-store-file",
+        "quarkus.http.ssl.certificate.key-store-file-type",
+        "quarkus.http.ssl.certificate.key-store-key-alias",
+        "quarkus.http.ssl.certificate.trust-store-file",
+        "quarkus.http.ssl.certificate.trust-store-file-type",
+      ):
+        if str(app_props.get(tls_key, "")).strip():
+          put_app_props(tls_key, "")
 
   def recommendPolarisAuthConfigurations(self, configurations, services):
     polaris_env = self._get_site_properties(configurations, services, "polaris-env")
@@ -405,6 +416,13 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
   def validatePolarisApplicationProperties(self, properties, recommendedDefaults, configurations, services, hosts):
     validation_items = []
 
+    polaris_env = {}
+    if "polaris-env" in configurations and "properties" in configurations["polaris-env"]:
+      polaris_env = configurations["polaris-env"]["properties"]
+    else:
+      polaris_env = self.getServicesSiteProperties(services, "polaris-env") or {}
+    ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
+
     if "quarkus.log.console.enable" in properties:
       validation_items.append({
         "config-name": "quarkus.log.console.enable",
@@ -472,11 +490,35 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         })
 
     insecure_requests = str(properties.get("quarkus.http.insecure-requests", "redirect")).strip().lower()
-    if insecure_requests not in ("enabled", "redirect", "disabled"):
-      validation_items.append({
-        "config-name": "quarkus.http.insecure-requests",
-        "item": self.getWarnItem("quarkus.http.insecure-requests must be one of: enabled, redirect, disabled")
-      })
+    if ssl_enabled:
+      if insecure_requests not in ("enabled", "redirect", "disabled"):
+        validation_items.append({
+          "config-name": "quarkus.http.insecure-requests",
+          "item": self.getErrorItem("quarkus.http.insecure-requests must be one of: enabled, redirect, disabled")
+        })
+    else:
+      if insecure_requests != "enabled":
+        validation_items.append({
+          "config-name": "quarkus.http.insecure-requests",
+          "item": self.getErrorItem(
+            "quarkus.http.insecure-requests must be enabled when polaris_ssl_enabled=false"
+          )
+        })
+
+      for tls_key in (
+        "quarkus.http.ssl.certificate.key-store-file",
+        "quarkus.http.ssl.certificate.key-store-file-type",
+        "quarkus.http.ssl.certificate.key-store-key-alias",
+        "quarkus.http.ssl.certificate.trust-store-file",
+        "quarkus.http.ssl.certificate.trust-store-file-type",
+      ):
+        if str(properties.get(tls_key, "")).strip():
+          validation_items.append({
+            "config-name": tls_key,
+            "item": self.getErrorItem(
+              "{0} must be empty when polaris_ssl_enabled=false".format(tls_key)
+            )
+          })
 
     ssl_port = str(properties.get("quarkus.http.ssl-port", "")).strip()
     if ssl_port and not ssl_port.isdigit():
@@ -501,12 +543,12 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
     if ssl_enabled and protocol != "https":
       validation_items.append({
         "config-name": "polaris_protocol",
-        "item": self.getWarnItem("polaris_protocol should be https when polaris_ssl_enabled=true")
+        "item": self.getErrorItem("polaris_protocol should be https when polaris_ssl_enabled=true")
       })
     if not ssl_enabled and protocol == "https":
       validation_items.append({
         "config-name": "polaris_ssl_enabled",
-        "item": self.getWarnItem("polaris_ssl_enabled should be true when polaris_protocol=https")
+        "item": self.getErrorItem("polaris_ssl_enabled should be true when polaris_protocol=https")
       })
 
     if ssl_enabled:
@@ -575,12 +617,12 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
       if not str(app_props.get("quarkus.http.ssl-port", "")).strip():
         validation_items.append({
           "config-name": "quarkus.http.ssl-port",
-          "item": self.getWarnItem("quarkus.http.ssl-port should be set when TLS is enabled")
+          "item": self.getErrorItem("quarkus.http.ssl-port should be set when TLS is enabled")
         })
       if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
         validation_items.append({
           "config-name": "quarkus.http.ssl.certificate.key-store-file",
-          "item": self.getWarnItem("TLS keystore file should be set when TLS is enabled")
+          "item": self.getErrorItem("TLS keystore file should be set when TLS is enabled")
         })
 
     auth_type = str(app_props.get("polaris.authentication.type", "internal")).strip().lower()

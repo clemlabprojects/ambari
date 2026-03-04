@@ -181,10 +181,23 @@ if polaris_ssl_enabled:
   if str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
     application_properties["quarkus.http.ssl.certificate.trust-store-password"] = "${POLARIS_SSL_TRUSTSTORE_PASSWORD}"
 else:
-  if "quarkus.http.ssl.certificate.key-store-password" in application_properties:
-    del application_properties["quarkus.http.ssl.certificate.key-store-password"]
-  if "quarkus.http.ssl.certificate.trust-store-password" in application_properties:
-    del application_properties["quarkus.http.ssl.certificate.trust-store-password"]
+  # TLS is disabled: remove SSL-only keys so Quarkus does not try to load
+  # keystore/truststore material.
+  for tls_key in (
+    "quarkus.http.ssl.certificate.key-store-file",
+    "quarkus.http.ssl.certificate.key-store-file-type",
+    "quarkus.http.ssl.certificate.key-store-key-alias",
+    "quarkus.http.ssl.certificate.key-store-password",
+    "quarkus.http.ssl.certificate.trust-store-file",
+    "quarkus.http.ssl.certificate.trust-store-file-type",
+    "quarkus.http.ssl.certificate.trust-store-password",
+  ):
+    if tls_key in application_properties:
+      del application_properties[tls_key]
+
+  insecure_requests = str(application_properties.get("quarkus.http.insecure-requests", "")).strip().lower()
+  if insecure_requests not in ("enabled", "redirect", "disabled"):
+    application_properties["quarkus.http.insecure-requests"] = "enabled"
 
 polaris_auth_type = str(application_properties.get("polaris.authentication.type", "internal")).strip().lower()
 if polaris_auth_type not in ("internal", "external", "mixed"):

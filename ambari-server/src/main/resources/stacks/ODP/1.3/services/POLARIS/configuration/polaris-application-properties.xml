@@ -19,14 +19,14 @@
  * limitations under the License.
  */
 -->
-<configuration supports_adding_forbidden="true">
+<configuration>
 
   <!-- Core HTTP properties -->
   <property>
     <name>quarkus.http.port</name>
     <display-name>HTTP Port</display-name>
     <value>8181</value>
-    <description>HTTP port for the Polaris server.</description>
+    <description>Plain HTTP listener port used by Polaris. This port is used only when insecure HTTP requests are enabled.</description>
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
@@ -39,7 +39,7 @@
     <name>quarkus.http.ssl-port</name>
     <display-name>HTTPS Port</display-name>
     <value>8443</value>
-    <description>HTTPS port for the Polaris server when TLS is enabled.</description>
+    <description>HTTPS listener port used when TLS is enabled.</description>
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
@@ -52,7 +52,7 @@
     <name>quarkus.http.insecure-requests</name>
     <display-name>HTTP Insecure Requests</display-name>
     <value>redirect</value>
-    <description>Behavior for HTTP requests when TLS is enabled.</description>
+    <description>Controls handling of HTTP (non-TLS) requests. Allowed values: enabled (serve HTTP), redirect (HTTP 301/302 to HTTPS), disabled (reject HTTP). For non-TLS deployments set this to enabled.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -78,7 +78,7 @@
     <name>quarkus.http.ssl.certificate.key-store-file</name>
     <display-name>TLS Keystore File</display-name>
     <value>/etc/polaris/conf/tls/polaris-server-keystore.p12</value>
-    <description>Path to the TLS keystore used by Polaris HTTPS endpoint.</description>
+    <description>Absolute path to the server TLS keystore file (PKCS12/JKS). Required when TLS is enabled.</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -86,7 +86,7 @@
     <name>quarkus.http.ssl.certificate.key-store-file-type</name>
     <display-name>TLS Keystore Type</display-name>
     <value>PKCS12</value>
-    <description>TLS keystore type.</description>
+    <description>Format of the TLS keystore file referenced by TLS Keystore File.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -108,7 +108,7 @@
     <name>quarkus.http.ssl.certificate.key-store-key-alias</name>
     <display-name>TLS Keystore Key Alias</display-name>
     <value>polaris</value>
-    <description>Alias of the TLS key/certificate entry to use.</description>
+    <description>Alias of the private key entry in the keystore used for HTTPS.</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -116,7 +116,7 @@
     <name>quarkus.http.ssl.certificate.trust-store-file</name>
     <display-name>TLS Truststore File</display-name>
     <value>/etc/polaris/conf/tls/polaris-server-truststore.p12</value>
-    <description>Path to the TLS truststore used by Polaris.</description>
+    <description>Absolute path to the TLS truststore file used to validate client/peer certificates when configured.</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -124,7 +124,7 @@
     <name>quarkus.http.ssl.certificate.trust-store-file-type</name>
     <display-name>TLS Truststore Type</display-name>
     <value>PKCS12</value>
-    <description>TLS truststore type.</description>
+    <description>Format of the TLS truststore file referenced by TLS Truststore File.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -146,7 +146,7 @@
     <name>quarkus.log.console.enabled</name>
     <display-name>Console Logging Enabled</display-name>
     <value>false</value>
-    <description>Enable console logging for Polaris server process output.</description>
+    <description>If true, Polaris logs are emitted to stdout/stderr (useful for containerized deployments).</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -157,7 +157,7 @@
     <name>quarkus.log.file.enabled</name>
     <display-name>File Logging Enabled</display-name>
     <value>true</value>
-    <description>Enable file logging for Polaris server logs.</description>
+    <description>If true, Polaris writes logs to file according to polaris-env log directory settings.</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -169,7 +169,7 @@
     <name>polaris.persistence.type</name>
     <display-name>Persistence Type</display-name>
     <value>relational-jdbc</value>
-    <description>Polaris metadata persistence type. Default is relational-jdbc for production PostgreSQL-backed persistence.</description>
+    <description>Metadata storage backend. Use relational-jdbc for production (PostgreSQL). in-memory is ephemeral and non-persistent.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -191,7 +191,7 @@
     <name>quarkus.datasource.db-kind</name>
     <display-name>Datasource DB Kind</display-name>
     <value>postgresql</value>
-    <description>Quarkus datasource backend type for Polaris relational persistence.</description>
+    <description>Database engine type used by Quarkus datasource for Polaris metadata.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -209,7 +209,7 @@
     <name>quarkus.datasource.jdbc.url</name>
     <display-name>Datasource JDBC URL</display-name>
     <value>jdbc:postgresql://localhost:5432/polaris</value>
-    <description>JDBC connection URL for Polaris metadata database.</description>
+    <description>JDBC URL for Polaris metadata database. Example: jdbc:postgresql://host:5432/polaris_db</description>
     <depends-on>
       <property>
         <type>polaris-db-properties</type>
@@ -235,7 +235,7 @@
     <name>quarkus.datasource.jdbc.driver</name>
     <display-name>Datasource JDBC Driver</display-name>
     <value>org.postgresql.Driver</value>
-    <description>JDBC driver class for Polaris metadata database.</description>
+    <description>Fully qualified JDBC driver class used for database connectivity.</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -243,7 +243,7 @@
     <name>quarkus.datasource.username</name>
     <display-name>Datasource Username</display-name>
     <value>polaris</value>
-    <description>Username for Polaris metadata database.</description>
+    <description>Database username used by Polaris for metadata persistence.</description>
     <depends-on>
       <property>
         <type>polaris-db-properties</type>
@@ -257,7 +257,7 @@
     <name>quarkus.datasource.password</name>
     <display-name>Datasource Password</display-name>
     <value></value>
-    <description>Password for Polaris metadata database.</description>
+    <description>Database password used by Polaris for metadata persistence.</description>
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
@@ -276,7 +276,7 @@
     <name>quarkus.datasource.devservices.enabled</name>
     <display-name>Datasource DevServices Enabled</display-name>
     <value>false</value>
-    <description>Enable Quarkus DevServices datasource auto-provisioning.</description>
+    <description>Enable Quarkus automatic local test database provisioning. Keep disabled in Ambari-managed environments.</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -288,7 +288,7 @@
     <name>polaris.authentication.type</name>
     <display-name>Authentication Type (Global)</display-name>
     <value>internal</value>
-    <description>Authentication mode: internal, external, or mixed.</description>
+    <description>Global authentication mode: internal (Polaris managed users), external (OIDC only), or mixed (both).</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -314,7 +314,7 @@
     <name>polaris.authentication.authenticator.type</name>
     <display-name>Authenticator Type</display-name>
     <value>default</value>
-    <description>Authenticator implementation for Polaris.</description>
+    <description>Authenticator implementation identifier used by Polaris runtime.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -322,7 +322,7 @@
     <name>polaris.authentication.token-service.type</name>
     <display-name>Token Service Type</display-name>
     <value>default</value>
-    <description>Token service implementation for internal authentication.</description>
+    <description>Token service implementation for internal authentication flows.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -331,7 +331,7 @@
     <name>polaris.authentication.token-broker.type</name>
     <display-name>Token Broker Type</display-name>
     <value>rsa-key-pair</value>
-    <description>Token broker implementation (rsa-key-pair or symmetric-key).</description>
+    <description>Token signing strategy. rsa-key-pair uses asymmetric keys; symmetric-key uses one shared secret key.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -353,7 +353,7 @@
     <name>polaris.authentication.token-broker.max-token-generation</name>
     <display-name>Max Token Lifetime</display-name>
     <value>PT1H</value>
-    <description>Maximum token lifetime in ISO-8601 duration format (e.g. PT1H).</description>
+    <description>Maximum generated token lifetime in ISO-8601 duration format (for example PT15M, PT1H, P1D).</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -361,7 +361,7 @@
     <name>polaris.authentication.token-broker.rsa-key-pair.public-key-file</name>
     <display-name>RSA Public Key File</display-name>
     <value>/etc/polaris/conf/keys/public.key</value>
-    <description>Public key file for RSA token broker.</description>
+    <description>Path to RSA public key used to verify internally issued tokens.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -369,7 +369,7 @@
     <name>polaris.authentication.token-broker.rsa-key-pair.private-key-file</name>
     <display-name>RSA Private Key File</display-name>
     <value>/etc/polaris/conf/keys/private.key</value>
-    <description>Private key file for RSA token broker.</description>
+    <description>Path to RSA private key used to sign internally issued tokens.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -377,7 +377,7 @@
     <name>polaris.authentication.token-broker.symmetric-key.file</name>
     <display-name>Symmetric Key File</display-name>
     <value>/etc/polaris/conf/keys/symmetric.key</value>
-    <description>Shared secret file for symmetric token broker.</description>
+    <description>Path to shared key file used when token broker type is symmetric-key.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -385,7 +385,7 @@
     <name>polaris.authentication.token-broker.symmetric-key.secret</name>
     <display-name>Symmetric Key Secret</display-name>
     <value></value>
-    <description>Optional shared secret for symmetric token broker.</description>
+    <description>Optional inline secret used for symmetric-key token broker mode.</description>
     <value-attributes>
       <type>password</type>
     </value-attributes>
@@ -397,7 +397,7 @@
     <name>polaris.realm-context.realms</name>
     <display-name>Allowed Realms</display-name>
     <value>POLARIS</value>
-    <description>Comma-separated list of Polaris realms.</description>
+    <description>Comma-separated list of allowed Polaris realms/tenants.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -405,7 +405,7 @@
     <name>polaris.realm-context.header-name</name>
     <display-name>Realm Header Name</display-name>
     <value>Polaris-Realm</value>
-    <description>HTTP header used to resolve the realm.</description>
+    <description>HTTP header name used by Polaris to resolve the target realm.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -413,7 +413,7 @@
     <name>polaris.realm-context.require-header</name>
     <display-name>Require Realm Header</display-name>
     <value>true</value>
-    <description>Require the realm header for all requests.</description>
+    <description>If true, requests must include the configured realm header.</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -425,7 +425,7 @@
     <name>quarkus.oidc.tenant-enabled</name>
     <display-name>OIDC Tenant Enabled</display-name>
     <value>false</value>
-    <description>Enable the default OIDC tenant when using external authentication.</description>
+    <description>Enable Quarkus default OIDC tenant. Must be true when Polaris authentication.type is external or mixed.</description>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
@@ -436,7 +436,7 @@
     <name>quarkus.oidc.auth-server-url</name>
     <display-name>OIDC Auth Server URL</display-name>
     <value>http://localhost:8080/realms/polaris</value>
-    <description>OIDC issuer base URL for the default tenant.</description>
+    <description>OIDC issuer URL (realm endpoint), for example https://keycloak.example/realms/polaris.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -444,7 +444,7 @@
     <name>quarkus.oidc.client-id</name>
     <display-name>OIDC Client ID</display-name>
     <value>polaris</value>
-    <description>OIDC client id for Polaris.</description>
+    <description>OIDC client identifier registered for Polaris at the IdP.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -452,7 +452,7 @@
     <name>quarkus.oidc.credentials.secret</name>
     <display-name>OIDC Client Secret</display-name>
     <value></value>
-    <description>OIDC client secret for Polaris.</description>
+    <description>OIDC client secret associated with OIDC Client ID.</description>
     <value-attributes>
       <type>password</type>
       <empty-value-valid>true</empty-value-valid>
@@ -464,7 +464,7 @@
     <name>quarkus.oidc.application-type</name>
     <display-name>OIDC Application Type</display-name>
     <value>service</value>
-    <description>Quarkus OIDC application type.</description>
+    <description>Quarkus OIDC application type. service validates bearer tokens; web-app enables browser login flows.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
@@ -486,7 +486,7 @@
     <name>quarkus.oidc.roles.role-claim-path</name>
     <display-name>OIDC Role Claim Path</display-name>
     <value>polaris/roles</value>
-    <description>JWT claim path used by Quarkus to read roles.</description>
+    <description>Claim path inside JWT token where role names are read (for example realm_access/roles).</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -495,7 +495,7 @@
     <name>polaris.oidc.principal-mapper.type</name>
     <display-name>Principal Mapper Type</display-name>
     <value>default</value>
-    <description>Principal mapper implementation.</description>
+    <description>Principal mapping strategy implementation used by Polaris OIDC integration.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -503,7 +503,7 @@
     <name>polaris.oidc.principal-mapper.id-claim-path</name>
     <display-name>Principal ID Claim Path</display-name>
     <value>polaris/principal_id</value>
-    <description>JWT claim path for the principal id.</description>
+    <description>JWT claim path used to derive stable Polaris principal identifier.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -511,7 +511,7 @@
     <name>polaris.oidc.principal-mapper.name-claim-path</name>
     <display-name>Principal Name Claim Path</display-name>
     <value>polaris/principal_name</value>
-    <description>JWT claim path for the principal name.</description>
+    <description>JWT claim path used to derive display name for Polaris principal.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -520,7 +520,7 @@
     <name>polaris.oidc.principal-roles-mapper.type</name>
     <display-name>Principal Roles Mapper Type</display-name>
     <value>default</value>
-    <description>Principal roles mapper implementation.</description>
+    <description>Role mapping strategy implementation used by Polaris OIDC integration.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -528,7 +528,7 @@
     <name>polaris.oidc.principal-roles-mapper.filter</name>
     <display-name>Principal Roles Filter</display-name>
     <value>^(?!profile$|email$).*</value>
-    <description>Regex filter applied to roles before mapping.</description>
+    <description>Regex filter applied to incoming token roles before mapping to Polaris roles.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -536,7 +536,7 @@
     <name>polaris.oidc.principal-roles-mapper.mappings[0].regex</name>
     <display-name>Principal Roles Mapping Regex</display-name>
     <value>^.*$</value>
-    <description>Regex for mapping role names.</description>
+    <description>Regex pattern applied to each role that passes the filter.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
@@ -544,7 +544,7 @@
     <name>polaris.oidc.principal-roles-mapper.mappings[0].replacement</name>
     <display-name>Principal Roles Mapping Replacement</display-name>
     <value>PRINCIPAL_ROLE:$0</value>
-    <description>Replacement for mapped role names.</description>
+    <description>Replacement expression used to build mapped Polaris role names from matched roles.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 

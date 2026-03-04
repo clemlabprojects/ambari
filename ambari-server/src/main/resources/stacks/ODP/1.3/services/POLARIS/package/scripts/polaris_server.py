@@ -55,8 +55,7 @@ class PolarisServer(Script):
     self.configure(env)
 
     app_cfg = "{0}/{1}".format(params.polaris_conf_dir, params.polaris_conf_file)
-    admin_cfg = "{0}/admin.properties".format(params.polaris_conf_dir)
-    quarkus_locations = "{0},{1}".format(app_cfg, admin_cfg)
+    quarkus_locations = app_cfg
     runtime_env = {
       "QUARKUS_CONFIG_LOCATIONS": quarkus_locations,
       "SMALLRYE_CONFIG_LOCATIONS": quarkus_locations,
