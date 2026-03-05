@@ -351,7 +351,7 @@ App.WizardStep4Controller = Em.ArrayController.extend({
 
   applyHdfsOnlyServiceConstraints: function() {
     var hdfsService = this.findProperty('serviceName', 'HDFS');
-    var hdfsSelected = !!(hdfsService && hdfsService.get('isSelected'));
+    var hdfsAvailable = !!(hdfsService && (hdfsService.get('isSelected') || hdfsService.get('isInstalled')));
 
     this.forEach(function(service) {
       if (!service || service.get('isInstalled')) {
@@ -361,8 +361,8 @@ App.WizardStep4Controller = Em.ArrayController.extend({
       var requiredServices = service.get('requiredServices') || [];
       var requiresHdfs = this.get('hdfsOnlyServices').contains(service.get('serviceName')) || requiredServices.contains('HDFS');
 
-      service.set('fsSelectionDisabled', requiresHdfs && !hdfsSelected);
-      if (requiresHdfs && !hdfsSelected && service.get('isSelected')) {
+      service.set('fsSelectionDisabled', requiresHdfs && !hdfsAvailable);
+      if (requiresHdfs && !hdfsAvailable && service.get('isSelected')) {
         service.set('isSelected', false);
       }
     }, this);
