@@ -185,7 +185,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
   }
 
   @Test
-  public void testConfigureOidcSkipsWhenPolarisInternalAuth() throws Exception {
+  public void testConfigureOidcAppliesWhenPolarisInternalAuth() throws Exception {
     Map<String, Map<String, String>> existingConfigurations = new HashMap<>();
     Map<String, String> oidcEnv = new HashMap<>();
     oidcEnv.put(ConfigureOidcServerAction.OIDC_PROVIDER, "keycloak");
@@ -224,6 +224,27 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     expect(oidcOperationHandlerFactory.getHandler("keycloak")).andReturn(handler).once();
     handler.open(eq(adminCredential), org.easymock.EasyMock.anyObject(OidcProviderConfiguration.class));
     expectLastCall().once();
+
+    Capture<OidcClientDescriptor> clientCapture = Capture.newInstance();
+    expect(handler.ensureClient(capture(clientCapture), eq("example")))
+      .andReturn(new OidcClientResult(CLUSTER_NAME + "-polaris", "internal-id", "secret")).once();
+
+    Capture<Credential> credentialCapture = Capture.newInstance();
+    credentialStoreService.setCredential(eq(CLUSTER_NAME), eq("polaris.oidc.client.secret"),
+      capture(credentialCapture), eq(CredentialStoreType.PERSISTED));
+    expectLastCall().once();
+
+    Capture<Iterable<String>> configTypesCapture = Capture.newInstance();
+    Capture<Map<String, Map<String, String>>> updatesCapture = Capture.newInstance();
+    Capture<Map<String, Collection<String>>> removalsCapture = Capture.newInstance();
+    Capture<String> userCapture = Capture.newInstance();
+    Capture<String> noteCapture = Capture.newInstance();
+
+    configHelper.updateBulkConfigType(eq(cluster), eq(STACK_ID), eq(controller),
+      capture(configTypesCapture), capture(updatesCapture), capture(removalsCapture),
+      capture(userCapture), capture(noteCapture));
+    expectLastCall().once();
+
     handler.close();
     expectLastCall().once();
 
@@ -236,6 +257,31 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     action.execute(null);
 
     verifyAll();
+
+    OidcClientDescriptor resolvedClient = clientCapture.getValue();
+    Assert.assertEquals(CLUSTER_NAME + "-polaris", resolvedClient.getClientId());
+    Assert.assertEquals("example", resolvedClient.getRealm());
+
+    Credential storedCredential = credentialCapture.getValue();
+    Assert.assertTrue(storedCredential instanceof GenericKeyCredential);
+    Assert.assertEquals("secret", new String(((GenericKeyCredential) storedCredential).getKey()));
+
+    Set<String> configTypes = new HashSet<>();
+    for (String type : configTypesCapture.getValue()) {
+      configTypes.add(type);
+    }
+    Assert.assertTrue(configTypes.contains("polaris-application-properties"));
+
+    Map<String, String> appUpdates = updatesCapture.getValue().get("polaris-application-properties");
+    Assert.assertNotNull(appUpdates);
+    Assert.assertEquals("external", appUpdates.get("polaris.authentication.type"));
+    Assert.assertEquals(CLUSTER_NAME + "-polaris", appUpdates.get("quarkus.oidc.client-id"));
+    Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
+    Assert.assertEquals("https://keycloak.example.com/realms/example",
+      appUpdates.get("quarkus.oidc.auth-server-url"));
+    Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
+    Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
+    Assert.assertEquals("admin", userCapture.getValue());
   }
 
   private static void setField(Object target, String fieldName, Object value) {
