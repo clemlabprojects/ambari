@@ -36,8 +36,8 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
     else:
       Logger.info("Ozone: Setup ranger: command retry not enabled thus skipping if ranger admin is down !")
 
-    if params.is_hdfs_enabled:
-      if params.xa_audit_hdfs_is_enabled and service_name == 'ozone-manager':
+    if params.xa_audit_hdfs_is_enabled and service_name == 'ozone-manager':
+      if params.can_manage_hdfs_audit_dirs:
         try:
           params.HdfsResource("/ranger/audit",
                             type="directory",
@@ -58,6 +58,15 @@ def setup_ranger_ozone(upgrade_type=None, service_name="ozone-manager"):
           params.HdfsResource(None, action="execute")
         except Exception as err:
           Logger.exception("Audit directory creation in HDFS for Ozone Ranger plugin failed with error:\n{0}".format(err))
+      else:
+        Logger.warning(
+          "Skipping Ozone Ranger audit directory creation in HDFS because HDFS resources are not manageable "
+          "on this host (is_hdfs_enabled={0}, has_hdfs_client_on_node={1}, dfs_type={2}).".format(
+            params.is_hdfs_enabled,
+            params.has_hdfs_client_on_node,
+            params.dfs_type
+          )
+        )
 
     api_version = 'v2'
     Logger.info("Creating Ranger Ozone Repository User: " + params.repo_config_username)

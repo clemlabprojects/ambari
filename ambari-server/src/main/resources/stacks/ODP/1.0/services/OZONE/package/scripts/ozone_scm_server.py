@@ -346,6 +346,9 @@ def format_scm(force=None):
       Logger.info(format("Ozone SCM Server {params.hostname} is already bootstrapped. Skipping..."))
     else:
       Logger.info(format("Ozone SCM Server {params.hostname} is the primordial node. Initializing..."))
+      if params.ozone_scm_ha_dirs != '':
+        Logger.warning(format("Ozone SCM HA storage dirs are set to {params.ozone_scm_ha_dirs} but HA is not enabled. This is likely a misconfiguration, please check your cluster configuration.")) 
+        prepareOzoneLayout(params.ozone_scm_ha_dirs)
       try:
         Execute(format("ozone --config {conf_dir} scm --init"),
           user = params.ozone_user,

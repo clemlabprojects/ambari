@@ -18,6 +18,7 @@ limitations under the License.
 
 """
 import os
+import functools
 import status_params
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 
@@ -136,6 +137,25 @@ security_enabled = config['configurations']['cluster-env']['security_enabled']
 # HDFS/OZONE cohabitation params
 nn_hosts = default("/clusterHostInfo/namenode_hosts", [])
 is_hdfs_enabled = 'hdfs-site' in config['configurations'].keys() and len(nn_hosts) >= 1
+local_component_list = default("/localComponents", [])
+has_hdfs_client_on_node = 'HDFS_CLIENT' in local_component_list
+
+dfs_type = default("/clusterLevelParams/dfs_type", "")
+hdfs_user = default("/configurations/hadoop-env/hdfs_user", None) if is_hdfs_enabled else None
+hdfs_user_keytab = default("/configurations/hadoop-env/hdfs_user_keytab", None) if is_hdfs_enabled else None
+hdfs_principal_name = default("/configurations/hadoop-env/hdfs_principal_name", None) if is_hdfs_enabled else None
+hdfs_site = config['configurations']['hdfs-site'] if is_hdfs_enabled else None
+default_fs = default("/configurations/core-site/fs.defaultFS", None) if is_hdfs_enabled else None
+hadoop_bin_dir = stack_select.get_hadoop_dir("bin") if is_hdfs_enabled else None
+
+can_manage_hdfs_audit_dirs = (
+  is_hdfs_enabled and
+  has_hdfs_client_on_node and
+  bool(dfs_type) and
+  hdfs_site is not None and
+  default_fs is not None and
+  hadoop_bin_dir is not None
+)
 
 # this is "hadoop-metrics.properties" for 1.x stacks
 metric_prop_file_name = "hadoop-metrics2-hbase.properties"
@@ -414,6 +434,22 @@ else:
   kinit_cmd_master = ""
   master_security_config = ""
 
+HdfsResource = functools.partial(
+  HdfsResource,
+  user=hdfs_user,
+  hdfs_resource_ignore_file="/var/lib/ambari-agent/data/.hdfs_resource_ignore",
+  security_enabled=security_enabled,
+  keytab=hdfs_user_keytab,
+  kinit_path_local=kinit_path_local,
+  hadoop_bin_dir=hadoop_bin_dir,
+  hadoop_conf_dir=hadoop_conf_dir,
+  principal_name=hdfs_principal_name,
+  hdfs_site=hdfs_site,
+  default_fs=default_fs,
+  immutable_paths=get_not_managed_resources(),
+  dfs_type=dfs_type
+)
+
 # Log4j Properties
 ## each service has its own properties
 #  Manager
@@ -516,6 +552,9 @@ ozone_scm_ha_enabled = ozone_scm_ha_current_cluster_nameservice != None
 ozone_scm_ha_dirs = ''
 if ozone_scm_ha_enabled: 
   ozone_scm_ha_dirs = config['configurations']['ozone-site']['ozone.scm.ha.ratis.storage.dir'].split(',')
+else:
+  if 'ozone.scm.ha.ratis.storage.dir' in config['configurations']['ozone-site']:
+    ozone_scm_ha_dirs = config['configurations']['ozone-site']['ozone.scm.ha.ratis.storage.dir'].split(',')
 ozone_scm_format_disabled = default("/configurations/cluster-env/ozone_scm_format_disabled", False)
 ozone_scm_primordial_node_id = config['configurations']['ozone-site']['ozone.scm.primordial.node.id']
 ozone_scm_ha_ratis_port = default("/configurations/ozone-site/ozone.scm.ratis.port", 9894)
@@ -679,7 +718,9 @@ if has_ranger_admin:
     if xml_configurations_supported and stack_supports_ranger_audit_db:
       xa_audit_db_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.solr']
 
-    xa_audit_hdfs_is_enabled = config['configurations']['ranger-ozone-audit']['xasecure.audit.destination.hdfs'] if xml_configurations_supported else False
+    xa_audit_hdfs_is_enabled = False
+    if xml_configurations_supported:
+      xa_audit_hdfs_is_enabled = str(default('/configurations/ranger-ozone-audit/xasecure.audit.destination.hdfs', False)).lower() == 'true'
     ssl_keystore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password'] if xml_configurations_supported else None
     ssl_truststore_password = config['configurations']['ranger-ozone-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password'] if xml_configurations_supported else None
     credential_file = format('/etc/ranger/{repo_name}/cred.jceks')

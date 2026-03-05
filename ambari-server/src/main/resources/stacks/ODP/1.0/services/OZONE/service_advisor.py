@@ -492,6 +492,7 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
 
     self.validators = [("ozone-site", self.validateOzoneConfigurationsFromODP10),
                        ("ozone-env", self.validateOzoneEnvConfigurationsFromODP10),
+                       ("ranger-ozone-audit", self.validateRangerOzoneAuditFromODP10),
                        ("ozone-site", self.validateRangerAuthorizerFromODP10)]
                        
     # **********************************************************
@@ -542,6 +543,26 @@ class OzoneValidator(service_advisor.ServiceAdvisor):
     """
     validationItems = []
     return self.toConfigurationValidationProblems(validationItems, "ozone-env")
+
+  def validateRangerOzoneAuditFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
+    """
+    Validate ranger-ozone-audit against installed services.
+    """
+    validationItems = []
+    ranger_ozone_audit = properties if properties else {}
+    servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    include_hdfs = "HDFS" in servicesList
+    hdfs_audit_enabled = str(ranger_ozone_audit.get("xasecure.audit.destination.hdfs", "false")).lower() == "true"
+
+    if not include_hdfs and hdfs_audit_enabled:
+      validationItems.append({
+        "config-name": "xasecure.audit.destination.hdfs",
+        "item": self.getErrorItem(
+          "HDFS service is not installed. Disable ranger-ozone-audit/xasecure.audit.destination.hdfs or install HDFS."
+        )
+      })
+
+    return self.toConfigurationValidationProblems(validationItems, "ranger-ozone-audit")
 
   def validateRangerAuthorizerFromODP10(self, properties, recommendedDefaults, configurations, services, hosts):
     """
