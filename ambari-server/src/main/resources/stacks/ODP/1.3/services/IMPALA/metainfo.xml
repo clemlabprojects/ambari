@@ -5,7 +5,7 @@
         <service>
             <name>IMPALA</name>
             <displayName>Impala</displayName>
-            <comment>an open source, analytic MPP database for Apache Hadoop that provides the fastest time-to-insight</comment>
+            <comment>Apache Impala is a modern, open source, distributed SQL query engine for open data and table formats</comment>
             <version>5.0.0</version>
             <components>
                 <component>
