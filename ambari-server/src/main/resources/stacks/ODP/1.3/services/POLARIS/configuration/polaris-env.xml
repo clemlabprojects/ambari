@@ -513,6 +513,91 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>polaris_ozone_principal_name</name>
+    <display-name>Ozone Principal Name</display-name>
+    <value>ozone-engine</value>
+    <description>Polaris principal created for Ozone-backed engine access.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_principal_secret</name>
+    <display-name>Ozone Principal Secret</display-name>
+    <value>ozone-engine-secret</value>
+    <description>Client secret for the Ozone Polaris principal.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>false</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_principal_role</name>
+    <display-name>Ozone Principal Role</display-name>
+    <value>ozone_engineers</value>
+    <description>Polaris principal role used for assigning the default Ozone catalog role.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_catalog_name</name>
+    <display-name>Ozone Catalog Name</display-name>
+    <value>ozone</value>
+    <description>Name of the default Ozone-backed Polaris catalog.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_catalog_base_location</name>
+    <display-name>Ozone Catalog Base Location</display-name>
+    <value>s3://ozone/polaris/</value>
+    <description>Default base location used when creating the Ozone-backed catalog.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_catalog_allowed_locations</name>
+    <display-name>Ozone Allowed Locations</display-name>
+    <value>s3://ozone/</value>
+    <description>Comma-separated list of allowed S3 locations for the Ozone-backed catalog.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_s3_endpoint</name>
+    <display-name>Ozone S3 Endpoint</display-name>
+    <value></value>
+    <description>S3 endpoint URL exposed by Ozone S3 Gateway, for example http://ozone-s3g-host:9878.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_s3_region</name>
+    <display-name>Ozone S3 Region</display-name>
+    <value>us-east-1</value>
+    <description>Region used in the Ozone S3 storage configuration for Polaris catalog creation.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_s3_path_style_access</name>
+    <display-name>Use Path-style S3 Access</display-name>
+    <value>true</value>
+    <description>Enable path-style S3 access for Ozone compatibility in Polaris catalog storage config.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ozone_catalog_auto_grants</name>
+    <display-name>Auto-grant Catalog Access</display-name>
+    <value>true</value>
+    <description>Automatically create default Polaris roles/grants for the Ozone principal when using internal authorization.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>polaris_oidc_use_cluster_config</name>
     <display-name>Use Cluster OIDC Configuration</display-name>
     <value>true</value>
@@ -623,6 +708,18 @@ export POLARIS_CONSOLE_TLS_KEY_FILE={{polaris_console_tls_key_file}}
 # Default internal admin credentials (optional)
 export POLARIS_ADMIN_USER={{polaris_admin_username}}
 export POLARIS_ADMIN_PASSWORD='{{polaris_admin_password_escaped}}'
+
+# Ozone bootstrap defaults for Polaris
+export POLARIS_OZONE_PRINCIPAL_NAME={{polaris_ozone_principal_name}}
+export POLARIS_OZONE_PRINCIPAL_SECRET='{{polaris_ozone_principal_secret_escaped}}'
+export POLARIS_OZONE_PRINCIPAL_ROLE={{polaris_ozone_principal_role}}
+export POLARIS_OZONE_CATALOG_NAME={{polaris_ozone_catalog_name}}
+export POLARIS_OZONE_CATALOG_BASE_LOCATION={{polaris_ozone_catalog_base_location}}
+export POLARIS_OZONE_CATALOG_ALLOWED_LOCATIONS={{polaris_ozone_catalog_allowed_locations}}
+export POLARIS_OZONE_S3_ENDPOINT={{polaris_ozone_s3_endpoint}}
+export POLARIS_OZONE_S3_REGION={{polaris_ozone_s3_region}}
+export POLARIS_OZONE_S3_PATH_STYLE_ACCESS={{polaris_ozone_s3_path_style_access}}
+export POLARIS_OZONE_CATALOG_AUTO_GRANTS={{polaris_ozone_catalog_auto_grants}}
     </value>
     <value-attributes>
       <type>content</type>

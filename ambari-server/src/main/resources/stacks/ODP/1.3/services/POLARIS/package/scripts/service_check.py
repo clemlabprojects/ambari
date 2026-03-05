@@ -33,16 +33,19 @@ class PolarisServiceCheck(Script):
 
     failures = 0
     for host in params.polaris_hosts:
-      url = format("{polaris_protocol}://{host}:{polaris_port}/")
-      cmd = format("curl -k -s -o /dev/null {url}")
+      ready_url = format("{polaris_protocol}://{host}:{polaris_port}/q/health/ready")
+      cmd = format(
+        "curl -k -sS --connect-timeout 3 --max-time 5 -o /dev/null "
+        "-w \"%{{http_code}}\" {ready_url} | grep -E '^(200|204)$'"
+      )
       try:
-        Execute(cmd, user=params.smoke_test_user, tries=5, try_sleep=10)
+        Execute(cmd, user=params.smoke_test_user, tries=15, try_sleep=5)
       except Exception as err:
         failures += 1
         Logger.error("Polaris service check failed for host {0} with error {1}".format(host, err))
 
     if failures == len(params.polaris_hosts):
-      raise Fail("All instances of POLARIS_SERVER are down.")
+      raise Fail("All instances of POLARIS_SERVER are down or not ready yet.")
 
     if params.polaris_mcp_hosts and str(params.polaris_mcp_transport).lower() != "stdio":
       mcp_path = "/mcp"
@@ -53,9 +56,9 @@ class PolarisServiceCheck(Script):
       for host in params.polaris_mcp_hosts:
         mcp_url = "{0}://{1}:{2}{3}".format(
           params.polaris_mcp_protocol, host, params.polaris_mcp_port, mcp_path)
-        mcp_cmd = "curl -k -s -o /dev/null {0}".format(mcp_url)
+        mcp_cmd = "curl -k -sS --connect-timeout 3 --max-time 5 -o /dev/null {0}".format(mcp_url)
         try:
-          Execute(mcp_cmd, user=params.smoke_test_user, tries=5, try_sleep=10)
+          Execute(mcp_cmd, user=params.smoke_test_user, tries=7, try_sleep=5)
         except Exception as err:
           mcp_failures += 1
           Logger.error("Polaris MCP service check failed for host {0} with error {1}".format(host, err))
@@ -68,9 +71,9 @@ class PolarisServiceCheck(Script):
       for host in params.polaris_console_hosts:
         console_url = "{0}://{1}:{2}/".format(
           params.polaris_console_protocol, host, params.polaris_console_port)
-        console_cmd = "curl -k -s -o /dev/null {0}".format(console_url)
+        console_cmd = "curl -k -sS --connect-timeout 3 --max-time 5 -o /dev/null {0}".format(console_url)
         try:
-          Execute(console_cmd, user=params.smoke_test_user, tries=5, try_sleep=10)
+          Execute(console_cmd, user=params.smoke_test_user, tries=7, try_sleep=5)
         except Exception as err:
           console_failures += 1
           Logger.error("Polaris Console service check failed for host {0} with error {1}".format(host, err))

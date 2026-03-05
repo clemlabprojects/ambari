@@ -15,7 +15,7 @@
           "configurations": [
             {
               "polaris-application-properties": {
-                "polaris.authentication.type": "external",
+                "polaris.authentication.type": "mixed",
                 "quarkus.oidc.tenant-enabled": "true",
                 "quarkus.oidc.auth-server-url": "${auth_server_url}",
                 "quarkus.oidc.client-id": "${client_id}",

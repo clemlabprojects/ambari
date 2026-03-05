@@ -61,6 +61,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     self.recommendPolarisTlsConfigurations(configurations, services)
     self.recommendPolarisAuthConfigurations(configurations, services)
+    self.recommendPolarisOzoneBootstrapConfigurations(configurations, services, hosts)
     self.recommendPolarisDatabaseConfigurations(configurations, services)
     self.recommendPolarisMcpConfigurations(configurations, services, hosts)
     self.recommendPolarisConsoleConfigurations(configurations, services)
@@ -201,16 +202,19 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       if str(polaris_env.get("polaris_protocol", "http")).strip().lower() == "https":
         put_polaris_env("polaris_protocol", "http")
       put_app_props("quarkus.http.insecure-requests", "enabled")
-      # Keep TLS-specific Quarkus keys empty when Polaris TLS is disabled.
-      for tls_key in (
-        "quarkus.http.ssl.certificate.key-store-file",
-        "quarkus.http.ssl.certificate.key-store-file-type",
-        "quarkus.http.ssl.certificate.key-store-key-alias",
-        "quarkus.http.ssl.certificate.trust-store-file",
-        "quarkus.http.ssl.certificate.trust-store-file-type",
-      ):
-        if str(app_props.get(tls_key, "")).strip():
-          put_app_props(tls_key, "")
+      # Keep TLS-specific keys populated in Ambari config for UX consistency,
+      # but params.py still strips them from effective runtime properties when
+      # Polaris TLS is disabled.
+      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
+        put_app_props("quarkus.http.ssl.certificate.key-store-file", "/etc/polaris/conf/tls/polaris-server-keystore.p12")
+      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file-type", "")).strip():
+        put_app_props("quarkus.http.ssl.certificate.key-store-file-type", "PKCS12")
+      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
+        put_app_props("quarkus.http.ssl.certificate.key-store-key-alias", "polaris")
+      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
+        put_app_props("quarkus.http.ssl.certificate.trust-store-file", "/etc/polaris/conf/tls/polaris-server-truststore.p12")
+      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
+        put_app_props("quarkus.http.ssl.certificate.trust-store-file-type", "PKCS12")
 
   def recommendPolarisAuthConfigurations(self, configurations, services):
     polaris_env = self._get_site_properties(configurations, services, "polaris-env")
@@ -230,10 +234,16 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       auth_type = "internal"
       put_app_props("polaris.authentication.type", auth_type)
 
-    security_enabled = self._is_security_enabled(configurations, services)
     oidc_admin_url = str(oidc_env.get("oidc_admin_url", "")).strip()
     oidc_realm = str(oidc_env.get("oidc_realm", "")).strip()
-    oidc_available = security_enabled and oidc_admin_url != "" and oidc_realm != ""
+    oidc_available = oidc_admin_url != "" and oidc_realm != ""
+
+    # Keep internal principals usable while enabling OIDC for Polaris.
+    # If cluster-level OIDC is configured and no explicit external/mixed mode was chosen,
+    # default Polaris authentication to mixed.
+    if oidc_available and auth_type == "internal":
+      auth_type = "mixed"
+      put_app_props("polaris.authentication.type", auth_type)
 
     if not str(polaris_env.get("polaris_bootstrap_realms", "")).strip():
       default_realms = str(app_props.get("polaris.realm-context.realms", "POLARIS")).strip() or "POLARIS"
@@ -254,6 +264,67 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
         put_app_props("quarkus.oidc.client-id", "{0}-polaris".format(cluster_name))
     else:
       put_app_props("quarkus.oidc.tenant-enabled", "false")
+
+  def recommendPolarisOzoneBootstrapConfigurations(self, configurations, services, hosts):
+    polaris_env = self._get_site_properties(configurations, services, "polaris-env")
+    ozone_site = self._get_site_properties(configurations, services, "ozone-site")
+    services_list = self.get_services_list(services)
+    cluster_name = services.get("clusterName", "cluster")
+
+    put_polaris_env = self.putProperty(configurations, "polaris-env", services)
+
+    ozone_present = "OZONE" in services_list or "ozone-site" in services.get("configurations", {})
+
+    if not ozone_present:
+      return
+
+    s3g_hosts = self.getHostsWithComponent("OZONE", "OZONE_S3G", services, hosts)
+    s3g_host = None
+    if s3g_hosts and len(s3g_hosts) > 0:
+      s3g_host = s3g_hosts[0]["Hosts"]["host_name"]
+
+    s3g_https_addr = str(ozone_site.get("ozone.s3g.https-address", "")).strip()
+    s3g_http_addr = str(ozone_site.get("ozone.s3g.http-address", "")).strip()
+    s3g_https_port = str(ozone_site.get("ozone.s3g.https-port", "9879")).strip() or "9879"
+    s3g_http_port = str(ozone_site.get("ozone.s3g.http-port", "9878")).strip() or "9878"
+
+    endpoint = ""
+    if s3g_https_addr:
+      endpoint_host = s3g_https_addr.split(":", 1)[0]
+      endpoint = "https://{0}:{1}".format(endpoint_host, s3g_https_port)
+    elif s3g_http_addr:
+      endpoint_host = s3g_http_addr.split(":", 1)[0]
+      endpoint = "http://{0}:{1}".format(endpoint_host, s3g_http_port)
+
+    if endpoint:
+      endpoint_host_only = endpoint.split("://", 1)[1].split(":", 1)[0].strip()
+      if endpoint_host_only in ("0.0.0.0", "::", "localhost", "") and s3g_host:
+        endpoint_protocol = endpoint.split("://", 1)[0]
+        endpoint_port = endpoint.rsplit(":", 1)[1]
+        endpoint = "{0}://{1}:{2}".format(endpoint_protocol, s3g_host, endpoint_port)
+    elif s3g_host:
+      endpoint = "http://{0}:{1}".format(s3g_host, s3g_http_port)
+
+    if not str(polaris_env.get("polaris_ozone_principal_name", "")).strip():
+      put_polaris_env("polaris_ozone_principal_name", "ozone-engine")
+    if not str(polaris_env.get("polaris_ozone_principal_secret", "")).strip():
+      put_polaris_env("polaris_ozone_principal_secret", "ozone-engine-secret")
+    if not str(polaris_env.get("polaris_ozone_principal_role", "")).strip():
+      put_polaris_env("polaris_ozone_principal_role", "ozone_engineers")
+    if not str(polaris_env.get("polaris_ozone_catalog_name", "")).strip():
+      put_polaris_env("polaris_ozone_catalog_name", "ozone")
+    if not str(polaris_env.get("polaris_ozone_catalog_base_location", "")).strip():
+      put_polaris_env("polaris_ozone_catalog_base_location", "s3://{0}/polaris/".format(cluster_name.lower()))
+    if not str(polaris_env.get("polaris_ozone_catalog_allowed_locations", "")).strip():
+      put_polaris_env("polaris_ozone_catalog_allowed_locations", "s3://{0}/".format(cluster_name.lower()))
+    if not str(polaris_env.get("polaris_ozone_s3_endpoint", "")).strip() and endpoint:
+      put_polaris_env("polaris_ozone_s3_endpoint", endpoint)
+    if not str(polaris_env.get("polaris_ozone_s3_region", "")).strip():
+      put_polaris_env("polaris_ozone_s3_region", "us-east-1")
+    if "polaris_ozone_catalog_auto_grants" not in polaris_env:
+      put_polaris_env("polaris_ozone_catalog_auto_grants", "true")
+    if "polaris_ozone_s3_path_style_access" not in polaris_env:
+      put_polaris_env("polaris_ozone_s3_path_style_access", "true")
 
   def _is_ranger_plugin_enabled(self, configurations, services):
     plugin_value = self._get_property(configurations, services, "ranger-polaris-plugin-properties", "ranger-polaris-plugin-enabled")
@@ -699,6 +770,32 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           validation_items.append({
             "config-name": "polaris_oidc_override_client_secret",
             "item": self.getWarnItem("polaris_oidc_override_client_secret should be set when not using cluster OIDC config")
+          })
+
+    services_list = self.get_services_list(services)
+    ozone_present = "OZONE" in services_list or "ozone-site" in services.get("configurations", {})
+    if ozone_present:
+      if auth_type == "external":
+        validation_items.append({
+          "config-name": "polaris.authentication.type",
+          "item": self.getWarnItem(
+            "Ozone principal/catalog auto-bootstrap requires internal or mixed Polaris authentication"
+          )
+        })
+
+      required_ozone_props = [
+        "polaris_ozone_principal_name",
+        "polaris_ozone_principal_secret",
+        "polaris_ozone_catalog_name",
+        "polaris_ozone_catalog_base_location",
+        "polaris_ozone_catalog_allowed_locations",
+        "polaris_ozone_s3_endpoint",
+      ]
+      for ozone_prop in required_ozone_props:
+        if not str(properties.get(ozone_prop, "")).strip():
+          validation_items.append({
+            "config-name": ozone_prop,
+            "item": self.getWarnItem("{0} should be set when OZONE service is installed".format(ozone_prop))
           })
 
     return self.toConfigurationValidationProblems(validation_items, "polaris-env")

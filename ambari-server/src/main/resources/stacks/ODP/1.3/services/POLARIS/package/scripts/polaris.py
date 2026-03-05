@@ -19,12 +19,19 @@ limitations under the License.
 import json
 import os
 import shlex
+import ssl
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed, Fail
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.core.source import DownloadSource, InlineTemplate
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.get_user_call_output import get_user_call_output
+from resource_management.libraries.resources.ozone_resource import OzoneResource
 from resource_management.libraries.resources.properties_file import PropertiesFile
 
 
@@ -463,6 +470,571 @@ def setup_metastore_bootstrap():
       Logger.info("Polaris metastore is already bootstrapped; skipping bootstrap step.")
       return
     raise
+
+
+def bootstrap_ozone_catalog_in_polaris():
+  import params
+
+  if not getattr(params, "has_ozone_service", False):
+    Logger.warning("Skipping Polaris Ozone bootstrap; OZONE service is not detected on this cluster.")
+    return
+
+  auth_type = _normalize(params.application_properties.get("polaris.authentication.type", "internal"))
+  if auth_type not in ("internal", "mixed"):
+    Logger.warning(
+      "Skipping Polaris Ozone bootstrap; Polaris authentication mode '{0}' does not support internal bootstrap credentials.".format(
+        auth_type
+      )
+    )
+    return
+
+  catalog_name = str(getattr(params, "polaris_ozone_catalog_name", "")).strip()
+  principal_name = str(getattr(params, "polaris_ozone_principal_name", "")).strip()
+  principal_secret = str(getattr(params, "polaris_ozone_principal_secret", "")).strip()
+  principal_role = str(getattr(params, "polaris_ozone_principal_role", "")).strip() or "{0}_role".format(principal_name)
+  base_location = str(getattr(params, "polaris_ozone_catalog_base_location", "")).strip()
+  allowed_locations = list(getattr(params, "polaris_ozone_catalog_allowed_locations_list", []) or [])
+  s3_endpoint = str(getattr(params, "polaris_ozone_s3_endpoint", "")).strip()
+  s3_region = str(getattr(params, "polaris_ozone_s3_region", "us-east-1")).strip() or "us-east-1"
+  path_style_access = bool(getattr(params, "polaris_ozone_s3_path_style_access", True))
+  auto_grants = bool(getattr(params, "polaris_ozone_catalog_auto_grants", True))
+
+  if not principal_name or not principal_secret:
+    Logger.warning("Skipping Polaris Ozone bootstrap; principal name/secret is not configured.")
+    return
+  if not catalog_name:
+    Logger.warning("Skipping Polaris Ozone bootstrap; catalog name is not configured.")
+    return
+  if not base_location:
+    Logger.warning("Skipping Polaris Ozone bootstrap; base location is not configured.")
+    return
+  if not allowed_locations:
+    Logger.warning("Skipping Polaris Ozone bootstrap; allowed locations are not configured.")
+    return
+  if not s3_endpoint:
+    Logger.warning("Skipping Polaris Ozone bootstrap; Ozone S3 endpoint is not configured.")
+    return
+
+  _ensure_ozone_s3_secret_for_principal(principal_name, principal_secret)
+
+  api_base = _polaris_get_base_url()
+  if not api_base:
+    Logger.warning("Skipping Polaris Ozone bootstrap; unable to resolve Polaris API base URL.")
+    return
+
+  if not _wait_for_polaris_api_ready_for_ozone_bootstrap(
+    api_base=api_base,
+    run_as_user=params.polaris_user,
+    timeout_seconds=30
+  ):
+    Logger.warning(
+      "Skipping Polaris Ozone bootstrap; Polaris API did not become ready within 30 seconds ({0}).".format(
+        api_base
+      )
+    )
+    return
+
+  root_user = str(getattr(params, "polaris_admin_username", "")).strip()
+  root_password = str(getattr(params, "polaris_admin_password", "")).strip()
+  if not root_user or not root_password:
+    Logger.warning("Skipping Polaris Ozone bootstrap; Polaris admin bootstrap credentials are missing.")
+    return
+
+  try:
+    token = _polaris_get_root_token_with_retry(api_base, root_user, root_password)
+    if not token:
+      Logger.warning("Skipping Polaris Ozone bootstrap; failed to acquire Polaris root access token.")
+      return
+
+    created, credentials = _polaris_ensure_principal(api_base, token, principal_name)
+    if created and principal_secret:
+      client_id = None
+      if isinstance(credentials, dict):
+        client_id = (credentials.get("credentials") or {}).get("clientId")
+      if client_id:
+        _polaris_reset_principal_secret(api_base, token, principal_name, client_id, principal_secret)
+
+    _polaris_ensure_principal_role(api_base, token, principal_role)
+    _polaris_assign_principal_role(api_base, token, principal_name, principal_role)
+
+    _polaris_ensure_catalog(
+      api_base=api_base,
+      token=token,
+      catalog_name=catalog_name,
+      base_location=base_location,
+      allowed_locations=allowed_locations,
+      s3_endpoint=s3_endpoint,
+      s3_region=s3_region,
+      path_style_access=path_style_access,
+    )
+
+    authz_type = _normalize(params.application_properties.get("polaris.authorization.type", "internal")) or "internal"
+    if authz_type == "ranger":
+      Logger.info(
+        "Polaris authorization type is ranger; skipping internal role/grant bootstrap for Ozone principal '{0}'.".format(
+          principal_name
+        )
+      )
+    elif auto_grants:
+      catalog_role_name = "catalog_admin"
+      _polaris_ensure_catalog_role(api_base, token, catalog_name, catalog_role_name)
+      _polaris_ensure_catalog_manage_access_grant(api_base, token, catalog_name, catalog_role_name)
+      _polaris_assign_catalog_role_to_principal_role(
+        api_base, token, principal_role, catalog_name, catalog_role_name
+      )
+
+    if getattr(params, "ozone_acl_enabled", False):
+      if getattr(params, "ozone_acl_managed_by_ranger", False):
+        Logger.info("Ozone ACL is enabled and managed by Ranger.")
+      else:
+        Logger.info("Ozone ACL is enabled and managed by native Ozone ACL authorizer.")
+    else:
+      Logger.warning(
+        "Ozone ACL is disabled; verify bucket-level access controls before using production Ozone catalogs."
+      )
+
+    Logger.info(
+      "Polaris Ozone bootstrap completed (catalog={0}, principal={1}, auth={2}, authz={3}).".format(
+        catalog_name, principal_name, auth_type, authz_type
+      )
+    )
+  except Exception as err:
+    Logger.warning("Polaris Ozone bootstrap failed: {0}".format(err))
+
+
+def _ensure_ozone_s3_secret_for_principal(principal_name, principal_secret):
+  import params
+
+  if not getattr(params, "security_enabled", False):
+    Logger.info(
+      "Skipping Ozone S3 secret bootstrap for '{0}'; cluster security is disabled.".format(
+        principal_name
+      )
+    )
+    return
+
+  if not principal_name or not principal_secret:
+    Logger.warning("Skipping Ozone S3 secret bootstrap; principal name/secret is empty.")
+    return
+
+  ozone_cmd = str(getattr(params, "ozone_cmd", "")).strip()
+  if not ozone_cmd or not os.path.exists(ozone_cmd):
+    ozone_cmd = "ozone"
+
+  kinit_path = str(getattr(params, "kinit_path_local", "")).strip()
+  ozone_user = str(getattr(params, "ozone_user", "")).strip() or str(getattr(params, "polaris_user", "polaris"))
+  ozone_keytab = str(getattr(params, "ozone_user_keytab", "")).strip()
+  ozone_principal = str(getattr(params, "ozone_principal_name", "")).strip()
+  om_service_id = str(getattr(params, "ozone_om_service_id", "")).strip()
+
+  if not kinit_path:
+    Logger.warning(
+      "Skipping Ozone S3 secret bootstrap for '{0}'; kinit path is not configured.".format(
+        principal_name
+      )
+    )
+    return
+  if not ozone_keytab or not os.path.exists(ozone_keytab):
+    Logger.warning(
+      "Skipping Ozone S3 secret bootstrap for '{0}'; ozone keytab '{1}' is missing.".format(
+        principal_name, ozone_keytab or "<empty>"
+      )
+    )
+    return
+  if not ozone_principal:
+    Logger.warning(
+      "Skipping Ozone S3 secret bootstrap for '{0}'; ozone principal is not configured.".format(
+        principal_name
+      )
+    )
+    return
+
+  try:
+    OzoneResource(
+      "polaris-ozone-s3-secret-{0}".format(principal_name),
+      action="generate_s3_credentials",
+      user=ozone_user,
+      conf_dir=str(getattr(params, "hadoop_conf_dir", "/etc/hadoop/conf") or "/etc/hadoop/conf"),
+      ozone_cmd=ozone_cmd,
+      security_enabled=True,
+      kinit_path_local=kinit_path,
+      keytab=ozone_keytab,
+      principal_name=ozone_principal,
+      access_id=principal_name,
+      secret_key=principal_secret,
+      om_service_id=om_service_id,
+      tries=3,
+      try_sleep=2,
+      logoutput=True
+    )
+    Logger.info("Ensured Ozone S3 secret for principal '{0}'.".format(principal_name))
+  except Exception as err:
+    Logger.warning(
+      "Skipping Ozone S3 secret bootstrap for '{0}'; command failed: {1}".format(
+        principal_name, err
+      )
+    )
+
+
+def _polaris_get_base_url():
+  import params
+
+  base_url = str(getattr(params, "polaris_service_url", "")).strip().rstrip("/")
+  if base_url:
+    return base_url
+
+  protocol = str(getattr(params, "polaris_protocol", "http")).strip().lower()
+  host = str(getattr(params, "polaris_service_host", "localhost")).strip() or "localhost"
+  port = str(getattr(params, "polaris_port", "8181")).strip() or "8181"
+  return "{0}://{1}:{2}".format(protocol, host, port)
+
+
+def _wait_for_polaris_api_ready_for_ozone_bootstrap(api_base, run_as_user, timeout_seconds=30):
+  ready_url = "{0}/q/health/ready".format(str(api_base).rstrip("/"))
+  deadline = time.time() + max(1, int(timeout_seconds))
+  attempt = 0
+
+  while time.time() < deadline:
+    attempt += 1
+    check_cmd = (
+      "curl -k -sS --connect-timeout 3 --max-time 5 -o /dev/null "
+      "-w \"%{http_code}\" {0}"
+    ).format(shlex.quote(ready_url))
+
+    try:
+      _, stdout, _ = get_user_call_output(
+        check_cmd,
+        user=run_as_user,
+        quiet=True,
+        is_checked_call=True
+      )
+      code = str(stdout).strip()
+      if code in ("200", "204"):
+        return True
+    except Exception:
+      pass
+
+    if attempt % 5 == 0:
+      Logger.info(
+        "Waiting for Polaris API readiness for Ozone bootstrap at {0} (attempt {1})...".format(
+          ready_url, attempt
+        )
+      )
+    time.sleep(2)
+
+  return False
+
+
+def _polaris_get_root_token_with_retry(api_base, root_user, root_password):
+  retries = 30
+  for attempt in range(1, retries + 1):
+    token = _polaris_get_root_token(api_base, root_user, root_password)
+    if token:
+      return token
+    time.sleep(2)
+    if attempt % 5 == 0:
+      Logger.info(
+        "Waiting for Polaris API readiness for Ozone bootstrap ({0}/{1})...".format(attempt, retries)
+      )
+  return None
+
+
+def _polaris_get_root_token(api_base, root_user, root_password):
+  token_url = "{0}/api/catalog/v1/oauth/tokens".format(api_base)
+  try:
+    status, payload = _polaris_api_request(
+      "POST",
+      token_url,
+      form_body={
+        "grant_type": "client_credentials",
+        "client_id": root_user,
+        "client_secret": root_password,
+        "scope": "PRINCIPAL_ROLE:ALL",
+      },
+    )
+  except Fail:
+    # Polaris server can still be starting when bootstrap runs; treat transient
+    # connection errors as retryable and let caller retry.
+    return None
+  if status != 200:
+    return None
+  if isinstance(payload, dict):
+    token = payload.get("access_token")
+    if token:
+      return str(token)
+  return None
+
+
+def _polaris_ensure_principal(api_base, token, principal_name):
+  principal_path = _path_quote(principal_name)
+  principal_url = "{0}/api/management/v1/principals/{1}".format(api_base, principal_path)
+
+  status, _ = _polaris_api_request("GET", principal_url, token=token)
+  if status == 200:
+    return False, {}
+  if status != 404:
+    raise Fail("Failed to query Polaris principal '{0}'. HTTP status={1}".format(principal_name, status))
+
+  create_url = "{0}/api/management/v1/principals".format(api_base)
+  create_body = {
+    "principal": {
+      "name": principal_name,
+      "properties": {}
+    },
+    "credentialRotationRequired": False
+  }
+  create_status, create_payload = _polaris_api_request(
+    "POST", create_url, token=token, json_body=create_body
+  )
+  if create_status not in (200, 201, 409):
+    raise Fail(
+      "Failed to create Polaris principal '{0}'. HTTP status={1}".format(principal_name, create_status)
+    )
+  return create_status in (200, 201), create_payload if isinstance(create_payload, dict) else {}
+
+
+def _polaris_reset_principal_secret(api_base, token, principal_name, client_id, client_secret):
+  principal_path = _path_quote(principal_name)
+  reset_url = "{0}/api/management/v1/principals/{1}/reset".format(api_base, principal_path)
+  payload = {
+    "clientId": client_id,
+    "clientSecret": client_secret,
+  }
+  status, _ = _polaris_api_request("POST", reset_url, token=token, json_body=payload)
+  if status not in (200, 201):
+    raise Fail(
+      "Failed to set secret for Polaris principal '{0}'. HTTP status={1}".format(principal_name, status)
+    )
+
+
+def _polaris_ensure_principal_role(api_base, token, principal_role_name):
+  role_path = _path_quote(principal_role_name)
+  role_url = "{0}/api/management/v1/principal-roles/{1}".format(api_base, role_path)
+  status, _ = _polaris_api_request("GET", role_url, token=token)
+  if status == 200:
+    return
+  if status != 404:
+    raise Fail(
+      "Failed to query Polaris principal role '{0}'. HTTP status={1}".format(principal_role_name, status)
+    )
+
+  create_url = "{0}/api/management/v1/principal-roles".format(api_base)
+  create_body = {
+    "principalRole": {
+      "name": principal_role_name,
+      "properties": {}
+    }
+  }
+  create_status, _ = _polaris_api_request("POST", create_url, token=token, json_body=create_body)
+  if create_status not in (200, 201, 409):
+    raise Fail(
+      "Failed to create Polaris principal role '{0}'. HTTP status={1}".format(
+        principal_role_name, create_status
+      )
+    )
+
+
+def _polaris_assign_principal_role(api_base, token, principal_name, principal_role_name):
+  principal_path = _path_quote(principal_name)
+  assign_url = "{0}/api/management/v1/principals/{1}/principal-roles".format(api_base, principal_path)
+  assign_body = {
+    "principalRole": {
+      "name": principal_role_name
+    }
+  }
+  status, _ = _polaris_api_request("PUT", assign_url, token=token, json_body=assign_body)
+  if status not in (200, 201, 204, 409):
+    raise Fail(
+      "Failed to assign principal role '{0}' to '{1}'. HTTP status={2}".format(
+        principal_role_name, principal_name, status
+      )
+    )
+
+
+def _polaris_ensure_catalog(
+  api_base,
+  token,
+  catalog_name,
+  base_location,
+  allowed_locations,
+  s3_endpoint,
+  s3_region,
+  path_style_access
+):
+  catalog_path = _path_quote(catalog_name)
+  catalog_url = "{0}/api/management/v1/catalogs/{1}".format(api_base, catalog_path)
+  status, _ = _polaris_api_request("GET", catalog_url, token=token)
+  if status == 200:
+    return
+  if status != 404:
+    raise Fail("Failed to query Polaris catalog '{0}'. HTTP status={1}".format(catalog_name, status))
+
+  create_url = "{0}/api/management/v1/catalogs".format(api_base)
+  create_body = {
+    "catalog": {
+      "type": "INTERNAL",
+      "name": catalog_name,
+      "properties": {
+        "default-base-location": base_location
+      },
+      "storageConfigInfo": {
+        "storageType": "S3",
+        "allowedLocations": allowed_locations,
+        "endpoint": s3_endpoint,
+        "region": s3_region,
+        "pathStyleAccess": bool(path_style_access),
+        "stsUnavailable": True
+      }
+    }
+  }
+  create_status, _ = _polaris_api_request("POST", create_url, token=token, json_body=create_body)
+  if create_status not in (200, 201, 409):
+    raise Fail("Failed to create Polaris catalog '{0}'. HTTP status={1}".format(catalog_name, create_status))
+
+
+def _polaris_ensure_catalog_role(api_base, token, catalog_name, catalog_role_name):
+  catalog_path = _path_quote(catalog_name)
+  role_path = _path_quote(catalog_role_name)
+  role_url = "{0}/api/management/v1/catalogs/{1}/catalog-roles/{2}".format(
+    api_base, catalog_path, role_path
+  )
+  status, _ = _polaris_api_request("GET", role_url, token=token)
+  if status == 200:
+    return
+  if status != 404:
+    raise Fail(
+      "Failed to query Polaris catalog role '{0}' in catalog '{1}'. HTTP status={2}".format(
+        catalog_role_name, catalog_name, status
+      )
+    )
+
+  create_url = "{0}/api/management/v1/catalogs/{1}/catalog-roles".format(api_base, catalog_path)
+  create_body = {
+    "catalogRole": {
+      "name": catalog_role_name,
+      "properties": {}
+    }
+  }
+  create_status, _ = _polaris_api_request("POST", create_url, token=token, json_body=create_body)
+  if create_status not in (200, 201, 409):
+    raise Fail(
+      "Failed to create Polaris catalog role '{0}' in catalog '{1}'. HTTP status={2}".format(
+        catalog_role_name, catalog_name, create_status
+      )
+    )
+
+
+def _polaris_ensure_catalog_manage_access_grant(api_base, token, catalog_name, catalog_role_name):
+  catalog_path = _path_quote(catalog_name)
+  role_path = _path_quote(catalog_role_name)
+  grants_url = "{0}/api/management/v1/catalogs/{1}/catalog-roles/{2}/grants".format(
+    api_base, catalog_path, role_path
+  )
+
+  status, payload = _polaris_api_request("GET", grants_url, token=token)
+  if status != 200:
+    raise Fail(
+      "Failed to list grants for catalog role '{0}' in catalog '{1}'. HTTP status={2}".format(
+        catalog_role_name, catalog_name, status
+      )
+    )
+
+  grants = []
+  if isinstance(payload, dict):
+    grants = payload.get("grants", []) or []
+  for grant in grants:
+    if not isinstance(grant, dict):
+      continue
+    if grant.get("type") == "catalog" and grant.get("privilege") == "CATALOG_MANAGE_ACCESS":
+      return
+
+  grant_body = {
+    "grant": {
+      "type": "catalog",
+      "privilege": "CATALOG_MANAGE_ACCESS"
+    }
+  }
+  grant_status, _ = _polaris_api_request("PUT", grants_url, token=token, json_body=grant_body)
+  if grant_status not in (200, 201, 409):
+    raise Fail(
+      "Failed to add CATALOG_MANAGE_ACCESS grant to role '{0}' in catalog '{1}'. HTTP status={2}".format(
+        catalog_role_name, catalog_name, grant_status
+      )
+    )
+
+
+def _polaris_assign_catalog_role_to_principal_role(
+  api_base, token, principal_role_name, catalog_name, catalog_role_name
+):
+  principal_role_path = _path_quote(principal_role_name)
+  catalog_path = _path_quote(catalog_name)
+  assign_url = "{0}/api/management/v1/principal-roles/{1}/catalog-roles/{2}".format(
+    api_base, principal_role_path, catalog_path
+  )
+  assign_body = {
+    "catalogRole": {
+      "name": catalog_role_name
+    }
+  }
+  status, _ = _polaris_api_request("PUT", assign_url, token=token, json_body=assign_body)
+  if status not in (200, 201, 204, 409):
+    raise Fail(
+      "Failed to assign catalog role '{0}' to principal role '{1}'. HTTP status={2}".format(
+        catalog_role_name, principal_role_name, status
+      )
+    )
+
+
+def _polaris_api_request(method, url, token=None, json_body=None, form_body=None, timeout=15):
+  headers = {
+    "Accept": "application/json",
+  }
+  payload = None
+
+  if token:
+    headers["Authorization"] = "Bearer {0}".format(token)
+
+  if json_body is not None:
+    payload = json.dumps(json_body).encode("utf-8")
+    headers["Content-Type"] = "application/json"
+  elif form_body is not None:
+    payload = urllib.parse.urlencode(form_body).encode("utf-8")
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+  request = urllib.request.Request(url=url, data=payload, headers=headers, method=method)
+  context = ssl._create_unverified_context() if url.lower().startswith("https://") else None
+
+  raw = ""
+  status = None
+  try:
+    response = urllib.request.urlopen(request, timeout=timeout, context=context)
+    status = response.getcode()
+    raw = response.read().decode("utf-8")
+  except urllib.error.HTTPError as http_err:
+    status = http_err.code
+    if http_err.fp:
+      raw = http_err.read().decode("utf-8")
+  except urllib.error.URLError as url_err:
+    raise Fail("Failed to reach Polaris API at {0}: {1}".format(url, url_err))
+
+  payload_obj = _polaris_safe_json(raw)
+  return status, payload_obj
+
+
+def _polaris_safe_json(raw):
+  if raw is None:
+    return {}
+  text = str(raw).strip()
+  if not text:
+    return {}
+  try:
+    return json.loads(text)
+  except Exception:
+    return {"_raw": text}
+
+
+def _path_quote(value):
+  return urllib.parse.quote(str(value), safe="")
 
 
 def _configure_kerberos():

@@ -103,6 +103,17 @@ polaris_oidc_use_cluster_config = _to_bool(default("/configurations/polaris-env/
 polaris_oidc_override_auth_server_url = str(default("/configurations/polaris-env/polaris_oidc_override_auth_server_url", "")).strip()
 polaris_oidc_override_client_id = str(default("/configurations/polaris-env/polaris_oidc_override_client_id", "")).strip()
 polaris_oidc_override_client_secret = str(default("/configurations/polaris-env/polaris_oidc_override_client_secret", "")).strip()
+polaris_ozone_principal_name = str(default("/configurations/polaris-env/polaris_ozone_principal_name", "ozone-engine")).strip() or "ozone-engine"
+polaris_ozone_principal_secret = str(default("/configurations/polaris-env/polaris_ozone_principal_secret", "ozone-engine-secret"))
+polaris_ozone_principal_secret_escaped = polaris_ozone_principal_secret.replace("'", "'\"'\"'")
+polaris_ozone_principal_role = str(default("/configurations/polaris-env/polaris_ozone_principal_role", "ozone_engineers")).strip() or "ozone_engineers"
+polaris_ozone_catalog_name = str(default("/configurations/polaris-env/polaris_ozone_catalog_name", "ozone")).strip() or "ozone"
+polaris_ozone_catalog_base_location = str(default("/configurations/polaris-env/polaris_ozone_catalog_base_location", "s3://ozone/polaris/")).strip()
+polaris_ozone_catalog_allowed_locations_raw = str(default("/configurations/polaris-env/polaris_ozone_catalog_allowed_locations", "s3://ozone/")).strip()
+polaris_ozone_s3_endpoint = str(default("/configurations/polaris-env/polaris_ozone_s3_endpoint", "")).strip()
+polaris_ozone_s3_region = str(default("/configurations/polaris-env/polaris_ozone_s3_region", "us-east-1")).strip() or "us-east-1"
+polaris_ozone_s3_path_style_access = _to_bool(default("/configurations/polaris-env/polaris_ozone_s3_path_style_access", "true"), True)
+polaris_ozone_catalog_auto_grants = _to_bool(default("/configurations/polaris-env/polaris_ozone_catalog_auto_grants", "true"), True)
 polaris_ssl_enabled = _to_bool(default("/configurations/polaris-env/polaris_ssl_enabled", "false"), False)
 polaris_ssl_auto_generate = _to_bool(default("/configurations/polaris-env/polaris_ssl_auto_generate", "true"), True)
 polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris_ssl_keystore_password", "changeit"))
@@ -155,7 +166,7 @@ for legacy_auth_key in (
 
 oidc_admin_url = str(default("/configurations/oidc-env/oidc_admin_url", "")).strip()
 oidc_realm = str(default("/configurations/oidc-env/oidc_realm", "")).strip()
-oidc_available = security_enabled and oidc_admin_url != "" and oidc_realm != ""
+oidc_available = oidc_admin_url != "" and oidc_realm != ""
 
 # Normalize deprecated Quarkus logging keys to current *.enabled variants.
 if "quarkus.log.console.enable" in application_properties:
@@ -303,6 +314,62 @@ polaris_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
 polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevelParams']['hostname']
 polaris_hostname = config['agentLevelParams']['hostname']
 polaris_service_url = "{0}://{1}:{2}".format(polaris_protocol, polaris_service_host, polaris_port)
+
+ozone_manager_hosts = sorted(default("/clusterHostInfo/ozone_manager_hosts", []))
+ozone_s3g_hosts = sorted(default("/clusterHostInfo/ozone_s3g_hosts", []))
+ozone_site = config.get('configurations', {}).get('ozone-site', {})
+has_ozone_service = len(ozone_manager_hosts) > 0 or "ozone.s3g.http-address" in ozone_site or "ozone.s3g.https-address" in ozone_site
+ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
+ozone_user = str(default("/configurations/ozone-env/ozone_user", polaris_user)).strip() or polaris_user
+ozone_user_keytab = str(default("/configurations/ozone-env/ozone_user_keytab", "")).strip()
+ozone_principal_name = str(default("/configurations/ozone-env/ozone_principal_name", "")).strip()
+if "_HOST" in ozone_principal_name:
+  ozone_principal_name = ozone_principal_name.replace("_HOST", polaris_hostname.lower())
+kinit_path_local = get_kinit_path(default("/configurations/kerberos-env/executable_search_paths", None))
+ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.internal.service.id", "")).strip()
+if not ozone_om_service_id:
+  ozone_om_service_ids = str(default("/configurations/ozone-site/ozone.om.service.ids", "")).strip()
+  if ozone_om_service_ids:
+    ozone_om_service_id = ozone_om_service_ids.split(",")[0].strip()
+
+ozone_acl_enabled = str(default("/configurations/ozone-site/ozone.acl.enabled", "false")).strip().lower() == "true"
+ozone_acl_authorizer = str(default("/configurations/ozone-site/ozone.acl.authorizer.class", "")).strip()
+ozone_ranger_plugin_enabled = str(default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")).strip().lower() == "yes"
+ozone_acl_managed_by_ranger = "ranger" in ozone_acl_authorizer.lower() or ozone_ranger_plugin_enabled
+
+if has_ozone_service and not polaris_ozone_s3_endpoint:
+  ozone_s3g_https_address = str(default("/configurations/ozone-site/ozone.s3g.https-address", "")).strip()
+  ozone_s3g_http_address = str(default("/configurations/ozone-site/ozone.s3g.http-address", "")).strip()
+  ozone_s3g_https_port = str(default("/configurations/ozone-site/ozone.s3g.https-port", "9879")).strip() or "9879"
+  ozone_s3g_http_port = str(default("/configurations/ozone-site/ozone.s3g.http-port", "9878")).strip() or "9878"
+
+  endpoint_candidate = ""
+  if ozone_s3g_https_address:
+    endpoint_candidate = "https://{0}:{1}".format(ozone_s3g_https_address.split(":", 1)[0], ozone_s3g_https_port)
+  elif ozone_s3g_http_address:
+    endpoint_candidate = "http://{0}:{1}".format(ozone_s3g_http_address.split(":", 1)[0], ozone_s3g_http_port)
+  elif ozone_s3g_hosts:
+    endpoint_candidate = "http://{0}:{1}".format(ozone_s3g_hosts[0], ozone_s3g_http_port)
+
+  if endpoint_candidate:
+    endpoint_host = endpoint_candidate.split("://", 1)[1].split(":", 1)[0]
+    if endpoint_host in ("0.0.0.0", "::", "localhost", "") and ozone_s3g_hosts:
+      endpoint_protocol = endpoint_candidate.split("://", 1)[0]
+      endpoint_port = endpoint_candidate.rsplit(":", 1)[1]
+      endpoint_candidate = "{0}://{1}:{2}".format(endpoint_protocol, ozone_s3g_hosts[0], endpoint_port)
+    polaris_ozone_s3_endpoint = endpoint_candidate
+
+if has_ozone_service and not polaris_ozone_catalog_base_location:
+  polaris_ozone_catalog_base_location = "s3://{0}/polaris/".format(cluster_name.lower())
+if has_ozone_service and not polaris_ozone_catalog_allowed_locations_raw:
+  polaris_ozone_catalog_allowed_locations_raw = "s3://{0}/".format(cluster_name.lower())
+
+polaris_ozone_catalog_allowed_locations_list = [
+  location.strip()
+  for location in polaris_ozone_catalog_allowed_locations_raw.split(",")
+  if location and location.strip()
+]
+polaris_ozone_catalog_allowed_locations = ",".join(polaris_ozone_catalog_allowed_locations_list)
 
 polaris_ssl_keystore_file = str(application_properties.get("quarkus.http.ssl.certificate.key-store-file", "")).strip()
 polaris_ssl_keystore_file_type = str(application_properties.get("quarkus.http.ssl.certificate.key-store-file-type", "PKCS12")).strip() or "PKCS12"

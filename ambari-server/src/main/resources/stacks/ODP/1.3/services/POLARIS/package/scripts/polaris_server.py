@@ -27,7 +27,7 @@ from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.script.script import Script
 
-from polaris import polaris
+from polaris import polaris, bootstrap_ozone_catalog_in_polaris
 from setup_ranger_polaris import setup_ranger_polaris
 
 
@@ -142,6 +142,8 @@ class PolarisServer(Script):
             environment=runtime_env,
             not_if=no_op_test
             )
+
+    bootstrap_ozone_catalog_in_polaris()
 
   def stop(self, env, upgrade_type=None):
     import params
