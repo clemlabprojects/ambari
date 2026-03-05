@@ -37,6 +37,48 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>kudu_enable_tls</name>
+    <display-name>Enable TLS</display-name>
+    <value>false</value>
+    <description>Enable TLS for Kudu RPC and web UI endpoints.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>ON</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>OFF</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_tls_cert_file</name>
+    <value>/etc/kudu/conf/tls/kudu-server.crt</value>
+    <description>PEM certificate used for Kudu TLS when enabled.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_tls_private_key_file</name>
+    <value>/etc/kudu/conf/tls/kudu-server.key</value>
+    <description>PEM private key used for Kudu TLS when enabled.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>kudu_tls_ca_cert_file</name>
+    <value></value>
+    <description>Optional CA certificate bundle for verifying TLS peers.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>kudu_principal_name</name>
     <value>kudu/_HOST@EXAMPLE.COM</value>
     <description>Kudu Kerberos principal used when cluster security is enabled.</description>

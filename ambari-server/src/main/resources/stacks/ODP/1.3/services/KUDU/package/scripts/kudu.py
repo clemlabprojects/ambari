@@ -90,6 +90,22 @@ class Kudu(Script):
             mode=0o755
         )
 
+        if params.kudu_enable_tls:
+            tls_paths = [params.kudu_tls_cert_file, params.kudu_tls_private_key_file, params.kudu_tls_ca_cert_file]
+            for tls_path in tls_paths:
+                if not tls_path:
+                    continue
+                tls_parent = os.path.dirname(tls_path)
+                if not tls_parent:
+                    continue
+                Directory(
+                    tls_parent,
+                    owner='root',
+                    group='root',
+                    create_parents=True,
+                    mode=0o755
+                )
+
         for data_dir in self._split_dirs(params.master_wal_dir):
             Directory(data_dir, owner=params.kudu_user, group=params.kudu_group, create_parents=True, mode=0o755)
         for data_dir in self._split_dirs(params.master_data_dirs):

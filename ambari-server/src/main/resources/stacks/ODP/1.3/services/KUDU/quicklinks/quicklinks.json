@@ -3,7 +3,7 @@
   "description": "default quick links configuration",
   "configuration": {
     "protocol": {
-      "type": "HTTP_ONLY"
+      "type": "HTTP_AND_HTTPS"
     },
     "links": [
       {

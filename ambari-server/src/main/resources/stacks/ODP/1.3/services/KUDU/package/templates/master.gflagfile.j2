@@ -6,6 +6,15 @@
 --webserver_port={{master_webserver_port}}
 --master_addresses={{master_addresses}}
 --log_dir={{kudu_log_dir}}
+{% if kudu_enable_tls and kudu_tls_cert_file and kudu_tls_private_key_file %}
+--rpc_certificate_file={{kudu_tls_cert_file}}
+--rpc_private_key_file={{kudu_tls_private_key_file}}
+--webserver_certificate_file={{kudu_tls_cert_file}}
+--webserver_private_key_file={{kudu_tls_private_key_file}}
+{% if kudu_tls_ca_cert_file and kudu_tls_ca_cert_file.strip() %}
+--rpc_ca_certificate_file={{kudu_tls_ca_cert_file}}
+{% endif %}
+{% endif %}
 {% if security_enabled and kudu_principal_name and kudu_keytab %}
 --rpc_authentication=required
 --rpc_encryption=required

@@ -18,6 +18,7 @@ limitations under the License.
 """
 
 from kudu import Kudu
+from setup_ranger_kudu import setup_ranger_kudu
 
 
 class KuduMaster(Kudu):
@@ -27,6 +28,7 @@ class KuduMaster(Kudu):
 
     def configure(self, env):
         Kudu.configure(self, env)
+        setup_ranger_kudu()
 
     def start(self, env):
         self.configure(env)
