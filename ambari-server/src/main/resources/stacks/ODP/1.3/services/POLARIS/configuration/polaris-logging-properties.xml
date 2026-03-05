@@ -25,9 +25,17 @@
     <display-name>polaris logging.properties template</display-name>
     <description>Additional Quarkus logging categories for Polaris. Use quoted category names when they contain dots.</description>
     <value>
-# Additional Quarkus logging categories for Polaris.
-# Example:
+# Polaris logging defaults (applied via /etc/polaris/conf/logging.properties).
+# Keep these at INFO for production baselines.
+quarkus.log.category."org.apache.polaris.service.config".level=INFO
+quarkus.log.category."org.apache.polaris.extension.auth.ranger".level=INFO
+quarkus.log.category."org.apache.ranger.plugin.service".level=INFO
+quarkus.log.category."org.apache.ranger.plugin.util.PolicyRefresher".level=INFO
+quarkus.log.category."org.apache.ranger.admin.client.RangerAdminRESTClient".level=INFO
+
+# Optional troubleshooting overrides (uncomment temporarily):
 # quarkus.log.category."org.apache.polaris.extension.auth.ranger".level=DEBUG
+# quarkus.log.category."org.apache.ranger.plugin.service".level=DEBUG
 # quarkus.log.category."org.apache.ranger.plugin.util.PolicyRefresher".level=DEBUG
 # quarkus.log.category."org.apache.ranger.admin.client.RangerAdminRESTClient".level=DEBUG
     </value>
