@@ -72,6 +72,11 @@
             </configFile>
             <configFile>
               <type>env</type>
+              <fileName>logging.properties</fileName>
+              <dictionaryName>polaris-logging-properties</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
               <fileName>polaris-env.sh</fileName>
               <dictionaryName>polaris-env</dictionaryName>
             </configFile>
@@ -154,6 +159,7 @@
 
       <configuration-dependencies>
         <config-type>polaris-application-properties</config-type>
+        <config-type>polaris-logging-properties</config-type>
         <config-type>polaris-db-properties</config-type>
         <config-type>polaris-env</config-type>
         <config-type>polaris-jaas-conf</config-type>

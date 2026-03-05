@@ -56,7 +56,8 @@ class PolarisServer(Script):
     self.configure(env)
 
     app_cfg = "{0}/{1}".format(params.polaris_conf_dir, params.polaris_conf_file)
-    quarkus_locations = app_cfg
+    logging_cfg = "{0}/logging.properties".format(params.polaris_conf_dir)
+    quarkus_locations = "{0},{1}".format(app_cfg, logging_cfg)
     runtime_env = {
       "QUARKUS_CONFIG_LOCATIONS": quarkus_locations,
       "SMALLRYE_CONFIG_LOCATIONS": quarkus_locations,
@@ -64,9 +65,29 @@ class PolarisServer(Script):
 
     app_props = params.application_properties
     authz_type = str(app_props.get("polaris.authorization.type", "internal")).strip().lower() or "internal"
+    # Ensure runtime authorizer selection always uses the effective Ambari value.
+    # This avoids accidental fallback to Polaris defaults when config source
+    # precedence differs across environments.
+    runtime_env["POLARIS_AUTHORIZATION_TYPE"] = authz_type
+    Logger.info("Polaris authorization runtime override: POLARIS_AUTHORIZATION_TYPE={0}".format(authz_type))
+    if getattr(params, "enable_ranger_polaris", False) and authz_type != "ranger":
+      Logger.warning(
+        "Ranger plugin is enabled but polaris.authorization.type={0}. "
+        "Polaris will not use Ranger authorization until this is set to 'ranger' "
+        "in Ambari configuration.".format(authz_type)
+      )
     if authz_type == "ranger":
       ranger_service_name = str(
         app_props.get("polaris.authorization.ranger.service-name", "")
+      ).strip() or "<unset>"
+      ranger_policy_url = str(
+        app_props.get("polaris.authorization.ranger.plugin.policy.rest.url", "")
+      ).strip() or "<unset>"
+      ranger_policy_source = str(
+        app_props.get("polaris.authorization.ranger.policy-source-impl", "")
+      ).strip() or "<unset>"
+      ranger_cache_dir = str(
+        app_props.get("polaris.authorization.ranger.plugin.policy.cache.dir", "")
       ).strip() or "<unset>"
       ranger_config_files = sorted(
         key for key in app_props.keys()
@@ -74,11 +95,19 @@ class PolarisServer(Script):
       )
       ranger_config_summary = ", ".join(ranger_config_files) if ranger_config_files else "<none>"
       Logger.info(
-        "Polaris authorization backend: ranger (service-name={0}, config-keys={1})".format(
+        "Polaris authorization backend: ranger (service-name={0}, policy-url={1}, policy-source={2}, cache-dir={3}, config-keys={4})".format(
           ranger_service_name,
+          ranger_policy_url,
+          ranger_policy_source,
+          ranger_cache_dir,
           ranger_config_summary
         )
       )
+      if ranger_policy_url == "<unset>":
+        Logger.warning(
+          "Ranger authorization is selected but policy REST URL is not set. "
+          "Polaris will not be able to download Ranger policies."
+        )
     else:
       Logger.info("Polaris authorization backend: {0}".format(authz_type))
 

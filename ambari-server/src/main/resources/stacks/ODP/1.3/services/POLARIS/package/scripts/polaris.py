@@ -46,6 +46,13 @@ def polaris(component_type='server'):
        mode=0o640
        )
 
+  File(format("{polaris_conf_dir}/logging.properties"),
+       content=params.polaris_logging_properties_content,
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o640
+       )
+
   if params.security_enabled:
     _configure_kerberos()
 

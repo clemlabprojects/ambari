@@ -43,6 +43,15 @@ def _to_int(value, default):
     return default
 
 
+def _resolve_ambari_template_value(raw_value, replacements):
+  if raw_value is None:
+    return ""
+  value = str(raw_value)
+  for key, replacement in replacements.items():
+    value = value.replace("{{" + key + "}}", str(replacement))
+  return value.strip()
+
+
 config = Script.get_config()
 stack_root = Script.get_stack_root()
 
@@ -78,6 +87,13 @@ polaris_mcp_home = default("/configurations/polaris-env/polaris_mcp_home", polar
 polaris_console_home = default("/configurations/polaris-env/polaris_console_home", polaris_tools_home)
 
 polaris_env_content = config['configurations']['polaris-env']['content']
+polaris_logging_properties_content = default(
+  "/configurations/polaris-logging-properties/content",
+  "# Additional Quarkus logging categories for Polaris.\n"
+  "# Example:\n"
+  "# quarkus.log.category.\"org.apache.polaris.extension.auth.ranger\".level=DEBUG\n"
+  "# quarkus.log.category.\"org.apache.ranger.plugin.util.PolicyRefresher\".level=DEBUG\n"
+)
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
 polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_username']
 polaris_admin_password = config['configurations']['polaris-env']['polaris_admin_password']
@@ -501,7 +517,19 @@ if enable_ranger_polaris:
 
   # Keep Ranger runtime keys available when the plugin is enabled, without
   # forcing the selected Polaris authorization backend.
-  application_properties["polaris.authorization.ranger.service-name"] = repo_name
+  ranger_template_values = {
+    "repo_name": repo_name,
+    "policymgr_mgr_url": policymgr_mgr_url or "",
+    "credential_file": credential_file,
+    "cluster_name": cluster_name,
+  }
+  ranger_service_name = _resolve_ambari_template_value(
+    ranger_polaris_security.get("ranger.plugin.polaris.service.name", ""),
+    ranger_template_values,
+  )
+  if not ranger_service_name or "{{" in ranger_service_name or "}}" in ranger_service_name:
+    ranger_service_name = repo_name
+  application_properties["polaris.authorization.ranger.service-name"] = ranger_service_name
   if not str(application_properties.get("polaris.authorization.ranger.app-id", "")).strip():
     application_properties["polaris.authorization.ranger.app-id"] = "polaris"
 
@@ -513,22 +541,25 @@ if enable_ranger_polaris:
   for idx, cfg_file in enumerate(ranger_config_files):
     application_properties["polaris.authorization.ranger.config-files[{0}]".format(idx)] = cfg_file
 
-  policy_source_impl = str(
-    ranger_polaris_security.get("ranger.plugin.polaris.policy.source.impl", "")
-  ).strip()
-  if policy_source_impl and not policy_source_impl.startswith("{{"):
+  policy_source_impl = _resolve_ambari_template_value(
+    ranger_polaris_security.get("ranger.plugin.polaris.policy.source.impl", ""),
+    ranger_template_values,
+  )
+  if policy_source_impl and "{{" not in policy_source_impl and "}}" not in policy_source_impl:
     application_properties["polaris.authorization.ranger.policy-source-impl"] = policy_source_impl
 
-  for ranger_key, ranger_value in ranger_polaris_security.items():
-    if not ranger_key.startswith("ranger.plugin.polaris."):
-      continue
-    plugin_suffix = ranger_key[len("ranger.plugin.polaris."):]
-    if not plugin_suffix:
-      continue
-    plugin_value = str(ranger_value).strip()
-    if not plugin_value or plugin_value.startswith("{{"):
-      continue
-    application_properties["polaris.authorization.ranger.plugin.{0}".format(plugin_suffix)] = plugin_value
+  ranger_plugin_sources = [ranger_polaris_security, ranger_polaris_audit]
+  for ranger_source in ranger_plugin_sources:
+    for ranger_key, ranger_value in ranger_source.items():
+      if not ranger_key.startswith("ranger.plugin.polaris."):
+        continue
+      plugin_suffix = ranger_key[len("ranger.plugin.polaris."):]
+      if not plugin_suffix:
+        continue
+      plugin_value = _resolve_ambari_template_value(ranger_value, ranger_template_values)
+      if not plugin_value or "{{" in plugin_value or "}}" in plugin_value:
+        continue
+      application_properties["polaris.authorization.ranger.plugin.{0}".format(plugin_suffix)] = plugin_value
 
   if has_namenode:
     hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
