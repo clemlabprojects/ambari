@@ -10,7 +10,7 @@
             <components>
                 <component>
                   <name>IMPALA_STATE_STORE</name>
-                  <displayName>Impala_State_Store</displayName>
+                  <displayName>Impala State Store</displayName>
                   <category>MASTER</category>
                   <cardinality>1+</cardinality>
                   <commandScript>
@@ -22,7 +22,7 @@
 
                 <component>
                   <name>IMPALA_CATALOG_SERVICE</name>
-                  <displayName>Impala_Catalog_Service</displayName>
+                  <displayName>Impala Catalog Service</displayName>
                   <category>MASTER</category>
                   <cardinality>1+</cardinality>
                   <commandScript>
@@ -34,7 +34,7 @@
 
                 <component>
                   <name>IMPALA_DAEMON</name>
-                  <displayName>Impala_Daemon</displayName>
+                  <displayName>Impala Daemon</displayName>
                   <category>SLAVE</category>
                   <cardinality>1+</cardinality>
                   <commandScript>
@@ -46,7 +46,7 @@
 
                 <component>
                     <name>IMPALA_CLIENT</name>
-                    <displayName>Impala_Client</displayName>
+                    <displayName>Impala Client</displayName>
                     <category>CLIENT</category>
                     <cardinality>1+</cardinality>
                     <commandScript>
