@@ -44,6 +44,7 @@
     <module>files</module>
     <module>tez</module>
     <module>k8s</module>
+    <module>tez</module>
     <!-- <module>pig</module> -->
     <module>capacity-scheduler</module>
     <!-- <module>wfmanager</module> -->
