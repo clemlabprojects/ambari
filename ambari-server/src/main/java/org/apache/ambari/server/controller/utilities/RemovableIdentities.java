@@ -20,10 +20,12 @@ package org.apache.ambari.server.controller.utilities;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.ambari.annotations.Experimental;
 import org.apache.ambari.annotations.ExperimentalFeature;
@@ -135,12 +137,20 @@ public class RemovableIdentities {
    * other services or components
    */
   public void remove(KerberosHelper kerberosHelper) throws AmbariException, KerberosOperationException {
-    // TODO: Fix the implementation identifying specific identities in the event we need to  pinpoint
-    // TODO: certain identities.  This is not currently needed here since we are only handing removing
-    // TODO: identities tied to a specific service, component, and/or host. The logic to determine
-    // TODO: whether an identity should be removed is handled elsewhere - unfortunately in different
-    // TODO: places
-    kerberosHelper.deleteIdentities(cluster, components, null);
+    List<KerberosIdentityDescriptor> removableIdentities = skipUsed();
+
+    // The delete handler always walks service-level and component-level identities for each
+    // component in the filter. Passing the computed identity names keeps cleanup scoped to the
+    // actual orphaned identities instead of re-processing every identity tied to the service.
+    if (cluster == null || components == null || components.isEmpty() || removableIdentities.isEmpty()) {
+      return;
+    }
+
+    Set<String> removableIdentityNames = removableIdentities.stream()
+      .map(KerberosIdentityDescriptor::getName)
+      .collect(toSet());
+
+    kerberosHelper.deleteIdentities(cluster, components, removableIdentityNames);
   }
 
   private List<KerberosIdentityDescriptor> skipUsed() throws AmbariException {

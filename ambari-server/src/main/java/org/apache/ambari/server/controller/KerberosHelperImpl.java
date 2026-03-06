@@ -499,10 +499,12 @@ public class KerberosHelperImpl implements KerberosHelper {
       dataDirectory,
       kerberosDetails.getDefaultRealm(),
       kerberosDetails.getKdcType());
+    RequestStageContainer requestStageContainer = new RequestStageContainer(actionManager.getNextRequestId(), null, requestFactory, actionManager);
+    requestStageContainer.setRequestContext("Delete Kerberos identities");
     OrderedRequestStageContainer stageContainer = new OrderedRequestStageContainer(
       roleGraphFactory,
       roleCommandOrder,
-      new RequestStageContainer(actionManager.getNextRequestId(), null, requestFactory, actionManager));
+      requestStageContainer);
     handler.addDeleteIdentityStages(cluster, stageContainer, commandParameters, kerberosDetails.manageIdentities());
     stageContainer.getRequestStageContainer().persist();
   }
