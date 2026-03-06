@@ -234,7 +234,7 @@
         <component>OZONE_S3_GATEWAY</component>
         <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
         <component>OZONE_MANAGER</component>
-        <component>OZONE_RECON_UI</component>
+        <component>OZONE_RECON</component>
         <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
 
@@ -451,7 +451,7 @@
         <component>OZONE_DATANODE</component>
         <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
         <component>OZONE_MANAGER</component>
-        <component>OZONE_RECON_UI</component>
+        <component>OZONE_RECON</component>
         <component>OZONE_S3_GATEWAY</component>
         <component>OZONE_CLIENT</component>
         <component>OZONE_HTTPFS_GATEWAY</component>

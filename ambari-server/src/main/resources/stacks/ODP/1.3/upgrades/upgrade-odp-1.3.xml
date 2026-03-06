@@ -215,7 +215,8 @@
       </service>
 
       <service name="OZONE">
-        <component>OZONE_DATANODe</component>
+        <component>OZONE_DATANODE</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
 
       <batch>
@@ -862,6 +863,10 @@
         </upgrade>
       </component>
       <component name="SPARK3_CLIENT">
+        <pre-upgrade>
+          <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag" />
+          <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs" />
+        </pre-upgrade>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>

@@ -175,6 +175,13 @@
         </task>
       </execute-stage>
 
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Prepare Ozone Manager">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_manager.py</script>
+          <function>prepare_express_upgrade</function>
+        </task>
+      </execute-stage>
+
       <execute-stage service="RANGER" component="RANGER_ADMIN" title="Backup Ranger Database">
         <task xsi:type="manual">
           <message>Before continuing, please backup the Ranger Admin database on the following host(s): {{hosts.all}}.</message>
@@ -225,7 +232,8 @@
         <component>OZONE_S3_GATEWAY</component>
         <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
         <component>OZONE_MANAGER</component>
-        <component>OZONE_RECON_UI</component>
+        <component>OZONE_RECON</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
 
       <service name="RANGER">
@@ -287,7 +295,6 @@
         <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.UpdateDesiredRepositoryAction"/>
       </execute-stage>
     </group>
-
 
     <group xsi:type="cluster" name="Upgrade service configs" title="Upgrade service configs">
       <direction>UPGRADE</direction> <!--  prevent config changes on downgrade -->
@@ -442,9 +449,10 @@
         <component>OZONE_DATANODE</component>
         <component>OZONE_STORAGE_CONTAINER_MANAGER</component>
         <component>OZONE_MANAGER</component>
-        <component>OZONE_RECON_UI</component>
+        <component>OZONE_RECON</component>
         <component>OZONE_S3_GATEWAY</component>
         <component>OZONE_CLIENT</component>
+        <component>OZONE_HTTPFS_GATEWAY</component>
       </service>
     </group>
 
@@ -844,6 +852,20 @@
         </task>
       </execute-stage>
 
+      <execute-stage service="OZONE" component="OZONE_STORAGE_CONTAINER_MANAGER" title="Execute Ozone SCM Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_scm_server.py</script>
+          <function>finalize_non_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Execute Ozone Manager Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_manager.py</script>
+          <function>finalize_non_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
       <execute-stage title="Save Cluster State">
         <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.FinalizeUpgradeAction">
         </task>
@@ -1158,6 +1180,10 @@
         </upgrade>
       </component>
       <component name="SPARK3_CLIENT">
+        <pre-upgrade>
+          <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag"/>
+          <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs"/>
+        </pre-upgrade>
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>

@@ -214,7 +214,7 @@
       </service>
 
       <service name="OZONE">
-        <component>OZONE_DATANODe</component>
+        <component>OZONE_DATANODE</component>
       </service>
 
       <batch>
