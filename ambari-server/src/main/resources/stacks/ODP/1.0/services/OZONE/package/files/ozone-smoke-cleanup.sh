@@ -16,9 +16,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-om_service_id=$1
-ozone sh key delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt
-ozone fs -rm -R -skipTrash "o3fs://ambarismokebucket.ambarismokevolume.${om_service_id}/.Trash"
-ozone sh bucket delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket
-ozone sh volume delete o3://${om_service_id}/ambarismokevolume
+conf_dir=$1
+om_service_id=$2
+ozone --config ${conf_dir} sh key delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt
+ozone --config ${conf_dir} fs -rm -R -skipTrash "o3fs://ambarismokebucket.ambarismokevolume.${om_service_id}/.Trash"
+ozone --config ${conf_dir} sh bucket delete o3://${om_service_id}/ambarismokevolume/ambarismokebucket
+ozone --config ${conf_dir} sh volume delete o3://${om_service_id}/ambarismokevolume
 exit

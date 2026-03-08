@@ -492,7 +492,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'KAFKA', 'audit_file': 'ranger-kafka-audit'},
       {'service_name': 'OZONE', 'audit_file': 'ranger-ozone-audit'},
       {'service_name': 'NIFI', 'audit_file': 'ranger-nifi-audit'},
-      {'service_name': 'NIFI_REGISTRY', 'audit_file': 'ranger-nifi-registry-audit'}
+      {'service_name': 'NIFI_REGISTRY', 'audit_file': 'ranger-nifi-registry-audit'},
+      {'service_name': 'POLARIS', 'audit_file': 'ranger-polaris-audit'}
     ]
 
     for item in range(len(ranger_services)):
@@ -645,7 +646,8 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       {'service_name': 'ATLAS', 'audit_file': 'ranger-atlas-audit'},
       {'service_name': 'OZONE', 'audit_file': 'ranger-ozone-audit'},
       {'service_name': 'NIFI', 'audit_file': 'ranger-nifi-audit'},
-      {'service_name': 'NIFI_REGISTRY', 'audit_file': 'ranger-nifi-registry-audit'}
+      {'service_name': 'NIFI_REGISTRY', 'audit_file': 'ranger-nifi-registry-audit'},
+      {'service_name': 'POLARIS', 'audit_file': 'ranger-polaris-audit'}
     ]
 
     for item in range(len(ranger_services)):

@@ -26,6 +26,7 @@ from resource_management.core.providers import Provider
 from resource_management.core.resources.system import Execute
 from resource_management.core.shell import quote_bash_args
 from resource_management.core.logger import Logger
+from resource_management.libraries.functions.get_user_call_output import get_user_call_output
 
 
 class OzoneResourceProvider(Provider):
@@ -42,6 +43,10 @@ class OzoneResourceProvider(Provider):
     "leader is not ready",
     "retry",
   )
+  # Functional failures sometimes printed by ozone CLI while still exiting with code 0.
+  FUNCTIONAL_ERROR_SUBSTRINGS = (
+    "operation works only when security is enabled",
+  )
 
   def action_run(self):
     command = self.resource.command
@@ -52,15 +57,16 @@ class OzoneResourceProvider(Provider):
     self._execute(full_command)
 
   def action_generate_s3_credentials(self):
-    self.assert_parameter_is_set("access_id")
-
     cmd = [self.resource.ozone_cmd]
     if self.resource.conf_dir:
       cmd += ["--config", self.resource.conf_dir]
     if self.resource.secret_key:
+      self.assert_parameter_is_set("access_id")
       cmd += ["s3", "setsecret", "-u", self.resource.access_id, "-s", self.resource.secret_key]
     else:
-      cmd += ["s3", "getsecret", "-u", self.resource.access_id]
+      cmd += ["s3", "getsecret"]
+      if self.resource.access_id:
+        cmd += ["-u", self.resource.access_id]
     if self.resource.om_service_id:
       cmd += ["--om-service-id", self.resource.om_service_id]
 
@@ -69,7 +75,7 @@ class OzoneResourceProvider(Provider):
     resource_try_sleep = self._as_int(self.resource.try_sleep, 0)
     tries = resource_tries if resource_tries > 1 else 5
     try_sleep = resource_try_sleep if resource_try_sleep > 0 else 5
-    self._execute_with_retry(full_command, tries=tries, try_sleep=try_sleep)
+    self._execute_with_retry(full_command, tries=tries, try_sleep=try_sleep, verify_output=True)
 
   def _ozone_base_command(self):
     cmd = [self.resource.ozone_cmd]
@@ -97,13 +103,16 @@ class OzoneResourceProvider(Provider):
             environment=self.resource.environment
             )
 
-  def _execute_with_retry(self, command, tries, try_sleep):
+  def _execute_with_retry(self, command, tries, try_sleep, verify_output=False):
     last_error = None
     retries = self._as_int(tries, 1)
     sleep_seconds = self._as_int(try_sleep, 0)
     for attempt in range(1, retries + 1):
       try:
-        self._execute(command, tries=1, try_sleep=0)
+        if verify_output:
+          self._execute_and_verify_output(command)
+        else:
+          self._execute(command, tries=1, try_sleep=0)
         return
       except Exception as err:
         last_error = err
@@ -119,6 +128,35 @@ class OzoneResourceProvider(Provider):
 
     if last_error:
       raise last_error
+
+  def _execute_and_verify_output(self, command):
+    if self.resource.security_enabled:
+      self.assert_parameter_is_set("kinit_path_local")
+      self.assert_parameter_is_set("keytab")
+      self.assert_parameter_is_set("principal_name")
+      kinit_cmd = " ".join(
+        quote_bash_args(x)
+        for x in [self.resource.kinit_path_local, "-kt", self.resource.keytab, self.resource.principal_name]
+      )
+      command = "{0}; {1}".format(kinit_cmd, command)
+
+    _, out, err = get_user_call_output(
+      command,
+      user=self.resource.user,
+      quiet=not bool(self.resource.logoutput),
+      is_checked_call=True,
+      env=self.resource.environment
+    )
+
+    combined = "\n".join(filter(None, [out, err]))
+    combined_lower = combined.lower()
+    for fragment in self.FUNCTIONAL_ERROR_SUBSTRINGS:
+      if fragment in combined_lower:
+        raise Fail(
+          "Execution of '{0}' reported functional error '{1}'. Output:\n{2}".format(
+            command, fragment, combined
+          )
+        )
 
   def _is_retryable_error(self, err):
     error_text = str(err).lower()

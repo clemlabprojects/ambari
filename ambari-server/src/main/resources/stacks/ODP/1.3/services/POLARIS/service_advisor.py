@@ -75,6 +75,8 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     if not ranger_plugin_enabled or "RANGER" not in services_list:
       return
 
+    self.recommendPolarisRangerAuditConfigurations(configurations, services)
+
     ranger_admin_url = self._get_ranger_admin_url(configurations, services)
     if ranger_admin_url:
       put_ranger_security = self.putProperty(configurations, "ranger-polaris-security", services)
@@ -86,6 +88,36 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       if not current_override:
         put_ranger_plugin = self.putProperty(configurations, "ranger-polaris-plugin-properties", services)
         put_ranger_plugin("polaris.service.url", polaris_service_url)
+
+  def recommendPolarisRangerAuditConfigurations(self, configurations, services):
+    if 'ranger-polaris-audit' not in services.get('configurations', {}):
+      return
+
+    put_ranger_audit = self.putProperty(configurations, 'ranger-polaris-audit', services)
+
+    ranger_audit_dict = [
+      {'filename': 'ranger-env', 'configname': 'xasecure.audit.destination.db', 'target_configname': 'xasecure.audit.destination.db'},
+      {'filename': 'ranger-env', 'configname': 'xasecure.audit.destination.hdfs', 'target_configname': 'xasecure.audit.destination.hdfs'},
+      {'filename': 'ranger-env', 'configname': 'xasecure.audit.destination.hdfs.dir', 'target_configname': 'xasecure.audit.destination.hdfs.dir'},
+      {'filename': 'ranger-env', 'configname': 'xasecure.audit.destination.solr', 'target_configname': 'xasecure.audit.destination.solr'},
+      {'filename': 'ranger-admin-site', 'configname': 'ranger.audit.solr.urls', 'target_configname': 'xasecure.audit.destination.solr.urls'},
+      {'filename': 'ranger-admin-site', 'configname': 'ranger.audit.solr.zookeepers', 'target_configname': 'xasecure.audit.destination.solr.zookeepers'},
+    ]
+    for item in ranger_audit_dict:
+      if item['filename'] in services['configurations'] and item['configname'] in services['configurations'][item['filename']]['properties']:
+        if item['filename'] in configurations and item['configname'] in configurations[item['filename']]['properties']:
+          value = configurations[item['filename']]['properties'][item['configname']]
+        else:
+          value = services['configurations'][item['filename']]['properties'][item['configname']]
+        put_ranger_audit(item['target_configname'], value)
+
+    # Ensure the HDFS audit dir uses the actual NameNode URI from core-site rather
+    # than the placeholder default value from the XML file.
+    hdfs_dir = self._get_property(configurations, services, 'ranger-polaris-audit', 'xasecure.audit.destination.hdfs.dir') or ''
+    if 'NAMENODE_HOSTNAME' in hdfs_dir or not hdfs_dir.startswith('hdfs://'):
+      default_fs = self._get_property(configurations, services, 'core-site', 'fs.defaultFS')
+      if default_fs:
+        put_ranger_audit('xasecure.audit.destination.hdfs.dir', '{0}/ranger/audit'.format(default_fs.rstrip('/')))
 
   def _sync_ranger_plugin_flag(self, configurations, services):
     if "ranger-env" in services["configurations"] \

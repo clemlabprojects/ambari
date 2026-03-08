@@ -19,13 +19,14 @@
 # under the License.
 #
 #
+conf_dir=$1
 # delete ozone commands
-ozone sh key delete o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt
-ozone sh bucket delete o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
-ozone sh volume delete o3://{{om_service_id}}/ambarismokevolume
-ozone sh volume create o3://{{om_service_id}}/ambarismokevolume
-ozone sh bucket create o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
+ozone --config ${conf_dir} sh key delete o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt
+ozone --config ${conf_dir} sh bucket delete o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
+ozone --config ${conf_dir} sh volume delete o3://{{om_service_id}}/ambarismokevolume
+ozone --config ${conf_dir} sh volume create o3://{{om_service_id}}/ambarismokevolume
+ozone --config ${conf_dir} sh bucket create o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
 echo 'Ambari Ozone Smoke Test' > /tmp/ozonesmokefile.txt
-ozone sh key put o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt /tmp/ozonesmokefile.txt
-ozone sh key ls o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
+ozone --config ${conf_dir} sh key put o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket/ozonesmokefile.txt /tmp/ozonesmokefile.txt
+ozone --config ${conf_dir} sh key ls o3://{{om_service_id}}/ambarismokevolume/ambarismokebucket
 exit

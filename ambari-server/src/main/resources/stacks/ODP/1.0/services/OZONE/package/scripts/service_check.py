@@ -17,12 +17,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
+import os
 
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.format import format
 from resource_management.core.resources.system import Execute, File
 from resource_management.core.source import StaticFile
 from resource_management.core.source import Template
+from resource_management.core.logger import Logger
 import functions
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -58,17 +60,32 @@ class OzoneServiceCheckDefault(OzoneServiceCheck):
       smokeuser_kinit_cmd = format("{kinit_path_local} -kt {smoke_user_keytab} {smokeuser_principal}") 
       
       Execute( smokeuser_kinit_cmd,
-        user = params.ozone_user,
+        user = params.smoke_test_user,
         logoutput = True
       )
 
-    servicecheckcmd = format("{exec_tmp_dir}/ozone-smoke-init.sh")
-    smokeverifycmd = format("{exec_tmp_dir}/ozone-smoke-verify.sh /etc/hadoop/conf ozonesmokefile.txt ozone {om_service_id}")
-    cleanupCmd = format("{exec_tmp_dir}/ozone-smoke-cleanup.sh {om_service_id}")
+    service_check_conf_dir = params.ozone_base_conf_dir
+    service_check_conf_candidates = [params.ozone_base_conf_dir]
+    for role_conf in params.ROLE_NAME_MAP_CONF.values():
+      service_check_conf_candidates.append(os.path.join(params.ozone_base_conf_dir, role_conf))
+
+    for conf_dir in service_check_conf_candidates:
+      if conf_dir and os.path.exists(os.path.join(conf_dir, "ozone-site.xml")):
+        service_check_conf_dir = conf_dir
+        break
+
+    Logger.info("Using Ozone service-check configuration directory: {0}".format(service_check_conf_dir))
+
+    servicecheckcmd = format("{exec_tmp_dir}/ozone-smoke-init.sh {service_check_conf_dir}")
+    smokeverifycmd = format("{exec_tmp_dir}/ozone-smoke-verify.sh {service_check_conf_dir} ozonesmokefile.txt ozone {om_service_id}")
+    cleanupCmd = format("{exec_tmp_dir}/ozone-smoke-cleanup.sh {service_check_conf_dir} {om_service_id}")
     Execute(format("{servicecheckcmd} && {smokeverifycmd} && {cleanupCmd}"),
       tries     = 6,
       try_sleep = 5,
       user = params.smoke_test_user,
+      environment={
+        "HADOOP_CONF_DIR": service_check_conf_dir
+      },
       logoutput = True
     )
 

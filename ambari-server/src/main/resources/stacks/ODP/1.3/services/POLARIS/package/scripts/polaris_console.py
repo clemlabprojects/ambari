@@ -26,7 +26,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.script.script import Script
 
-from polaris import polaris
+from polaris import configure_polaris
 
 
 class PolarisConsole(Script):
@@ -38,7 +38,7 @@ class PolarisConsole(Script):
   def configure(self, env, upgrade_type=None, config_dir=None):
     import params
     env.set_params(params)
-    polaris('client')
+    configure_polaris('client')
 
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params

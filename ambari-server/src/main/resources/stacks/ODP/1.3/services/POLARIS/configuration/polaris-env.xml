@@ -646,8 +646,8 @@
     <display-name>polaris-env template</display-name>
     <description>This is the jinja template for polaris-env.sh file</description>
     <value>
-# The java implementation to use. If JAVA_HOME is not found we expect java and jar to be in path
-export JAVA_HOME={{java64_home}}
+# Java 17+ is required by Polaris. Configure polaris_java_home in Ambari to point to the correct JDK.
+export JAVA_HOME={{polaris_java_home}}
 
 # Polaris JAAS configuration (used when Kerberos is enabled)
 export POLARIS_JAAS_FILE={{polaris_jaas_conf}}
@@ -710,16 +710,12 @@ export POLARIS_ADMIN_USER={{polaris_admin_username}}
 export POLARIS_ADMIN_PASSWORD='{{polaris_admin_password_escaped}}'
 
 # Ozone bootstrap defaults for Polaris
-export POLARIS_OZONE_PRINCIPAL_NAME={{polaris_ozone_principal_name}}
-export POLARIS_OZONE_PRINCIPAL_SECRET='{{polaris_ozone_principal_secret_escaped}}'
-export POLARIS_OZONE_PRINCIPAL_ROLE={{polaris_ozone_principal_role}}
 export POLARIS_OZONE_CATALOG_NAME={{polaris_ozone_catalog_name}}
 export POLARIS_OZONE_CATALOG_BASE_LOCATION={{polaris_ozone_catalog_base_location}}
 export POLARIS_OZONE_CATALOG_ALLOWED_LOCATIONS={{polaris_ozone_catalog_allowed_locations}}
 export POLARIS_OZONE_S3_ENDPOINT={{polaris_ozone_s3_endpoint}}
 export POLARIS_OZONE_S3_REGION={{polaris_ozone_s3_region}}
 export POLARIS_OZONE_S3_PATH_STYLE_ACCESS={{polaris_ozone_s3_path_style_access}}
-export POLARIS_OZONE_CATALOG_AUTO_GRANTS={{polaris_ozone_catalog_auto_grants}}
     </value>
     <value-attributes>
       <type>content</type>

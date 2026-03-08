@@ -529,6 +529,7 @@ om_server_hosts = default("/clusterHostInfo/ozone_manager_hosts", None)
 kafka_server_hosts = default("/clusterHostInfo/kafka_broker_hosts", None)
 atlas_server_hosts = default("/clusterHostInfo/atlas_server_hosts", None)
 kms_server_hosts = default("/clusterHostInfo/ranger_kms_server_hosts", None)
+polaris_server_hosts = default("/clusterHostInfo/polaris_server_hosts", None)
 
 policy_users_to_create = []
 policy_users_to_create_for_kms = []
@@ -566,6 +567,10 @@ if atlas_server_hosts != None:
   if len(atlas_server_hosts) > 0 :
     atlas_user = default("/configurations/atlas-env/atlas_user", "atlas")
     policy_users_to_create.append(atlas_user)
+if polaris_server_hosts != None:
+  if len(polaris_server_hosts) > 0 :
+    polaris_user = default("/configurations/polaris-env/polaris_user", "polaris")
+    policy_users_to_create.append(polaris_user)
 if kms_server_hosts != None:
   policy_users_to_create.append('ranger') # since ranger 2.6, ranger user is required for KMS policies
   # also when creating ranger kms policies, we need to create hardcoded following users
@@ -581,6 +586,8 @@ if kms_server_hosts != None:
     policy_users_to_create.append('atlas')
   if 'kafka' not in policy_users_to_create:
     policy_users_to_create.append('kafka')
+  if 'polaris' not in policy_users_to_create:
+    policy_users_to_create.append('polaris')
   if len(kms_server_hosts) > 0 :
     if security_enabled:
       rangerkms_principal = config['configurations']['dbks-site']['ranger.ks.kerberos.principal']

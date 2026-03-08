@@ -26,6 +26,12 @@
     <description>Additional Quarkus logging categories for Polaris. Use quoted category names when they contain dots.</description>
     <value>
 # Polaris logging defaults (applied via /etc/polaris/conf/logging.properties).
+
+# Strip OTEL trace-context brackets, empty MDC fields, and thread name from log lines.
+# Default Quarkus+OTEL format includes [traceId,spanId] [,,,] (thread) which is noisy.
+quarkus.log.console.format=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] %s%e%n
+quarkus.log.file.format=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] %s%e%n
+
 # Keep these at INFO for production baselines.
 quarkus.log.category."org.apache.polaris.service.config".level=INFO
 quarkus.log.category."org.apache.polaris.extension.auth.ranger".level=INFO

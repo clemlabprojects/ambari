@@ -55,19 +55,27 @@ def _resolve_ambari_template_value(raw_value, replacements):
 config = Script.get_config()
 stack_root = Script.get_stack_root()
 
+# Command/stack execution context from Ambari.
 version = default("/commandParams/version", None)
 version_for_stack_feature_checks = get_stack_feature_version(config)
 retry_enabled = default("/commandParams/command_retry_enabled", False)
 
+# Core runtime identities and Java prerequisites used by all Polaris components.
 polaris_user = config['configurations']['polaris-env']['polaris_user']
 user_group = config['configurations']['cluster-env']['user_group']
 java64_home = config['ambariLevelParams']['java_home']
+# Polaris requires Java 17+. polaris_java_home must point to a Java 17+ installation;
+# it falls back to java64_home so the attribute always exists for template rendering,
+# but the default in polaris-env.xml should be set to the correct Java 17 path.
+polaris_java_home = java64_home
 jdk_location = default("/ambariLevelParams/jdk_location", "/usr/share/java")
 custom_postgres_jdbc_name = default("/ambariLevelParams/custom_postgres_jdbc_name", None)
 
+# Cluster-level security context used to decide kerberos-aware execution paths.
 security_enabled = str(default("/configurations/cluster-env/security_enabled", "false")).lower() == "true"
 kinit_path_local = get_kinit_path(default("/configurations/kerberos-env/executable_search_paths", None))
 
+# Polaris filesystem/layout parameters consumed by scripts during configure/start.
 polaris_log_dir = default("/configurations/polaris-env/polaris_log_dir", "/var/log/polaris")
 polaris_pid_dir = default("/configurations/polaris-env/polaris_pid_dir", "/var/run/polaris")
 polaris_pid_file = format("{polaris_pid_dir}/polaris.pid")
@@ -86,6 +94,9 @@ polaris_tools_home = default("/configurations/polaris-env/polaris_tools_home",
 polaris_mcp_home = default("/configurations/polaris-env/polaris_mcp_home", polaris_tools_home)
 polaris_console_home = default("/configurations/polaris-env/polaris_console_home", polaris_tools_home)
 
+# User-facing Polaris service parameters (bootstrap principals, OIDC toggles, TLS).
+# These are kept in params.py so both configure-time templating and runtime actions
+# use the same normalized values.
 polaris_env_content = config['configurations']['polaris-env']['content']
 polaris_logging_properties_content = default(
   "/configurations/polaris-logging-properties/content",
@@ -98,22 +109,18 @@ polaris_opts = config['configurations']['polaris-env']['polaris_opts']
 polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_username']
 polaris_admin_password = config['configurations']['polaris-env']['polaris_admin_password']
 polaris_admin_password_escaped = str(polaris_admin_password or "").replace("'", "'\"'\"'")
-polaris_bootstrap_realms_raw = str(default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS")).strip()
+polaris_bootstrap_realms_raw = default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS").strip()
 polaris_oidc_use_cluster_config = _to_bool(default("/configurations/polaris-env/polaris_oidc_use_cluster_config", "true"), True)
 polaris_oidc_override_auth_server_url = str(default("/configurations/polaris-env/polaris_oidc_override_auth_server_url", "")).strip()
 polaris_oidc_override_client_id = str(default("/configurations/polaris-env/polaris_oidc_override_client_id", "")).strip()
 polaris_oidc_override_client_secret = str(default("/configurations/polaris-env/polaris_oidc_override_client_secret", "")).strip()
-polaris_ozone_principal_name = str(default("/configurations/polaris-env/polaris_ozone_principal_name", "ozone-engine")).strip() or "ozone-engine"
 polaris_ozone_principal_secret = str(default("/configurations/polaris-env/polaris_ozone_principal_secret", "ozone-engine-secret"))
-polaris_ozone_principal_secret_escaped = polaris_ozone_principal_secret.replace("'", "'\"'\"'")
-polaris_ozone_principal_role = str(default("/configurations/polaris-env/polaris_ozone_principal_role", "ozone_engineers")).strip() or "ozone_engineers"
 polaris_ozone_catalog_name = str(default("/configurations/polaris-env/polaris_ozone_catalog_name", "ozone")).strip() or "ozone"
 polaris_ozone_catalog_base_location = str(default("/configurations/polaris-env/polaris_ozone_catalog_base_location", "s3://ozone/polaris/")).strip()
 polaris_ozone_catalog_allowed_locations_raw = str(default("/configurations/polaris-env/polaris_ozone_catalog_allowed_locations", "s3://ozone/")).strip()
 polaris_ozone_s3_endpoint = str(default("/configurations/polaris-env/polaris_ozone_s3_endpoint", "")).strip()
 polaris_ozone_s3_region = str(default("/configurations/polaris-env/polaris_ozone_s3_region", "us-east-1")).strip() or "us-east-1"
 polaris_ozone_s3_path_style_access = _to_bool(default("/configurations/polaris-env/polaris_ozone_s3_path_style_access", "true"), True)
-polaris_ozone_catalog_auto_grants = _to_bool(default("/configurations/polaris-env/polaris_ozone_catalog_auto_grants", "true"), True)
 polaris_ssl_enabled = _to_bool(default("/configurations/polaris-env/polaris_ssl_enabled", "false"), False)
 polaris_ssl_auto_generate = _to_bool(default("/configurations/polaris-env/polaris_ssl_auto_generate", "true"), True)
 polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris_ssl_keystore_password", "changeit"))
@@ -134,6 +141,8 @@ polaris_jaas_conf_template = config['configurations']['polaris-jaas-conf']['cont
 polaris_start_command = default("/configurations/polaris-env/polaris_start_command", "").strip()
 polaris_stop_command = default("/configurations/polaris-env/polaris_stop_command", "").strip()
 
+# Backward-compatible command normalization. Older stack definitions referenced
+# `bin/polaris` but service control must run `bin/server`.
 if not polaris_start_command:
   polaris_start_command = format("{polaris_home}/bin/server")
 else:
@@ -151,6 +160,8 @@ else:
     stop_parts[0] = stop_parts[0][:-len("/bin/polaris")] + "/bin/server"
     polaris_stop_command = " ".join(stop_parts)
 
+# Load mutable config dictionaries once; all later derived values are written
+# back into these maps before files are rendered by configure().
 application_properties = dict(config['configurations']['polaris-application-properties'])
 polaris_db_properties = dict(config['configurations']['polaris-db-properties'])
 cluster_name = config.get('clusterName', "cluster")
@@ -168,6 +179,8 @@ oidc_admin_url = str(default("/configurations/oidc-env/oidc_admin_url", "")).str
 oidc_realm = str(default("/configurations/oidc-env/oidc_realm", "")).strip()
 oidc_available = oidc_admin_url != "" and oidc_realm != ""
 
+# Normalize legacy Quarkus keys so operators can upgrade configs without
+# startup failures from renamed options.
 # Normalize deprecated Quarkus logging keys to current *.enabled variants.
 if "quarkus.log.console.enable" in application_properties:
   if "quarkus.log.console.enabled" not in application_properties:
@@ -230,8 +243,11 @@ polaris_auth_type = str(application_properties.get("polaris.authentication.type"
 if polaris_auth_type not in ("internal", "external", "mixed"):
   polaris_auth_type = "internal"
 
+# Persist normalized auth mode into generated application.properties.
 application_properties["polaris.authentication.type"] = polaris_auth_type
 
+# OIDC is mapped from cluster-level oidc-env when enabled, with explicit
+# override knobs preserved for custom/external IdP topologies.
 if polaris_auth_type in ("external", "mixed"):
   application_properties["quarkus.oidc.tenant-enabled"] = "true"
   if not str(application_properties.get("quarkus.oidc.application-type", "")).strip():
@@ -253,9 +269,11 @@ if polaris_auth_type in ("external", "mixed"):
 else:
   application_properties["quarkus.oidc.tenant-enabled"] = "false"
 
-bootstrap_realms_source = polaris_bootstrap_realms_raw
+# Build deterministic bootstrap realm list and credentials payload consumed by
+# polaris.py metastore bootstrap/admin operations.
+bootstrap_realms_source = default("/configurations/polaris-env/polaris_bootstrap_realms", "POLARIS").strip()
 if not bootstrap_realms_source:
-  bootstrap_realms_source = str(application_properties.get("polaris.realm-context.realms", "POLARIS")).strip()
+  bootstrap_realms_source = application_properties.get("polaris.realm-context.realms", "POLARIS").strip()
 bootstrap_realms = [r.strip() for r in bootstrap_realms_source.split(',') if r.strip()]
 polaris_bootstrap_credentials = ""
 if polaris_auth_type in ("internal", "mixed") and bootstrap_realms:
@@ -265,6 +283,7 @@ if polaris_auth_type in ("internal", "mixed") and bootstrap_realms:
   polaris_bootstrap_credentials = ";".join(entries)
 polaris_bootstrap_credentials_escaped = polaris_bootstrap_credentials.replace("'", "'\"'\"'")
 
+# RDBMS bootstrap inputs for relational-jdbc persistence mode.
 polaris_db_flavor = str(default("/configurations/polaris-db-properties/DB_FLAVOR", "POSTGRES")).upper()
 polaris_create_db_dbuser = str(default("/configurations/polaris-db-properties/create_db_dbuser", "true")).lower() == "true"
 polaris_db_host = str(default("/configurations/polaris-db-properties/db_host", "localhost")).strip() or "localhost"
@@ -296,6 +315,7 @@ if persistence_type == "relational-jdbc":
   if str(polaris_db_password).strip():
     application_properties["quarkus.datasource.password"] = polaris_db_password
 
+# Resolve effective service protocol/port from requested mode plus TLS state.
 polaris_protocol_requested = str(default("/configurations/polaris-env/polaris_protocol", "http")).strip().lower()
 if polaris_protocol_requested not in ("http", "https"):
   polaris_protocol_requested = "http"
@@ -315,6 +335,8 @@ polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevel
 polaris_hostname = config['agentLevelParams']['hostname']
 polaris_service_url = "{0}://{1}:{2}".format(polaris_protocol, polaris_service_host, polaris_port)
 
+# Ozone topology discovery and integration toggles used by Polaris Ozone
+# bootstrap logic (secret retrieval, ACL mode, default catalog endpoint).
 ozone_manager_hosts = sorted(default("/clusterHostInfo/ozone_manager_hosts", []))
 ozone_s3g_hosts = sorted(default("/clusterHostInfo/ozone_s3g_hosts", []))
 ozone_site = config.get('configurations', {}).get('ozone-site', {})
@@ -332,11 +354,13 @@ if not ozone_om_service_id:
   if ozone_om_service_ids:
     ozone_om_service_id = ozone_om_service_ids.split(",")[0].strip()
 
+ozone_security_enabled = str(default("/configurations/ozone-site/ozone.security.enabled", "false")).strip().lower() == "true"
 ozone_acl_enabled = str(default("/configurations/ozone-site/ozone.acl.enabled", "false")).strip().lower() == "true"
 ozone_acl_authorizer = str(default("/configurations/ozone-site/ozone.acl.authorizer.class", "")).strip()
 ozone_ranger_plugin_enabled = str(default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")).strip().lower() == "yes"
 ozone_acl_managed_by_ranger = "ranger" in ozone_acl_authorizer.lower() or ozone_ranger_plugin_enabled
 
+# Autodetect S3 gateway endpoint when operators leave explicit endpoint empty.
 if has_ozone_service and not polaris_ozone_s3_endpoint:
   ozone_s3g_https_address = str(default("/configurations/ozone-site/ozone.s3g.https-address", "")).strip()
   ozone_s3g_http_address = str(default("/configurations/ozone-site/ozone.s3g.http-address", "")).strip()
@@ -364,6 +388,7 @@ if has_ozone_service and not polaris_ozone_catalog_base_location:
 if has_ozone_service and not polaris_ozone_catalog_allowed_locations_raw:
   polaris_ozone_catalog_allowed_locations_raw = "s3://{0}/".format(cluster_name.lower())
 
+# Normalize allowed locations to a deterministic list/string representation.
 polaris_ozone_catalog_allowed_locations_list = [
   location.strip()
   for location in polaris_ozone_catalog_allowed_locations_raw.split(",")
@@ -377,6 +402,8 @@ polaris_ssl_keystore_alias = str(application_properties.get("quarkus.http.ssl.ce
 polaris_ssl_truststore_file = str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip()
 polaris_ssl_truststore_file_type = str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file-type", "PKCS12")).strip() or "PKCS12"
 
+# MCP/Console launcher parameters are derived here so start scripts stay simple
+# and do not replicate option assembly in multiple component scripts.
 polaris_mcp_transport = default("/configurations/polaris-env/polaris_mcp_transport", "http")
 polaris_mcp_host = default("/configurations/polaris-env/polaris_mcp_host", "0.0.0.0")
 polaris_mcp_port = int(default("/configurations/polaris-env/polaris_mcp_port", 8000))
@@ -473,6 +500,8 @@ if "quarkus.http.cors.access-control-allow-credentials" not in application_prope
 if not str(application_properties.get("quarkus.http.cors.access-control-max-age", "")).strip():
   application_properties["quarkus.http.cors.access-control-max-age"] = "PT10M"
 
+# Kerberos-specific JVM/JAAS parameters are prepared once here and reused by
+# configure/start actions to avoid drift.
 polaris_jaas_principal = None
 polaris_bare_principal = None
 polaris_kerberos_opts = ""
@@ -484,7 +513,8 @@ if security_enabled:
     "-Djava.security.auth.login.config={polaris_jaas_conf} -Djavax.security.auth.useSubjectCredsOnly=false"
   )
 
-# Ranger Polaris plugin integration
+# Ranger plugin integration expands Ambari templates, computes repository
+# metadata, and injects plugin-specific runtime keys for Polaris.
 ranger_policy_config = {}
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
@@ -493,11 +523,56 @@ has_ranger_admin = len(ranger_admin_hosts) > 0
 enable_ranger_polaris = default("/configurations/ranger-polaris-plugin-properties/ranger-polaris-plugin-enabled", "No")
 enable_ranger_polaris = str(enable_ranger_polaris).lower() == "yes"
 
-namenode_host = default("/clusterHostInfo/namenode_host", None)
-has_namenode = namenode_host is not None
+namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
+has_namenode = not len(namenode_hosts) == 0
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin") if has_namenode else None
 hadoop_conf_dir = os.environ.get("HADOOP_CONF_DIR", "/etc/hadoop/conf")
 
+enable_ranger_polaris = default("/configurations/polaris-application-properties/polaris.authorization.type", "internal").strip().lower() == "ranger"
+if enable_ranger_polaris:
+    # get ranger policy url
+    policymgr_mgr_url = config['configurations']['admin-properties']['policymgr_external_url']
+    if xml_configurations_supported:
+      policymgr_mgr_url = config['configurations']['ranger-polaris-security']['ranger.plugin.polaris.policy.rest.url']
+
+    if not is_empty(policymgr_mgr_url) and policymgr_mgr_url.endswith('/'):
+      policymgr_mgr_url = policymgr_mgr_url.rstrip('/')
+
+    # ranger audit db user
+    xa_audit_db_user = default('/configurations/admin-properties/audit_db_user', 'rangerlogger')
+
+    # ranger polaris service/repository name
+    repo_name = str(config['clusterName']) + '_polaris'
+    repo_name_value = config['configurations']['ranger-polaris-security']['ranger.plugin.polaris.service.name']
+    if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
+      repo_name = repo_name_value
+
+    common_name_for_certificate = config['configurations']['ranger-polaris-plugin-properties']['common.name.for.certificate']
+    repo_config_username = config['configurations']['ranger-polaris-plugin-properties']['REPOSITORY_CONFIG_USERNAME']
+    ranger_plugin_properties = config['configurations']['ranger-polaris-plugin-properties']
+    policy_user = config['configurations']['ranger-polaris-plugin-properties']['policy_user']
+    repo_config_password = config['configurations']['ranger-polaris-plugin-properties']['REPOSITORY_CONFIG_PASSWORD']
+
+    # ranger-env config
+    ranger_env = config['configurations']['ranger-env']
+
+    # create ranger-env config having external ranger credential properties
+    if not has_ranger_admin and enable_ranger_polaris:
+      external_admin_username = default('/configurations/ranger-polaris-plugin-properties/external_admin_username', 'admin')
+      external_admin_password = default('/configurations/ranger-polaris-plugin-properties/external_admin_password', 'admin')
+      external_ranger_admin_username = default('/configurations/ranger-polaris-plugin-properties/external_ranger_admin_username', 'amb_ranger_admin')
+      external_ranger_admin_password = default('/configurations/ranger-polaris-plugin-properties/external_ranger_admin_password', 'amb_ranger_admin')
+      ranger_env = {}
+      ranger_env['admin_username'] = external_admin_username
+      ranger_env['admin_password'] = external_admin_password
+      ranger_env['ranger_admin_username'] = external_ranger_admin_username
+      ranger_env['ranger_admin_password'] = external_ranger_admin_password
+      ranger_admin_username = external_admin_username
+      ranger_admin_password = external_admin_password
+
+    if has_ranger_admin:
+      ranger_admin_username = config['configurations']['ranger-env']['admin_username']
+      ranger_admin_password = config['configurations']['ranger-env']['admin_password']
 is_ranger_kms_ssl_enabled = default("configurations/ranger-kms-site/ranger.service.https.attrib.ssl.enabled", False)
 
 # Defaults for Ranger setup arguments that are optional for Polaris
@@ -511,6 +586,35 @@ if enable_ranger_polaris:
   repo_name_value = config['configurations']['ranger-polaris-security']['ranger.plugin.polaris.service.name']
   if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
     repo_name = repo_name_value
+
+  ranger_policy_config = {
+    "isEnabled": "true",
+    "service": repo_name,
+    "name": "[AMBARI] - Polaris Admin Access",
+    "resources": {
+      "root": {
+        "values": ["*"],
+        "isExcludes": "false",
+        "isRecursive": "false"
+      }
+    },
+    "policyItems": [{
+      "accesses": [
+        {"type": "catalog_create", "isAllowed": "true"},
+        {"type": "catalog_list", "isAllowed": "true"},
+        {"type": "principal_create", "isAllowed": "true"},
+        {"type": "principal_list", "isAllowed": "true"},
+        {"type": "principal_role_create", "isAllowed": "true"},
+        {"type": "principal_role_list", "isAllowed": "true"},
+        {"type": "service_manage_access", "isAllowed": "true"},
+      ],
+      "users": [polaris_admin_username],
+      "groups": [],
+      "roles": [],
+      "conditions": [],
+      "delegateAdmin": "false"
+    }]
+  }
 
   ssl_keystore_password = config['configurations']['ranger-polaris-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password']
   ssl_truststore_password = config['configurations']['ranger-polaris-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password']
@@ -599,6 +703,12 @@ if enable_ranger_polaris:
   application_properties["polaris.authorization.ranger.service-name"] = ranger_service_name
   if not str(application_properties.get("polaris.authorization.ranger.app-id", "")).strip():
     application_properties["polaris.authorization.ranger.app-id"] = "polaris"
+
+  # When Kerberos is enabled, configure the Ranger plugin to log in via the Polaris keytab so
+  # that the Ranger Admin REST client uses SPNEGO/Kerberos rather than SIMPLE authentication.
+  if security_enabled and polaris_jaas_principal and polaris_keytab_path:
+    application_properties["polaris.authorization.ranger.kerberos.principal"] = polaris_jaas_principal
+    application_properties["polaris.authorization.ranger.kerberos.keytab"] = polaris_keytab_path
 
   ranger_config_files = [
     format("{polaris_conf_dir}/ranger-polaris-security.xml"),

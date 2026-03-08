@@ -27,7 +27,7 @@ from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.script.script import Script
 
-from polaris import polaris, bootstrap_ozone_catalog_in_polaris
+from polaris import configure_polaris, bootstrap_ozone_catalog
 from setup_ranger_polaris import setup_ranger_polaris
 
 
@@ -40,8 +40,10 @@ class PolarisServer(Script):
   def configure(self, env, upgrade_type=None, config_dir=None):
     import params
     env.set_params(params)
-    polaris('server')
-    setup_ranger_polaris()
+    try:
+      configure_polaris('server')
+    finally:
+      setup_ranger_polaris()
 
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
@@ -127,6 +129,8 @@ class PolarisServer(Script):
       runtime_env["QUARKUS_DATASOURCE_USERNAME"] = jdbc_user
     if jdbc_password:
       runtime_env["QUARKUS_DATASOURCE_PASSWORD"] = jdbc_password
+    
+    runtime_env["JAVA_HOME"] = params.polaris_java_home
 
     no_op_test = format('test -f {polaris_pid_file} && ps -p `cat {polaris_pid_file}` >/dev/null 2>&1')
     # Polaris runtime launcher is foreground; daemonize it for Ambari service control.
@@ -143,7 +147,7 @@ class PolarisServer(Script):
             not_if=no_op_test
             )
 
-    bootstrap_ozone_catalog_in_polaris()
+    bootstrap_ozone_catalog()
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -162,6 +166,12 @@ class PolarisServer(Script):
                 )
 
     File(params.polaris_pid_file, action="delete")
+
+  def bootstrap_ozone_catalog(self, env):
+    import params
+    env.set_params(params)
+    Logger.info("Running manual Polaris custom command: BOOTSTRAP_OZONE_CATALOG")
+    bootstrap_ozone_catalog()
 
   def status(self, env):
     import status_params
