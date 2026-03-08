@@ -658,12 +658,24 @@ if enable_ranger_polaris:
   policy_user = ranger_plugin_properties['policy_user']
   polaris_service_url_override = default('/configurations/ranger-polaris-plugin-properties/polaris.service.url', '').strip()
   polaris_repository_url = polaris_service_url_override if polaris_service_url_override else polaris_service_url
+  # Ranger service-config expects a single realm value for Polaris-Realm header.
+  # Resolve it from Polaris realm-context config (first realm if multiple are configured).
+  polaris_repository_realm = str(
+    application_properties.get('polaris.realm-context.default-realm', '')
+  ).strip()
+  if is_empty(polaris_repository_realm):
+    realms_source = str(application_properties.get('polaris.realm-context.realms', 'POLARIS')).strip()
+    if not is_empty(realms_source):
+      polaris_repository_realm = realms_source.split(',')[0].strip()
+  if is_empty(polaris_repository_realm):
+    polaris_repository_realm = 'POLARIS'
 
   polaris_repository_configuration = {
     'username': ranger_plugin_properties['REPOSITORY_CONFIG_USERNAME'],
     'password': ranger_plugin_properties['REPOSITORY_CONFIG_PASSWORD'],
     # Ranger Polaris service definition requires this field name.
     'polaris.base.url': polaris_repository_url,
+    'polaris.realm': polaris_repository_realm,
     # Keep legacy alias for compatibility with older service-def variants.
     'polaris.rest.address': polaris_repository_url,
     'commonNameForCertificate': ranger_plugin_properties['common.name.for.certificate'],
