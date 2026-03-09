@@ -125,6 +125,30 @@
 
     </property>
     <property>
+        <name>impala_daemon_webserver_port</name>
+        <display-name>Impalad Web UI Port</display-name>
+        <value>25000</value>
+        <description>Web UI port for impalad.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_catalog_webserver_port</name>
+        <display-name>Catalogd Web UI Port</display-name>
+        <value>25020</value>
+        <description>Web UI port for catalogd.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_statestore_webserver_port</name>
+        <display-name>Statestored Web UI Port</display-name>
+        <value>25010</value>
+        <description>Web UI port for statestored.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>kerberos_reinit_interval</name>
         <value>60</value>
         <description>kerberos_reinit_interval</description>
@@ -583,6 +607,27 @@
 
     </property>
     <property>
+        <name>catalogd_ha_preemption_wait_period_ms</name>
+        <value>10000</value>
+        <description>The amount of time in milliseconds that the statestore waits for the second catalogd before finalizing active catalog designation.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>state_store_ha_port</name>
+        <value>24020</value>
+        <description>RPC port used for statestore HA communication between the active and standby statestore instances.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>statestore_ha_preemption_wait_period_ms</name>
+        <value>10000</value>
+        <description>The amount of time in milliseconds that the standby statestore waits before promoting itself when the active statestore is unavailable.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>num_metadata_loading_threads</name>
         <value>16</value>
         <description>The number of metadata loading threads (degree of parallelism) to use when loading catalog metadata.</description>
@@ -957,7 +1002,7 @@ RANGER_SERVICE_TYPE={{impala_env['impala_ranger_service_type']}}
 LDAP_URI={{impala_env['impala_ldap_uri']}}
 PWD_IN_CLEAR={{impala_env['impala_ldap_passwords_in_clear_ok']}}
 LDAP_DOMAIN={{impala_env['impala_ldap_domain']}}
-BIND_PASSWORD="{{ldap_credential_command}}"
+BIND_PASSWORD="{{ldap_credential_cmd}}"
 LDAP_USER_FILTER={{impala_env['ldap_user_filter']}}
 LDAP_GROUP_FILTER={{impala_env['ldap_group_filter']}}
 KRB_REINIT_INT={{impala_env['kerberos_reinit_interval']}}
@@ -984,6 +1029,7 @@ WEBSERVER_PRIVATE_KEY_PWD_CMD={{impala_env['webserver_private_key_password_cmd']
         <value>
 IMPALA_CATALOG_ARGS=" \
 -log_dir={{impala_log_dir}} \
+-hostname={{current_host_name}} \
 -max_log_files={{impala_env['max_log_files']}} \
 -state_store_host={{impala_state_store_host}} \
 -catalog_service_host={{impala_catalog_host}} \
@@ -999,6 +1045,14 @@ IMPALA_CATALOG_ARGS=" \
 -idle_session_timeout={{impala_env['impala_idle_session_timeout']}} \
 -idle_client_poll_period_s={{impala_env['idle_client_poll_period_s']}} \
 -statestore_subscriber_timeout_seconds={{impala_env['statestore_subscriber_timeout_s']}} \
+{% if enable_catalogd_ha %} \
+-enable_catalogd_ha=true \
+{% endif %} \
+{% if enable_statestored_ha %} \
+-enable_statestored_ha=true \
+-state_store_2_host={{impala_secondary_state_store_host}} \
+-state_store_2_port={{impala_env['impala_state_store_port']}} \
+{% endif %} \
 -load_catalog_in_background={{impala_env['load_catalog_in_background']}} \
 -load_auth_to_local_rules={{impala_env['load_auth_to_local_rules']}} \
 -enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}} \
@@ -1083,6 +1137,7 @@ IMPALA_CATALOG_ARGS=" \
         <value>
 IMPALA_STATE_STORE_ARGS=" \
 -log_dir={{impala_log_dir}} \
+-hostname={{current_host_name}} \
 -max_log_files={{impala_env['max_log_files']}} \
 -state_store_port={{impala_env['impala_state_store_port']}} \
 -statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}} \
@@ -1099,6 +1154,17 @@ IMPALA_STATE_STORE_ARGS=" \
 -statestore_heartbeat_tcp_timeout_seconds={{impala_env['statestore_heartbeat_tcp_timeout_seconds']}} \
 -statestore_max_missed_heartbeats={{impala_env['statestore_max_missed_heartbeats']}} \
 -statestore_num_heartbeat_threads={{impala_env['statestore_num_heartbeat_threads']}} \
+{% if enable_catalogd_ha %} \
+-enable_catalogd_ha=true \
+-catalogd_ha_preemption_wait_period_ms={{impala_env['catalogd_ha_preemption_wait_period_ms']}} \
+{% endif %} \
+{% if enable_statestored_ha %} \
+-enable_statestored_ha=true \
+-statestore_ha_preemption_wait_period_ms={{impala_env['statestore_ha_preemption_wait_period_ms']}} \
+-state_store_ha_port={{impala_env['state_store_ha_port']}} \
+-state_store_peer_host={{impala_state_store_peer_host}} \
+-state_store_peer_ha_port={{impala_env['state_store_ha_port']}} \
+{% endif %} \
 -redaction_rules_file={{impala_env['redaction_rules_file']}} \
 {% if enable_ranger %} \
 -server_name={{hive_server_host}} \
@@ -1179,11 +1245,20 @@ IMPALA_STATE_STORE_ARGS=" \
         <value>
 IMPALA_SERVER_ARGS=" \
 -log_dir={{impala_log_dir}} \
+-hostname={{current_host_name}} \
 --scratch_dirs={{impala_env['impala_scratch_dir']}} \
 --state_store_host={{impala_state_store_host}} \
 -mem_limit={{impala_env['mem_limit']}} \
 -catalog_service_host={{impala_catalog_host}} \
 -state_store_port={{impala_env['impala_state_store_port']}} \
+{% if enable_catalogd_ha %} \
+-enable_catalogd_ha=true \
+{% endif %} \
+{% if enable_statestored_ha %} \
+-enable_statestored_ha=true \
+-state_store_2_host={{impala_secondary_state_store_host}} \
+-state_store_2_port={{impala_env['impala_state_store_port']}} \
+{% endif %} \
 -fe_service_threads={{impala_env['fe_service_threads']}} \
 -enable_insert_events={{impala_env['enable_insert_events']}} \
 -inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}} \

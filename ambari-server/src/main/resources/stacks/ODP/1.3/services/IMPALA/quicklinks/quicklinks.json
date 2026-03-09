@@ -7,33 +7,48 @@
     },
     "links": [
       {
-        "name": "impala catalog web ui",
-        "label": "CATALOG MASTER WEB UI",
+        "name": "impalad web ui",
+        "label": "IMPALAD WEB UI",
+        "component_name": "IMPALA_DAEMON",
+        "requires_user_name": "false",
+        "url": "%@://%@:%@",
+        "port": {
+          "http_property": "impala_daemon_webserver_port",
+          "http_default_port": "25000",
+          "https_property": "impala_daemon_webserver_port",
+          "https_default_port": "25000",
+          "regex": "^(\\d+)$",
+          "site": "impala-env"
+        }
+      },
+      {
+        "name": "catalogd web ui",
+        "label": "CATALOGD WEB UI",
         "component_name": "IMPALA_CATALOG_SERVICE",
         "requires_user_name": "false",
         "url": "%@://%@:%@",
         "port": {
-          "http_property": "webserver_port",
+          "http_property": "impala_catalog_webserver_port",
           "http_default_port": "25020",
-          "https_property": "webserver_port",
+          "https_property": "impala_catalog_webserver_port",
           "https_default_port": "25020",
           "regex": "^(\\d+)$",
-          "site": "impala-catalog-env"
+          "site": "impala-env"
         }
       },
       {
-        "name": "impala statestore web ui",
-        "label": "STATESTORE MASTER WEB UI",
+        "name": "statestored web ui",
+        "label": "STATESTORED WEB UI",
         "component_name": "IMPALA_STATE_STORE",
         "requires_user_name": "false",
         "url": "%@://%@:%@",
         "port": {
-          "http_property": "webserver_port",
+          "http_property": "impala_statestore_webserver_port",
           "http_default_port": "25010",
-          "https_property": "webserver_port",
+          "https_property": "impala_statestore_webserver_port",
           "https_default_port": "25010",
           "regex": "^(\\d+)$",
-          "site": "impala-statestore-env"
+          "site": "impala-env"
         }
       }
     ]

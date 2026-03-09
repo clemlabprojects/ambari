@@ -14,7 +14,7 @@ RANGER_SERVICE_TYPE={{impala_env['impala_ranger_service_type']}}
 LDAP_URI={{impala_env['impala_ldap_uri']}}
 PWD_IN_CLEAR={{impala_env['impala_ldap_passwords_in_clear_ok']}}
 LDAP_DOMAIN={{impala_env['impala_ldap_domain']}}
-BIND_PASSWORD='echo "{{impala_env['impala_ldap_bind_password']}}"'
+BIND_PASSWORD={{ldap_bind_password_cmd}}
 KRB_REINIT_INT={{impala_env['kerberos_reinit_interval']}}
 LOCAL_TO_UNIX={{impala_env['impala_use_local_tz_for_unix_timestamp_conversions']}}
 LEGACY_HIVE_TS={{impala_env['impala_convert_legacy_hive_parquet_utc_timestamps']}}
@@ -29,6 +29,7 @@ WEBSERVER_PRIVATE_KEY_PWD_CMD={{impala_env['webserver_private_key_password_cmd']
 
 IMPALA_CATALOG_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
+    -hostname={{current_host_name}} \
     -state_store_host=${IMPALA_STATE_STORE_HOST} \
     -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
     -num_metadata_loading_threads={{impala_env['num_metadata_loading_threads']}} \
@@ -41,6 +42,14 @@ IMPALA_CATALOG_ARGS=" \
     -idle_query_timeout={{impala_env['impala_idle_query_timeout']}} \
     -idle_session_timeout={{impala_env['impala_idle_session_timeout']}} \
     -statestore_subscriber_timeout_seconds={{impala_env['statestore_subscriber_timeout_s']}} \
+    {% if enable_catalogd_ha %}
+    -enable_catalogd_ha=true \
+    {% endif %}
+    {% if enable_statestored_ha %}
+    -enable_statestored_ha=true \
+    -state_store_2_host={{impala_secondary_state_store_host}} \
+    -state_store_2_port={{impala_env['impala_state_store_port']}} \
+    {% endif %}
     -load_catalog_in_background={{impala_env['load_catalog_in_background']}} \
     -load_auth_to_local_rules={{impala_env['load_auth_to_local_rules']}} \
     -enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}} \
@@ -81,6 +90,7 @@ IMPALA_CATALOG_ARGS=" \
 	"
 IMPALA_STATE_STORE_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
+    -hostname={{current_host_name}} \
     -state_store_port=${IMPALA_STATE_STORE_PORT} \
     -statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}} \
     -statestore_num_update_threads={{impala_env['statestore_num_update_threads']}} \
@@ -94,6 +104,17 @@ IMPALA_STATE_STORE_ARGS=" \
     -statestore_heartbeat_tcp_timeout_seconds={{impala_env['statestore_heartbeat_tcp_timeout_seconds']}} \
     -statestore_max_missed_heartbeats={{impala_env['statestore_max_missed_heartbeats']}} \
     -statestore_num_heartbeat_threads={{impala_env['statestore_num_heartbeat_threads']}} \
+    {% if enable_catalogd_ha %}
+    -enable_catalogd_ha=true \
+    -catalogd_ha_preemption_wait_period_ms={{impala_env['catalogd_ha_preemption_wait_period_ms']}} \
+    {% endif %}
+    {% if enable_statestored_ha %}
+    -enable_statestored_ha=true \
+    -statestore_ha_preemption_wait_period_ms={{impala_env['statestore_ha_preemption_wait_period_ms']}} \
+    -state_store_ha_port={{impala_env['state_store_ha_port']}} \
+    -state_store_peer_host={{impala_state_store_peer_host}} \
+    -state_store_peer_ha_port={{impala_env['state_store_ha_port']}} \
+    {% endif %}
     -redaction_rules_file={{impala_env['redaction_rules_file']}} \
     {% if enable_ranger %}
     -server_name=${HIVE_SERVER_HOST} \
@@ -131,12 +152,21 @@ IMPALA_STATE_STORE_ARGS=" \
 	"
 IMPALA_SERVER_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
+    -hostname={{current_host_name}} \
 	--scratch_dirs=${IMPALA_SCRATCH_DIR} \
 	--catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
 	--state_store_host=${IMPALA_STATE_STORE_HOST} \
 	-mem_limit=${MEM_LIMIT} \
     -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
     -state_store_port=${IMPALA_STATE_STORE_PORT} \
+    {% if enable_catalogd_ha %}
+    -enable_catalogd_ha=true \
+    {% endif %}
+    {% if enable_statestored_ha %}
+    -enable_statestored_ha=true \
+    -state_store_2_host={{impala_secondary_state_store_host}} \
+    -state_store_2_port={{impala_env['impala_state_store_port']}} \
+    {% endif %}
     -fe_service_threads={{impala_env['fe_service_threads']}} \
     -inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}} \
     -max_profile_log_file_size={{impala_env['max_profile_log_file_size']}} \

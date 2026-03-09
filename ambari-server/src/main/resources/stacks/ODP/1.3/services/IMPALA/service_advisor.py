@@ -77,8 +77,8 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
         """
         self.cardinalitiesDict.update(
             {
-                "IMPALA_CATALOG_SERVICE": {"min":1},
-                "IMPALA_STATE_STORE": {"min":1},
+                "IMPALA_CATALOG_SERVICE": {"min":1, "max":2},
+                "IMPALA_STATE_STORE": {"min":1, "max":2},
                 "IMPALA_DAEMON":{"min":1},
             }
         )

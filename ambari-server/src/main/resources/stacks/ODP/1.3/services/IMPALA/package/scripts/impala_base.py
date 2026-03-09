@@ -25,7 +25,7 @@ from resource_management.core.source import InlineTemplate, Template, StaticFile
 from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_config import get_config
-from resource_management.libraries.functions.security_credential_helper import update_password
+from ambari_commons.credential_store_helper import create_password_in_credential_store
 from resource_management.core.exceptions import Fail
 from resource_management.libraries.functions.check_process_status import check_process_status
 
@@ -98,7 +98,7 @@ class ImpalaBase(Script):
         else:
             print("JAVA_HOME could not be detected.")
 
-    def configureImpala(self, env, name=None):
+    def configureImpala(self, env, name=None, upgrade_type=None):
         import params
         env.set_params(params)
         # if params.security_enabled:
@@ -107,22 +107,61 @@ class ImpalaBase(Script):
         #     Execute(cmd, ignore_failures=True)
         realm_name = os.popen(
             'grep "default_realm" /etc/krb5.conf ').read().strip(os.linesep).split(' ')[-1]
+        resolved_java_home = self._resolve_java_home()
+
         File("/etc/default/impala",
-             content=InlineTemplate(params.impala_template, realm_name=realm_name),
+             content=InlineTemplate(
+                 "# Managed by Ambari.\n"
+                 "# Native runtime config is rendered to /etc/impala/conf/impala-env.sh and *_flags files.\n"
+             ),
              mode=0o644
         )
-
-        # Map Ambari-generated args into init.d defaults for ODP service names
         File("/etc/default/impala-daemon",
-             content=InlineTemplate("source /etc/default/impala\nDAEMON_FLAGS=\"$IMPALAD_ARGS\"\n"),
+             content=InlineTemplate(
+                 "# Managed by Ambari.\n"
+                 "# impala.sh reads /etc/impala/conf/impalad_flags directly.\n"
+                 "DAEMON_FLAGS=\"\"\n"
+             ),
              mode=0o644
         )
         File("/etc/default/impala-catalog-service",
-             content=InlineTemplate("source /etc/default/impala\nDAEMON_FLAGS=\"$IMPALA_CATALOG_ARGS\"\n"),
+             content=InlineTemplate(
+                 "# Managed by Ambari.\n"
+                 "# impala.sh reads /etc/impala/conf/catalogd_flags directly.\n"
+                 "DAEMON_FLAGS=\"\"\n"
+             ),
              mode=0o644
         )
         File("/etc/default/impala-state-store",
-             content=InlineTemplate("source /etc/default/impala\nDAEMON_FLAGS=\"$IMPALA_STATE_STORE_ARGS\"\n"),
+             content=InlineTemplate(
+                 "# Managed by Ambari.\n"
+                 "# impala.sh reads /etc/impala/conf/statestored_flags directly.\n"
+                 "DAEMON_FLAGS=\"\"\n"
+             ),
+             mode=0o644
+        )
+        File(params.impala_env_sh,
+             owner=params.impala_user,
+             group=params.impala_group,
+             content=Template('impala-env.sh.j2', resolved_java_home=resolved_java_home),
+             mode=0o644
+        )
+        File(params.catalogd_flags_path,
+             owner=params.impala_user,
+             group=params.impala_group,
+             content=Template('catalogd_flags.j2', realm_name=realm_name),
+             mode=0o644
+        )
+        File(params.statestored_flags_path,
+             owner=params.impala_user,
+             group=params.impala_group,
+             content=Template('statestored_flags.j2', realm_name=realm_name),
+             mode=0o644
+        )
+        File(params.impalad_flags_path,
+             owner=params.impala_user,
+             group=params.impala_group,
+             content=Template('impalad_flags.j2', realm_name=realm_name),
              mode=0o644
         )
 
@@ -251,23 +290,45 @@ class ImpalaBase(Script):
             print("Ranger is Disabled")
 
         if params.enable_ldap_auth:
-            # Proceed only if the password is non-empty and not just whitespaceAdd commentMore actions
+            if not params.jdk_location:
+                raise Fail("ambariLevelParams/jdk_location is required for JCEKS-backed Impala LDAP credentials.")
+
+            Directory(params.impala_credential_lib_dir,
+                      owner=params.impala_user,
+                      group=params.impala_group,
+                      create_parents=True,
+                      mode=0o755)
+            Directory(os.path.dirname(params.impala_credential_store_file),
+                      owner=params.impala_user,
+                      group=params.impala_group,
+                      create_parents=True,
+                      mode=0o750)
+
             if params.impala_ldap_bind_password and params.impala_ldap_bind_password.strip():
-                # Update credential
-                delete_error, save_error = update_password(params.credential_path, "impala_ldap_bind_password", params.impala_ldap_bind_password, user=params.impala_user)
-                if save_error:
-                    if delete_error:
-                        Logger.error("Failed to delete alias from JCEKS credential: {0}".format(delete_error))
-                    Logger.error("Failed to save new JCEKS credential for impala_ldap_bind_password: {0}".format(save_error))
-                    raise Fail("Failed to save impala_ldap_bind_password to JCEKS: {0}".format(save_error))
+                create_password_in_credential_store(
+                    params.impala_credential_alias,
+                    params.impala_credential_provider_path,
+                    params.impala_credential_classpath,
+                    params.java64_home,
+                    params.jdk_location,
+                    params.impala_ldap_bind_password,
+                )
+                File(params.impala_credential_store_file,
+                     owner=params.impala_user,
+                     group=params.impala_group,
+                     only_if=format("test -e {impala_credential_store_file}"),
+                     mode=0o640)
+                dot_jceks_crc_file = os.path.join(
+                    os.path.dirname(params.impala_credential_store_file),
+                    ".{0}.crc".format(os.path.basename(params.impala_credential_store_file))
+                )
+                File(dot_jceks_crc_file,
+                     owner=params.impala_user,
+                     group=params.impala_group,
+                     only_if=format("test -e {dot_jceks_crc_file}"),
+                     mode=0o640)
 
-                #If this triggers, either the alias or the jceks file probably doesn't exist
-                elif delete_error:
-                    Logger.info("Unable to delete alias from JCEKS credential file: {0}".format(delete_error))
-                else:
-                    Logger.info("Successfully saved impala_ldap_bind_password to JCEKS.")
-
-            # Handle SSL-context for config -ldap_bind_password_cmd
+            # Render a local helper script so ldap_bind_password_cmd stays runtime-compatible.
             File(os.path.join(params.impala_conf_dir, "init_ldap_creds.sh"),
                  owner=params.impala_user,
                  group=params.impala_group,
@@ -280,41 +341,116 @@ class ImpalaBase(Script):
             sudo.unlink("/var/lib/impala/kudu-client-1.12.0.jar")
 
     def _impala_service_meta(self, service_name):
+        import params
         if service_name == "impala-daemon":
             return {
                 "svc": "impalad",
-                "args_var": "IMPALAD_ARGS",
                 "pid": "/var/run/impala/impalad.pid",
                 "out": "impalad.out",
                 "err": "impalad.err",
+                "impala_home": "{}".format(params.impala_home_daemon)
             }
         if service_name == "impala-catalog-service":
             return {
                 "svc": "catalogd",
-                "args_var": "IMPALA_CATALOG_ARGS",
                 "pid": "/var/run/impala/catalogd.pid",
                 "out": "catalogd.out",
                 "err": "catalogd.err",
+                "impala_home": "{}".format(params.impala_home_catalog)
             }
         if service_name == "impala-state-store":
             return {
                 "svc": "statestored",
-                "args_var": "IMPALA_STATE_STORE_ARGS",
                 "pid": "/var/run/impala/statestored.pid",
                 "out": "statestored.out",
                 "err": "statestored.err",
+                "impala_home": "{}".format(params.impala_home_statestore)
             }
         raise Fail("Unknown Impala service: {0}".format(service_name))
 
-    def _impala_cmd(self, action, service_name):
-        meta = self._impala_service_meta(service_name)
-        impala_home = "/usr/odp/current/{0}".format(service_name)
-        args = "${%s}" % meta["args_var"] if action == "start" else ""
-        return "bash -c 'source /etc/default/impala; {0}/bin/impala.sh {1} {2} {3}'".format(
-            impala_home, action, meta["svc"], args
+    def _source_java_home(self, source_file):
+        if not source_file or not os.path.isfile(source_file):
+            return None
+        command = "source {0} >/dev/null 2>&1 && printf '%s' \"$JAVA_HOME\"".format(source_file)
+        result = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True,
+            executable="/bin/bash",
+        )
+        stdout, _ = result.communicate()
+        if result.returncode != 0:
+            return None
+        java_home = stdout.decode('utf-8').strip() if hasattr(stdout, 'decode') else stdout.strip()
+        return os.path.realpath(java_home) if java_home else None
+
+    def _java_home_has_lib(self, java_home, lib_name):
+        java_home = os.path.realpath(java_home) if java_home else None
+        if not java_home or not os.path.isdir(java_home):
+            return False
+        for root, _, files in os.walk(java_home):
+            if lib_name in files:
+                return True
+        return False
+
+    def _is_valid_java_home(self, java_home):
+        return self._java_home_has_lib(java_home, "libjvm.so") and self._java_home_has_lib(java_home, "libjsig.so")
+
+    def _resolve_java_home(self):
+        import params
+
+        candidates = [
+            params.java_home,
+            getattr(params, "java64_home", None),
+            params.ambari_java_home,
+            self._source_java_home("/etc/default/bigtop-utils"),
+            self._source_java_home("/usr/lib/bigtop-utils/bigtop-detect-javahome"),
+            self._source_java_home("/usr/libexec/bigtop-detect-javahome"),
+        ]
+
+        tried = []
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate = os.path.realpath(candidate.strip())
+            if not candidate or candidate in tried:
+                continue
+            tried.append(candidate)
+            if self._is_valid_java_home(candidate):
+                return candidate
+
+        raise Fail(
+            "Unable to resolve a valid JAVA_HOME for Impala. Tried: {0}".format(
+                ", ".join(tried) if tried else "<none>"
+            )
         )
 
-    def start_impala_service(self, service_name):
+    def _impala_runtime_env(self, service_name):
+        import params
+
+        meta = self._impala_service_meta(service_name)
+        env = os.environ.copy()
+        env["JAVA_HOME"] = self._resolve_java_home()
+        env["%s_PIDFILE" % meta["svc"].upper()] = meta["pid"]
+        env["%s_OUTFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["out"])
+        env["%s_ERRFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["err"])
+        if params.has_hadoop_home:
+            env["HADOOP_HOME"] = params.hadoop_home
+        if params.has_hadoop_conf_dir:
+            env["HADOOP_CONF_DIR"] = params.hadoop_conf_dir
+        return env
+
+    def _impala_cmd(self, action, service_name, extra_args=None):
+        meta = self._impala_service_meta(service_name)
+        args = ""
+        if action == "start" and extra_args:
+            args = " {0}".format(extra_args)
+        return "{0}/bin/impala.sh {1} {2}{3}".format(
+            meta["impala_home"], action, meta["svc"], args
+        )
+
+    def start_impala_service(self, service_name, extra_args=None):
         import params
         meta = self._impala_service_meta(service_name)
         print("Starting service: {}".format(service_name))
@@ -328,12 +464,8 @@ class ImpalaBase(Script):
                   group=params.impala_group,
                   create_parents=True)
 
-        env = os.environ.copy()
-        env["%s_PIDFILE" % meta["svc"].upper()] = meta["pid"]
-        env["%s_OUTFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["out"])
-        env["%s_ERRFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["err"])
-
-        cmd = self._impala_cmd("start", service_name)
+        env = self._impala_runtime_env(service_name)
+        cmd = self._impala_cmd("start", service_name, extra_args=extra_args)
         Execute(cmd, environment=env, user=params.impala_user, logoutput=True)
 
     def stop_impala_service(self, service_name):
@@ -341,11 +473,27 @@ class ImpalaBase(Script):
         meta = self._impala_service_meta(service_name)
         print("Stopping service: {}".format(service_name))
 
-        env = os.environ.copy()
-        env["%s_PIDFILE" % meta["svc"].upper()] = meta["pid"]
+        env = self._impala_runtime_env(service_name)
         cmd = self._impala_cmd("stop", service_name)
         Execute(cmd, environment=env, user=params.impala_user, logoutput=True)
 
     def status_impala_service(self, service_name):
         meta = self._impala_service_meta(service_name)
         check_process_status(meta["pid"])
+
+    def failover_impala_service(self, service_name, force_flag, ha_enabled, ha_hosts, component_name):
+        import params
+
+        if not ha_enabled or len(ha_hosts) != 2:
+            raise Fail("{0} failover requires exactly 2 installed hosts in HA mode.".format(component_name))
+
+        Logger.info("Running one-shot failover for {0} on host {1}".format(component_name, params.current_host_name))
+
+        try:
+            self.status_impala_service(service_name)
+        except Exception:
+            Logger.info("{0} is not running on this host; starting it with {1}".format(service_name, force_flag))
+        else:
+            self.stop_impala_service(service_name)
+
+        self.start_impala_service(service_name, extra_args=force_flag)

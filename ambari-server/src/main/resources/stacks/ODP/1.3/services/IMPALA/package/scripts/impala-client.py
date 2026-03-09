@@ -31,8 +31,8 @@ class ImpalaCLient(ImpalaBase):
         self.installImpala(env)
         self.configure(env)
 
-    def configure(self, env):
-        self.configureImpala(env, name='client')
+    def configure(self, env, upgrade_type=None):
+        self.configureImpala(env, name='client', upgrade_type=upgrade_type)
 
     def status(self, env):
         raise ClientComponentHasNoStatus()

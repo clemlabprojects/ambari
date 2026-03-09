@@ -293,49 +293,49 @@
         "IMPALA_STATE_STORE": {
           "STACK-SELECT-PACKAGE": "impala-state-store",
           "INSTALL": [
-            "impala"
+            "impala-state-store"
           ],
           "PATCH": [
-            "impala"
+            "impala-state-store"
           ],
           "STANDARD": [
-            "impala"
+            "impala-state-store"
           ]
         },
         "IMPALA_CATALOG_SERVICE": {
           "STACK-SELECT-PACKAGE": "impala-catalog-service",
           "INSTALL": [
-            "impala"
+            "impala-catalog-service"
           ],
           "PATCH": [
-            "impala"
+            "impala-catalog-service"
           ],
           "STANDARD": [
-            "impala"
+            "impala-catalog-service"
           ]
         },
         "IMPALA_DAEMON": {
           "STACK-SELECT-PACKAGE": "impala-daemon",
           "INSTALL": [
-            "impala"
+            "impala-daemon"
           ],
           "PATCH": [
-            "impala"
+            "impala-daemon"
           ],
           "STANDARD": [
-            "impala"
+            "impala-daemon"
           ]
         },
         "IMPALA_CLIENT": {
           "STACK-SELECT-PACKAGE": "impala-client",
           "INSTALL": [
-            "impala"
+            "impala-client"
           ],
           "PATCH": [
-            "impala"
+            "impala-client"
           ],
           "STANDARD": [
-            "impala"
+            "impala-client"
           ]
         }
       },

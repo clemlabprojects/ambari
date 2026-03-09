@@ -12,24 +12,62 @@
                   <name>IMPALA_STATE_STORE</name>
                   <displayName>Impala State Store</displayName>
                   <category>MASTER</category>
-                  <cardinality>1+</cardinality>
+                  <cardinality>1-2</cardinality>
+                  <versionAdvertised>true</versionAdvertised>
                   <commandScript>
                     <script>scripts/impala-state-store.py</script>
                     <scriptType>PYTHON</scriptType>
                     <timeout>10000</timeout>
                   </commandScript>
+                  <customCommands>
+                    <customCommand>
+                      <name>FAILOVER_TO_THIS_HOST</name>
+                      <commandScript>
+                        <script>scripts/impala-state-store.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                      </commandScript>
+                    </customCommand>
+                  </customCommands>
                 </component>
 
                 <component>
                   <name>IMPALA_CATALOG_SERVICE</name>
                   <displayName>Impala Catalog Service</displayName>
                   <category>MASTER</category>
-                  <cardinality>1+</cardinality>
+                  <cardinality>1-2</cardinality>
+                  <versionAdvertised>true</versionAdvertised>
+                  <dependencies>
+                    <dependency>
+                      <name>CORE/CORE_CLIENT</name>
+                      <scope>host</scope>
+                      <auto-deploy>
+                        <enabled>true</enabled>
+                      </auto-deploy>
+                    </dependency>
+                    <dependency>
+                      <name>HIVE/HIVE_CLIENT</name>
+                      <scope>host</scope>
+                      <auto-deploy>
+                        <enabled>true</enabled>
+                      </auto-deploy>
+                    </dependency>
+                  </dependencies>
                   <commandScript>
                     <script>scripts/impala-catalog.py</script>
                     <scriptType>PYTHON</scriptType>
                     <timeout>10000</timeout>
                   </commandScript>
+                  <customCommands>
+                    <customCommand>
+                      <name>FAILOVER_TO_THIS_HOST</name>
+                      <commandScript>
+                        <script>scripts/impala-catalog.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                      </commandScript>
+                    </customCommand>
+                  </customCommands>
                 </component>
 
                 <component>
@@ -37,6 +75,23 @@
                   <displayName>Impala Daemon</displayName>
                   <category>SLAVE</category>
                   <cardinality>1+</cardinality>
+                  <versionAdvertised>true</versionAdvertised>
+                  <dependencies>
+                    <dependency>
+                      <name>CORE/CORE_CLIENT</name>
+                      <scope>host</scope>
+                      <auto-deploy>
+                        <enabled>true</enabled>
+                      </auto-deploy>
+                    </dependency>
+                    <dependency>
+                      <name>HIVE/HIVE_CLIENT</name>
+                      <scope>host</scope>
+                      <auto-deploy>
+                        <enabled>true</enabled>
+                      </auto-deploy>
+                    </dependency>
+                  </dependencies>
                   <commandScript>
                     <script>scripts/impala-daemon.py</script>
                     <scriptType>PYTHON</scriptType>
@@ -49,6 +104,23 @@
                     <displayName>Impala Client</displayName>
                     <category>CLIENT</category>
                     <cardinality>1+</cardinality>
+                    <versionAdvertised>true</versionAdvertised>
+                    <dependencies>
+                      <dependency>
+                        <name>CORE/CORE_CLIENT</name>
+                        <scope>host</scope>
+                        <auto-deploy>
+                          <enabled>true</enabled>
+                        </auto-deploy>
+                      </dependency>
+                      <dependency>
+                        <name>HIVE/HIVE_CLIENT</name>
+                        <scope>host</scope>
+                        <auto-deploy>
+                          <enabled>true</enabled>
+                        </auto-deploy>
+                      </dependency>
+                    </dependencies>
                     <commandScript>
                         <script>scripts/impala-client.py</script>
                         <scriptType>PYTHON</scriptType>
@@ -67,7 +139,7 @@
                 <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12,redhat8,redhat9</osFamily>
                 <packages>
                   <package>
-                    <name>impala-${stack_version}</name>
+                    <name>impala_${stack_version}</name>
                   </package>
                 </packages>
               </osSpecific>
@@ -94,6 +166,12 @@
                 <config-type>ranger-hive-policymgr-ssl</config-type>
                 <config-type>ranger-hive-security</config-type>
             </configuration-dependencies>
+            <quickLinksConfigurations>
+              <quickLinksConfiguration>
+                <fileName>quicklinks.json</fileName>
+                <default>true</default>
+              </quickLinksConfiguration>
+            </quickLinksConfigurations>
             <restartRequiredAfterChange>true</restartRequiredAfterChange>
         </service>
     </services>

@@ -28,22 +28,64 @@ from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.resources.hdfs_resource import HdfsResource
 from resource_management.libraries.functions.setup_ranger_plugin_xml import generate_ranger_service_config
 from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
-import resource_management.libraries.functions.security_credential_helper as security_credential_helper
 import os, socket
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 files_dir = os.path.join(os.path.dirname(script_dir), 'files')
+
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() == "true"
+
+
+config = Script.get_config()
+tmp_dir = Script.get_tmp_dir()
+stack_root = Script.get_stack_root()
+
+java_home = config['ambariLevelParams']['java_home']
+java_version = expect("/ambariLevelParams/java_version", int)
+ambari_java_home = config['ambariLevelParams']['ambari_java_home']
+ambari_java_exec = format("{ambari_java_home}/bin/java")
+impala_home_statestore = os.path.join(stack_root,  "current", "impala-state-store")
+impala_home_catalog = os.path.join(stack_root,  "current", "impala-catalog-service")
+impala_home_daemon = os.path.join(stack_root,  "current", "impala-daemon")
+
+def _host_aliases(host):
+    aliases = set()
+    if host:
+        lowered = host.lower()
+        aliases.add(lowered)
+        aliases.add(lowered.split('.')[0])
+    return aliases
+
+
+def _resolve_current_host(hosts, *candidates):
+    for candidate in candidates:
+        candidate_aliases = _host_aliases(candidate)
+        if not candidate_aliases:
+            continue
+        for host in hosts:
+            if candidate_aliases & _host_aliases(host):
+                return host
+    return hosts[0] if hosts else None
+
+
+def _peer_host(hosts, current_host):
+    if len(hosts) < 2:
+        return current_host
+    for host in hosts:
+        if host != current_host:
+            return host
+    return hosts[0]
+
 
 # server configurations
 config = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 stack_root = Script.get_stack_root()
 stack_name = default("/hostLevelParams/stack_name", None)
-
-security_script_path = security_credential_helper.__file__
-
-credential_path = "jceks://file/etc/security/credential/impala.jceks"
-ldap_credential_cmd = "ambari-python-wrap {0} -f {1} -a impala_ldap_bind_password".format(security_script_path, credential_path)
 impala_env = config['configurations']['impala-env']
 impala_user = config['configurations']['impala-env']['impala_user']
 impala_group = config['configurations']['impala-env']['impala_group']
@@ -52,23 +94,46 @@ impala_scratch_dir = config['configurations']['impala-env']['impala_scratch_dir'
 mem_limit = config['configurations']['impala-env']['mem_limit']
 impala_run_init_lib = default("/configurations/impala-env/impala_run_init_lib", False)
 impala_log_file = os.path.join(impala_log_dir,'impala-setup.log')
-impala_catalog_host = config['clusterHostInfo']['impala_catalog_service_hosts'][0]
-impala_state_store_host = config['clusterHostInfo']['impala_state_store_hosts'][0]
-enable_ranger = impala_env['enable_ranger']
-enable_trusted_subnets = impala_env['enable_trusted_subnets']
-enable_ldap_tls = impala_env['ldap_tls']
-enable_admission_control = impala_env['enable_admission_control']
-ldap_search_bind_authentication = impala_env['ldap_search_bind_authentication']
+hostname = default("/agentLevelParams/hostname", socket.getfqdn())
+socket_host_name = socket.getfqdn()
+socket_short_host_name = socket.gethostname()
+# Keep HA host selection stable across runs by deriving peers from sorted host lists.
+impala_catalog_hosts = sorted(default("/clusterHostInfo/impala_catalog_service_hosts", []))
+impala_state_store_hosts = sorted(default("/clusterHostInfo/impala_state_store_hosts", []))
+impala_daemon_hosts = sorted(default("/clusterHostInfo/impala_daemon_hosts", []))
+impala_catalog_host = impala_catalog_hosts[0] if impala_catalog_hosts else hostname
+impala_state_store_host = impala_state_store_hosts[0] if impala_state_store_hosts else hostname
+impala_secondary_state_store_host = impala_state_store_hosts[1] if len(impala_state_store_hosts) > 1 else impala_state_store_host
+current_host_name = _resolve_current_host(
+    impala_catalog_hosts + impala_state_store_hosts + impala_daemon_hosts,
+    hostname,
+    socket_host_name,
+    socket_short_host_name,
+) or socket_host_name
+current_statestore_host = _resolve_current_host(
+    impala_state_store_hosts,
+    hostname,
+    socket_host_name,
+    socket_short_host_name,
+)
+impala_state_store_peer_host = _peer_host(impala_state_store_hosts, current_statestore_host) if current_statestore_host else impala_state_store_host
+enable_catalogd_ha = len(impala_catalog_hosts) == 2
+enable_statestored_ha = len(impala_state_store_hosts) == 2
+enable_ranger = _as_bool(impala_env['enable_ranger'])
+enable_trusted_subnets = _as_bool(impala_env['enable_trusted_subnets'])
+enable_ldap_tls = _as_bool(impala_env['ldap_tls'])
+enable_admission_control = _as_bool(impala_env['enable_admission_control'])
+ldap_search_bind_authentication = _as_bool(impala_env['ldap_search_bind_authentication'])
 ldap_baseDN = impala_env['ldap_baseDN']
 ldap_domain = impala_env['impala_ldap_domain']
 ldap_bind_pattern = impala_env['ldap_bind_pattern']
-ldap_allow_anonymous_binds = impala_env['ldap_allow_anonymous_binds']
+ldap_allow_anonymous_binds = _as_bool(impala_env['ldap_allow_anonymous_binds'])
 impala_ldap_bind_password = impala_env['impala_ldap_bind_password']
 llama_site_content = config['configurations']['llama-site']['content']
 fair_scheduler_content = config['configurations']['fair-scheduler']['content']
-enable_ldap_auth = impala_env['enable_ldap_auth']
-client_services_ssl_enabled = impala_env['client_services_ssl_enabled']
-enable_load_balancer = impala_env['enable_load_balancer']
+enable_ldap_auth = _as_bool(impala_env['enable_ldap_auth'])
+client_services_ssl_enabled = _as_bool(impala_env['client_services_ssl_enabled'])
+enable_load_balancer = _as_bool(impala_env['enable_load_balancer'])
 impala_load_balancer_host = impala_env['impala_load_balancer_host']
 impala_log4j_properties = config['configurations']['impala-log4j-properties']['content']
 impala_log4j_properties = impala_log4j_properties.replace("${impala.log.dir}",impala_log_dir)
@@ -77,7 +142,8 @@ impala_state_store_template = config['configurations']['impala-env']['impala_sta
 impala_catalog_template = config['configurations']['impala-env']['impala_catalog_content']
 impala_server_template = config['configurations']['impala-env']['impala_server_args']
 local_library_dir=config['configurations']['impala-env']['local_library_dir']
-enable_audit_event_log=impala_env['enable_audit_event_log']
+enable_audit_event_log=_as_bool(impala_env['enable_audit_event_log'])
+enable_core_dumps=_as_bool(impala_env['enable_core_dumps'])
 audit_event_log_dir=impala_env['audit_event_log_dir']
 new_catalog_items = dict()
 new_statestore_items = dict()
@@ -95,16 +161,23 @@ for key, value in impala_env.items():
 
 impala_template = impala_defaults + impala_catalog_template + impala_state_store_template + impala_server_template
 
-current_host_name = socket.getfqdn()
-
-security_enabled = config['configurations']['cluster-env']['security_enabled']
+security_enabled = _as_bool(config['configurations']['cluster-env']['security_enabled'])
 
 hdfs_host = default("/clusterHostInfo/namenode_hosts", [''])[0]
 if not hdfs_host:
     hdfs_host = default("/clusterHostInfo/namenode_host", [''])[0]
 hive_host = default("/clusterHostInfo/hive_metastore_hosts", [''])[0]
 impala_conf_dir = "/etc/impala/conf"
-ldap_bind_password_cmd = "\'bash {0}/init_ldap_creds.sh\'".format(impala_conf_dir)
+impala_env_sh = os.path.join(impala_conf_dir, "impala-env.sh")
+catalogd_flags_path = os.path.join(impala_conf_dir, "catalogd_flags")
+statestored_flags_path = os.path.join(impala_conf_dir, "statestored_flags")
+impalad_flags_path = os.path.join(impala_conf_dir, "impalad_flags")
+impala_credential_alias = "impala_ldap_bind_password"
+impala_credential_store_file = "/etc/security/credential/impala.jceks"
+impala_credential_provider_path = "jceks://file/etc/security/credential/impala.jceks"
+impala_credential_lib_dir = os.path.join(impala_conf_dir, "cred", "lib")
+impala_credential_classpath = os.path.join(impala_credential_lib_dir, "*")
+ldap_bind_password_cmd = os.path.join(impala_conf_dir, "init_ldap_creds.sh")
 '''
 scp_conf_from = {
     "hive": {
@@ -123,6 +196,13 @@ hive_site_config = dict(config['configurations']['hive-site'])
 core_site_config = dict(config['configurations']['core-site'])
 hdfs_site_config = dict(config['configurations']['hdfs-site'])
 java64_home = config['ambariLevelParams']['java_home']
+jdk_location = default("/ambariLevelParams/jdk_location", None)
+ldap_credential_cmd = "\"{0}/bin/java\" -cp \"{1}\" org.apache.ambari.server.credentialapi.CredentialUtil get {2} -provider {3} 2>/dev/null | tail -n 1".format(
+    java64_home,
+    impala_credential_classpath,
+    impala_credential_alias,
+    impala_credential_provider_path,
+)
 java_version = expect("/ambariLevelParams/java_version", int)
 version = default("/commandParams/version", None)
 retryAble = default("/commandParams/command_retry_enabled", False)
@@ -133,7 +213,6 @@ hive_user = config['configurations']['hive-env']['hive_user']
 user_group = config['configurations']['cluster-env']['user_group']
 
 #current hosts and hive server list
-hostname = config['agentLevelParams']['hostname']
 hive_metastore_hosts = default('/clusterHostInfo/hive_metastore_hosts', [])
 hive_server_hosts = default("/clusterHostInfo/hive_server_hosts", [])
 hive_interactive_hosts = default('/clusterHostInfo/hive_server_interactive_hosts', [])
@@ -175,7 +254,7 @@ hive_site_config["hive.metastore.db.type"] = hive_metastore_db_type.upper()
 hive_site_config["hive.hook.proto.base-directory"] = hive_hook_proto_base_directory
 
 hive_server_host = config['clusterHostInfo']['hive_server_hosts'][0]
-impala_disable_kudu = config["configurations"]["impala-env"]["impala_disable_kudu"]
+impala_disable_kudu = _as_bool(config["configurations"]["impala-env"]["impala_disable_kudu"])
 kudu_master_port = default("/configurations/kudu-master-env/rpc_bind_addresses", "0.0.0.0:7051").split(":")[1]
 kudu_master_hosts = (":" + kudu_master_port + ",").join(default("/clusterHostInfo/kudu_master_hosts", [])) + ":" + kudu_master_port
 
@@ -198,7 +277,10 @@ hdfs_principal_name = config['configurations']['hadoop-env']['hdfs_principal_nam
 hdfs_site = config['configurations']['hdfs-site'] if has_namenode else None
 default_fs = config['configurations']['core-site']['fs.defaultFS'] if has_namenode else None
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin") if has_namenode else None
-hadoop_conf_dir = conf_select.get_hadoop_conf_dir() if has_namenode else None
+hadoop_conf_dir = conf_select.get_hadoop_conf_dir() if has_namenode else '/etc/hadoop/conf'
+hadoop_home = stack_select.get_hadoop_dir("home") if has_namenode else '/usr/odp/current/hadoop-client'
+has_hadoop_conf_dir = bool(hadoop_conf_dir and os.path.isdir(hadoop_conf_dir))
+has_hadoop_home = bool(hadoop_home and os.path.isdir(hadoop_home))
 mount_table_xml_inclusion_file_full_path = None
 mount_table_content = None
 if 'viewfs-mount-table' in config['configurations']:
