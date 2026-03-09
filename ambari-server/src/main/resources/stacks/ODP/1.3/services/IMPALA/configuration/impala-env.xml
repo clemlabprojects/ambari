@@ -859,8 +859,8 @@
     </property>
     <property>
         <name>impala_service_java_options</name>
-        <value>-Dlog4j.configuration=/etc/impala/conf/log4j.properties</value>
-        <description>JVM arguments to override across all Impala components</description>
+        <value>-Dlog4j.configuration=/etc/impala/conf/log4j.properties -Djavax.security.auth.useSubjectCredsOnly=false</value>
+        <description>JVM arguments to override across all Impala components. Includes Kerberos Subject credential handling required for HMS SASL connectivity.</description>
         <value-attributes>
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>

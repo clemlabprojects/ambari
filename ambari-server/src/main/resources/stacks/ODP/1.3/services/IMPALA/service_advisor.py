@@ -129,7 +129,31 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
 
     def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
         putHDFSCoreProperty = self.putProperty(configurations, "core-site", services)
+        putImpalaEnvProperty = self.putProperty(configurations, "impala-env", services)
 
         putHDFSCoreProperty("hadoop.proxyuser.impala.hosts","*")
         putHDFSCoreProperty("hadoop.proxyuser.impala.groups","*")
         putHDFSCoreProperty("hadoop.proxyuser.impala.users","*")
+
+        # Ensure Impala JVM gets credentials from keytab-based login context for HMS SASL.
+        required_option = "-Djavax.security.auth.useSubjectCredsOnly=false"
+        default_log4j_option = "-Dlog4j.configuration=/etc/impala/conf/log4j.properties"
+
+        current_opts = ""
+        try:
+            current_opts = services["configurations"]["impala-env"]["properties"].get(
+                "impala_service_java_options", ""
+            )
+        except Exception:
+            current_opts = ""
+
+        if not current_opts:
+            current_opts = default_log4j_option
+
+        options = current_opts.split()
+        if default_log4j_option not in options:
+            options.insert(0, default_log4j_option)
+        if required_option not in options:
+            options.append(required_option)
+
+        putImpalaEnvProperty("impala_service_java_options", " ".join(options))

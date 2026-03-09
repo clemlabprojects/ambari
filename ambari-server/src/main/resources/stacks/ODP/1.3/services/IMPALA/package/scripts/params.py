@@ -51,6 +51,7 @@ ambari_java_exec = format("{ambari_java_home}/bin/java")
 impala_home_statestore = os.path.join(stack_root,  "current", "impala-state-store")
 impala_home_catalog = os.path.join(stack_root,  "current", "impala-catalog-service")
 impala_home_daemon = os.path.join(stack_root,  "current", "impala-daemon")
+impala_conf_dir = "/etc/impala/conf"
 
 def _host_aliases(host):
     aliases = set()
@@ -116,10 +117,54 @@ current_statestore_host = _resolve_current_host(
     socket_host_name,
     socket_short_host_name,
 )
+max_log_files = default("/configurations/impala-env/max_log_files", 10)
+impala_catalog_webserver_port = default("/configurations/impala-env/impala_catalog_webserver_port", 25020)
+#The estimated stats size is calculated as 400 bytes * # columns * # partitions. The option prevents you from computing incremental stats on tables with too many columns and partitions (it guards against the scenario where memory usage from incremental stats creeps up and up as tables get larger, eventually causing an outage).
+# So you probably want to set it based on the expected size of the largest table that you will be using incremental stats on (that would help prevent someone accidentally computing incremental stats on an even larger table).
+# A few other comments.
+# Generally non-incremental stats will be more robust but we understand that it's sometimes challenging or less practical to do a full compute stats on all tables. So if the calculation above spits out a huge number, you might want to reconsider that.
+# You need to be careful with bumping *only* the catalog heap size. On versions prior to CDH5.16, you need all coordinator impala daemons to have a heap size as large as the catalogd, since the catalog cache is replicated. That was addressed for incremental stats specifically in CDH5.16 by *not* replicating the incremental stats (all other state is still replicated).
+# In CDH5.16 the memory consumption was improved substantially as well (the incremental stats use ~5x less memory). The estimated stats size is actually reduce to 200 bytes * # columns * #partitions.
+inc_stats_size_limit_bytes = default("/configurations/impala-env/inc_stats_size_limit_bytes", 100 * 1024 * 1024)
+# automatic refresh metadata interval in seconds. If set to a positive value, Impala will automatically refresh metadata for tables in the catalog that have not been refreshed in the last N seconds. This is disabled by default (0 or negative value).
+hms_event_polling_interval_s = default("/configurations/impala-env/hms_event_polling_interval_s", 60)
+#  determines how much parallelism Impala devotes to loading metadata in the background. The default is 16. You might increase this value for systems with huge numbers of databases, tables, or partitions. You might lower this value for busy systems that are CPU-constrained due to jobs from components other than Impala.  
+# https://impala.apache.org/docs/build/html/topics/impala_new_features.html
+num_metadata_loading_threads = default("/configurations/impala-env/num_metadata_loading_threads", 4)
+# reference https://issues.apache.org/jira/browse/IMPALA-6512
+datastream_sender_timeout_ms = default("/configurations/impala-env/datastream_sender_timeout_ms", 30000)
+# Improved scalability for highly concurrent loads by reducing the possibility of TCP/IP timeouts. A configuration setting, accepted_cnxn_queue_depth, can be adjusted upwards to avoid this type of timeout on large clusters.  Impala 2.8
+accepted_cnxn_queue_depth = default("/configurations/impala-env/accepted_cnxn_queue_depth", 128)
+minidump_path = default("/configurations/impala-env/minidump_path", "/var/lib/impala/minidumps")
+max_minidumps = default("/configurations/impala-env/max_minidumps", 5)
+default_query_options = default("/configurations/impala-env/default_query_options", "")
+impala_idle_query_timeout = default("/configurations/impala-env/impala_idle_query_timeout", 3600)
+impala_idle_session_timeout = default("/configurations/impala-env/impala_idle_session_timeout", 3600)
+idle_client_poll_period_s = default("/configurations/impala-env/idle_client_poll_period_s", 60)
+statestore_subscriber_timeout_s = default("/configurations/impala-env/statestore_subscriber_timeout_s", 90)
+catalogd_ha_preemption_wait_period_ms = default("/configurations/impala-env/catalogd_ha_preemption_wait_period_ms", 30000)
+impala_state_store_port = default("/configurations/impala-env/impala_state_store_port", 25010)
+load_catalog_in_background = _as_bool(default("/configurations/impala-env/load_catalog_in_background", True))
+load_auth_to_local_rules = default("/configurations/impala-env/load_auth_to_local_rules", "")
+enable_legacy_avx_support = _as_bool(default("/configurations/impala-env/enable_legacy_avx_support", False))
+enable_insert_events = _as_bool(default("/configurations/impala-env/enable_insert_events", False))
+redaction_rules_file = default("/configurations/impala-env/redaction_rules_file", os.path.join(impala_conf_dir, "redaction-rules.json"))
+
 impala_state_store_peer_host = _peer_host(impala_state_store_hosts, current_statestore_host) if current_statestore_host else impala_state_store_host
 enable_catalogd_ha = len(impala_catalog_hosts) == 2
 enable_statestored_ha = len(impala_state_store_hosts) == 2
 enable_ranger = _as_bool(impala_env['enable_ranger'])
+if enable_ranger:
+    impala_ranger_service_type = default("/configurations/impala-env/impala_ranger_service_type", "ranger")
+    impala_ranger_app_id = default("/configurations/impala-env/impala_ranger_app_id", "impala")
+    impala_authorization_provider = default("/configurations/impala-env/impala_authorization_provider", "ranger")
+    impala_proxy_user_config = default("/configurations/impala-env/impala_proxy_user_config", "")
+else:
+    impala_ranger_service_type = default("/configurations/impala-env/impala_ranger_service_type", "impala")
+    impala_ranger_app_id = default("/configurations/impala-env/impala_ranger_app_id", "impala")
+    impala_authorization_provider = default("/configurations/impala-env/impala_authorization_provider", "legacy")
+    impala_proxy_user_config = default("/configurations/impala-env/impala_proxy_user_config", "")
+
 enable_trusted_subnets = _as_bool(impala_env['enable_trusted_subnets'])
 enable_ldap_tls = _as_bool(impala_env['ldap_tls'])
 enable_admission_control = _as_bool(impala_env['enable_admission_control'])
@@ -132,7 +177,6 @@ impala_ldap_bind_password = impala_env['impala_ldap_bind_password']
 llama_site_content = config['configurations']['llama-site']['content']
 fair_scheduler_content = config['configurations']['fair-scheduler']['content']
 enable_ldap_auth = _as_bool(impala_env['enable_ldap_auth'])
-client_services_ssl_enabled = _as_bool(impala_env['client_services_ssl_enabled'])
 enable_load_balancer = _as_bool(impala_env['enable_load_balancer'])
 impala_load_balancer_host = impala_env['impala_load_balancer_host']
 impala_log4j_properties = config['configurations']['impala-log4j-properties']['content']
@@ -161,13 +205,57 @@ for key, value in impala_env.items():
 
 impala_template = impala_defaults + impala_catalog_template + impala_state_store_template + impala_server_template
 
-security_enabled = _as_bool(config['configurations']['cluster-env']['security_enabled'])
+security_enabled = config['configurations']['cluster-env']['security_enabled']
 
+# Kerberos Principal for Impala daemons
+if security_enabled:
+    kerberos_reinit_interval = default("/configurations/impala-env/kerberos_reinit_interval", 24*3600)
+    impala_keytab = config['configurations']['impala-env']['impala_keytab']
+    impala_principal = config['configurations']['impala-env']['impala_principal_name'].replace('_HOST', hostname.lower())
+
+# SSL and TLS settings
+client_services_ssl_enabled = _as_bool(impala_env['client_services_ssl_enabled'])
+if client_services_ssl_enabled:
+    ssl_server_certificate = config['configurations']['impala-env']['ssl_server_certificate']
+    ssl_server_private_key = config['configurations']['impala-env']['ssl_server_private_key']
+    ssl_server_ca_certificate = config['configurations']['impala-env']['ssl_server_ca_certificate']
+    ssl_client_certificate = config['configurations']['impala-env']['ssl_client_certificate']
+    ssl_client_private_key = config['configurations']['impala-env']['ssl_client_private_key']
+    ssl_client_ca_certificate = config['configurations']['impala-env']['ssl_client_ca_certificate']
+    webserver_certificate_file = config['configurations']['impala-env']['webserver_certificate_file']
+    webserver_private_key_file = config['configurations']['impala-env']['webserver_private_key_file']
+    webserver_private_key_password_cmd = config['configurations']['impala-env']['webserver_private_key_password_cmd']
+
+# LDAP
+if enable_ldap_auth:
+    impala_ldap_uri = config['configurations']['impala-env']['impala_ldap_uri']
+    impala_ldap_passwords_in_clear_ok = _as_bool(config['configurations']['impala-env']['impala_ldap_passwords_in_clear_ok'])
+    ldap_allow_anonymous_binds = _as_bool(config['configurations']['impala-env']['ldap_allow_anonymous_binds'])
+    ldap_bind_dn = config['configurations']['impala-env']['ldap_bind_dn']
+    impala_ldap_domain = config['configurations']['impala-env']['impala_ldap_domain']
+    ldap_baseDN = config['configurations']['impala-env']['ldap_baseDN']
+    ldap_bind_pattern = config['configurations']['impala-env']['ldap_bind_pattern']
+    ldap_search_bind_authentication = _as_bool(config['configurations']['impala-env']['ldap_search_bind_authentication'])
+    allow_custom_ldap_filters_with_kerberos_auth = _as_bool(config['configurations']['impala-env']['allow_custom_ldap_filters_with_kerberos_auth'])
+    ldap_user_search_basedn = config['configurations']['impala-env']['ldap_user_search_basedn']
+    ldap_group_search_basedn = config['configurations']['impala-env']['ldap_group_search_basedn']
+    ldap_user_filter = config['configurations']['impala-env']['ldap_user_filter']
+    ldap_group_filter = config['configurations']['impala-env']['ldap_group_filter']
+    ldap_user_filter = config['configurations']['impala-env']['ldap_user_filter']
+    ldap_group_filter = config['configurations']['impala-env']['ldap_group_filter']
+    ldap_group_dn_pattern = config['configurations']['impala-env']['ldap_group_dn_pattern']
+    ldap_group_membership_key = config['configurations']['impala-env']['ldap_group_membership_key']
+    ldap_group_class_key = config['configurations']['impala-env']['ldap_group_class_key']
+    enable_ldap_tls = _as_bool(config['configurations']['impala-env']['enable_ldap_tls'])
+    ldap_ca_certificate = config['configurations']['impala-env']['ldap_ca_certificate']
+    if ldap_ca_certificate == "" and enable_ldap_tls and client_services_ssl_enabled:
+        ldap_ca_certificate = ssl_client_ca_certificate
+
+# Hadoop settings
 hdfs_host = default("/clusterHostInfo/namenode_hosts", [''])[0]
 if not hdfs_host:
     hdfs_host = default("/clusterHostInfo/namenode_host", [''])[0]
 hive_host = default("/clusterHostInfo/hive_metastore_hosts", [''])[0]
-impala_conf_dir = "/etc/impala/conf"
 impala_env_sh = os.path.join(impala_conf_dir, "impala-env.sh")
 catalogd_flags_path = os.path.join(impala_conf_dir, "catalogd_flags")
 statestored_flags_path = os.path.join(impala_conf_dir, "statestored_flags")
