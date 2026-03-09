@@ -1,0 +1,143 @@
+# Managed by Ambari. Changes will be overwritten.
+-log_dir={{impala_log_dir}}
+-log_filename=impalad
+-hostname={{current_host_name}}
+-webserver_port={{impala_env['impala_daemon_webserver_port']}}
+--scratch_dirs={{impala_env['impala_scratch_dir']}}
+--state_store_host={{impala_state_store_host}}
+-mem_limit={{impala_env['mem_limit']}}
+-catalog_service_host={{impala_catalog_host}}
+-state_store_port={{impala_env['impala_state_store_port']}}
+{% if enable_catalogd_ha %}
+-enable_catalogd_ha=true
+{% endif %}
+{% if enable_statestored_ha %}
+-enable_statestored_ha=true
+-state_store_2_host={{impala_secondary_state_store_host}}
+-state_store_2_port={{impala_env['impala_state_store_port']}}
+{% endif %}
+-fe_service_threads={{impala_env['fe_service_threads']}}
+-enable_insert_events={{impala_env['enable_insert_events']}}
+-inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}}
+-max_log_files={{impala_env['max_log_files']}}
+-max_profile_log_file_size={{impala_env['max_profile_log_file_size']}}
+-max_profile_log_files={{impala_env['max_profile_log_files']}}
+-profile_log_dir={{impala_env['profile_log_dir']}}
+-disable_pool_max_requests={{impala_env['disable_pool_max_requests']}}
+-disable_pool_mem_limits={{impala_env['disable_pool_mem_limits']}}
+-default_pool_max_queued={{impala_env['default_pool_max_queued']}}
+-default_pool_max_requests={{impala_env['default_pool_max_requests']}}
+-default_pool_mem_limit={{impala_env['default_pool_mem_limit']}}
+-queue_wait_timeout_ms={{impala_env['queue_wait_timeout_ms']}}
+-minidump_path={{impala_env['minidump_path']}}
+-max_minidumps={{impala_env['max_minidumps']}}
+-default_query_options={{impala_env['default_query_options']}}
+-max_result_cache_size={{impala_env['max_result_cache_size']}}
+-unused_file_handle_timeout_sec={{impala_env['unused_file_handle_timeout_sec']}}
+-max_cached_file_handles={{impala_env['max_cached_file_handles']}}
+-max_audit_event_log_file_size={{impala_env['max_audit_event_log_file_size']}}
+-max_audit_event_log_files={{impala_env['max_audit_event_log_files']}}
+-accepted_cnxn_queue_depth={{impala_env['accepted_cnxn_queue_depth']}}
+-idle_client_poll_period_s={{impala_env['idle_client_poll_period_s']}}
+-idle_query_timeout={{impala_env['impala_idle_query_timeout']}}
+-idle_session_timeout={{impala_env['impala_idle_session_timeout']}}
+-use_local_tz_for_unix_timestamp_conversions={{impala_env['impala_use_local_tz_for_unix_timestamp_conversions']}}
+-convert_legacy_hive_parquet_utc_timestamps={{impala_env['impala_convert_legacy_hive_parquet_utc_timestamps']}}
+-insert_inherit_permissions
+-use_local_catalog={{impala_env['use_local_catalog']}}
+-enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}}
+-disk_spill_encryption={{impala_env['disk_spill_encryption']}}
+-abort_on_failed_audit_event={{impala_env['abort_on_failed_audit_event']}}
+-lineage_event_log_dir={{impala_env['lineage_event_log_dir']}}
+-max_lineage_log_file_size={{impala_env['max_lineage_log_file_size']}}
+-redaction_rules_file={{impala_env['redaction_rules_file']}}
+-is_coordinator={{impala_env['is_coordinator']}}
+-is_executor={{impala_env['is_executor']}}
+-local_library_dir={{local_library_dir}}
+{% if enable_ranger %}
+-server_name={{hive_server_host}}
+-ranger_service_type={{impala_env['impala_ranger_service_type']}}
+-ranger_app_id={{impala_env['impala_ranger_app_id']}}
+-authorization_provider={{impala_env['impala_authorization_provider']}}
+-authorized_proxy_user_config={{impala_env['impala_proxy_user_config']}}
+{% endif %}
+{% if enable_trusted_subnets %}
+--trusted_subnets={{impala_env['trusted_subnets']}}
+{% endif %}
+-disable_kudu={{impala_disable_kudu}}
+{% if not impala_disable_kudu %}
+-kudu_master_hosts={{kudu_master_hosts}}
+{% endif %}
+-use_statestore
+-state_store_host={{impala_state_store_host}}
+-be_port={{impala_env['impala_backend_port']}}
+{% if security_enabled %}
+-kerberos_reinit_interval={{impala_env['kerberos_reinit_interval']}}
+{% if enable_load_balancer %}
+-principal=impala/{{impala_load_balancer_host}}@{{realm_name}}
+{% else %}
+-principal=impala/{{current_host_name}}@{{realm_name}}
+{% endif %}
+-be_principal=impala/{{current_host_name}}@{{realm_name}}
+-keytab_file=/etc/security/keytabs/impala.service.keytab
+{% endif %}
+{% if client_services_ssl_enabled %}
+-ssl_server_certificate={{impala_env['ssl_server_certificate']}}
+-ssl_private_key={{impala_env['ssl_private_key']}}
+-ssl_private_key_password_cmd={{impala_env['ssl_private_key_password_cmd']}}
+-ssl_client_ca_certificate={{impala_env['ssl_client_ca_certificate']}}
+-webserver_certificate_file={{impala_env['webserver_certificate_file']}}
+-webserver_private_key_file={{impala_env['webserver_private_key_file']}}
+-webserver_private_key_password_cmd={{impala_env['webserver_private_key_password_cmd']}}
+{% endif %}
+{% if enable_audit_event_log %}
+-enable_audit_event_log={{impala_env['enable_audit_event_log']}}
+-audit_event_log_dir={{impala_env['audit_event_log_dir']}}
+{% endif %}
+{% if enable_ldap_auth %}
+-enable_ldap_auth=true
+-ldap_uri={{impala_env['impala_ldap_uri']}}
+-ldap_passwords_in_clear_ok={{impala_env['impala_ldap_passwords_in_clear_ok']}}
+{% if ldap_allow_anonymous_binds %}
+-ldap_allow_anonymous_binds={{impala_env['ldap_allow_anonymous_binds']}}
+{% else %}
+-ldap_bind_dn={{impala_env['ldap_bind_dn']}}
+-ldap_bind_password_cmd={{ldap_bind_password_cmd}}
+{% endif %}
+{% if ldap_domain %}
+-ldap_domain={{impala_env['impala_ldap_domain']}}
+{% endif %}
+{% if ldap_baseDN %}
+-ldap_basedn={{impala_env['ldap_baseDN']}}
+{% endif %}
+{% if ldap_bind_pattern %}
+-ldap_bind_pattern={{impala_env['ldap_bind_pattern']}}
+{% endif %}
+{% if ldap_search_bind_authentication %}
+-ldap_search_bind_authentication={{impala_env['ldap_search_bind_authentication']}}
+-allow_custom_ldap_filters_with_kerberos_auth={{impala_env['allow_custom_ldap_filters_with_kerberos_auth']}}
+-ldap_user_search_basedn={{impala_env['ldap_user_search_basedn']}}
+-ldap_group_search_basedn={{impala_env['ldap_group_search_basedn']}}
+-ldap_user_filter={{impala_env['ldap_user_filter']}}
+-ldap_group_filter={{impala_env['ldap_group_filter']}}
+{% else %}
+-ldap_user_filter={{impala_env['ldap_user_filter']}}
+-ldap_group_filter={{impala_env['ldap_group_filter']}}
+-ldap_group_dn_pattern={{impala_env['ldap_group_dn_pattern']}}
+-ldap_group_membership_key={{impala_env['ldap_group_membership_key']}}
+-ldap_group_class_key={{impala_env['ldap_group_class_key']}}
+{% endif %}
+{% endif %}
+{% if enable_ldap_tls %}
+-ldap_tls=true
+-ldap_ca_certificate={{impala_env['ldap_ca_certificate']}}
+{% endif %}
+{% if enable_admission_control %}
+-fair_scheduler_allocation_path=/etc/impala/conf/fair-scheduler.xml
+-llama_site_path=/etc/impala/conf/llama-site.xml
+{% endif %}
+{% if new_server_items.keys() %}
+{% for key, value in new_server_items.items() %}
+-{{ key }}={{ value }}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,30 @@
+#!/bin/bash
+# Managed by Ambari. Changes will be overwritten.
+
+: ${CLASSPATH:=}
+: ${LD_LIBRARY_PATH:=}
+
+export JAVA_HOME=${JAVA_HOME:-"{{resolved_java_home}}"}
+{% if has_hadoop_home %}
+export HADOOP_HOME=${HADOOP_HOME:-"{{hadoop_home}}"}
+{% endif %}
+{% if has_hadoop_conf_dir %}
+export HADOOP_CONF_DIR=${HADOOP_CONF_DIR:-"{{hadoop_conf_dir}}"}
+{% endif %}
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-{{impala_env['impala_service_java_options']}}}"
+
+{% if enable_core_dumps %}
+ulimit -c unlimited
+{% endif %}
+
+: ${IMPALAD_PIDFILE:="/var/run/impala/impalad.pid"}
+: ${CATALOGD_PIDFILE:="/var/run/impala/catalogd.pid"}
+: ${STATESTORED_PIDFILE:="/var/run/impala/statestored.pid"}
+
+: ${IMPALAD_OUTFILE:="{{impala_log_dir}}/impalad.out"}
+: ${CATALOGD_OUTFILE:="{{impala_log_dir}}/catalogd.out"}
+: ${STATESTORED_OUTFILE:="{{impala_log_dir}}/statestored.out"}
+
+: ${IMPALAD_ERRFILE:="{{impala_log_dir}}/impalad.err"}
+: ${CATALOGD_ERRFILE:="{{impala_log_dir}}/catalogd.err"}
+: ${STATESTORED_ERRFILE:="{{impala_log_dir}}/statestored.err"}
