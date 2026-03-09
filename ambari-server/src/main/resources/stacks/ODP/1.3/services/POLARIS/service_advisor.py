@@ -20,6 +20,7 @@ limitations under the License.
 import importlib.util
 import os
 import traceback
+import urllib.parse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STACKS_DIR = os.path.join(SCRIPT_DIR, '../../../../../stacks/')
@@ -111,13 +112,13 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
           value = services['configurations'][item['filename']]['properties'][item['configname']]
         put_ranger_audit(item['target_configname'], value)
 
-    # Ensure the HDFS audit dir uses the actual NameNode URI from core-site rather
-    # than the placeholder default value from the XML file.
+    # Ensure the HDFS audit dir uses a logical/active fs.defaultFS URI.
     hdfs_dir = self._get_property(configurations, services, 'ranger-polaris-audit', 'xasecure.audit.destination.hdfs.dir') or ''
-    if 'NAMENODE_HOSTNAME' in hdfs_dir or not hdfs_dir.startswith('hdfs://'):
-      default_fs = self._get_property(configurations, services, 'core-site', 'fs.defaultFS')
-      if default_fs:
-        put_ranger_audit('xasecure.audit.destination.hdfs.dir', '{0}/ranger/audit'.format(default_fs.rstrip('/')))
+    default_fs = self._get_property(configurations, services, 'core-site', 'fs.defaultFS') or ''
+    hdfs_nameservices = self._get_property(configurations, services, 'hdfs-site', 'dfs.nameservices') or ''
+    normalized_hdfs_dir = self._normalize_hdfs_audit_dir(hdfs_dir, default_fs, hdfs_nameservices)
+    if normalized_hdfs_dir and normalized_hdfs_dir != hdfs_dir:
+      put_ranger_audit('xasecure.audit.destination.hdfs.dir', normalized_hdfs_dir)
 
   def _sync_ranger_plugin_flag(self, configurations, services):
     if "ranger-env" in services["configurations"] \
@@ -402,6 +403,28 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       return configurations[site]["properties"][name]
     if site in services["configurations"] and name in services["configurations"][site]["properties"]:
       return services["configurations"][site]["properties"][name]
+    return None
+
+  def _normalize_hdfs_audit_dir(self, hdfs_dir, default_fs, hdfs_nameservices):
+    hdfs_dir = str(hdfs_dir or '').strip()
+    default_fs = str(default_fs or '').strip()
+    if not default_fs.startswith('hdfs://'):
+      return None
+
+    normalized = '{0}/ranger/audit'.format(default_fs.rstrip('/'))
+    if not hdfs_dir or 'NAMENODE_HOSTNAME' in hdfs_dir or not hdfs_dir.startswith('hdfs://'):
+      return normalized
+
+    parsed_dir = urllib.parse.urlparse(hdfs_dir)
+    current_host = parsed_dir.hostname or ''
+    nameservice_set = set([
+      ns.strip() for ns in str(hdfs_nameservices).split(',') if ns and ns.strip()
+    ])
+
+    # Prevent hdfs://<nameservice>:8020/... form, which is treated as a real host.
+    if parsed_dir.port and current_host and current_host in nameservice_set:
+      return normalized
+
     return None
 
   def _get_site_properties(self, configurations, services, site):

@@ -33,6 +33,14 @@
   useTicketCache=false
   principal="{{polaris_jaas_principal}}";
 };
+Client {
+  com.sun.security.auth.module.Krb5LoginModule required
+  useKeyTab=true
+  keyTab="{{polaris_keytab_path}}"
+  storeKey=true
+  useTicketCache=false
+  principal="{{polaris_jaas_principal}}";
+};
     </value>
     <value-attributes>
       <type>content</type>
