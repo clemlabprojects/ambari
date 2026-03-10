@@ -250,6 +250,14 @@ if security_enabled:
     enable_atlas_server_rule = True
     atlas_kerberos_service_users = map(to_ambari_infra_atlasserver_rule,atlas_server_hosts)
     # map each host on logfeeder principal
+enable_polaris_server_rule = False
+polaris_server_hosts = default("/clusterHostInfo/polaris_server_hosts", [])
+if security_enabled and len(polaris_server_hosts) > 0:
+    enable_polaris_server_rule = True
+    def to_ambari_infra_polarisserver_rule(host):
+      return get_name_from_principal(default('configurations/polaris-env/polaris_principal', 'polaris')) + "/" + host
+    polaris_kerberos_service_users = map(to_ambari_infra_polarisserver_rule,polaris_server_hosts)
+
 infra_solr_role_ranger_admin = default('configurations/infra-solr-security-json/infra_solr_role_ranger_admin', 'ranger_user')
 infra_solr_role_ranger_audit = default('configurations/infra-solr-security-json/infra_solr_role_ranger_audit', 'ranger_audit_user')
 infra_solr_role_atlas = default('configurations/infra-solr-security-json/infra_solr_role_atlas', 'atlas_user')
