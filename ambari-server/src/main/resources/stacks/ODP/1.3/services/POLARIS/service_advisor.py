@@ -120,6 +120,34 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
     if normalized_hdfs_dir and normalized_hdfs_dir != hdfs_dir:
       put_ranger_audit('xasecure.audit.destination.hdfs.dir', normalized_hdfs_dir)
 
+    if self._is_security_enabled(configurations, services):
+      kerberos_audit_defaults = {
+        "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
+        "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
+        "xasecure.audit.jaas.Client.option.useKeyTab": "true",
+        "xasecure.audit.jaas.Client.option.storeKey": "false",
+        "xasecure.audit.jaas.Client.option.serviceName": "solr",
+        "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true",
+      }
+      for key, value in kerberos_audit_defaults.items():
+        put_ranger_audit(key, value)
+
+      principal = self._get_property(
+        configurations, services, "ranger-polaris-audit", "xasecure.audit.jaas.Client.option.principal"
+      )
+      if not str(principal or "").strip():
+        polaris_principal = self._get_property(configurations, services, "polaris-env", "polaris_principal")
+        if str(polaris_principal or "").strip():
+          put_ranger_audit("xasecure.audit.jaas.Client.option.principal", polaris_principal)
+
+      keytab = self._get_property(
+        configurations, services, "ranger-polaris-audit", "xasecure.audit.jaas.Client.option.keyTab"
+      )
+      if not str(keytab or "").strip():
+        polaris_keytab = self._get_property(configurations, services, "polaris-env", "polaris_keytab")
+        if str(polaris_keytab or "").strip():
+          put_ranger_audit("xasecure.audit.jaas.Client.option.keyTab", polaris_keytab)
+
   def _sync_ranger_plugin_flag(self, configurations, services):
     if "ranger-env" in services["configurations"] \
       and "ranger-polaris-plugin-properties" in services["configurations"] \
@@ -478,6 +506,7 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
     self.as_super.__init__(*args, **kwargs)
     self.validators = [
       ("ranger-polaris-plugin-properties", self.validateRangerPolarisPluginProperties),
+      ("ranger-polaris-audit", self.validateRangerPolarisAudit),
       ("polaris-db-properties", self.validatePolarisDbProperties),
       ("polaris-application-properties", self.validatePolarisApplicationProperties),
       ("polaris-env", self.validatePolarisEnvProperties)
@@ -505,6 +534,77 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         })
 
     return self.toConfigurationValidationProblems(validation_items, "ranger-polaris-plugin-properties")
+
+  def validateRangerPolarisAudit(self, properties, recommendedDefaults, configurations, services, hosts):
+    validation_items = []
+
+    hdfs_enabled = str(properties.get("xasecure.audit.destination.hdfs", "false")).strip().lower() == "true"
+    hdfs_dir = str(properties.get("xasecure.audit.destination.hdfs.dir", "")).strip()
+    if hdfs_enabled:
+      if not hdfs_dir:
+        validation_items.append({
+          "config-name": "xasecure.audit.destination.hdfs.dir",
+          "item": self.getWarnItem("xasecure.audit.destination.hdfs.dir should be set when HDFS audit is enabled")
+        })
+      elif "NAMENODE_HOSTNAME" in hdfs_dir:
+        validation_items.append({
+          "config-name": "xasecure.audit.destination.hdfs.dir",
+          "item": self.getErrorItem(
+            "Replace NAMENODE_HOSTNAME placeholder with fs.defaultFS-based path (for example: hdfs://<nameservice>/ranger/audit)"
+          )
+        })
+      elif hdfs_dir.startswith("hdfs://"):
+        hdfs_site = self.getSiteProperties(configurations, "hdfs-site")
+        if not hdfs_site:
+          hdfs_site = self.getServicesSiteProperties(services, "hdfs-site") or {}
+        nameservice_set = set([
+          ns.strip() for ns in str((hdfs_site or {}).get("dfs.nameservices", "")).split(",") if ns and ns.strip()
+        ])
+        parsed = urllib.parse.urlparse(hdfs_dir)
+        if parsed.port and parsed.hostname and parsed.hostname in nameservice_set:
+          validation_items.append({
+            "config-name": "xasecure.audit.destination.hdfs.dir",
+            "item": self.getErrorItem(
+              "Use logical nameservice URI without port (hdfs://<nameservice>/...) for Ranger HDFS audit destination"
+            )
+          })
+
+    solr_enabled = str(properties.get("xasecure.audit.destination.solr", "false")).strip().lower() == "true"
+    cluster_env = self.getSiteProperties(configurations, "cluster-env")
+    if not cluster_env:
+      cluster_env = self.getServicesSiteProperties(services, "cluster-env") or {}
+    security_enabled = str(cluster_env.get("security_enabled", "false")).strip().lower() == "true"
+
+    if solr_enabled and security_enabled:
+      required_pairs = {
+        "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
+        "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
+        "xasecure.audit.jaas.Client.option.useKeyTab": "true",
+        "xasecure.audit.jaas.Client.option.storeKey": "false",
+        "xasecure.audit.jaas.Client.option.serviceName": "solr",
+        "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true",
+      }
+      for key, expected in required_pairs.items():
+        current_value = str(properties.get(key, "")).strip()
+        if current_value.lower() != str(expected).lower():
+          validation_items.append({
+            "config-name": key,
+            "item": self.getWarnItem(
+              "{0} should be set to '{1}' for Solr Kerberos audit".format(key, expected)
+            )
+          })
+
+      for key in (
+        "xasecure.audit.jaas.Client.option.principal",
+        "xasecure.audit.jaas.Client.option.keyTab",
+      ):
+        if not str(properties.get(key, "")).strip():
+          validation_items.append({
+            "config-name": key,
+            "item": self.getWarnItem("{0} should be set when Solr audit and Kerberos are enabled".format(key))
+          })
+
+    return self.toConfigurationValidationProblems(validation_items, "ranger-polaris-audit")
 
   def validatePolarisDbProperties(self, properties, recommendedDefaults, configurations, services, hosts):
     validation_items = []

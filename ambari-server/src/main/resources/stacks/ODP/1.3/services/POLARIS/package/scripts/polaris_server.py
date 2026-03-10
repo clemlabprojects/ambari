@@ -63,6 +63,7 @@ class PolarisServer(Script):
     runtime_env = {
       "QUARKUS_CONFIG_LOCATIONS": quarkus_locations,
       "SMALLRYE_CONFIG_LOCATIONS": quarkus_locations,
+      "POLARIS_JAVA_OPTS": params.polaris_opts
     }
 
     app_props = params.application_properties
@@ -131,6 +132,8 @@ class PolarisServer(Script):
       runtime_env["QUARKUS_DATASOURCE_PASSWORD"] = jdbc_password
     
     runtime_env["JAVA_HOME"] = params.polaris_java_home
+    runtime_env["POLARIS_JAVA_OPTS"] = params.polaris_opts
+    runtime_env["HADOOP_CONF_DIR"] = params.hadoop_conf_dir
 
     no_op_test = format('test -f {polaris_pid_file} && ps -p `cat {polaris_pid_file}` >/dev/null 2>&1')
     # Polaris runtime launcher is foreground; daemonize it for Ambari service control.

@@ -103,6 +103,60 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>xasecure.audit.jaas.Client.loginModuleName</name>
+    <value>com.sun.security.auth.module.Krb5LoginModule</value>
+    <description>JAAS login module used for Solr Kerberos authentication.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.loginModuleControlFlag</name>
+    <value>required</value>
+    <description>JAAS control flag used for Solr Kerberos authentication.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.option.useKeyTab</name>
+    <value>true</value>
+    <description>Use keytab for Solr Kerberos authentication.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.option.storeKey</name>
+    <value>false</value>
+    <description>Store key option for Solr Kerberos JAAS client.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.option.serviceName</name>
+    <value>solr</value>
+    <description>Kerberos service name for Solr.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.destination.solr.force.use.inmemory.jaas.config</name>
+    <value>true</value>
+    <description>Force in-memory JAAS config for Solr audit client.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.option.principal</name>
+    <value/>
+    <description>Kerberos principal used by Solr audit client.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>xasecure.audit.jaas.Client.option.keyTab</name>
+    <value/>
+    <description>Keytab used by Solr audit client.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>xasecure.audit.destination.solr.batch.filespool.dir</name>
     <value>/var/log/polaris/audit/solr/spool</value>
     <description>/var/log/polaris/audit/solr/spool</description>

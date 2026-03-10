@@ -20,6 +20,7 @@ import os
 
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import conf_select
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_bare_principal import get_bare_principal
@@ -510,7 +511,7 @@ if security_enabled:
   polaris_jaas_principal = polaris_principal_value.replace('_HOST', current_host)
   polaris_bare_principal = get_bare_principal(polaris_principal_value)
   polaris_kerberos_opts = format(
-    "-Djava.security.auth.login.config={polaris_jaas_conf} -Djavax.security.auth.useSubjectCredsOnly=false"
+    "-Djava.security.auth.login.config={polaris_jaas_conf} -Djavax.security.auth.useSubjectCredsOnly=false -Dsolr.httpclient.builder.factory=org.apache.solr.client.solrj.impl.Krb5HttpClientBuilder"
   )
 
 # Ranger plugin integration expands Ambari templates, computes repository
@@ -526,7 +527,7 @@ enable_ranger_polaris = str(enable_ranger_polaris).lower() == "yes"
 namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
 has_namenode = not len(namenode_hosts) == 0
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin") if has_namenode else None
-hadoop_conf_dir = os.environ.get("HADOOP_CONF_DIR", "/etc/hadoop/conf")
+hadoop_conf_dir = conf_select.get_hadoop_conf_dir() if has_namenode else "/etc/hadoop/conf"
 
 enable_ranger_polaris = default("/configurations/polaris-application-properties/polaris.authorization.type", "internal").strip().lower() == "ranger"
 if enable_ranger_polaris:
@@ -648,7 +649,7 @@ if enable_ranger_polaris:
     ranger_admin_password = config['configurations']['ranger-env']['admin_password']
 
   ranger_plugin_properties = config['configurations']['ranger-polaris-plugin-properties']
-  ranger_polaris_audit = config['configurations']['ranger-polaris-audit']
+  ranger_polaris_audit = dict(config['configurations']['ranger-polaris-audit'])
   ranger_polaris_audit_attrs = config['configurationAttributes']['ranger-polaris-audit']
   ranger_polaris_security = config['configurations']['ranger-polaris-security']
   ranger_polaris_security_attrs = config['configurationAttributes']['ranger-polaris-security']

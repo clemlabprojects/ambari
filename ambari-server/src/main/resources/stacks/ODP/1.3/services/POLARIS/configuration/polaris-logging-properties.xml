@@ -32,18 +32,28 @@
 quarkus.log.console.format=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] %s%e%n
 quarkus.log.file.format=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] %s%e%n
 
-# Keep these at INFO for production baselines.
+# Keep these Ranger-related categories at INFO for production baselines.
+# Admins can raise specific categories to DEBUG/TRACE when troubleshooting.
 quarkus.log.category."org.apache.polaris.service.config".level=INFO
 quarkus.log.category."org.apache.polaris.extension.auth.ranger".level=INFO
+quarkus.log.category."org.apache.ranger".level=INFO
+quarkus.log.category."org.apache.ranger.plugin".level=INFO
 quarkus.log.category."org.apache.ranger.plugin.service".level=INFO
+quarkus.log.category."org.apache.ranger.plugin.util".level=INFO
 quarkus.log.category."org.apache.ranger.plugin.util.PolicyRefresher".level=INFO
+quarkus.log.category."org.apache.ranger.admin.client".level=INFO
 quarkus.log.category."org.apache.ranger.admin.client.RangerAdminRESTClient".level=INFO
+quarkus.log.category."org.apache.ranger.audit".level=INFO
+quarkus.log.category."org.apache.ranger.audit.destination".level=INFO
+quarkus.log.category."org.apache.ranger.audit.provider".level=INFO
+quarkus.log.category."org.apache.ranger.audit.provider.hdfs".level=INFO
+quarkus.log.category."org.apache.ranger.audit.utils".level=INFO
+quarkus.log.category."org.apache.ranger.audit.queue".level=INFO
 
-# Optional troubleshooting overrides (uncomment temporarily):
-# quarkus.log.category."org.apache.polaris.extension.auth.ranger".level=DEBUG
-# quarkus.log.category."org.apache.ranger.plugin.service".level=DEBUG
+# Example troubleshooting overrides (uncomment temporarily):
+# quarkus.log.category."org.apache.ranger.audit.provider.hdfs".level=DEBUG
+# quarkus.log.category."org.apache.ranger.audit.destination".level=DEBUG
 # quarkus.log.category."org.apache.ranger.plugin.util.PolicyRefresher".level=DEBUG
-# quarkus.log.category."org.apache.ranger.admin.client.RangerAdminRESTClient".level=DEBUG
     </value>
     <value-attributes>
       <type>content</type>

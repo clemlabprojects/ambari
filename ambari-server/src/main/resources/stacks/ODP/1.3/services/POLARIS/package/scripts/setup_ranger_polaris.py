@@ -32,94 +32,6 @@ import urllib.parse
 import urllib.request
 
 
-def _prepare_ranger_audit_runtime_config():
-  """
-  Normalize Ranger audit settings before the plugin XML files are rendered.
-
-  This keeps runtime behavior deterministic even if existing cluster configs
-  still contain legacy placeholders or incomplete Kerberos audit properties.
-  """
-  import params
-
-  if not params.enable_ranger_polaris:
-    return None
-
-  # Ambari config dictionaries are immutable wrappers. Work on a plain mutable
-  # copy and pass it explicitly to setup_ranger_plugin().
-  audit_cfg = dict(params.ranger_polaris_audit)
-  _normalize_hdfs_audit_dir(audit_cfg, params.config)
-  _ensure_solr_kerberos_audit_settings(audit_cfg, params.security_enabled, params.polaris_jaas_principal, params.polaris_keytab_path)
-  return audit_cfg
-
-
-def _normalize_hdfs_audit_dir(audit_cfg, full_config):
-  hdfs_enabled = str(audit_cfg.get("xasecure.audit.destination.hdfs", "false")).strip().lower() == "true"
-  if not hdfs_enabled:
-    return
-
-  core_site = full_config.get("configurations", {}).get("core-site", {})
-  hdfs_site = full_config.get("configurations", {}).get("hdfs-site", {})
-  default_fs = str(core_site.get("fs.defaultFS", "")).strip()
-  current_dir = str(audit_cfg.get("xasecure.audit.destination.hdfs.dir", "")).strip()
-
-  if not default_fs.startswith("hdfs://"):
-    Logger.warning(
-      "Polaris Ranger audit: fs.defaultFS is empty or non-HDFS ({0}); keeping configured HDFS audit dir '{1}'.".format(
-        default_fs, current_dir
-      )
-    )
-    return
-
-  normalized_default = "{0}/ranger/audit".format(default_fs.rstrip("/"))
-  should_update = False
-
-  if not current_dir or "NAMENODE_HOSTNAME" in current_dir or not current_dir.startswith("hdfs://"):
-    should_update = True
-  else:
-    parsed_dir = urllib.parse.urlparse(current_dir)
-    current_host = parsed_dir.hostname or ""
-    nameservices = [
-      ns.strip() for ns in str(hdfs_site.get("dfs.nameservices", "")).split(",") if ns.strip()
-    ]
-
-    # In HA/logical nameservice mode, host:port form (e.g. hdfs://ns:8020)
-    # gets treated as a physical host and can trigger UnknownHostException.
-    if parsed_dir.port and current_host and current_host in nameservices:
-      should_update = True
-
-  if should_update and current_dir != normalized_default:
-    audit_cfg["xasecure.audit.destination.hdfs.dir"] = normalized_default
-    Logger.info(
-      "Polaris Ranger audit: normalized xasecure.audit.destination.hdfs.dir from '{0}' to '{1}'.".format(
-        current_dir, normalized_default
-      )
-    )
-
-
-def _ensure_solr_kerberos_audit_settings(audit_cfg, security_enabled, principal, keytab):
-  if not security_enabled:
-    return
-
-  desired_static = {
-    "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
-    "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
-    "xasecure.audit.jaas.Client.option.useKeyTab": "true",
-    "xasecure.audit.jaas.Client.option.storeKey": "false",
-    "xasecure.audit.jaas.Client.option.serviceName": "solr",
-    "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true",
-  }
-  for key, value in desired_static.items():
-    if str(audit_cfg.get(key, "")).strip() != value:
-      audit_cfg[key] = value
-
-  principal = str(principal or "").strip()
-  keytab = str(keytab or "").strip()
-  if principal and not str(audit_cfg.get("xasecure.audit.jaas.Client.option.principal", "")).strip():
-    audit_cfg["xasecure.audit.jaas.Client.option.principal"] = principal
-  if keytab and not str(audit_cfg.get("xasecure.audit.jaas.Client.option.keyTab", "")).strip():
-    audit_cfg["xasecure.audit.jaas.Client.option.keyTab"] = keytab
-
-
 def setup_ranger_polaris():
   import params
 
@@ -133,10 +45,6 @@ def setup_ranger_polaris():
     Logger.info("Polaris: Ranger setup will retry if Ranger Admin is temporarily unavailable.")
   else:
     Logger.info("Polaris: Ranger setup will skip if Ranger Admin is unavailable.")
-
-  effective_ranger_polaris_audit = _prepare_ranger_audit_runtime_config()
-  if effective_ranger_polaris_audit is None:
-    effective_ranger_polaris_audit = params.ranger_polaris_audit
 
   if params.has_namenode and params.xa_audit_hdfs_is_enabled:
     try:
@@ -215,7 +123,7 @@ def setup_ranger_polaris():
                       params.enable_ranger_polaris, conf_dict=params.polaris_conf_dir,
                       component_user=params.polaris_user, component_group=params.user_group,
                       cache_service_list=['polaris'],
-                      plugin_audit_properties=effective_ranger_polaris_audit, plugin_audit_attributes=params.ranger_polaris_audit_attrs,
+                      plugin_audit_properties=params.ranger_polaris_audit, plugin_audit_attributes=params.ranger_polaris_audit_attrs,
                       plugin_security_properties=params.ranger_polaris_security, plugin_security_attributes=params.ranger_polaris_security_attrs,
                       plugin_policymgr_ssl_properties=params.ranger_polaris_policymgr_ssl, plugin_policymgr_ssl_attributes=params.ranger_polaris_policymgr_ssl_attrs,
                       component_list=['polaris-server'], audit_db_is_enabled=False,
