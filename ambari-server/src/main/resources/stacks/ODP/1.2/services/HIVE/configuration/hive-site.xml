@@ -19,7 +19,7 @@
  * limitations under the License.
  */
 -->
-<configuration supports_adding_forbidden="true">
+<configuration>
     <property>
         <name>hive.zookeeper.log.level</name>
         <description>Hive Zookeeper Log level to control Logback - Options are INFO, DEBUG, WARN, ERROR</description>
