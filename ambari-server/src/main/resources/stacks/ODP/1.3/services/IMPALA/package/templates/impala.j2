@@ -5,7 +5,7 @@ HIVE_SERVER_HOST={{hive_server_host}}
 IMPALA_BACKEND_PORT={{impala_env['impala_backend_port']}}
 IMPALA_LOG_DIR={{impala_log_dir}}
 IMPALA_SCRATCH_DIR={{impala_env['impala_scratch_dir']}}
-MEM_LIMIT={{impala_env['mem_limit']}}
+MEM_LIMIT={{impala_env['impalad_mem_limit']}}
 RANGER_APP_ID={{impala_env['impala_ranger_app_id']}}
 AUTH_PROVIDER={{impala_env['impala_authorization_provider']}}
 TRUSTED_SUBNETS={{impala_env['trusted_subnets']}} 
@@ -156,7 +156,7 @@ IMPALA_SERVER_ARGS=" \
 	--scratch_dirs=${IMPALA_SCRATCH_DIR} \
 	--catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
 	--state_store_host=${IMPALA_STATE_STORE_HOST} \
-	-mem_limit=${MEM_LIMIT} \
+    -mem_limit=${MEM_LIMIT} \
     -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
     -state_store_port=${IMPALA_STATE_STORE_PORT} \
     {% if enable_catalogd_ha %}

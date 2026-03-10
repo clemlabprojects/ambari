@@ -92,7 +92,6 @@ impala_user = config['configurations']['impala-env']['impala_user']
 impala_group = config['configurations']['impala-env']['impala_group']
 impala_log_dir = config['configurations']['impala-env']['impala_log_dir']
 impala_scratch_dir = config['configurations']['impala-env']['impala_scratch_dir']
-mem_limit = config['configurations']['impala-env']['mem_limit']
 impala_run_init_lib = default("/configurations/impala-env/impala_run_init_lib", False)
 impala_log_file = os.path.join(impala_log_dir,'impala-setup.log')
 hostname = default("/agentLevelParams/hostname", socket.getfqdn())
@@ -182,7 +181,7 @@ impala_scratch_dir = default("/configurations/impala-env/impala_scratch_dir", "/
 _default_state_store_host = impala_state_store_hosts[0] if impala_state_store_hosts else hostname
 _default_catalog_host = impala_catalog_hosts[0] if impala_catalog_hosts else hostname
 impala_state_store_host = _default_state_store_host
-mem_limit = default("/configurations/impala-env/mem_limit", "80%")
+impalad_mem_limit = default("/configurations/impala-env/impalad_mem_limit", "20gb")
 impala_catalog_host = _default_catalog_host
 enable_state_store_ha = len(impala_state_store_hosts) == 2
 if enable_state_store_ha:
@@ -217,7 +216,7 @@ is_coordinator = current_host_name in impala_catalog_hosts
 is_executor = current_host_name in impala_daemon_hosts
 local_library_dir = default("/configurations/impala-env/local_library_dir", "/usr/lib/impala/lib")
 # 
-enable_ranger = _as_bool(impala_env['enable_ranger'])
+enable_ranger = config['configurations']['impala-env']['enable_ranger'] if 'enable_ranger' in config['configurations']['impala-env'] else False
 if enable_ranger:
     impala_ranger_service_type = default("/configurations/impala-env/impala_ranger_service_type", "ranger")
     impala_ranger_app_id = default("/configurations/impala-env/impala_ranger_app_id", "impala")

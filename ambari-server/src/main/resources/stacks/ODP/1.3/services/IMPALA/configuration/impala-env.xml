@@ -158,7 +158,18 @@
     <property>
         <name>mem_limit</name>
         <value>20gb</value>
-        <description>memory limit . etc 70%,10mb,10gb,10tb</description>
+        <description>Deprecated legacy key. Use impalad_mem_limit.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_mem_limit</name>
+        <display-name>Impalad Memory Limit</display-name>
+        <value>20gb</value>
+        <description>Value for impalad -mem_limit. Examples: 70%, 10mb, 10gb, 10tb.</description>
+        <value-attributes>
+            <type>string</type>
+        </value-attributes>
     <on-ambari-upgrade add="true"/>
 
     </property>
@@ -1100,7 +1111,7 @@ IMPALA_BACKEND_PORT={{impala_env['impala_backend_port']}}
 IMPALA_LOG_DIR={{impala_log_dir}}
 IMPALA_MAX_LOG_FILES={{impala_env['max_log_files']}}
 IMPALA_SCRATCH_DIR={{impala_env['impala_scratch_dir']}}
-MEM_LIMIT={{impala_env['mem_limit']}}
+MEM_LIMIT={{impala_env['impalad_mem_limit']}}
 RANGER_APP_ID={{impala_env['impala_ranger_app_id']}}
 AUTH_PROVIDER={{impala_env['impala_authorization_provider']}}
 TRUSTED_SUBNETS={{impala_env['trusted_subnets']}}
@@ -1355,7 +1366,7 @@ IMPALA_SERVER_ARGS=" \
 -hostname={{current_host_name}} \
 --scratch_dirs={{impala_env['impala_scratch_dir']}} \
 --state_store_host={{impala_state_store_host}} \
--mem_limit={{impala_env['mem_limit']}} \
+-mem_limit={{impala_env['impalad_mem_limit']}} \
 -catalog_service_host={{impala_catalog_host}} \
 -state_store_port={{impala_env['impala_state_store_port']}} \
 {% if enable_catalogd_ha %} \

@@ -126,6 +126,31 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
 
         return self.getServiceComponentCardinalityValidations(services, hosts, "IMPALA")
 
+    def _recommended_impalad_mem_limit(self, services, hosts):
+        impalad_hosts = self.getHostsWithComponent("IMPALA", "IMPALA_DAEMON", services, hosts)
+        impalad_mem_kb = []
+
+        for host in impalad_hosts:
+            total_mem = host.get("Hosts", {}).get("total_mem", 0)
+            try:
+                total_mem = int(total_mem)
+            except (TypeError, ValueError):
+                continue
+
+            if total_mem > 0:
+                impalad_mem_kb.append(total_mem)
+
+        # If host memory details are not available, keep percentage-based default behavior.
+        if not impalad_mem_kb:
+            return "80%"
+
+        min_mem_kb = min(impalad_mem_kb)
+        recommended_gb = int((min_mem_kb * 70) / (100 * 1024 * 1024))
+        if recommended_gb < 2:
+            recommended_gb = 2
+
+        return "{0}g".format(recommended_gb)
+
 
     def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
         putHDFSCoreProperty = self.putProperty(configurations, "core-site", services)
@@ -166,6 +191,7 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
             options.append(required_option)
 
         putImpalaEnvProperty("impala_service_java_options", " ".join(options))
+        putImpalaEnvProperty("impalad_mem_limit", self._recommended_impalad_mem_limit(services, hosts))
 
         # Required by Impala HMS event processing on secured clusters.
         putHIVECoreProperty("hive.metastore.dml.events", "true")
