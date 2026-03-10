@@ -2,94 +2,94 @@
 -log_dir={{impala_log_dir}}
 -log_filename=statestored
 -hostname={{current_host_name}}
--max_log_files={{impala_env['max_log_files']}}
--webserver_port={{impala_env['impala_statestore_webserver_port']}}
--state_store_port={{impala_env['impala_state_store_port']}}
--statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}}
--statestore_num_update_threads={{impala_env['statestore_num_update_threads']}}
--inc_stats_size_limit_bytes={{impala_env['inc_stats_size_limit_bytes']}}
--minidump_path={{impala_env['minidump_path']}}
--max_minidumps={{impala_env['max_minidumps']}}
--default_query_options={{impala_env['default_query_options']}}
--idle_query_timeout={{impala_env['impala_idle_query_timeout']}}
--idle_session_timeout={{impala_env['impala_idle_session_timeout']}}
--enable_legacy_avx_support={{impala_env['enable_legacy_avx_support']}}
--enable_insert_events={{impala_env['enable_insert_events']}}
--statestore_heartbeat_frequency_ms={{impala_env['statestore_heartbeat_frequency_ms']}}
--statestore_heartbeat_tcp_timeout_seconds={{impala_env['statestore_heartbeat_tcp_timeout_seconds']}}
--statestore_max_missed_heartbeats={{impala_env['statestore_max_missed_heartbeats']}}
--statestore_num_heartbeat_threads={{impala_env['statestore_num_heartbeat_threads']}}
+-max_log_files={{max_statestore_log_files}}
+-webserver_port={{impala_statestore_webserver_port}}
+-state_store_port={{ impala_state_store_port }}
+-statestore_update_frequency_ms={{ statestore_update_frequency_ms }}
+-statestore_num_update_threads={{ statestore_num_update_threads }}
+-inc_stats_size_limit_bytes={{ inc_stats_size_limit_bytes }}
+-minidump_path={{ statestore_minidump_path }}
+-max_minidumps={{ statestore_max_minidumps }}
+-default_query_options={{ statestore_default_query_options }}
+-idle_query_timeout={{ impala_idle_query_timeout }}
+-idle_session_timeout={{ impala_idle_session_timeout }}
+-enable_legacy_avx_support={{ enable_legacy_avx_support }}
+-enable_insert_events={{ enable_insert_events }}
+-statestore_heartbeat_frequency_ms={{ statestore_heartbeat_frequency_ms }}
+-statestore_heartbeat_tcp_timeout_seconds={{ statestore_heartbeat_tcp_timeout_seconds }}
+-statestore_max_missed_heartbeats={{ statestore_max_missed_heartbeats }}
+-statestore_num_heartbeat_threads={{ statestore_num_heartbeat_threads }}
 {% if enable_catalogd_ha %}
 -enable_catalogd_ha=true
--catalogd_ha_preemption_wait_period_ms={{impala_env['catalogd_ha_preemption_wait_period_ms']}}
+-catalogd_ha_preemption_wait_period_ms={{ catalogd_ha_preemption_wait_period_ms }}
 {% endif %}
 {% if enable_statestored_ha %}
 -enable_statestored_ha=true
--statestore_ha_preemption_wait_period_ms={{impala_env['statestore_ha_preemption_wait_period_ms']}}
--state_store_ha_port={{impala_env['state_store_ha_port']}}
+-statestore_ha_preemption_wait_period_ms={{ statestore_ha_preemption_wait_period_ms }}
+-state_store_ha_port={{ state_store_ha_port }}
 -state_store_peer_host={{impala_state_store_peer_host}}
--state_store_peer_ha_port={{impala_env['state_store_ha_port']}}
+-state_store_peer_ha_port={{ state_store_ha_port }}
 {% endif %}
--redaction_rules_file={{impala_env['redaction_rules_file']}}
+-redaction_rules_file={{ redaction_rules_file }}
 {% if enable_ranger %}
 -server_name={{hive_server_host}}
--ranger_service_type={{impala_env['impala_ranger_service_type']}}
--ranger_app_id={{impala_env['impala_ranger_app_id']}}
--authorization_provider={{impala_env['impala_authorization_provider']}}
--authorized_proxy_user_config={{impala_env['impala_proxy_user_config']}}
+-ranger_service_type={{ impala_ranger_service_type }}
+-ranger_app_id={{ impala_ranger_app_id }}
+-authorization_provider={{ impala_authorization_provider }}
+-authorized_proxy_user_config={{ impala_proxy_user_config }}
 {% endif %}
 -disable_kudu={{impala_disable_kudu}}
 {% if security_enabled %}
--kerberos_reinit_interval={{impala_env['kerberos_reinit_interval']}}
+-kerberos_reinit_interval={{ kerberos_reinit_interval }}
 -principal=impala/{{current_host_name}}@{{realm_name}}
 -keytab_file=/etc/security/keytabs/impala.service.keytab
 {% endif %}
 {% if client_services_ssl_enabled %}
--ssl_server_certificate={{impala_env['ssl_server_certificate']}}
--ssl_private_key={{impala_env['ssl_private_key']}}
--ssl_private_key_password_cmd={{impala_env['ssl_private_key_password_cmd']}}
--ssl_client_ca_certificate={{impala_env['ssl_client_ca_certificate']}}
--webserver_certificate_file={{impala_env['webserver_certificate_file']}}
--webserver_private_key_file={{impala_env['webserver_private_key_file']}}
--webserver_private_key_password_cmd={{impala_env['webserver_private_key_password_cmd']}}
+-ssl_server_certificate={{ ssl_server_certificate }}
+-ssl_private_key={{ ssl_private_key }}
+-ssl_private_key_password_cmd={{ ssl_private_key_password_cmd }}
+-ssl_client_ca_certificate={{ ssl_client_ca_certificate }}
+-webserver_certificate_file={{ webserver_certificate_file }}
+-webserver_private_key_file={{ webserver_private_key_file }}
+-webserver_private_key_password_cmd={{ webserver_private_key_password_cmd }}
 {% endif %}
 {% if enable_ldap_auth %}
 -enable_ldap_auth=true
--ldap_uri={{impala_env['impala_ldap_uri']}}
--ldap_passwords_in_clear_ok={{impala_env['impala_ldap_passwords_in_clear_ok']}}
+-ldap_uri={{ impala_ldap_uri }}
+-ldap_passwords_in_clear_ok={{ impala_ldap_passwords_in_clear_ok }}
 {% if ldap_allow_anonymous_binds %}
--ldap_allow_anonymous_binds={{impala_env['ldap_allow_anonymous_binds']}}
+-ldap_allow_anonymous_binds={{ ldap_allow_anonymous_binds }}
 {% else %}
--ldap_bind_dn={{impala_env['ldap_bind_dn']}}
+-ldap_bind_dn={{ ldap_bind_dn }}
 -ldap_bind_password_cmd={{ldap_bind_password_cmd}}
 {% endif %}
 {% if ldap_domain %}
--ldap_domain={{impala_env['impala_ldap_domain']}}
+-ldap_domain={{ impala_ldap_domain }}
 {% endif %}
 {% if ldap_baseDN %}
--ldap_basedn={{impala_env['ldap_baseDN']}}
+-ldap_basedn={{ ldap_baseDN }}
 {% endif %}
 {% if ldap_bind_pattern %}
--ldap_bind_pattern={{impala_env['ldap_bind_pattern']}}
+-ldap_bind_pattern={{ ldap_bind_pattern }}
 {% endif %}
 {% if ldap_search_bind_authentication %}
--ldap_search_bind_authentication={{impala_env['ldap_search_bind_authentication']}}
--allow_custom_ldap_filters_with_kerberos_auth={{impala_env['allow_custom_ldap_filters_with_kerberos_auth']}}
--ldap_user_search_basedn={{impala_env['ldap_user_search_basedn']}}
--ldap_group_search_basedn={{impala_env['ldap_group_search_basedn']}}
--ldap_user_filter={{impala_env['ldap_user_filter']}}
--ldap_group_filter={{impala_env['ldap_group_filter']}}
+-ldap_search_bind_authentication={{ ldap_search_bind_authentication }}
+-allow_custom_ldap_filters_with_kerberos_auth={{ allow_custom_ldap_filters_with_kerberos_auth }}
+-ldap_user_search_basedn={{ ldap_user_search_basedn }}
+-ldap_group_search_basedn={{ ldap_group_search_basedn }}
+-ldap_user_filter={{ ldap_user_filter }}
+-ldap_group_filter={{ ldap_group_filter }}
 {% else %}
--ldap_user_filter={{impala_env['ldap_user_filter']}}
--ldap_group_filter={{impala_env['ldap_group_filter']}}
--ldap_group_dn_pattern={{impala_env['ldap_group_dn_pattern']}}
--ldap_group_membership_key={{impala_env['ldap_group_membership_key']}}
--ldap_group_class_key={{impala_env['ldap_group_class_key']}}
+-ldap_user_filter={{ ldap_user_filter }}
+-ldap_group_filter={{ ldap_group_filter }}
+-ldap_group_dn_pattern={{ ldap_group_dn_pattern }}
+-ldap_group_membership_key={{ ldap_group_membership_key }}
+-ldap_group_class_key={{ ldap_group_class_key }}
 {% endif %}
 {% endif %}
 {% if enable_ldap_tls %}
 -ldap_tls=true
--ldap_ca_certificate={{impala_env['ldap_ca_certificate']}}
+-ldap_ca_certificate={{ ldap_ca_certificate }}
 {% endif %}
 {% if new_statestore_items.keys() %}
 {% for key, value in new_statestore_items.items() %}

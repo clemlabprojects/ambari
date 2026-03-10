@@ -179,6 +179,16 @@
 
     </property>
     <property>
+        <name>impala_run_init_lib</name>
+        <value>false</value>
+        <description>Run Ambari IMPALA init_lib helper before daemon start to refresh symlinks in /usr/lib/impala/lib.</description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>enable_ldap_auth</name>
         <value>false</value>
         <description>Enable Ldap Auth </description>
@@ -690,6 +700,28 @@
 
     </property>
     <property>
+        <name>statestore_minidump_path</name>
+        <value>/var/lib/impala/statestore_minidumps</value>
+        <description>Directory to write statestored minidump files to.</description>
+        <value-attributes>
+            <type>string</type>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_minidump_path</name>
+        <value>/var/lib/impala/impalad_minidumps</value>
+        <description>Directory to write impalad minidump files to.</description>
+        <value-attributes>
+            <type>string</type>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>max_minidumps</name>
         <value>9</value>
         <description>Maximum minidump files Impala keeps around at any one time. A zero or negative value is interpreted as "unlimited". </description>
@@ -697,9 +729,45 @@
 
     </property>
     <property>
+        <name>statestore_max_minidumps</name>
+        <value>9</value>
+        <description>Maximum statestored minidump files kept at any one time. A zero or negative value is interpreted as unlimited.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_max_minidumps</name>
+        <value>9</value>
+        <description>Maximum impalad minidump files kept at any one time. A zero or negative value is interpreted as unlimited.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>default_query_options</name>
         <value></value>
         <description>key = value pairs of default query options for impalad, separated by comma</description>
+        <value-attributes>
+            <type>string</type>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>statestore_default_query_options</name>
+        <value></value>
+        <description>Key=value pairs of default query options for statestored, separated by comma.</description>
+        <value-attributes>
+            <type>string</type>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_default_query_options</name>
+        <value></value>
+        <description>Key=value pairs of default query options for impalad, separated by comma.</description>
         <value-attributes>
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
@@ -736,6 +804,20 @@
 
     </property>
     <property>
+        <name>max_statestore_log_files</name>
+        <value>4</value>
+        <description>The maximum number of statestored log files to keep at each severity level.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_max_log_files</name>
+        <value>4</value>
+        <description>The maximum number of impalad log files to keep at each severity level.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>max_profile_log_file_size</name>
         <value>5000</value>
         <description>The maximum size (in queries) of the profile log file before a new one is created.</description>
@@ -750,9 +832,34 @@
 
     </property>
     <property>
+        <name>impalad_max_profile_log_file_size</name>
+        <value>5000</value>
+        <description>The maximum size (in queries) of an impalad profile log file before a new one is created.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_max_profile_log_files</name>
+        <value>10</value>
+        <description>Maximum number of impalad profile log files to retain.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>profile_log_dir</name>
         <value></value>
         <description>The directory in which profile log files are written. If blank, defaults to log_file_dir/profiles</description>
+        <value-attributes>
+            <type>string</type>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impalad_profile_log_dir</name>
+        <value>/var/log/impala/profiles</value>
+        <description>The directory in which impalad profile log files are written.</description>
         <value-attributes>
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>

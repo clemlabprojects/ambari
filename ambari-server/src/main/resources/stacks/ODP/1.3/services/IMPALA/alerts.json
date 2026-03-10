@@ -64,8 +64,8 @@
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "21000",
-          "default_port": 21000,
+          "uri": "{{impala-env/impala_backend_port}}",
+          "default_port": 22000,
           "reporting": {
             "ok": {
               "text": "TCP OK - {0:.3f}s response on port {1}"

@@ -105,9 +105,6 @@ class ImpalaBase(Script):
         #     cmd = format("{service_packagedir}/scripts/ktuntil_config.sh")
         #     Execute('echo "Running ' + cmd + '" as root')
         #     Execute(cmd, ignore_failures=True)
-        realm_name = os.popen(
-            'grep "default_realm" /etc/krb5.conf ').read().strip(os.linesep).split(' ')[-1]
-        resolved_java_home = self._resolve_java_home()
 
         File("/etc/default/impala",
              content=InlineTemplate(
@@ -143,25 +140,25 @@ class ImpalaBase(Script):
         File(params.impala_env_sh,
              owner=params.impala_user,
              group=params.impala_group,
-             content=Template('impala-env.sh.j2', resolved_java_home=resolved_java_home),
+             content=Template('impala-env.sh.j2', resolved_java_home=params.java64_home),
              mode=0o644
         )
         File(params.catalogd_flags_path,
              owner=params.impala_user,
              group=params.impala_group,
-             content=Template('catalogd_flags.j2', realm_name=realm_name),
+             content=Template('catalogd_flags.j2', realm_name=params.realm_name),
              mode=0o644
         )
         File(params.statestored_flags_path,
              owner=params.impala_user,
              group=params.impala_group,
-             content=Template('statestored_flags.j2', realm_name=realm_name),
+             content=Template('statestored_flags.j2', realm_name=params.realm_name),
              mode=0o644
         )
         File(params.impalad_flags_path,
              owner=params.impala_user,
              group=params.impala_group,
-             content=Template('impalad_flags.j2', realm_name=realm_name),
+             content=Template('impalad_flags.j2', realm_name=params.realm_name),
              mode=0o644
         )
 
@@ -212,6 +209,26 @@ class ImpalaBase(Script):
               owner = params.impala_user,
               group = params.impala_group,
               mode = 0o644)
+
+        # Ensure Impala JVM resolves Hadoop/HDFS settings from its own conf dir.
+        XmlConfig("core-site.xml",
+              conf_dir = params.impala_conf_dir,
+              configurations = params.core_site_config,
+              configuration_attributes = params.config['configurationAttributes'].get('core-site', {}),
+              owner = params.impala_user,
+              group = params.impala_group,
+              mode = 0o644,
+              xml_include_file = params.mount_table_xml_inclusion_file_full_path)
+
+        # Render hdfs-site.xml only when HDFS service/config is present.
+        if params.has_namenode and params.hdfs_site_config:
+            XmlConfig("hdfs-site.xml",
+                  conf_dir = params.impala_conf_dir,
+                  configurations = params.hdfs_site_config,
+                  configuration_attributes = params.config['configurationAttributes'].get('hdfs-site', {}),
+                  owner = params.impala_user,
+                  group = params.impala_group,
+                  mode = 0o644)
 
         # Add hive-ranger confs to impala_conf_dir on enabling ranger
         if params.enable_ranger :

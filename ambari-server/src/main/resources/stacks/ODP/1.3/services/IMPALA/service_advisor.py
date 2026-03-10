@@ -129,11 +129,20 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
 
     def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
         putHDFSCoreProperty = self.putProperty(configurations, "core-site", services)
+        putHIVECoreProperty = self.putProperty(configurations, "hive-site", services)
         putImpalaEnvProperty = self.putProperty(configurations, "impala-env", services)
+        services_list = self.get_services_list(services)
 
-        putHDFSCoreProperty("hadoop.proxyuser.impala.hosts","*")
-        putHDFSCoreProperty("hadoop.proxyuser.impala.groups","*")
-        putHDFSCoreProperty("hadoop.proxyuser.impala.users","*")
+
+        impala_user = "impala"
+        try:
+            impala_user = services["configurations"]["impala-env"]["properties"].get("impala_user", "impala")
+        except Exception:
+            impala_user = "impala"
+
+        putHDFSCoreProperty("hadoop.proxyuser.{0}.hosts".format(impala_user), "*")
+        putHDFSCoreProperty("hadoop.proxyuser.{0}.groups".format(impala_user), "*")
+        putHDFSCoreProperty("hadoop.proxyuser.{0}.users".format(impala_user), "*")
 
         # Ensure Impala JVM gets credentials from keytab-based login context for HMS SASL.
         required_option = "-Djavax.security.auth.useSubjectCredsOnly=false"
@@ -157,3 +166,10 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
             options.append(required_option)
 
         putImpalaEnvProperty("impala_service_java_options", " ".join(options))
+
+        # Required by Impala HMS event processing on secured clusters.
+        putHIVECoreProperty("hive.metastore.dml.events", "true")
+
+        # Toggle integrations based on installed services.
+        putImpalaEnvProperty("impala_disable_kudu", "false" if "KUDU" in services_list else "true")
+        putImpalaEnvProperty("enable_ranger", "true" if "RANGER" in services_list else "false")

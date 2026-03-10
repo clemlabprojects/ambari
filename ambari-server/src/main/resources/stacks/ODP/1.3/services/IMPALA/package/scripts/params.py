@@ -117,8 +117,17 @@ current_statestore_host = _resolve_current_host(
     socket_host_name,
     socket_short_host_name,
 )
+
+## Common properties:
+impala_idle_query_timeout = default("/configurations/impala-env/impala_idle_query_timeout", 3600)
+impala_idle_session_timeout = default("/configurations/impala-env/impala_idle_session_timeout", 3600)
+enable_legacy_avx_support = _as_bool(default("/configurations/impala-env/enable_legacy_avx_support", False))
+enable_insert_events = _as_bool(default("/configurations/impala-env/enable_insert_events", False))
+
+## configure default catalogd flags
 max_log_files = default("/configurations/impala-env/max_log_files", 10)
 impala_catalog_webserver_port = default("/configurations/impala-env/impala_catalog_webserver_port", 25020)
+
 #The estimated stats size is calculated as 400 bytes * # columns * # partitions. The option prevents you from computing incremental stats on tables with too many columns and partitions (it guards against the scenario where memory usage from incremental stats creeps up and up as tables get larger, eventually causing an outage).
 # So you probably want to set it based on the expected size of the largest table that you will be using incremental stats on (that would help prevent someone accidentally computing incremental stats on an even larger table).
 # A few other comments.
@@ -138,21 +147,76 @@ accepted_cnxn_queue_depth = default("/configurations/impala-env/accepted_cnxn_qu
 minidump_path = default("/configurations/impala-env/minidump_path", "/var/lib/impala/minidumps")
 max_minidumps = default("/configurations/impala-env/max_minidumps", 5)
 default_query_options = default("/configurations/impala-env/default_query_options", "")
-impala_idle_query_timeout = default("/configurations/impala-env/impala_idle_query_timeout", 3600)
-impala_idle_session_timeout = default("/configurations/impala-env/impala_idle_session_timeout", 3600)
 idle_client_poll_period_s = default("/configurations/impala-env/idle_client_poll_period_s", 60)
 statestore_subscriber_timeout_s = default("/configurations/impala-env/statestore_subscriber_timeout_s", 90)
-catalogd_ha_preemption_wait_period_ms = default("/configurations/impala-env/catalogd_ha_preemption_wait_period_ms", 30000)
-impala_state_store_port = default("/configurations/impala-env/impala_state_store_port", 25010)
 load_catalog_in_background = _as_bool(default("/configurations/impala-env/load_catalog_in_background", True))
 load_auth_to_local_rules = default("/configurations/impala-env/load_auth_to_local_rules", "")
-enable_legacy_avx_support = _as_bool(default("/configurations/impala-env/enable_legacy_avx_support", False))
-enable_insert_events = _as_bool(default("/configurations/impala-env/enable_insert_events", False))
 redaction_rules_file = default("/configurations/impala-env/redaction_rules_file", os.path.join(impala_conf_dir, "redaction-rules.json"))
 
+
+## configure default statestored flags
+max_statestore_log_files = default("/configurations/impala-env/max_statestore_log_files", 10)
+impala_statestore_webserver_port = default("/configurations/impala-env/impala_statestore_webserver_port", 25011)
+impala_state_store_port = default("/configurations/impala-env/impala_state_store_port", 25010)
+statestore_update_frequency_ms = default("/configurations/impala-env/statestore_update_frequency_ms", 1000)
+statestore_num_update_threads = default("/configurations/impala-env/statestore_num_update_threads", 4)
+inc_stats_size_limit_bytes = default("/configurations/impala-env/inc_stats_size_limit_bytes", 100 * 1024 * 1024)
+statestore_minidump_path = default("/configurations/impala-env/statestore_minidump_path", "/var/lib/impala/statestore_minidumps")
+statestore_max_minidumps = default("/configurations/impala-env/statestore_max_minidumps", 5)
+statestore_default_query_options = default("/configurations/impala-env/statestore_default_query_options", "")
+statestore_heartbeat_frequency_ms = default("/configurations/impala-env/statestore_heartbeat_frequency_ms", 5000)
+statestore_heartbeat_tcp_timeout_seconds = default("/configurations/impala-env/statestore_heartbeat_tcp_timeout_seconds", 60)
+statestore_max_missed_heartbeats = default("/configurations/impala-env/statestore_max_missed_heartbeats", 12)
+statestore_num_heartbeat_threads = default("/configurations/impala-env/statestore_num_heartbeat_threads", 4)
+statestore_ha_preemption_wait_period_ms = default("/configurations/impala-env/statestore_ha_preemption_wait_period_ms", 30000)
 impala_state_store_peer_host = _peer_host(impala_state_store_hosts, current_statestore_host) if current_statestore_host else impala_state_store_host
 enable_catalogd_ha = len(impala_catalog_hosts) == 2
+catalogd_ha_preemption_wait_period_ms = default("/configurations/impala-env/catalogd_ha_preemption_wait_period_ms", 30000)
 enable_statestored_ha = len(impala_state_store_hosts) == 2
+state_store_ha_port = default("/configurations/impala-env/state_store_ha_port", 25012)
+
+## configure default impalad flags
+impala_backend_port = default("/configurations/impala-env/impala_backend_port", 22000)
+impala_daemon_webserver_port = default("/configurations/impala-env/impala_daemon_webserver_port", 25000)
+impala_scratch_dir = default("/configurations/impala-env/impala_scratch_dir", "/tmp")
+_default_state_store_host = impala_state_store_hosts[0] if impala_state_store_hosts else hostname
+_default_catalog_host = impala_catalog_hosts[0] if impala_catalog_hosts else hostname
+impala_state_store_host = _default_state_store_host
+mem_limit = default("/configurations/impala-env/mem_limit", "80%")
+impala_catalog_host = _default_catalog_host
+enable_state_store_ha = len(impala_state_store_hosts) == 2
+if enable_state_store_ha:
+    impala_secondary_state_store_host = impala_state_store_hosts[1]
+impalad_max_log_files = default("/configurations/impala-env/impalad_max_log_files", 10)
+fe_service_threads = default("/configurations/impala-env/fe_service_threads", 16)
+impalad_max_profile_log_file_size = default("/configurations/impala-env/impalad_max_profile_log_file_size", 100 * 1024 * 1024)
+impalad_max_profile_log_files = default("/configurations/impala-env/impalad_max_profile_log_files", 10)
+impalad_profile_log_dir = default("/configurations/impala-env/impalad_profile_log_dir", os.path.join(impala_log_dir, "profiles"))
+disable_pool_max_requests = _as_bool(default("/configurations/impala-env/disable_pool_max_requests", False))
+disable_pool_mem_limits = _as_bool(default("/configurations/impala-env/disable_pool_mem_limits", False))
+default_pool_max_queued = default("/configurations/impala-env/default_pool_max_queued", 1000)
+default_pool_max_requests = default("/configurations/impala-env/default_pool_max_requests", 0)
+default_pool_mem_limit = default("/configurations/impala-env/default_pool_mem_limit", 0)
+queue_wait_timeout_ms = default("/configurations/impala-env/queue_wait_timeout_ms", 300000)
+impalad_minidump_path = default("/configurations/impala-env/impalad_minidump_path", "/var/lib/impala/impalad_minidumps")
+impalad_max_minidumps = default("/configurations/impala-env/impalad_max_minidumps", 5)
+impalad_default_query_options = default("/configurations/impala-env/impalad_default_query_options", "")
+max_result_cache_size = default("/configurations/impala-env/max_result_cache_size", "1GB")
+unused_file_handle_timeout_sec = default("/configurations/impala-env/unused_file_handle_timeout_sec", 60)
+max_cached_file_handles = default("/configurations/impala-env/max_cached_file_handles", 1000)
+max_audit_event_log_file_size = default("/configurations/impala-env/max_audit_event_log_file_size", 100 * 1024 * 1024)
+max_audit_event_log_files = default("/configurations/impala-env/max_audit_event_log_files", 10)
+impala_use_local_tz_for_unix_timestamp_conversions = _as_bool(default("/configurations/impala-env/impala_use_local_tz_for_unix_timestamp_conversions", False))
+impala_convert_legacy_hive_parquet_utc_timestamps = _as_bool(default("/configurations/impala-env/impala_convert_legacy_hive_parquet_utc_timestamps", False))
+use_local_catalog =  _as_bool(default("/configurations/impala-env/use_local_catalog", False))
+disk_spill_encryption = default("/configurations/impala-env/disk_spill_encryption", "none")
+abort_on_failed_audit_event = _as_bool(default("/configurations/impala-env/abort_on_failed_audit_event", False))
+lineage_event_log_dir = default("/configurations/impala-env/lineage_event_log_dir", os.path.join(impala_log_dir, "lineage"))
+max_lineage_log_file_size = default("/configurations/impala-env/max_lineage_log_file_size", 100 * 1024 * 1024)
+is_coordinator = current_host_name in impala_catalog_hosts
+is_executor = current_host_name in impala_daemon_hosts
+local_library_dir = default("/configurations/impala-env/local_library_dir", "/usr/lib/impala/lib")
+# 
 enable_ranger = _as_bool(impala_env['enable_ranger'])
 if enable_ranger:
     impala_ranger_service_type = default("/configurations/impala-env/impala_ranger_service_type", "ranger")
@@ -166,7 +230,9 @@ else:
     impala_proxy_user_config = default("/configurations/impala-env/impala_proxy_user_config", "")
 
 enable_trusted_subnets = _as_bool(impala_env['enable_trusted_subnets'])
-enable_ldap_tls = _as_bool(impala_env['ldap_tls'])
+if enable_trusted_subnets:
+    trusted_subnets = impala_env['trusted_subnets']
+enable_ldap_tls = _as_bool(default("/configurations/impala-env/ldap_tls", False))
 enable_admission_control = _as_bool(impala_env['enable_admission_control'])
 ldap_search_bind_authentication = _as_bool(impala_env['ldap_search_bind_authentication'])
 ldap_baseDN = impala_env['ldap_baseDN']
@@ -178,7 +244,8 @@ llama_site_content = config['configurations']['llama-site']['content']
 fair_scheduler_content = config['configurations']['fair-scheduler']['content']
 enable_ldap_auth = _as_bool(impala_env['enable_ldap_auth'])
 enable_load_balancer = _as_bool(impala_env['enable_load_balancer'])
-impala_load_balancer_host = impala_env['impala_load_balancer_host']
+if enable_load_balancer:
+    impala_load_balancer_host = impala_env['impala_load_balancer_host']
 impala_log4j_properties = config['configurations']['impala-log4j-properties']['content']
 impala_log4j_properties = impala_log4j_properties.replace("${impala.log.dir}",impala_log_dir)
 impala_defaults = config['configurations']['impala-env']['impala_defaults']
@@ -212,19 +279,17 @@ if security_enabled:
     kerberos_reinit_interval = default("/configurations/impala-env/kerberos_reinit_interval", 24*3600)
     impala_keytab = config['configurations']['impala-env']['impala_keytab']
     impala_principal = config['configurations']['impala-env']['impala_principal_name'].replace('_HOST', hostname.lower())
-
+    realm_name = impala_principal.split('@')[1] if '@' in impala_principal else None
 # SSL and TLS settings
 client_services_ssl_enabled = _as_bool(impala_env['client_services_ssl_enabled'])
 if client_services_ssl_enabled:
-    ssl_server_certificate = config['configurations']['impala-env']['ssl_server_certificate']
-    ssl_server_private_key = config['configurations']['impala-env']['ssl_server_private_key']
-    ssl_server_ca_certificate = config['configurations']['impala-env']['ssl_server_ca_certificate']
-    ssl_client_certificate = config['configurations']['impala-env']['ssl_client_certificate']
-    ssl_client_private_key = config['configurations']['impala-env']['ssl_client_private_key']
-    ssl_client_ca_certificate = config['configurations']['impala-env']['ssl_client_ca_certificate']
-    webserver_certificate_file = config['configurations']['impala-env']['webserver_certificate_file']
-    webserver_private_key_file = config['configurations']['impala-env']['webserver_private_key_file']
-    webserver_private_key_password_cmd = config['configurations']['impala-env']['webserver_private_key_password_cmd']
+    ssl_server_certificate = default("/configurations/impala-env/ssl_server_certificate", "")
+    ssl_private_key = default("/configurations/impala-env/ssl_private_key", "")
+    ssl_private_key_password_cmd = default("/configurations/impala-env/ssl_private_key_password_cmd", "")
+    ssl_client_ca_certificate = default("/configurations/impala-env/ssl_client_ca_certificate", "")
+    webserver_certificate_file = default("/configurations/impala-env/webserver_certificate_file", "")
+    webserver_private_key_file = default("/configurations/impala-env/webserver_private_key_file", "")
+    webserver_private_key_password_cmd = default("/configurations/impala-env/webserver_private_key_password_cmd", "")
 
 # LDAP
 if enable_ldap_auth:
@@ -246,7 +311,7 @@ if enable_ldap_auth:
     ldap_group_dn_pattern = config['configurations']['impala-env']['ldap_group_dn_pattern']
     ldap_group_membership_key = config['configurations']['impala-env']['ldap_group_membership_key']
     ldap_group_class_key = config['configurations']['impala-env']['ldap_group_class_key']
-    enable_ldap_tls = _as_bool(config['configurations']['impala-env']['enable_ldap_tls'])
+    enable_ldap_tls = _as_bool(default("/configurations/impala-env/ldap_tls", False))
     ldap_ca_certificate = config['configurations']['impala-env']['ldap_ca_certificate']
     if ldap_ca_certificate == "" and enable_ldap_tls and client_services_ssl_enabled:
         ldap_ca_certificate = ssl_client_ca_certificate
@@ -281,8 +346,9 @@ scp_conf_from = {
 # Hive Ranger params
 #site xml configurations
 hive_site_config = dict(config['configurations']['hive-site'])
+hivemetastore_site_config = dict(default('/configurations/hivemetastore-site', {}))
 core_site_config = dict(config['configurations']['core-site'])
-hdfs_site_config = dict(config['configurations']['hdfs-site'])
+hdfs_site_config = dict(default('/configurations/hdfs-site', {}))
 java64_home = config['ambariLevelParams']['java_home']
 jdk_location = default("/ambariLevelParams/jdk_location", None)
 ldap_credential_cmd = "\"{0}/bin/java\" -cp \"{1}\" org.apache.ambari.server.credentialapi.CredentialUtil get {2} -provider {3} 2>/dev/null | tail -n 1".format(
@@ -340,6 +406,52 @@ hive_site_config["hive.execution.engine"] = "tez"
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
 hive_site_config["hive.metastore.db.type"] = hive_metastore_db_type.upper()
 hive_site_config["hive.hook.proto.base-directory"] = hive_hook_proto_base_directory
+
+# Hive 4 deployments may keep HMS client settings in hivemetastore-site using
+# metastore.* keys. Impala reads hive-site.xml, so mirror critical HMS settings.
+def _first_non_empty_prop(configs, keys):
+    for key in keys:
+        value = configs.get(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return None
+
+hms_uris = _first_non_empty_prop(
+    hive_site_config,
+    ["hive.metastore.uris", "metastore.uris", "metastore.thrift.uris"]
+)
+if hms_uris is None:
+    hms_uris = _first_non_empty_prop(
+        hivemetastore_site_config,
+        ["hive.metastore.uris", "metastore.uris", "metastore.thrift.uris"]
+    )
+if hms_uris:
+    hive_site_config["hive.metastore.uris"] = hms_uris
+
+hms_principal = _first_non_empty_prop(
+    hive_site_config,
+    ["hive.metastore.kerberos.principal", "metastore.kerberos.principal"]
+)
+if hms_principal is None:
+    hms_principal = _first_non_empty_prop(
+        hivemetastore_site_config,
+        ["hive.metastore.kerberos.principal", "metastore.kerberos.principal"]
+    )
+if hms_principal:
+    hive_site_config["hive.metastore.kerberos.principal"] = hms_principal
+
+hms_sasl = _first_non_empty_prop(
+    hive_site_config,
+    ["hive.metastore.sasl.enabled", "metastore.sasl.enabled", "metastore.thrift.sasl.enabled"]
+)
+if hms_sasl is None:
+    hms_sasl = _first_non_empty_prop(
+        hivemetastore_site_config,
+        ["hive.metastore.sasl.enabled", "metastore.sasl.enabled", "metastore.thrift.sasl.enabled"]
+    )
+
+if security_enabled and str(hms_sasl).strip().lower() != "false":
+    hive_site_config["hive.metastore.sasl.enabled"] = "true"
 
 hive_server_host = config['clusterHostInfo']['hive_server_hosts'][0]
 impala_disable_kudu = _as_bool(config["configurations"]["impala-env"]["impala_disable_kudu"])
