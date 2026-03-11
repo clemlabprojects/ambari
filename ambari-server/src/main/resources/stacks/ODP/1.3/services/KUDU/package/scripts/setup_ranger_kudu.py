@@ -21,7 +21,7 @@ from resource_management.core.logger import Logger
 from resource_management.libraries.functions.setup_ranger_plugin_xml import setup_configuration_file_for_required_plugins
 
 
-def setup_ranger_kudu():
+def setup_ranger_kudu(component_name='kudu-master'):
   import params
 
   if not params.enable_ranger_kudu:
@@ -80,7 +80,7 @@ def setup_ranger_kudu():
                       plugin_audit_properties=params.ranger_kudu_audit, plugin_audit_attributes=params.ranger_kudu_audit_attrs,
                       plugin_security_properties=params.ranger_kudu_security, plugin_security_attributes=params.ranger_kudu_security_attrs,
                       plugin_policymgr_ssl_properties=params.ranger_kudu_policymgr_ssl, plugin_policymgr_ssl_attributes=params.ranger_kudu_policymgr_ssl_attrs,
-                      component_list=['kudu-master'], audit_db_is_enabled=params.xa_audit_db_is_enabled,
+                      component_list=[component_name], audit_db_is_enabled=params.xa_audit_db_is_enabled,
                       credential_file=params.credential_file, xa_audit_db_password=None,
                       ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password,
                       policy_config_dict=params.ranger_policy_config if params.ranger_policy_config else None,

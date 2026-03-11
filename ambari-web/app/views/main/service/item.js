@@ -40,7 +40,8 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
     'HAWQMASTER': ['IMMEDIATE_STOP_HAWQ_SERVICE', 'RUN_HAWQ_CHECK', 'HAWQ_CLEAR_CACHE', 'REMOVE_HAWQ_STANDBY', 'RESYNC_HAWQ_STANDBY'],
     'HAWQSEGMENT': ['IMMEDIATE_STOP_HAWQ_SEGMENT'],
     'HAWQSTANDBY': ['ACTIVATE_HAWQ_STANDBY'],
-    'HIVE_SERVER_INTERACTIVE' : ["RESTART_LLAP"]
+    'HIVE_SERVER_INTERACTIVE' : ["RESTART_LLAP"],
+    'KUDU_MASTER': ['ADD_KUDU_MASTER']
   },
 
    addActionMap: function() {
@@ -277,6 +278,16 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
           }
           if (hMasterCustomCommands && hMasterCustomCommands.contains('STOP_REPLICATION')) {
             options.push(actionMap.STOP_REPLICATION);
+          }
+        }
+
+        if (serviceName === 'KUDU') {
+          var kuduMasterComponent = App.StackServiceComponent.find().findProperty('componentName', 'KUDU_MASTER');
+          if (kuduMasterComponent) {
+            var kuduMasterCustomCommands = kuduMasterComponent.get('customCommands');
+            if (kuduMasterCustomCommands && kuduMasterCustomCommands.contains('ADD_KUDU_MASTER')) {
+              options.push(actionMap.TOGGLE_ADD_KUDU_MASTER);
+            }
           }
         }
 

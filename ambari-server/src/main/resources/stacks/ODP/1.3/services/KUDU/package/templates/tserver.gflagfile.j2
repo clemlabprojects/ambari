@@ -21,6 +21,20 @@
 --keytab_file={{kudu_keytab}}
 --principal={{kudu_principal_name}}
 {% endif %}
+{% if enable_ranger_kudu %}
+{% if '--ranger_config_path' not in tserver_additional_flags %}
+--ranger_config_path={{ranger_kudu_config_path}}
+{% endif %}
+{% if '--ranger_java_path' not in tserver_additional_flags %}
+--ranger_java_path={{ranger_kudu_java_path}}
+{% endif %}
+{% if '--ranger_jar_path' not in tserver_additional_flags %}
+--ranger_jar_path={{ranger_kudu_jar_path}}
+{% endif %}
+{% if '--tserver_enforce_access_control' not in tserver_additional_flags %}
+--tserver_enforce_access_control=true
+{% endif %}
+{% endif %}
 {% if tserver_additional_flags and tserver_additional_flags.strip() %}
 {{tserver_additional_flags}}
 {% endif %}

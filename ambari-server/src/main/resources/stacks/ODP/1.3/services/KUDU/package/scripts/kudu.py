@@ -18,11 +18,13 @@ limitations under the License.
 """
 
 import os
+import socket
 
 from resource_management.libraries.script.script import Script
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.core.source import Template
 from resource_management.core.exceptions import Fail
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
 
@@ -62,6 +64,218 @@ class Kudu(Script):
         Execute(
             format('{kinit_path_local} -kt {kudu_keytab} {kudu_principal_name}'),
             user=params.kudu_user
+        )
+
+    def _normalize_host(self, host):
+        if host is None:
+            return ''
+        return str(host).strip().lower().rstrip('.')
+
+    def _host_aliases(self, host):
+        normalized = self._normalize_host(host)
+        aliases = set()
+        if normalized:
+            aliases.add(normalized)
+            aliases.add(normalized.split('.', 1)[0])
+        return aliases
+
+    def _hosts_match(self, left, right):
+        return len(self._host_aliases(left).intersection(self._host_aliases(right))) > 0
+
+    def _local_host_aliases(self, params):
+        aliases = set()
+        for value in [params.hostname, socket.gethostname(), socket.getfqdn()]:
+            aliases.update(self._host_aliases(value))
+        return aliases
+
+    def _parse_master_address(self, address, default_port):
+        token = str(address).strip()
+        if not token:
+            return None
+        if ':' in token:
+            host, port = token.rsplit(':', 1)
+            host = host.strip()
+            port = port.strip() or default_port
+        else:
+            host = token
+            port = default_port
+        if not host:
+            return None
+        normalized = self._normalize_host(host)
+        return {
+            'host': normalized,
+            'port': str(port),
+            'address': '{0}:{1}'.format(normalized, port)
+        }
+
+    def _parse_master_addresses(self, master_addresses, default_port):
+        parsed = []
+        seen = set()
+        for raw in str(master_addresses or '').split(','):
+            entry = self._parse_master_address(raw, default_port)
+            if not entry:
+                continue
+            key = entry['address']
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed.append(entry)
+        return parsed
+
+    def _is_reachable(self, host, port, timeout_sec=2.0):
+        sock = None
+        try:
+            sock = socket.create_connection((host, int(port)), timeout_sec)
+            return True
+        except Exception:
+            return False
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _is_dir_empty_for_bootstrap(self, path):
+        if not os.path.exists(path):
+            return True
+        if not os.path.isdir(path):
+            return False
+        entries = [name for name in os.listdir(path) if name != 'lost+found']
+        return len(entries) == 0
+
+    def _assert_master_dirs_bootstrap_ready(self, params):
+        not_empty = []
+        for data_dir in self._split_dirs(params.master_wal_dir) + self._split_dirs(params.master_data_dirs):
+            if not self._is_dir_empty_for_bootstrap(data_dir):
+                not_empty.append(data_dir)
+        if not_empty:
+            raise Fail(
+                "ADD_KUDU_MASTER requires empty master storage directories on the target host. "
+                "Non-empty paths: {0}".format(', '.join(not_empty))
+            )
+
+    def add_kudu_master_to_cluster(self, env):
+        import params
+        env.set_params(params)
+
+        self.configure(env)
+        self._kinit_if_needed(params)
+        self._assert_master_dirs_bootstrap_ready(params)
+
+        default_port = str(params.master_rpc_port) if params.master_rpc_port else '7051'
+        local_aliases = self._local_host_aliases(params)
+
+        configured_masters = self._parse_master_addresses(params.master_addresses, default_port)
+        local_entry = None
+        existing_entries = []
+        for entry in configured_masters:
+            if entry['host'] in local_aliases:
+                if local_entry is None:
+                    local_entry = entry
+                continue
+            existing_entries.append(entry)
+
+        if local_entry is None:
+            local_entry = self._parse_master_address('{0}:{1}'.format(params.hostname, default_port), default_port)
+            configured_masters.append(local_entry)
+            Logger.info(
+                "Local host was not present in kudu-master-env/master_addresses; using {0} as target master address."
+                .format(local_entry['address'])
+            )
+
+        if not existing_entries:
+            raise Fail(
+                "No existing masters found in kudu-master-env/master_addresses after excluding local host "
+                "({0}). Add the current leader first.".format(local_entry['host'])
+            )
+
+        reachable_existing = []
+        unreachable_existing = []
+        for entry in existing_entries:
+            if self._is_reachable(entry['host'], entry['port']):
+                reachable_existing.append(entry)
+            else:
+                unreachable_existing.append(entry['address'])
+
+        if not reachable_existing:
+            raise Fail(
+                "Unable to reach any existing master from configured addresses: {0}".format(
+                    ', '.join([entry['address'] for entry in existing_entries])
+                )
+            )
+
+        if unreachable_existing:
+            Logger.warning(
+                "Ignoring unreachable configured masters for ADD_KUDU_MASTER: {0}".format(
+                    ', '.join(unreachable_existing)
+                )
+            )
+
+        seed_master_addrs = ','.join([entry['address'] for entry in reachable_existing])
+
+        command_master_addrs = []
+        seen = set()
+        for entry in reachable_existing + [local_entry]:
+            if entry['address'] in seen:
+                continue
+            seen.add(entry['address'])
+            command_master_addrs.append(entry['address'])
+
+        runtime_env = os.environ.copy()
+        runtime_env['KUDU_CONF_DIR'] = params.kudu_conf_dir
+        runtime_env['KUDU_LOG_DIR'] = params.kudu_log_dir
+        runtime_env['KUDU_RUN_DIR'] = params.kudu_run_dir
+
+        cmd = [
+            params.kudu_cli_bin,
+            'master',
+            'add',
+            seed_master_addrs,
+            local_entry['address'],
+            '--fs_wal_dir={0}'.format(params.master_wal_dir),
+            '--fs_data_dirs={0}'.format(params.master_data_dirs),
+            '--rpc_bind_addresses={0}'.format(params.master_rpc_bind_addresses),
+            '--webserver_interface={0}'.format(params.master_webserver_interface),
+            '--webserver_port={0}'.format(params.master_webserver_port),
+            '--master_addresses={0}'.format(','.join(command_master_addrs)),
+        ]
+
+        if params.security_enabled:
+            cmd.extend([
+                '--rpc_authentication=required',
+                '--rpc_encryption=required',
+                '--keytab_file={0}'.format(params.kudu_keytab),
+                '--principal={0}'.format(params.kudu_principal_name),
+            ])
+
+        if params.kudu_enable_tls and params.kudu_tls_cert_file and params.kudu_tls_private_key_file:
+            cmd.extend([
+                '--rpc_certificate_file={0}'.format(params.kudu_tls_cert_file),
+                '--rpc_private_key_file={0}'.format(params.kudu_tls_private_key_file),
+                '--webserver_certificate_file={0}'.format(params.kudu_tls_cert_file),
+                '--webserver_private_key_file={0}'.format(params.kudu_tls_private_key_file),
+            ])
+            if params.kudu_tls_ca_cert_file:
+                cmd.append('--rpc_ca_certificate_file={0}'.format(params.kudu_tls_ca_cert_file))
+
+        for raw_flag in str(params.master_additional_flags or '').splitlines():
+            flag = raw_flag.strip()
+            if not flag or flag.startswith('#'):
+                continue
+            cmd.append(flag)
+
+        Logger.info(
+            "Running ADD_KUDU_MASTER on host {0} with seed master(s) [{1}] and target [{2}]".format(
+                params.hostname,
+                seed_master_addrs,
+                local_entry['address']
+            )
+        )
+        Execute(cmd, user=params.kudu_user, environment=runtime_env, logoutput=True)
+        Logger.info(
+            "ADD_KUDU_MASTER completed. Next steps: update master_addresses/tserver_master_addrs for all hosts, "
+            "restart existing masters one-by-one, then start this new master and restart tservers."
         )
 
     def configure(self, env):

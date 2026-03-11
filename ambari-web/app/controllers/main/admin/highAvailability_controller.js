@@ -94,6 +94,15 @@ App.MainAdminHighAvailabilityController = App.WizardController.extend({
   },
 
   /**
+   * add Kudu Master
+   * @return {Boolean}
+   */
+  addKuduMaster: function () {
+    App.router.transitionTo('main.services.addKuduMaster');
+    return true;
+  },
+
+  /**
    * remove Hawq Standby
    * @return {Boolean}
    */

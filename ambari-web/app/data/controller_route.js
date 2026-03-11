@@ -50,6 +50,10 @@ module.exports = [
     route: 'main.services.enableRMHighAvailability'
   },
   {
+    wizardControllerName: App.router.get('addKuduMasterWizardController.name'),
+    route: 'main.services.addKuduMaster'
+  },
+  {
     wizardControllerName: App.router.get('addHawqStandbyWizardController.name'),
     route: 'main.services.addHawqStandby'
   },

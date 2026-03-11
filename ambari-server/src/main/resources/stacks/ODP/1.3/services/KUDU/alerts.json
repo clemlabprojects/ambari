@@ -38,8 +38,8 @@
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "7051",
-          "default_port": 7051,
+          "uri": "{{kudu-master-env/webserver_port}}",
+          "default_port": 8051,
           "reporting": {
             "ok": {
               "text": "TCP OK - {0:.3f}s response on port {1}"
@@ -65,8 +65,8 @@
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "7050",
-          "default_port": 7050,
+          "uri": "{{kudu-tserver-env/webserver_port}}",
+          "default_port": 8050,
           "reporting": {
             "ok": {
               "text": "TCP OK - {0:.3f}s response on port {1}"

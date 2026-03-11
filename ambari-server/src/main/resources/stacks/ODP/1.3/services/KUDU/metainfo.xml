@@ -18,6 +18,16 @@
             <scriptType>PYTHON</scriptType>
             <timeout>10000</timeout>
           </commandScript>
+          <customCommands>
+            <customCommand>
+              <name>ADD_KUDU_MASTER</name>
+              <commandScript>
+                <script>scripts/kudu-master.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>1800</timeout>
+              </commandScript>
+            </customCommand>
+          </customCommands>
         </component>
         <component>
           <name>KUDU_TSERVER</name>

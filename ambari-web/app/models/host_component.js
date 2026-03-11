@@ -310,6 +310,7 @@ App.HostComponentActionMap = {
     const NN = ctx.get('controller.content.hostComponents').findProperty('componentName', 'NAMENODE'),
       RM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RESOURCEMANAGER'),
       RA = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RANGER_ADMIN'),
+      KM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'KUDU_MASTER'),
       HM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQMASTER'),
       HS = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQSTANDBY'),
       HMComponent = App.MasterComponent.find('HAWQMASTER'),
@@ -423,6 +424,13 @@ App.HostComponentActionMap = {
         cssClass: 'glyphicon glyphicon-arrow-up',
         isHidden: App.get('isRAHaEnabled'),
         disabled: App.get('isSingleNode') || !RA || RA.get('isNotInstalled')
+      },
+      TOGGLE_ADD_KUDU_MASTER: {
+        action: 'addKuduMaster',
+        label: Em.I18n.t('admin.addKuduMaster.button.enable'),
+        cssClass: 'glyphicon glyphicon-plus',
+        isHidden: !KM,
+        disabled: App.get('allHostNames.length') <= App.HostComponent.find().filterProperty('componentName', 'KUDU_MASTER').length
       },
       MOVE_COMPONENT: {
         action: 'reassignMaster',

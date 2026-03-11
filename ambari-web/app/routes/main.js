@@ -914,6 +914,8 @@ module.exports = Em.Route.extend(App.RouterRedirections, {
 
     enableNameNodeFederation: require('routes/namenode_federation_routes'),
 
+    addKuduMaster: require('routes/add_kudu_master_routes'),
+
     addHawqStandby: require('routes/add_hawq_standby_routes'),
 
     removeHawqStandby: require('routes/remove_hawq_standby_routes'),

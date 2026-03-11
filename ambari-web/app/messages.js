@@ -3479,6 +3479,36 @@ Em.I18n.translations = {
   'wizard.inProgress': '{0} in Progress | Initiated by {1}',
 
   'alerts.instance.fullLogPopup.header': 'Instance Response',
+  'admin.addKuduMaster.button.enable': 'Add Kudu Master',
+  'admin.addKuduMaster.closePopup': 'Add Kudu Master Wizard is in progress. You must allow the wizard to' +
+      ' complete for Ambari to remain in a usable state. If you choose to quit, complete the operation manually' +
+      ' to avoid cluster inconsistency. Are you sure you want to exit the wizard?',
+  'admin.addKuduMaster.wizard.header': 'Add Kudu Master Wizard',
+  'admin.addKuduMaster.wizard.step1.header': 'Get Started',
+  'admin.addKuduMaster.wizard.step1.body': 'This wizard walks you through adding a new Kudu Master host to an existing Kudu deployment.' +
+      '<br/><br/><b>The wizard will install the Kudu Master role, update Kudu master address configuration, execute the master add command, and restart Kudu Tablet Servers.</b>',
+  'admin.addKuduMaster.wizard.step2.header': 'Select Host',
+  'admin.addKuduMaster.wizard.step2.body': 'Select a host that will be running the new Kudu Master',
+  'admin.addKuduMaster.wizard.step2.error.noHost': 'No target host was selected for the new Kudu Master.',
+  'admin.addKuduMaster.wizard.step3.header': 'Review',
+  'admin.addKuduMaster.wizard.step3.confirm.host.body': '<b>Confirm your Kudu Master host selections.</b>',
+  'admin.addKuduMaster.wizard.step3.currentMasters': 'Current Kudu Masters',
+  'admin.addKuduMaster.wizard.step3.newMaster': 'New Kudu Master',
+  'admin.addKuduMaster.wizard.step3.confirm.config.body': '<div class=\"alert alert-info\">' +
+      '<p><b>Review Configuration Changes.</b></p>' +
+      'The wizard will update <b>kudu-master-env/master_addresses</b> and <b>kudu-tserver-env/tserver_master_addrs</b> to include the new Kudu Master host.' +
+      '</div>',
+  'admin.addKuduMaster.step4.save.configuration.note': 'This configuration is created by Add Kudu Master wizard',
+  'admin.addKuduMaster.wizard.step4.header': 'Configure Components',
+  'admin.addKuduMaster.wizard.step4.task0.title': 'Install Kudu Master',
+  'admin.addKuduMaster.wizard.step4.task1.title': 'Reconfigure Kudu',
+  'admin.addKuduMaster.wizard.step4.task2.title': 'Execute Kudu Master Add Command',
+  'admin.addKuduMaster.wizard.step4.task3.title': 'Start New Kudu Master',
+  'admin.addKuduMaster.wizard.step4.task4.title': 'Stop Kudu Tablet Servers',
+  'admin.addKuduMaster.wizard.step4.task5.title': 'Start Kudu Tablet Servers',
+  'admin.addKuduMaster.wizard.step4.notice.inProgress': 'Please wait while the new Kudu Master is being added.',
+  'admin.addKuduMaster.wizard.step4.notice.completed': 'Kudu Master has been added successfully.',
+  'admin.addKuduMaster.wizard.step4.addKuduMasterCommand.context': 'Execute Kudu add master command',
   'admin.addHawqStandby.button.enable': 'Add HAWQ Standby Master',
   'admin.addHawqStandby.closePopup':'Add HAWQ Standby Master Wizard is in progress. You must allow the wizard to' +
       ' complete for Ambari to be in usable state. If you choose to quit, you must follow documented manual' +

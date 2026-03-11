@@ -101,9 +101,10 @@ class KuduRecommender(service_advisor.ServiceAdvisor):
         self._sync_ranger_plugin_flag(configurations, services)
 
         services_list = self.get_services_list(services)
-        ranger_plugin_enabled = self._is_ranger_plugin_enabled(configurations, services)
-        if not ranger_plugin_enabled or "RANGER" not in services_list:
+        if "RANGER" not in services_list:
             return
+
+        self._sync_ranger_audit_defaults(configurations, services)
 
         put_ranger_security = self.putProperty(configurations, "ranger-kudu-security", services)
         ranger_admin_url = self._get_ranger_admin_url(configurations, services)
@@ -118,6 +119,10 @@ class KuduRecommender(service_advisor.ServiceAdvisor):
         )
         if not current_repo_name or "{{" in current_repo_name or "}}" in current_repo_name:
             put_ranger_security("ranger.plugin.kudu.service.name", "{0}_kudu".format(cluster_name))
+
+        ranger_plugin_enabled = self._is_ranger_plugin_enabled(configurations, services)
+        if not ranger_plugin_enabled:
+            return
 
         if "HDFS" not in services_list:
             put_ranger_audit = self.putProperty(configurations, "ranger-kudu-audit", services)
@@ -137,16 +142,55 @@ class KuduRecommender(service_advisor.ServiceAdvisor):
             put_kudu_env("kudu_tls_ca_cert_file", "")
 
     def _sync_ranger_plugin_flag(self, configurations, services):
-        if "ranger-env" not in services.get("configurations", {}):
+        if "ranger-kudu-plugin-properties" not in services.get("configurations", {}) and \
+                "ranger-kudu-plugin-properties" not in configurations:
             return
-        if "ranger-kudu-plugin-properties" not in services.get("configurations", {}):
-            return
-        ranger_env_props = services["configurations"]["ranger-env"].get("properties", {})
-        if "ranger-kudu-plugin-enabled" not in ranger_env_props:
+
+        ranger_plugin_enabled = self._get_property(
+            configurations, services, "ranger-env", "ranger-kudu-plugin-enabled"
+        )
+        if ranger_plugin_enabled is None:
             return
 
         put_ranger_plugin = self.putProperty(configurations, "ranger-kudu-plugin-properties", services)
-        put_ranger_plugin("ranger-kudu-plugin-enabled", ranger_env_props["ranger-kudu-plugin-enabled"])
+        put_ranger_plugin("ranger-kudu-plugin-enabled", ranger_plugin_enabled)
+
+    def _sync_ranger_audit_defaults(self, configurations, services):
+        if "ranger-kudu-audit" not in services.get("configurations", {}) and "ranger-kudu-audit" not in configurations:
+            return
+
+        put_ranger_audit = self.putProperty(configurations, "ranger-kudu-audit", services)
+        ranger_audit_dict = [
+            {"filename": "ranger-env", "configname": "xasecure.audit.destination.db", "target_configname": "xasecure.audit.destination.db"},
+            {"filename": "ranger-env", "configname": "xasecure.audit.destination.hdfs", "target_configname": "xasecure.audit.destination.hdfs"},
+            {"filename": "ranger-env", "configname": "xasecure.audit.destination.hdfs.dir", "target_configname": "xasecure.audit.destination.hdfs.dir"},
+            {"filename": "ranger-env", "configname": "xasecure.audit.destination.solr", "target_configname": "xasecure.audit.destination.solr"},
+            {"filename": "ranger-admin-site", "configname": "ranger.audit.solr.urls", "target_configname": "xasecure.audit.destination.solr.urls"},
+            {"filename": "ranger-admin-site", "configname": "ranger.audit.solr.zookeepers", "target_configname": "xasecure.audit.destination.solr.zookeepers"},
+        ]
+        for item in ranger_audit_dict:
+            if item["filename"] not in services.get("configurations", {}):
+                continue
+            source_props = services["configurations"][item["filename"]].get("properties", {})
+            if item["configname"] not in source_props:
+                continue
+            if item["filename"] in configurations and item["configname"] in configurations[item["filename"]].get("properties", {}):
+                value = configurations[item["filename"]]["properties"][item["configname"]]
+            else:
+                value = source_props[item["configname"]]
+            put_ranger_audit(item["target_configname"], value)
+
+        current_hdfs_dir = str(
+            self._get_property(configurations, services, "ranger-kudu-audit", "xasecure.audit.destination.hdfs.dir") or ""
+        ).strip()
+        default_fs = str(self._get_property(configurations, services, "core-site", "fs.defaultFS") or "").strip()
+        should_normalize_hdfs_dir = (
+            not current_hdfs_dir
+            or "NAMENODE_HOSTNAME" in current_hdfs_dir
+            or current_hdfs_dir in ("hdfs://localhost:8020", "hdfs://localhost:8020/ranger/audit")
+        )
+        if should_normalize_hdfs_dir and default_fs:
+            put_ranger_audit("xasecure.audit.destination.hdfs.dir", "{0}/ranger/audit".format(default_fs.rstrip("/")))
 
     def _is_ranger_plugin_enabled(self, configurations, services):
         plugin_value = self._get_property(

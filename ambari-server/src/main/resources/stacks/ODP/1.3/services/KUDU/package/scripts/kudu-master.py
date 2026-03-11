@@ -28,7 +28,7 @@ class KuduMaster(Kudu):
 
     def configure(self, env):
         Kudu.configure(self, env)
-        setup_ranger_kudu()
+        setup_ranger_kudu('kudu-master')
 
     def start(self, env):
         self.configure(env)
@@ -39,6 +39,9 @@ class KuduMaster(Kudu):
 
     def status(self, env):
         self.status_kudu('master')
+
+    def add_kudu_master(self, env):
+        self.add_kudu_master_to_cluster(env)
 
 
 if __name__ == '__main__':

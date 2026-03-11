@@ -18,6 +18,7 @@ limitations under the License.
 """
 
 from kudu import Kudu
+from setup_ranger_kudu import setup_ranger_kudu
 
 
 class KuduTserver(Kudu):
@@ -27,6 +28,7 @@ class KuduTserver(Kudu):
 
     def configure(self, env):
         Kudu.configure(self, env)
+        setup_ranger_kudu('kudu-tserver')
 
     def start(self, env):
         self.configure(env)
