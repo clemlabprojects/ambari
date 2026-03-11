@@ -25,6 +25,7 @@ from resource_management.core.source import InlineTemplate, Template, StaticFile
 from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_config import get_config
+from resource_management.libraries.functions import conf_select
 from ambari_commons.credential_store_helper import create_password_in_credential_store
 from resource_management.core.exceptions import Fail
 from resource_management.libraries.functions.check_process_status import check_process_status
@@ -251,13 +252,38 @@ class ImpalaBase(Script):
                                   create_parents = True,
                                   mode=0o755)
 
+            hive_site_path = os.path.join(params.hive_conf_dir, "hive-site.xml")
+            if not os.path.isdir(params.hive_conf_dir):
+                if params.stack_name and params.hive_conf_select_version:
+                    Logger.info(
+                        "Impala Ranger setup: {0} is missing; running conf-select for hive ({1}).".format(
+                            params.hive_conf_dir, params.hive_conf_select_version
+                        )
+                    )
+                    conf_select.select(params.stack_name, "hive", params.hive_conf_select_version, ignore_errors=True)
+                else:
+                    Logger.info(
+                        "Impala Ranger setup: {0} is missing and conf-select context is unavailable; creating directly.".format(
+                            params.hive_conf_dir
+                        )
+                    )
+
+            Directory(params.hive_conf_dir,
+                      owner=params.hive_user,
+                      group=params.user_group,
+                      create_parents = True,
+                      mode=0o755)
+
+            if params.setup_client_option or not os.path.exists(hive_site_path):
+                XmlConfig("hive-site.xml",
+                          conf_dir = params.hive_conf_dir,
+                          configurations = params.hive_site_config,
+                          configuration_attributes = params.config['configurationAttributes']['hive-site'],
+                          owner = params.hive_user,
+                          group = params.user_group,
+                          mode = 0o644)
+
             if params.setup_client_option:
-                Directory(params.hive_conf_dir,
-                          owner=params.hive_user,
-                          group=params.user_group,
-                          create_parents = True,
-                          mode=0o755
-                          )
                 hivemetastore_site_config = get_config("hivemetastore-site")
                 if hivemetastore_site_config:
                     XmlConfig("hivemetastore-site.xml",
@@ -269,13 +295,6 @@ class ImpalaBase(Script):
                               mode=0o644)
                 else:
                     print("Hive Metastore site not present")
-                XmlConfig("hive-site.xml",
-                          conf_dir = params.hive_conf_dir,
-                          configurations = params.hive_site_config,
-                          configuration_attributes = params.config['configurationAttributes']['hive-site'],
-                          owner = params.hive_user,
-                          group = params.user_group,
-                          mode = 0o644)
                 XmlConfig("hiveserver2-site.xml",
                           conf_dir=params.impala_conf_dir,
                           configurations=params.config['configurations']['hiveserver2-site'],
@@ -452,11 +471,53 @@ class ImpalaBase(Script):
         env["%s_PIDFILE" % meta["svc"].upper()] = meta["pid"]
         env["%s_OUTFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["out"])
         env["%s_ERRFILE" % meta["svc"].upper()] = os.path.join(params.impala_log_dir, meta["err"])
+        env["IMPALA_CONF_DIR"] = params.impala_conf_dir
         if params.has_hadoop_home:
             env["HADOOP_HOME"] = params.hadoop_home
         if params.has_hadoop_conf_dir:
             env["HADOOP_CONF_DIR"] = params.hadoop_conf_dir
+        self._prepend_classpath_entry(env, "CLASSPATH", params.impala_conf_dir)
+        self._prepend_classpath_entry(env, "HADOOP_CLASSPATH", params.impala_conf_dir)
+        ranger_classpath_dirs = [
+            os.path.join(params.impala_home_daemon, "lib"),
+            os.path.join(params.impala_home_daemon, "lib", "jars"),
+            os.path.join(params.stack_root, "current", "impala", "lib"),
+            os.path.join(params.stack_root, "current", "impala", "lib", "ranger-impala-plugin-impl"),
+            os.path.join(params.stack_root, "current", "ranger-impala-plugin", "lib"),
+            os.path.join(params.stack_root, "current", "ranger-impala-plugin", "lib", "ranger-hive-plugin-impl"),
+            os.path.join(params.stack_root, "current", "ranger-impala-plugin", "install", "lib"),
+            os.path.join(params.stack_root, "current", "ranger-hive-plugin", "lib"),
+            os.path.join(params.stack_root, "current", "ranger-hive-plugin", "lib", "ranger-hive-plugin-impl"),
+            os.path.join(params.stack_root, "current", "ranger-hive-plugin", "install", "lib"),
+        ]
+        self._append_wildcard_classpath(env, "CLASSPATH", ranger_classpath_dirs)
+        self._append_wildcard_classpath(env, "HADOOP_CLASSPATH", ranger_classpath_dirs)
         return env
+
+    def _append_wildcard_classpath(self, env, env_var, directories):
+        entries = []
+        current_value = env.get(env_var, "")
+        if current_value:
+            entries.extend([entry for entry in current_value.split(":") if entry])
+        for directory in directories:
+            if not directory or not os.path.isdir(directory):
+                continue
+            wildcard = "{0}/*".format(directory)
+            if wildcard not in entries:
+                entries.append(wildcard)
+        if entries:
+            env[env_var] = ":".join(entries)
+
+    def _prepend_classpath_entry(self, env, env_var, entry):
+        if not entry:
+            return
+        entries = []
+        current_value = env.get(env_var, "")
+        if current_value:
+            entries.extend([part for part in current_value.split(":") if part])
+        entries = [part for part in entries if part != entry]
+        entries.insert(0, entry)
+        env[env_var] = ":".join(entries)
 
     def _impala_cmd(self, action, service_name, extra_args=None):
         meta = self._impala_service_meta(service_name)

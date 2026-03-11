@@ -723,6 +723,9 @@ hive_zk_namespace = default("/configurations/hive-site/hive.zookeeper.namespace"
 # ranger host
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
+impala_catalogd_hosts = default("/clusterHostInfo/impala_catalog_service_hosts", [])
+has_impala_catalogd = not len(impala_catalogd_hosts) == 0
+
 
 # ranger hive plugin enabled property
 enable_ranger_hive = config['configurations']['hive-env']['hive_security_authorization'].lower() == 'ranger'
@@ -806,6 +809,11 @@ if enable_ranger_hive:
     hive_ranger_plugin_config['policy.download.auth.users'] = hive_user
     hive_ranger_plugin_config['tag.download.auth.users'] = hive_user
     hive_ranger_plugin_config['policy.grantrevoke.auth.users'] = hive_user
+    if has_impala_catalogd:
+      impala_user = config['configurations']['impala-env']['impala_user']
+      hive_ranger_plugin_config['policy.download.auth.users'] += ',' + impala_user
+      hive_ranger_plugin_config['tag.download.auth.users'] += ',' + impala_user
+      hive_ranger_plugin_config['policy.grantrevoke.auth.users'] += ',' + impala_user
 
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:

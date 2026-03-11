@@ -25,6 +25,7 @@ from resource_management.libraries.functions import get_kinit_path
 from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.is_empty import is_empty
+from resource_management.libraries.functions.get_stack_version import get_stack_version
 from resource_management.libraries.resources.hdfs_resource import HdfsResource
 from resource_management.libraries.functions.setup_ranger_plugin_xml import generate_ranger_service_config
 from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
@@ -86,7 +87,7 @@ def _peer_host(hosts, current_host):
 config = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 stack_root = Script.get_stack_root()
-stack_name = default("/hostLevelParams/stack_name", None)
+stack_name = default("/hostLevelParams/stack_name", default("/clusterLevelParams/stack_name", None))
 impala_env = config['configurations']['impala-env']
 impala_user = config['configurations']['impala-env']['impala_user']
 impala_group = config['configurations']['impala-env']['impala_group']
@@ -216,7 +217,7 @@ is_coordinator = current_host_name in impala_catalog_hosts
 is_executor = current_host_name in impala_daemon_hosts
 local_library_dir = default("/configurations/impala-env/local_library_dir", "/usr/lib/impala/lib")
 # 
-enable_ranger = config['configurations']['impala-env']['enable_ranger'] if 'enable_ranger' in config['configurations']['impala-env'] else False
+enable_ranger = _as_bool(default("/configurations/impala-env/enable_ranger", False))
 if enable_ranger:
     impala_ranger_service_type = default("/configurations/impala-env/impala_ranger_service_type", "ranger")
     impala_ranger_app_id = default("/configurations/impala-env/impala_ranger_app_id", "impala")
@@ -360,6 +361,15 @@ java_version = expect("/ambariLevelParams/java_version", int)
 version = default("/commandParams/version", None)
 retryAble = default("/commandParams/command_retry_enabled", False)
 stack_supports_ranger_kerberos = True
+hive_conf_select_version = version
+if not hive_conf_select_version:
+    for package_name in ("hive-client", "hive-server2-hive", "hive-metastore"):
+        try:
+            hive_conf_select_version = get_stack_version(package_name)
+        except Exception:
+            hive_conf_select_version = None
+        if hive_conf_select_version:
+            break
 
 # users
 hive_user = config['configurations']['hive-env']['hive_user']
@@ -594,7 +604,7 @@ if enable_ranger_hive:
     }
 
     hive_ranger_plugin_config['enable.hive.metastore.lookup'] = "TRUE"
-    hive_ranger_plugin_config['hive.site.file.path'] = os.path.join(hive_conf_dir,"hive-site.xml")
+    hive_ranger_plugin_config['hive.site.file.path'] = os.path.join(impala_conf_dir, "hive-site.xml")
 
     if security_enabled:
         hive_ranger_plugin_config['policy.download.auth.users'] = hive_user + ',' + impala_user

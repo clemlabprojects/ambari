@@ -2,7 +2,9 @@
 # Managed by Ambari. Changes will be overwritten.
 
 : ${CLASSPATH:=}
+: ${HADOOP_CLASSPATH:=}
 : ${LD_LIBRARY_PATH:=}
+: ${IMPALA_CONF_DIR:="{{impala_conf_dir}}"}
 
 export JAVA_HOME=${JAVA_HOME:-"{{resolved_java_home}}"}
 {% if has_hadoop_home %}
@@ -11,7 +13,30 @@ export HADOOP_HOME=${HADOOP_HOME:-"{{hadoop_home}}"}
 {% if has_hadoop_conf_dir %}
 export HADOOP_CONF_DIR=${HADOOP_CONF_DIR:-"{{hadoop_conf_dir}}"}
 {% endif %}
+CLASSPATH="${IMPALA_CONF_DIR}${CLASSPATH:+:${CLASSPATH}}"
+HADOOP_CLASSPATH="${IMPALA_CONF_DIR}${HADOOP_CLASSPATH:+:${HADOOP_CLASSPATH}}"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-{{impala_env['impala_service_java_options']}}}"
+
+# Ensure Ranger Impala plugin and audit destination jars are visible to Impala JVMs.
+for ranger_cp_dir in \
+  "{{impala_home_daemon}}/lib" \
+  "{{impala_home_daemon}}/lib/jars" \
+  "{{stack_root}}/current/impala/lib" \
+  "{{stack_root}}/current/impala/lib/ranger-impala-plugin-impl" \
+  "{{stack_root}}/current/ranger-impala-plugin/lib" \
+  "{{stack_root}}/current/ranger-impala-plugin/lib/ranger-hive-plugin-impl" \
+  "{{stack_root}}/current/ranger-impala-plugin/install/lib" \
+  "{{stack_root}}/current/ranger-hive-plugin/lib" \
+  "{{stack_root}}/current/ranger-hive-plugin/lib/ranger-hive-plugin-impl" \
+  "{{stack_root}}/current/ranger-hive-plugin/install/lib"
+do
+  if [ -d "${ranger_cp_dir}" ]; then
+    CLASSPATH="${CLASSPATH:+${CLASSPATH}:}${ranger_cp_dir}/*"
+    HADOOP_CLASSPATH="${HADOOP_CLASSPATH:+${HADOOP_CLASSPATH}:}${ranger_cp_dir}/*"
+  fi
+done
+export CLASSPATH
+export HADOOP_CLASSPATH
 
 {% if enable_core_dumps %}
 ulimit -c unlimited

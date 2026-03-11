@@ -34,10 +34,10 @@
 -redaction_rules_file={{redaction_rules_file}}
 {% if enable_ranger %}
 -server_name={{hive_server_host}}
--ranger_service_type={{impala_ranger_service_type}}
--ranger_app_id={{impala_ranger_app_id}}
--authorization_provider={{impala_authorization_provider}}
--authorized_proxy_user_config={{impala_proxy_user_config}}
+-ranger_service_type={{ impala_ranger_service_type }}
+-ranger_app_id={{ impala_ranger_app_id }}
+-authorization_provider={{ impala_authorization_provider }}
+-authorized_proxy_user_config={{ impala_proxy_user_config }}
 {% endif %}
 -disable_kudu={{impala_disable_kudu}}
 {% if security_enabled %}
