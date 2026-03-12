@@ -37,6 +37,13 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>ranger_kudu_receiver_fifo_dir</name>
+    <display-name>Ranger Receiver FIFO Directory</display-name>
+    <value>/var/run/kudu</value>
+    <description>Writable directory used by Kudu to create Ranger receiver FIFOs.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>kudu_enable_tls</name>
     <display-name>Enable TLS</display-name>
     <value>false</value>

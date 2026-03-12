@@ -303,6 +303,14 @@ class Kudu(Script):
             create_parents=True,
             mode=0o755
         )
+        if params.enable_ranger_kudu and params.ranger_kudu_receiver_fifo_dir:
+            Directory(
+                params.ranger_kudu_receiver_fifo_dir,
+                owner=params.kudu_user,
+                group=params.kudu_group,
+                create_parents=True,
+                mode=0o755
+            )
 
         if params.kudu_enable_tls:
             tls_paths = [params.kudu_tls_cert_file, params.kudu_tls_private_key_file, params.kudu_tls_ca_cert_file]

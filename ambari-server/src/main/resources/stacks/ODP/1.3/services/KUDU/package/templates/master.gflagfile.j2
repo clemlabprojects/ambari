@@ -31,6 +31,9 @@
 {% if '--ranger_jar_path' not in master_additional_flags %}
 --ranger_jar_path={{ranger_kudu_jar_path}}
 {% endif %}
+{% if '--ranger_receiver_fifo_dir' not in master_additional_flags %}
+--ranger_receiver_fifo_dir={{ranger_kudu_receiver_fifo_dir}}
+{% endif %}
 {% endif %}
 {% if master_additional_flags and master_additional_flags.strip() %}
 {{master_additional_flags}}

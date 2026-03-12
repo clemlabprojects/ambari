@@ -48,6 +48,7 @@ kudu_group = kudu_env['kudu_group']
 kudu_conf_dir = kudu_env['kudu_conf_dir']
 kudu_log_dir = kudu_env['kudu_log_dir']
 kudu_run_dir = kudu_env['kudu_run_dir']
+ranger_kudu_receiver_fifo_dir = default('/configurations/kudu-env/ranger_kudu_receiver_fifo_dir', kudu_run_dir)
 kudu_enable_tls = str(default('/configurations/kudu-env/kudu_enable_tls', 'false')).lower() == 'true'
 kudu_tls_cert_file = default('/configurations/kudu-env/kudu_tls_cert_file', '/etc/kudu/conf/tls/kudu-server.crt')
 kudu_tls_private_key_file = default('/configurations/kudu-env/kudu_tls_private_key_file', '/etc/kudu/conf/tls/kudu-server.key')
@@ -119,7 +120,7 @@ for _kudu_cli in _kudu_cli_candidates:
         kudu_cli_bin = _kudu_cli
         break
 
-ranger_kudu_config_path = format('{kudu_conf_dir}/ranger-kudu-security.xml')
+ranger_kudu_config_path = kudu_conf_dir
 _candidate_java_path = format('{java_home}/bin/java') if java_home else '/usr/bin/java'
 ranger_kudu_java_path = _candidate_java_path if os.path.exists(_candidate_java_path) else '/usr/bin/java'
 _role_name = str(config.get('role', '')).upper()

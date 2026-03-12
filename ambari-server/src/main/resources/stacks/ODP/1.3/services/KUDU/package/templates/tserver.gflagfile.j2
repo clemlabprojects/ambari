@@ -31,6 +31,9 @@
 {% if '--ranger_jar_path' not in tserver_additional_flags %}
 --ranger_jar_path={{ranger_kudu_jar_path}}
 {% endif %}
+{% if '--ranger_receiver_fifo_dir' not in tserver_additional_flags %}
+--ranger_receiver_fifo_dir={{ranger_kudu_receiver_fifo_dir}}
+{% endif %}
 {% if '--tserver_enforce_access_control' not in tserver_additional_flags %}
 --tserver_enforce_access_control=true
 {% endif %}
