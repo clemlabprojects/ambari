@@ -214,6 +214,26 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
     self.as_super = super(AtlasRecommender, self)
     self.as_super.__init__(*args, **kwargs)
 
+  def buildSolrZookeeperUrl(self, zookeeper_hosts, zookeeper_port, infra_solr_znode=None):
+    """
+    Build SolrCloud ZooKeeper connect string in form:
+      host1:2181,host2:2181,host3:2181/infra-solr
+    Chroot must be appended once at the end, not per-host.
+    """
+    zookeeper_host_arr = [host + ':' + zookeeper_port for host in zookeeper_hosts]
+    solr_zookeeper_url = ",".join(zookeeper_host_arr)
+
+    if infra_solr_znode:
+      znode = infra_solr_znode.strip()
+      if znode and znode != '/':
+        if not znode.startswith('/'):
+          znode = '/' + znode
+        znode = znode.rstrip('/')
+        if znode:
+          solr_zookeeper_url += znode
+
+    return solr_zookeeper_url
+
 
   def constructAtlasRestAddress(self, services, hosts):
     """
@@ -273,16 +293,8 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
         infra_solr_znode = None
 
       zookeeper_hosts = self.getHostNamesWithComponent("ZOOKEEPER", "ZOOKEEPER_SERVER", services)
-      zookeeper_host_arr = []
-
       zookeeper_port = self.getZKPort(services)
-      for i in range(len(zookeeper_hosts)):
-        zookeeper_host = zookeeper_hosts[i] + ':' + zookeeper_port
-        if infra_solr_znode is not None:
-          zookeeper_host += infra_solr_znode
-        zookeeper_host_arr.append(zookeeper_host)
-
-      solr_zookeeper_url = ",".join(zookeeper_host_arr)
+      solr_zookeeper_url = self.buildSolrZookeeperUrl(zookeeper_hosts, zookeeper_port, infra_solr_znode)
 
       putAtlasApplicationProperty('atlas.graph.index.search.solr.zookeeper-url', solr_zookeeper_url)
     else:
@@ -419,17 +431,8 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
           infra_solr_znode = None
 
         zookeeper_hosts = self.getHostNamesWithComponent("ZOOKEEPER", "ZOOKEEPER_SERVER", services)
-        zookeeper_host_arr = []
-
         zookeeper_port = self.getZKPort(services)
-        for i in range(len(zookeeper_hosts)):
-          zookeeper_host = zookeeper_hosts[i] + ':' + zookeeper_port
-          zookeeper_host_arr.append(zookeeper_host)
-
-        solr_zookeeper_url = ",".join(zookeeper_host_arr)
-
-        if infra_solr_znode is not None:
-          solr_zookeeper_url += infra_solr_znode
+        solr_zookeeper_url = self.buildSolrZookeeperUrl(zookeeper_hosts, zookeeper_port, infra_solr_znode)
 
         putAtlasApplicationProperty('atlas.graph.index.search.solr.zookeeper-url', solr_zookeeper_url)
       else:
