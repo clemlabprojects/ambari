@@ -868,6 +868,7 @@
           <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag" />
           <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs" />
         </pre-upgrade>
+        <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
