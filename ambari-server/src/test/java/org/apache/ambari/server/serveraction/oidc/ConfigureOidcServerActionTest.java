@@ -274,7 +274,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
 
     Map<String, String> appUpdates = updatesCapture.getValue().get("polaris-application-properties");
     Assert.assertNotNull(appUpdates);
-    Assert.assertEquals("external", appUpdates.get("polaris.authentication.type"));
+    Assert.assertEquals("mixed", appUpdates.get("polaris.authentication.type"));
     Assert.assertEquals(CLUSTER_NAME + "-polaris", appUpdates.get("quarkus.oidc.client-id"));
     Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
     Assert.assertEquals("https://keycloak.example.com/realms/example",
