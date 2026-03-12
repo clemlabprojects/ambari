@@ -121,6 +121,14 @@
             <type>atlas-env</type>
             <set key="atlas.kafka.client.log.level" value="WARN"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_migration">
+            <type>atlas-env</type>
+            <replace key="metadata_opts" find="-Dlog4j.configuration=atlas-log4j.xml" replace-with="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default">
+            <type>atlas-env</type>
+            <set key="metadata_opts" value="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml" if-key="metadata_opts" if-key-state="absent"/>
+          </definition>
         </changes>
       </component>
     </service>

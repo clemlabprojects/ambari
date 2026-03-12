@@ -1026,6 +1026,11 @@
           </task>
           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_atlas_consumer_producer" />
           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas" />
+          <task xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_migration" />
+          <task xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default" />
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.FixAtlasSolrCloudZkUrl">
+            <summary>Normalize Atlas SolrCloud ZooKeeper URL formatting</summary>
+          </task>
         </pre-upgrade>
         <pre-downgrade/>
         <upgrade>

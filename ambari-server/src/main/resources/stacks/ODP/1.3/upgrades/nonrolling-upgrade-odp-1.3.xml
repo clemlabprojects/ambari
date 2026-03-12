@@ -359,6 +359,20 @@
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_kafka_client_log4j_atlas"/>
       </execute-stage>
 
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Migrate Atlas metadata opts logging flag to Logback">
+        <task xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_migration"/>
+      </execute-stage>
+
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Set Atlas metadata opts Logback default when absent">
+        <task xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default"/>
+      </execute-stage>
+
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Normalize Atlas SolrCloud ZooKeeper URL formatting">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.FixAtlasSolrCloudZkUrl">
+          <summary>Normalize Atlas SolrCloud ZooKeeper URL formatting</summary>
+        </task>
+      </execute-stage>
+
     </group>
 
 

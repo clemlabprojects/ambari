@@ -508,10 +508,21 @@ class AtlasRecommender(service_advisor.ServiceAdvisor):
   def recommendAtlasConfigurationsFromODP13(self, configurations, clusterData, services, hosts):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     putAtlasApplicationProperty = self.putProperty(configurations, "application-properties", services)
+    putAtlasEnvProperty = self.putProperty(configurations, "atlas-env", services)
 
     atlasServiceVersion = [service['StackServices']['service_version'] for service in services["services"] if service['StackServices']['service_name'] == 'ATLAS'][0]
     security_enabled = AtlasServiceAdvisor.isKerberosEnabled(services, configurations)
     if atlasServiceVersion == '2.4.0':
+      # Atlas 2.4 in ODP uses logback; migrate old log4j default automatically.
+      metadata_opts = None
+      if 'atlas-env' in configurations and 'metadata_opts' in configurations['atlas-env']['properties']:
+        metadata_opts = configurations['atlas-env']['properties']['metadata_opts']
+      elif 'atlas-env' in services['configurations'] and 'metadata_opts' in services['configurations']['atlas-env']['properties']:
+        metadata_opts = services['configurations']['atlas-env']['properties']['metadata_opts']
+
+      if metadata_opts is None or '-Dlog4j.configuration' in metadata_opts or 'atlas-log4j.xml' in metadata_opts:
+        putAtlasEnvProperty('metadata_opts', '-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml')
+
       if security_enabled:
         putAtlasApplicationProperty('atlas.graph.index.search.solr.kerberos-enabled', "true")
 
