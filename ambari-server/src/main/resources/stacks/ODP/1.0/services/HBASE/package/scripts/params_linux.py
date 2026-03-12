@@ -66,6 +66,7 @@ version_for_stack_feature_checks = get_stack_feature_version(config)
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
 hbase_thrift_stack_enabled = check_stack_feature(StackFeature.HBASE_SUPPORTS_THRIFT, version_for_stack_feature_checks)
+hbase_log4j2_support = check_stack_feature(StackFeature.HBASE_SUPPORT_LOG4J2, version_for_stack_feature_checks)
 
 # hadoop default parameters
 hadoop_bin_dir = stack_select.get_hadoop_dir("bin")
@@ -257,15 +258,27 @@ else:
 
 #log4j.properties
 # HBase log4j settings
-hbase_log_maxfilesize = default('configurations/hbase-log4j/hbase_log_maxfilesize',256)
-hbase_log_maxbackupindex = default('configurations/hbase-log4j/hbase_log_maxbackupindex',20)
-hbase_security_log_maxfilesize = default('configurations/hbase-log4j/hbase_security_log_maxfilesize',256)
-hbase_security_log_maxbackupindex = default('configurations/hbase-log4j/hbase_security_log_maxbackupindex',20)
+hbase_log_maxfilesize = default('configurations/hbase-log4j/hbase_log_maxfilesize', 256)
+hbase_log_maxbackupindex = default('configurations/hbase-log4j/hbase_log_maxbackupindex', 20)
+hbase_security_log_maxfilesize = default('configurations/hbase-log4j/hbase_security_log_maxfilesize', 256)
+hbase_security_log_maxbackupindex = default('configurations/hbase-log4j/hbase_security_log_maxbackupindex', 20)
+
+if hbase_log4j2_support:
+  # Use log4j2-specific sizing knobs when they exist, with fallback to legacy hbase-log4j keys.
+  hbase_log_maxfilesize = default('configurations/hbase-log4j2/hbase_log_maxfilesize', hbase_log_maxfilesize)
+  hbase_log_maxbackupindex = default('configurations/hbase-log4j2/hbase_log_maxbackupindex', hbase_log_maxbackupindex)
+  hbase_security_log_maxfilesize = default('configurations/hbase-log4j2/hbase_security_log_maxfilesize', hbase_security_log_maxfilesize)
+  hbase_security_log_maxbackupindex = default('configurations/hbase-log4j2/hbase_security_log_maxbackupindex', hbase_security_log_maxbackupindex)
 
 if (('hbase-log4j' in config['configurations']) and ('content' in config['configurations']['hbase-log4j'])):
   log4j_props = config['configurations']['hbase-log4j']['content']
 else:
   log4j_props = None
+
+if hbase_log4j2_support and ('hbase-log4j2' in config['configurations']) and ('content' in config['configurations']['hbase-log4j2']):
+  log4j2_props = config['configurations']['hbase-log4j2']['content']
+else:
+  log4j2_props = None
 
 hbase_env_sh_template = config['configurations']['hbase-env']['content']
 

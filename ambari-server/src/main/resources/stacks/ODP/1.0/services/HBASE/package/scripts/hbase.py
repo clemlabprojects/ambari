@@ -242,6 +242,20 @@ def hbase(name=None):
       group=params.user_group,
       owner=params.hbase_user
     )
+
+  if params.hbase_log4j2_support and params.log4j2_props != None:
+    File(format("{params.hbase_conf_dir}/log4j2.properties"),
+         mode=0o644,
+         group=params.user_group,
+         owner=params.hbase_user,
+         content=InlineTemplate(params.log4j2_props)
+    )
+  elif params.hbase_log4j2_support and os.path.exists(format("{params.hbase_conf_dir}/log4j2.properties")):
+    File(format("{params.hbase_conf_dir}/log4j2.properties"),
+      mode=0o644,
+      group=params.user_group,
+      owner=params.hbase_user
+    )
   if name == "master":
     params.HdfsResource(params.hbase_hdfs_root_dir,
                          type="directory",

@@ -70,6 +70,9 @@
             <type>hbase-env</type>
             <set key="hbase.zookeeper.log.level" value="INFO"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_create_hbase_log4j2_config">
+            <type>hbase-log4j2</type>
+          </definition>
           <definition xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift">
             <type>hbase-site</type>
             <set key="hbase.thrift.minWorkerThreads" value="200"/>

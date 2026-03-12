@@ -129,7 +129,12 @@
               <type>env</type>
               <fileName>log4j.properties</fileName>
               <dictionaryName>hbase-log4j</dictionaryName>
-            </configFile>            
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>log4j2.properties</fileName>
+              <dictionaryName>hbase-log4j2</dictionaryName>
+            </configFile>
           </configFiles>
         </component>
 
@@ -244,6 +249,7 @@
         <config-type>hbase-site</config-type>
         <config-type>hbase-env</config-type>
         <config-type>hbase-log4j</config-type>
+        <config-type>hbase-log4j2</config-type>
         <config-type>ranger-hbase-plugin-properties</config-type>
         <config-type>ranger-hbase-audit</config-type>
         <config-type>ranger-hbase-policymgr-ssl</config-type>

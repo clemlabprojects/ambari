@@ -326,6 +326,11 @@
       </execute-stage>
 
       <!-- HBASE -->
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Create HBase Log4j2 config type from stack defaults">
+        <task xsi:type="create_and_configure" id="odp_1_3_2_0_create_hbase_log4j2_config"/>
+      </execute-stage>
+
+      <!-- HBASE -->
       <execute-stage service="HBASE" component="HBASE_MASTER" title="Add Default Properties For HBase Thrift Server Support">
         <task xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift"/>
       </execute-stage>

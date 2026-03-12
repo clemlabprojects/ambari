@@ -200,6 +200,32 @@
           ]
         },
         {
+          "name": "HBASE_RESTSERVER",
+          "identities": [
+            {
+              "name": "hbase_restserver_hbase",
+              "principal": {
+                "value": "${hbase-env/hbase_user}/_HOST@${realm}",
+                "type" : "service",
+                "configuration": "hbase-site/hbase.rest.kerberos.principal",
+                "local_username": "${hbase-env/hbase_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/hbase-rest.service.keytab",
+                "owner": {
+                  "name": "${hbase-env/hbase_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "hbase-site/hbase.rest.keytab.file"
+              }
+            }
+          ]
+        },
+        {
           "name": "PHOENIX_QUERY_SERVER",
           "identities": [
             {

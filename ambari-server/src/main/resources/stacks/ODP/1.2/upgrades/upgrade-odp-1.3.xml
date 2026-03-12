@@ -740,6 +740,7 @@
       <component name="HBASE_MASTER">
         <pre-upgrade>
           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase" />
+          <task xsi:type="create_and_configure" id="odp_1_3_2_0_create_hbase_log4j2_config" />
           <task xsi:type="configure" id="odp_1_2_4_0_support_hbase_thrift" />
           <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hbase_producer" />
           <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_log4j_hbase" />
