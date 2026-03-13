@@ -22,6 +22,7 @@ import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.DB_DRIVER
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.HOST_SYS_PREPPED;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_VERSION;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.NOT_MANAGED_HDFS_PATH_LIST;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_NAME;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_VERSION;
 import static org.easymock.EasyMock.anyLong;
@@ -2170,12 +2171,14 @@ public class AmbariManagementControllerImplTest {
 
     Map<String, String> defaultHostParams = helper.createDefaultHostParams(cluster, repositoryVersionEntity.getStackId());
 
-    assertEquals(16, defaultHostParams.size());
+    assertEquals(17, defaultHostParams.size());
     assertEquals(MYSQL_JAR, defaultHostParams.get(DB_DRIVER_FILENAME));
     assertEquals(SOME_STACK_NAME, defaultHostParams.get(STACK_NAME));
     assertEquals(SOME_STACK_VERSION, defaultHostParams.get(STACK_VERSION));
     assertEquals("true", defaultHostParams.get(HOST_SYS_PREPPED));
     assertEquals("8", defaultHostParams.get(JAVA_VERSION));
+    assertTrue(defaultHostParams.containsKey(SECONDARY_JAVA_HOME));
+    assertNull(defaultHostParams.get(SECONDARY_JAVA_HOME));
     assertNotNull(defaultHostParams.get(NOT_MANAGED_HDFS_PATH_LIST));
     assertTrue(defaultHostParams.get(NOT_MANAGED_HDFS_PATH_LIST).contains("/tmp"));
   }
