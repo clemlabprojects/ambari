@@ -172,8 +172,6 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     
     ## added in 1.0.6.0
     
-    ozone_scm_hosts = self.getComponentHostNames(services, "OZONE", "OZONE_STORAGE_CONTAINER_MANAGER")
-    ozone_om_hosts = self.getComponentHostNames(services, "OZONE", "OZONE_MANAGER")
     ozoneSiteProperties = self.getSiteProperties(services['configurations'], 'ozone-site')
     ozoneEnvProperties = self.getSiteProperties(services['configurations'], 'ozone-env')
     putOzoneEnvProperty = self.putProperty(configurations, "ozone-env", services)
@@ -209,9 +207,9 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       failedVolumesTolerated = 2
     putOzoneSiteProperty("dfs.datanode.failed.volumes.tolerated", failedVolumesTolerated)
 
-    managerHosts = self.getHostsWithComponent("OZONE", "OZONE_MANAGER", services, hosts)
-    scmHosts = self.getHostsWithComponent("OZONE", "OZONE_STORAGE_CONTAINER_MANAGER", services, hosts)
-    reconHosts = self.getHostsWithComponent("OZONE", "OZONE_RECON", services, hosts)
+    managerHosts = self.getHostsWithComponent("OZONE", "OZONE_MANAGER", services, hosts) or []
+    scmHosts = self.getHostsWithComponent("OZONE", "OZONE_STORAGE_CONTAINER_MANAGER", services, hosts) or []
+    reconHosts = self.getHostsWithComponent("OZONE", "OZONE_RECON", services, hosts) or []
 
     ## Ozone Manager
     # 25 * # of cores on NameNode
@@ -358,64 +356,79 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
     putOzoneEnvProperty('ozone_manager_opt_maxnewsize', max(int(manager_heapsize / 8), 128))
 
     if 'ozone-site' in services['configurations']:
-      ## computes ids for SCM
-      scm_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.datanode.port"]
-      putOzoneSiteProperty("ozone.scm.primordial.node.id", scmHosts[0]["Hosts"]["host_name"])
-
-      scm_names = ','.join(str(x['Hosts']['host_name']+":"+str(scm_port)) for x in scmHosts)
+      ozone_site_properties = services["configurations"]["ozone-site"]["properties"]
       defaultSCMServiceName = 'scmservice'
       defaultOMServiceName = 'omservice'
-      putOzoneSiteProperty("ozone.scm.names", scm_names)
-      
-      if  "ozone.scm.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
-        if services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"] is None:
-          putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
-        else:
-          defaultSCMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.scm.service.ids"].split(',')[0]
-      else:
-        putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
-      # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
-      boundaries = [0] if len(scmHosts) is 1 else list(range(0, len(scmHosts)))
-      putOzoneSiteProperty("ozone.scm.nodes."+str(defaultSCMServiceName), ','.join(str("scm"+str(x)) for x in boundaries))
-      scm_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.http-port"]
-      scm_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.scm.https-port"]
-      for x in boundaries:
-        scmhost = scmHosts[x]
-        scmhostname = scmhost['Hosts']['host_name']
-        putOzoneSiteProperty("ozone.scm.address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
-        putOzoneSiteProperty("ozone.scm.http-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_http_port))
-        putOzoneSiteProperty("ozone.scm.https-address."+str(defaultSCMServiceName)+".scm"+str(x).format(defaultSCMServiceName), str(scmhostname)+":"+str(scm_https_port))
 
-      default_ozone_port = 9862 #client port
+      ## computes ids for SCM
+      if scmHosts:
+        scm_port = ozone_site_properties["ozone.scm.datanode.port"]
+        putOzoneSiteProperty("ozone.scm.primordial.node.id", scmHosts[0]["Hosts"]["host_name"])
+
+        scm_names = ','.join(str(x['Hosts']['host_name'] + ":" + str(scm_port)) for x in scmHosts)
+        putOzoneSiteProperty("ozone.scm.names", scm_names)
+
+        if "ozone.scm.service.ids" not in ozone_site_properties:
+          if ozone_site_properties.get("ozone.scm.service.ids") is None:
+            putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
+          else:
+            defaultSCMServiceName = ozone_site_properties["ozone.scm.service.ids"].split(',')[0]
+        else:
+          putOzoneSiteProperty("ozone.scm.service.ids", defaultSCMServiceName)
+
+        # configure ozone.scm.nodes.EXAMPLESCMSERVICEID
+        boundaries = [0] if len(scmHosts) == 1 else list(range(0, len(scmHosts)))
+        putOzoneSiteProperty("ozone.scm.nodes." + str(defaultSCMServiceName), ','.join(str("scm" + str(x)) for x in boundaries))
+        scm_http_port = ozone_site_properties["ozone.scm.http-port"]
+        scm_https_port = ozone_site_properties["ozone.scm.https-port"]
+        for x in boundaries:
+          scmhost = scmHosts[x]
+          scmhostname = scmhost['Hosts']['host_name']
+          putOzoneSiteProperty("ozone.scm.address." + str(defaultSCMServiceName) + ".scm" + str(x).format(defaultSCMServiceName), scmhost['Hosts']['host_name'])
+          putOzoneSiteProperty("ozone.scm.http-address." + str(defaultSCMServiceName) + ".scm" + str(x).format(defaultSCMServiceName), str(scmhostname) + ":" + str(scm_http_port))
+          putOzoneSiteProperty("ozone.scm.https-address." + str(defaultSCMServiceName) + ".scm" + str(x).format(defaultSCMServiceName), str(scmhostname) + ":" + str(scm_https_port))
+      else:
+        self.logger.warning("Skipping SCM host-based Ozone recommendations: no OZONE_STORAGE_CONTAINER_MANAGER hosts were found.")
+
+      default_ozone_port = 9862  # client port
       default_ozone_dn_to_recon_port = 9891
-      if "ozone.om.address" in services["configurations"]["ozone-site"]["properties"]:
-        parts = services["configurations"]["ozone-site"]["properties"]["ozone.om.address"].split(':')
+      if "ozone.om.address" in ozone_site_properties:
+        parts = ozone_site_properties["ozone.om.address"].split(':')
         default_ozone_port = parts[1] if len(parts) > 1 else 9862
-      if "ozone.recon.address" in services["configurations"]["ozone-site"]["properties"]:
-        parts = services["configurations"]["ozone-site"]["properties"]["ozone.recon.address"].split(':')
+      if "ozone.recon.address" in ozone_site_properties:
+        parts = ozone_site_properties["ozone.recon.address"].split(':')
         default_ozone_dn_to_recon_port = parts[1] if len(parts) > 1 else 9891
+
       ## computes ids for OM
-      if  "ozone.om.service.ids" not in services["configurations"]["ozone-site"]["properties"]:
-        if services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"] is None:
+      if "ozone.om.service.ids" not in ozone_site_properties:
+        if ozone_site_properties.get("ozone.om.service.ids") is None:
           putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
         else:
-          defaultOMServiceName = services["configurations"]["ozone-site"]["properties"]["ozone.om.service.ids"].split(',')[0]
+          defaultOMServiceName = ozone_site_properties["ozone.om.service.ids"].split(',')[0]
       else:
         putOzoneSiteProperty("ozone.om.service.ids", defaultOMServiceName)
-      # configure ozone.om.nodes.EXAMPLESOMSERVICEID
-      boundaries = [0] if len(managerHosts) is 1 else list(range(0, len(managerHosts)))
-      putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name']+":"+str(default_ozone_dn_to_recon_port)))
-      putOzoneSiteProperty("ozone.om.nodes."+str(defaultOMServiceName), ','.join(str("om"+str(x)) for x in boundaries))
-      om_http_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.http-port"]
-      om_https_port = services["configurations"]["ozone-site"]["properties"]["ozone.om.https-port"]
-      for x in boundaries:
-        omhost = managerHosts[x]
-        omhostname = omhost['Hosts']['host_name']
-        putOzoneSiteProperty("ozone.om.address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name'])+":"+str(default_ozone_port))
-        putOzoneSiteProperty("ozone.om.http-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_http_port))
-        putOzoneSiteProperty("ozone.om.https-address."+str(defaultOMServiceName)+".om"+str(x).format(defaultOMServiceName), str(omhostname)+":"+str(om_https_port))
 
-      dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts))
+      if reconHosts:
+        putOzoneSiteProperty("ozone.recon.address", str(reconHosts[0]['Hosts']['host_name'] + ":" + str(default_ozone_dn_to_recon_port)))
+      else:
+        self.logger.warning("Skipping ozone.recon.address recommendation: no OZONE_RECON hosts were found.")
+
+      if managerHosts:
+        # configure ozone.om.nodes.EXAMPLESOMSERVICEID
+        boundaries = [0] if len(managerHosts) == 1 else list(range(0, len(managerHosts)))
+        putOzoneSiteProperty("ozone.om.nodes." + str(defaultOMServiceName), ','.join(str("om" + str(x)) for x in boundaries))
+        om_http_port = ozone_site_properties["ozone.om.http-port"]
+        om_https_port = ozone_site_properties["ozone.om.https-port"]
+        for x in boundaries:
+          omhost = managerHosts[x]
+          omhostname = omhost['Hosts']['host_name']
+          putOzoneSiteProperty("ozone.om.address." + str(defaultOMServiceName) + ".om" + str(x).format(defaultOMServiceName), str(omhost['Hosts']['host_name']) + ":" + str(default_ozone_port))
+          putOzoneSiteProperty("ozone.om.http-address." + str(defaultOMServiceName) + ".om" + str(x).format(defaultOMServiceName), str(omhostname) + ":" + str(om_http_port))
+          putOzoneSiteProperty("ozone.om.https-address." + str(defaultOMServiceName) + ".om" + str(x).format(defaultOMServiceName), str(omhostname) + ":" + str(om_https_port))
+      else:
+        self.logger.warning("Skipping OM host-based Ozone recommendations: no OZONE_MANAGER hosts were found.")
+
+      dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts) or [])
       # update ozone replication to size of dnHosts
       replicationReco = min(3, dnHosts)
       putOzoneSiteProperty("ozone.replication", replicationReco)
@@ -443,13 +456,13 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         putOzoneSiteProperty('ozone.acl.authorizer.class','org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer')
 
       # Enable High Availability params
-      if len(ozone_om_hosts) > 1 :
+      if len(managerHosts) > 1:
         self.logger.info("Enabling Ozone Manager High availability properties")
         putOzoneSiteProperty("ozone.om.internal.service.id", defaultOMServiceName)
         putOzoneSiteProperty("ozone.om.ratis.enable", "true")
         # setting default Ozone Manager Active Node
         putOzoneEnvProperty("hdds_ha_initial_om_active", managerHosts[0]["Hosts"]["host_name"])
-      if len(ozone_scm_hosts) > 1 :
+      if len(scmHosts) > 1:
         self.logger.info("Enabling Ozone Manager High availability properties")
         putOzoneSiteProperty("ozone.scm.default.service.id", defaultSCMServiceName)
         putOzoneSiteProperty("ozone.scm.ratis.enable", "true")
