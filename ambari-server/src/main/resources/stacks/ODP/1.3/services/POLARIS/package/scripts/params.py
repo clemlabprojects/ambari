@@ -65,10 +65,18 @@ retry_enabled = default("/commandParams/command_retry_enabled", False)
 polaris_user = config['configurations']['polaris-env']['polaris_user']
 user_group = config['configurations']['cluster-env']['user_group']
 java64_home = config['ambariLevelParams']['java_home']
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
+stack_supports_secondary_java_home = check_stack_feature(
+  StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks
+)
 # Polaris requires Java 17+. polaris_java_home must point to a Java 17+ installation;
-# it falls back to java64_home so the attribute always exists for template rendering,
+# it resolves from per-component javaHomeSelector metadata and falls back to java64_home
+# so the attribute always exists for template rendering,
 # but the default in polaris-env.xml should be set to the correct Java 17 path.
 polaris_java_home = java64_home
+if stack_supports_secondary_java_home:
+  polaris_java_home = host_level_params.get(java_home_selector, None) or java64_home
 jdk_location = default("/ambariLevelParams/jdk_location", "/usr/share/java")
 custom_postgres_jdbc_name = default("/ambariLevelParams/custom_postgres_jdbc_name", None)
 

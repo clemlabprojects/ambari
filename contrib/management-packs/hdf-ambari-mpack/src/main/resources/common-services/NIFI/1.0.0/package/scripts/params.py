@@ -208,6 +208,8 @@ nifi_boostrap_notification_content = config['configurations']['nifi-bootstrap-no
 
 #autodetect jdk home
 jdk64_home=config['hostLevelParams']['java_home']
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
 
 #autodetect ambari server for metrics
 if 'metrics_collector_hosts' in config['clusterHostInfo']:
@@ -266,6 +268,13 @@ stack_version_unformatted = config['hostLevelParams']['stack_version']
 stack_version_formatted = format_stack_version(stack_version_unformatted)
 stack_supports_ranger_kerberos = stack_version_formatted and check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, stack_version_formatted)
 stack_supports_ranger_audit_db = stack_version_formatted and check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, stack_version_formatted)
+stack_supports_secondary_java_home = stack_version_formatted and check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, stack_version_formatted)
+
+selected_java_home = config['hostLevelParams']['java_home']
+if stack_supports_secondary_java_home:
+  selected_java_home = host_level_params.get(java_home_selector, None) or config['hostLevelParams']['java_home']
+jdk64_home = selected_java_home
+java_home = selected_java_home
 
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0

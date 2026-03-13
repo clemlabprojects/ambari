@@ -25,6 +25,7 @@ import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_HOME
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_VERSION;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JCE_NAME;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JDK_NAME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -620,11 +621,13 @@ public class StageUtils {
     LOG.debug("Setting JDK_NAME to: {}", configuration.getJDKName());
     LOG.debug("Setting JCE_NAME to: {}", configuration.getJCEName());
     LOG.debug("Setting JAVA_VERSION to: {}", configuration.getJavaVersion());
+    LOG.debug("Setting SECONDARY_JAVA_HOME to: {}", configuration.getSecondaryJavaHome());
     LOG.debug("Reading stack STACK_JAVA_HOME to: {}", configuration.getStackJavaVersion());
     hostLevelParams.put(JAVA_HOME, configuration.getJavaHome());
     hostLevelParams.put(JDK_NAME, configuration.getJDKName());
     hostLevelParams.put(JCE_NAME, configuration.getJCEName());
     hostLevelParams.put(JAVA_VERSION, String.valueOf(configuration.getJavaVersion()));
+    hostLevelParams.put(SECONDARY_JAVA_HOME, configuration.getSecondaryJavaHome());
     if (StringUtils.isNotEmpty(configuration.getStackJavaHome())
       && !configuration.getStackJavaHome().equals(configuration.getJavaHome())) {
       LOG.debug("Overriding JAVA_HOME to: {}", configuration.getStackJavaHome());

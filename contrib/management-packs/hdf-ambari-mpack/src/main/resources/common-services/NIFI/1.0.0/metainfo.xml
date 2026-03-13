@@ -29,6 +29,7 @@
                   <displayName>NiFi Certificate Authority</displayName>
                   <category>SLAVE</category>
                   <cardinality>0-1</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <timelineAppid>NIFI</timelineAppid>
                   <logs>
                     <log>
@@ -57,6 +58,7 @@
                   <displayName>NiFi</displayName>
                   <category>MASTER</category>
                   <cardinality>1+</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <timelineAppid>NIFI</timelineAppid>
 
                   <dependencies>

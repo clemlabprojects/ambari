@@ -398,7 +398,14 @@ else:
 
 hive_metastore_heapsize = config['configurations']['hive-env']['hive.metastore.heapsize']
 
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
+stack_supports_secondary_java_home = check_stack_feature(
+  StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks
+)
 java64_home = config['hostLevelParams']['java_home']
+if stack_supports_secondary_java_home:
+  java64_home = host_level_params.get(java_home_selector, None) or config['hostLevelParams']['java_home']
 java_version = expect("/hostLevelParams/java_version", int)
 
 ##### MYSQL
@@ -739,4 +746,3 @@ if has_ranger_admin:
   #For SQLA explicitly disable audit to DB for Ranger
   if xa_audit_db_flavor == 'sqla':
     xa_audit_db_is_enabled = False
-

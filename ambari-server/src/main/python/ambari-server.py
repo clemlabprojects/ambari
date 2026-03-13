@@ -383,6 +383,8 @@ def init_action_parser(action, parser):
                     help="File with database cleanup script")
   parser.add_option('-j', '--java-home', dest="java_home", default=None,
                     help="Use specified java_home.  Must be valid on all hosts")
+  parser.add_option('--secondary-java-home', dest="secondary_java_home", default=None,
+                    help="Use specified secondary_java_home for selected stack services. Must be valid on all hosts")
   parser.add_option("-v", "--verbose",
                     action="store_true", dest="verbose", default=False,
                     help="Print verbose status messages")
@@ -487,6 +489,8 @@ def init_setup_parser_options(parser):
                          help="Use specified java_home for Ambari Server (ambari.java.home). If not set, Ambari Server uses the same JDK as stack services.")
   other_group.add_option('--stack-java-home', dest="stack_java_home", default=None,
                     help="Use specified java_home for stack services.  Must be valid on all hosts")
+  other_group.add_option('--secondary-java-home', dest="secondary_java_home", default=None,
+                    help="Use specified secondary_java_home for selected stack services. Must be valid on all hosts")
   other_group.add_option('--skip-view-extraction', action="store_true", default=False, help="Skip extraction of system views", dest="skip_view_extraction")
   other_group.add_option('--postgresschema', default=None, help="Postgres database schema name",
                          dest="postgres_schema")

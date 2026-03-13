@@ -272,6 +272,7 @@ The following are the properties which can be used to configure Ambari.
 | ssl.trustStore.type | The type of truststore used by the `javax.net.ssl.trustStoreType` property. | | 
 | stack.hooks.folder | A location of hooks folder relative to resources folder. |`stack-hooks` | 
 | stack.java.home | The location of the JDK on the Ambari Agent hosts for stack services.<br/><br/>The following are examples of valid values:<ul><li>`/usr/jdk64/jdk1.7.0_45`</ul> | | 
+| secondary.java.home | The location of the secondary JDK on the Ambari Agent hosts for selected stack services.<br/><br/>The following are examples of valid values:<ul><li>`/usr/lib/jvm/java-21-openjdk`</ul> | | 
 | stack.java.version | JDK version of the stack, use in case of it differs from Ambari JDK version.<br/><br/>The following are examples of valid values:<ul><li>`1.7`</ul> | | 
 | stack.jce.name | The name of the JCE policy ZIP file for stack services.<br/><br/>The following are examples of valid values:<ul><li>`UnlimitedJCEPolicyJDK7.zip`</ul> | | 
 | stack.jdk.name | The name of the JDK installation binary for stack services.<br/><br/>The following are examples of valid values:<ul><li>`jdk-7u45-linux-x64.tar.gz`</ul> | | 

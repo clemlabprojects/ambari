@@ -44,6 +44,7 @@ import org.apache.ambari.server.agent.AgentCommand;
 import org.apache.ambari.server.agent.CancelCommand;
 import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.agent.ExecutionCommand;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.HostsMap;
 import org.apache.ambari.server.events.ActionFinalReportReceivedEvent;
@@ -61,6 +62,7 @@ import org.apache.ambari.server.orm.entities.RequestEntity;
 import org.apache.ambari.server.serveraction.ServerActionExecutor;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.ComponentInfo;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.HostState;
@@ -68,6 +70,8 @@ import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
 import org.apache.ambari.server.state.ServiceComponentHostEvent;
+import org.apache.ambari.server.state.ServiceInfo;
+import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.fsm.InvalidStateTransitionException;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostOpFailedEvent;
 import org.apache.ambari.server.utils.StageUtils;
@@ -114,6 +118,9 @@ class ActionScheduler implements Runnable {
 
   @Inject
   private Clusters clusters;
+
+  @Inject
+  private Provider<AmbariMetaInfo> ambariMetaInfoProvider;
 
   @Inject
   private AmbariEventPublisher ambariEventPublisher;
@@ -1166,8 +1173,9 @@ class ActionScheduler implements Runnable {
     commandParamsCmd.putAll(commandParams);
     cmd.setCommandParams(commandParamsCmd);
 
+    Cluster cluster = null;
     try {
-      Cluster cluster = clusters.getCluster(s.getClusterName());
+      cluster = clusters.getCluster(s.getClusterName());
       if (null != cluster) {
         // Generate localComponents
         for (ServiceComponentHost sch : cluster.getServiceComponentHosts(hostname)) {
@@ -1187,12 +1195,61 @@ class ActionScheduler implements Runnable {
     }
     Map<String, String> hostParamsCmd = cmd.getHostLevelParams();
     hostParamsCmd.putAll(hostParams);
+
+    String javaHomeSelector = getJavaHomeSelectorFromComponentMetadata(cluster, cmd);
+    if (StringUtils.isNotEmpty(javaHomeSelector)) {
+      hostParamsCmd.put(ExecutionCommand.KeyNames.JAVA_HOME_SELECTOR, javaHomeSelector);
+    }
+
     cmd.setHostLevelParams(hostParamsCmd);
 
     // change the hostname in the command for the host itself
     cmd.setHostname(hostsMap.getHostMap(hostname));
 
     commandsToUpdate.add(cmd);
+  }
+
+  private String getJavaHomeSelectorFromComponentMetadata(Cluster cluster, ExecutionCommand cmd) {
+    if (cluster == null || cmd == null) {
+      return null;
+    }
+
+    String serviceName = cmd.getServiceName();
+    String componentName = cmd.getRole();
+
+    if (StringUtils.isEmpty(serviceName) || StringUtils.isEmpty(componentName)) {
+      return null;
+    }
+
+    try {
+      Service service = cluster.getService(serviceName);
+      if (service == null) {
+        return null;
+      }
+
+      StackId stackId = service.getDesiredStackId();
+      if (stackId == null) {
+        return null;
+      }
+
+      ServiceInfo serviceInfo = ambariMetaInfoProvider.get().getService(
+          stackId.getStackName(), stackId.getStackVersion(), serviceName);
+
+      if (serviceInfo == null) {
+        return null;
+      }
+
+      ComponentInfo componentInfo = serviceInfo.getComponentByName(componentName);
+      if (componentInfo == null) {
+        return null;
+      }
+
+      return StringUtils.trimToNull(componentInfo.getJavaHomeSelector());
+    } catch (AmbariException e) {
+      LOG.debug("Unable to resolve javaHomeSelector from metainfo for service {} component {}",
+          serviceName, componentName, e);
+      return null;
+    }
   }
 
   /**

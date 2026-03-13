@@ -92,6 +92,7 @@ STACK_JAVA_HOME_PROPERTY = "stack.java.home"
 STACK_JDK_NAME_PROPERTY = "stack.jdk.name"
 STACK_JCE_NAME_PROPERTY = "stack.jce.name"
 STACK_JAVA_VERSION = "stack.java.version"
+SECONDARY_JAVA_HOME_PROPERTY = "secondary.java.home"
 
 #ambari JDK
 AMBARI_JAVA_HOME_PROPERTY = "ambari.java.home"

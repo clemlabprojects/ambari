@@ -43,7 +43,8 @@ from ambari_server.serverConfiguration import configDefaults, JDKRelease, get_st
   JAVA_HOME, JAVA_HOME_PROPERTY, JCE_NAME_PROPERTY, JDBC_RCA_URL_PROPERTY, JDBC_URL_PROPERTY, \
   JDK_NAME_PROPERTY, JDK_RELEASES, NR_USER_PROPERTY, OS_FAMILY, OS_FAMILY_PROPERTY, OS_TYPE, OS_TYPE_PROPERTY, OS_VERSION, \
   VIEWS_DIR_PROPERTY, JDBC_DATABASE_PROPERTY, JDK_DOWNLOAD_SUPPORTED_PROPERTY, JCE_DOWNLOAD_SUPPORTED_PROPERTY, SETUP_DONE_PROPERTIES, \
-  STACK_JAVA_HOME_PROPERTY, STACK_JDK_NAME_PROPERTY, STACK_JCE_NAME_PROPERTY, STACK_JAVA_VERSION, GPL_LICENSE_ACCEPTED_PROPERTY, AMBARI_JAVA_HOME_PROPERTY
+  STACK_JAVA_HOME_PROPERTY, STACK_JDK_NAME_PROPERTY, STACK_JCE_NAME_PROPERTY, STACK_JAVA_VERSION, GPL_LICENSE_ACCEPTED_PROPERTY, \
+  AMBARI_JAVA_HOME_PROPERTY, SECONDARY_JAVA_HOME_PROPERTY
 from ambari_server.serverUtils import is_server_runing
 from ambari_server.setupSecurity import adjust_directory_permissions
 from ambari_server.userInput import get_YN_input, get_validated_string_input
@@ -491,6 +492,26 @@ class JDKSetup(object):
       err = "Ambari Server requires JDK {0}. Detected JDK {1} at {2}.".format(AMBARI_SUPPORTED_JAVA_VERSIONS_STR, javaVersion, javaHome)
       raise FatalException(1, err)
 
+  def _configureSecondaryJavaHome(self, args, properties):
+    secondaryJavaHome = getattr(args, "secondary_java_home", None)
+    if secondaryJavaHome is None:
+      return
+
+    if not isinstance(secondaryJavaHome, str):
+      return
+
+    secondaryJavaHome = secondaryJavaHome.strip()
+    if not secondaryJavaHome:
+      return
+
+    if not validate_jdk(secondaryJavaHome):
+      err = "Path to secondary java home " + secondaryJavaHome + " or java binary file does not exist"
+      raise FatalException(1, err)
+
+    print('Setting SECONDARY_JAVA_HOME for selected stack services...')
+    print_warning_msg("SECONDARY_JAVA_HOME " + secondaryJavaHome + " must be valid on ALL hosts")
+    properties.process_pair(SECONDARY_JAVA_HOME_PROPERTY, secondaryJavaHome)
+
   #
   # Downloads and installs the JDK and the JCE policy archive
   #
@@ -519,6 +540,7 @@ class JDKSetup(object):
 
     if not ambariOnly:
       print("Configuring JDK for stack services (java.home/stack.java.home)...")
+      self._configureSecondaryJavaHome(args, properties)
 
     if not ambariOnly and args.java_home:
       #java_home was specified among the command-line arguments. Use it as custom JDK location.

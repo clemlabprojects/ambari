@@ -845,6 +845,15 @@ public class Configuration {
     "stack.java.version", null);
 
   /**
+   * The location of the secondary JDK on Ambari Agent hosts for selected services.
+   */
+  @Markdown(
+    description = "The location of the secondary JDK on the Ambari Agent hosts for selected stack services.",
+    examples = { "/usr/lib/jvm/java-21-openjdk" })
+  public static final ConfigurationProperty<String> SECONDARY_JAVA_HOME = new ConfigurationProperty<>(
+    "secondary.java.home", null);
+
+  /**
    * The auto group creation by Ambari.
    */
   @Markdown(
@@ -4189,6 +4198,10 @@ public class Configuration {
 
   public String getStackJavaVersion() {
     return getProperty(STACK_JAVA_VERSION);
+  }
+
+  public String getSecondaryJavaHome() {
+    return getProperty(SECONDARY_JAVA_HOME);
   }
 
   public String getAmbariBlacklistFile() {

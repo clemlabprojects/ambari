@@ -28,6 +28,11 @@
         "min_version": "1.3.2.0"
       },
       {
+        "name": "secondary_java_home_support",
+        "description": "Allow selected services to use secondary_java_home from hostLevelParams",
+        "min_version": "1.3.2.0"
+      },
+      {
         "name": "kafka_acl_migration_support",
         "description": "ACL migration support",
         "min_version": "1.0.0.0"

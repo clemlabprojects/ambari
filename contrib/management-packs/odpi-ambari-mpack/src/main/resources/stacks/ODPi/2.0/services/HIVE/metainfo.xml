@@ -29,6 +29,7 @@
             <category>CLIENT</category>
             <deleted>false</deleted>
             <cardinality>0+</cardinality>
+            <javaHomeSelector>secondary_java_home</javaHomeSelector>
             <versionAdvertised>false</versionAdvertised>
             <versionAdvertisedInternal>false</versionAdvertisedInternal>
             <commandScript>
@@ -54,6 +55,7 @@
             <category>MASTER</category>
             <deleted>false</deleted>
             <cardinality>1+</cardinality>
+            <javaHomeSelector>secondary_java_home</javaHomeSelector>
             <versionAdvertisedInternal>false</versionAdvertisedInternal>
             <commandScript>
                 <script>scripts/hive_server.py</script>
@@ -115,6 +117,7 @@
             <category>CLIENT</category>
             <deleted>false</deleted>
             <cardinality>1+</cardinality>
+            <javaHomeSelector>secondary_java_home</javaHomeSelector>
             <versionAdvertised>false</versionAdvertised>
             <versionAdvertisedInternal>false</versionAdvertisedInternal>
             <commandScript>
@@ -155,6 +158,7 @@
             <category>MASTER</category>
             <deleted>false</deleted>
             <cardinality>1+</cardinality>
+            <javaHomeSelector>secondary_java_home</javaHomeSelector>
             <versionAdvertisedInternal>false</versionAdvertisedInternal>
             <commandScript>
                 <script>scripts/webhcat_server.py</script>
@@ -269,6 +273,7 @@
             <category>MASTER</category>
             <deleted>false</deleted>
             <cardinality>1+</cardinality>
+            <javaHomeSelector>secondary_java_home</javaHomeSelector>
             <versionAdvertisedInternal>false</versionAdvertisedInternal>
             <commandScript>
                 <script>scripts/hive_metastore.py</script>

@@ -203,6 +203,29 @@ public class ComponentModuleTest {
   }
 
   @Test
+  public void testResolve_JavaHomeSelector() {
+    String javaHomeSelector = "secondary_java_home";
+
+    ComponentInfo info = new ComponentInfo();
+    ComponentInfo parentInfo = new ComponentInfo();
+
+    // parent has value set, child value is null
+    parentInfo.setJavaHomeSelector(javaHomeSelector);
+    assertEquals(javaHomeSelector, resolveComponent(info, parentInfo).getModuleInfo().getJavaHomeSelector());
+
+    // child has value set, parent value is null
+    info.setJavaHomeSelector(javaHomeSelector);
+    parentInfo.setJavaHomeSelector(null);
+    assertEquals(javaHomeSelector, resolveComponent(info, parentInfo).getModuleInfo().getJavaHomeSelector());
+
+    // value set in both parent and child; child overwrites
+    String childSelector = "java_home";
+    info.setJavaHomeSelector(childSelector);
+    parentInfo.setJavaHomeSelector(javaHomeSelector);
+    assertEquals(childSelector, resolveComponent(info, parentInfo).getModuleInfo().getJavaHomeSelector());
+  }
+
+  @Test
   public void testResolve_AutoDeploy() {
     AutoDeployInfo autoDeployInfo = new AutoDeployInfo();
     autoDeployInfo.setEnabled(true);
@@ -634,4 +657,3 @@ public class ComponentModuleTest {
     f.set(o, value);
   }
 }
-

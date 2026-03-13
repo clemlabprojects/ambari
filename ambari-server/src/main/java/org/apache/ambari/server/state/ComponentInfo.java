@@ -147,6 +147,9 @@ public class ComponentInfo {
   @XmlElement(name="customFolder")
   private String customFolder;
 
+  @XmlElement(name="javaHomeSelector")
+  private String javaHomeSelector;
+
   /**
    * Optional component type like HCFS_CLIENT.
    * HCFS_CLIENT indicates compatibility with HDFS_CLIENT
@@ -180,6 +183,7 @@ public class ComponentInfo {
     timelineAppid = prototype.timelineAppid;
     reassignAllowed = prototype.reassignAllowed;
     customFolder = prototype.customFolder;
+    javaHomeSelector = prototype.javaHomeSelector;
     rollingRestartSupported = prototype.rollingRestartSupported;
     componentType = prototype.componentType;
   }
@@ -452,6 +456,14 @@ public class ComponentInfo {
     this.componentType = componentType;
   }
 
+  public String getJavaHomeSelector() {
+    return javaHomeSelector;
+  }
+
+  public void setJavaHomeSelector(String javaHomeSelector) {
+    this.javaHomeSelector = javaHomeSelector;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -484,6 +496,8 @@ public class ComponentInfo {
     if (clientConfigFiles != null ? !clientConfigFiles.equals(that.clientConfigFiles) :
         that.clientConfigFiles != null) return false;
     if (customFolder != null ? !customFolder.equals(that.customFolder) : that.customFolder != null) return false;
+    if (javaHomeSelector != null ? !javaHomeSelector.equals(that.javaHomeSelector) : that.javaHomeSelector != null)
+      return false;
 
     return true;
   }
@@ -510,6 +524,7 @@ public class ComponentInfo {
     // NULL = 0, TRUE = 2, FALSE = 1
     result = 31 * result + (versionAdvertisedField != null ? (versionAdvertisedField.booleanValue() ? 2 : 1) : 0);
     result = 31 * result + (customFolder != null ? customFolder.hashCode() : 0);
+    result = 31 * result + (javaHomeSelector != null ? javaHomeSelector.hashCode() : 0);
     return result;
   }
 

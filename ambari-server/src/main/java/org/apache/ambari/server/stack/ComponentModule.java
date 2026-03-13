@@ -123,6 +123,10 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
         componentInfo.setTimelineAppid(parentInfo.getTimelineAppid());
       }
 
+      if (componentInfo.getJavaHomeSelector() == null) {
+        componentInfo.setJavaHomeSelector(parentInfo.getJavaHomeSelector());
+      }
+
       mergeComponentDependencies(parentInfo.getDependencies(),
               componentInfo.getDependencies());
 

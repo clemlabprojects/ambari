@@ -30,6 +30,7 @@
           <displayName>Polaris Server</displayName>
           <category>MASTER</category>
           <cardinality>1+</cardinality>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
           <versionAdvertised>false</versionAdvertised>
           <dependencies>
             <dependency>
@@ -68,6 +69,7 @@
           <displayName>Polaris Client</displayName>
           <category>CLIENT</category>
           <cardinality>0+</cardinality>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
           <versionAdvertised>false</versionAdvertised>
           <dependencies>
             <dependency>
@@ -116,6 +118,7 @@
           <displayName>Polaris MCP Server</displayName>
           <category>MASTER</category>
           <cardinality>0+</cardinality>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
           <versionAdvertised>false</versionAdvertised>
           <dependencies>
             <dependency>
@@ -144,6 +147,7 @@
           <displayName>Polaris Console</displayName>
           <category>MASTER</category>
           <cardinality>0+</cardinality>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
           <versionAdvertised>false</versionAdvertised>
           <dependencies>
             <dependency>

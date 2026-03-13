@@ -526,6 +526,8 @@ public class ExecutionCommand extends AgentCommand {
     String PACKAGE_LIST = "package_list";
     String JDK_LOCATION = "jdk_location";
     String JAVA_HOME = "java_home";
+    String SECONDARY_JAVA_HOME = "secondary_java_home";
+    String JAVA_HOME_SELECTOR = "java_home_selector";
     String GPL_LICENSE_ACCEPTED = "gpl_license_accepted";
     String AMBARI_JAVA_HOME = "ambari_java_home";
     String AMBARI_JDK_NAME = "ambari_jdk_name";

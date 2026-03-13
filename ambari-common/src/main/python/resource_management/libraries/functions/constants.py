@@ -117,6 +117,7 @@ class StackFeature:
   HIVE_INTERACTIVE_ATLAS_HOOK_REQUIRED = "hive_interactive_atlas_hook_required"
   CORE_SITE_FOR_RANGER_PLUGINS_SUPPORT = 'core_site_for_ranger_plugins'
   CORE_SERVICE_MANDATORY = "core_service_mandatory"
+  SECONDARY_JAVA_HOME_SUPPORT = "secondary_java_home_support"
   ATLAS_INSTALL_HOOK_PACKAGE_SUPPORT = "atlas_install_hook_package_support"
   ATLAS_HDFS_SITE_ON_NAMENODE_HA = 'atlas_hdfs_site_on_namenode_ha'
   HIVE_INTERACTIVE_GA_SUPPORT = 'hive_interactive_ga'
