@@ -643,7 +643,9 @@ public class StageUtilsTest extends EasyMockSupport {
     assertEquals("myStackJavaHome", hostLevelParams.get("java_home"));
     assertNull(hostLevelParams.get("jdk_name"));
     assertNull(hostLevelParams.get("jce_name"));
-    assertEquals(4, hostLevelParams.size());
+    assertTrue(hostLevelParams.containsKey(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertNull(hostLevelParams.get(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertEquals(5, hostLevelParams.size());
   }
 
   @Test
@@ -665,7 +667,9 @@ public class StageUtilsTest extends EasyMockSupport {
     assertEquals("myStackJdkName", hostLevelParams.get("jdk_name"));
     assertEquals("myStackJceName", hostLevelParams.get("jce_name"));
     assertEquals("7", hostLevelParams.get("java_version"));
-    assertEquals(4, hostLevelParams.size());
+    assertTrue(hostLevelParams.containsKey(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertNull(hostLevelParams.get(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertEquals(5, hostLevelParams.size());
   }
 
   @Test
@@ -682,7 +686,9 @@ public class StageUtilsTest extends EasyMockSupport {
     assertEquals("myJavaHome", hostLevelParams.get("java_home"));
     assertEquals("myJdkName", hostLevelParams.get("jdk_name"));
     assertEquals("myJceName", hostLevelParams.get("jce_name"));
-    assertEquals(4, hostLevelParams.size());
+    assertTrue(hostLevelParams.containsKey(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertNull(hostLevelParams.get(ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME));
+    assertEquals(5, hostLevelParams.size());
   }
 
   private void checkServiceHostIndexes(Map<String, Set<String>> info, String componentName, String mappedComponentName,
