@@ -256,13 +256,19 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     # DAS Hook
     putHiveEnvProperty("hive_timeline_logging_enabled", "false")
     das_hook_class = "org.apache.hadoop.hive.ql.hooks.HiveProtoLoggingHook"
+    ats_hook_class = "org.apache.hadoop.hive.ql.hooks.ATSHook"
 
     hooks_properties = ["hive.exec.pre.hooks", "hive.exec.post.hooks", "hive.exec.failure.hooks"]
+    has_ats_hook = False
     for hooks_property in hooks_properties:
       if hooks_property in configurations["hive-site"]["properties"]:
         hooks_value = configurations["hive-site"]["properties"][hooks_property]
       else:
         hooks_value = " "
+
+      if ats_hook_class in hooks_value:
+        has_ats_hook = True
+
       if das_hook_class not in hooks_value:
         if hooks_value == " ":
           hooks_value = das_hook_class
@@ -270,6 +276,22 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
           hooks_value = hooks_value + "," + das_hook_class
         # Put updated hooks property
         putHiveSiteProperty(hooks_property, hooks_value)
+
+    # If ATSHook is configured on any hook list, enforce it on pre/post/failure to avoid
+    # stale RUNNING entries in Tez View Hive Queries for successful statements.
+    if has_ats_hook:
+      for hooks_property in hooks_properties:
+        if hooks_property in configurations["hive-site"]["properties"]:
+          hooks_value = configurations["hive-site"]["properties"][hooks_property]
+        else:
+          hooks_value = " "
+
+        if ats_hook_class not in hooks_value:
+          if hooks_value == " ":
+            hooks_value = ats_hook_class
+          else:
+            hooks_value = hooks_value + "," + ats_hook_class
+          putHiveSiteProperty(hooks_property, hooks_value)
 
     if not "yarn-site" in configurations:
       self.calculateYarnAllocationSizes(configurations, services, hosts)

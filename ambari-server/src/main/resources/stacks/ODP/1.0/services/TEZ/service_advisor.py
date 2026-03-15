@@ -469,6 +469,11 @@ class TezRecommender(service_advisor.ServiceAdvisor):
     # Keep tez-site opts empty to allow composition from tez-env base/extra values
     putTezProperty('tez.am.launch.cmd-opts', "")
     putTezProperty('tez.task.launch.cmd-opts', "")
+    # Keep ATS v1.5 Tez history entities enabled for Tez View DAG/vertex rendering.
+    putTezProperty("yarn.timeline-service.enabled", "true")
+    putTezProperty("tez.am.history.logging.enabled", "true")
+    putTezProperty("tez.history.logging.service.class", "org.apache.tez.dag.history.logging.ats.ATSV15HistoryLoggingService")
+    putTezProperty("tez.runtime.convert.user-payload.to.history-text", "true")
     self.logger.info("Updated Tez JVM base/extra options in 'tez-env' for java version: {0}".format(java_version_str))
 
 

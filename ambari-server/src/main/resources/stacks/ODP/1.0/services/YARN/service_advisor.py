@@ -909,6 +909,46 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
           currentValueService = currentValueService.replace("spark2_shuffle","")
         putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
 
+    # Tez View requires ATS v1.5 entity-group plugin wiring for vertex/dag detail lookups.
+    if 'TEZ' in servicesList:
+      yarn_site = services["configurations"].get("yarn-site", {})
+      yarn_props = yarn_site.get("properties", {})
+
+      required_store_class = "org.apache.hadoop.yarn.server.timeline.EntityGroupFSTimelineStore"
+      required_plugins = [
+        "org.apache.hadoop.yarn.applications.distributedshell.DistributedShellTimelinePlugin",
+        "org.apache.tez.dag.history.logging.ats.TimelineCachePluginImpl"
+      ]
+      required_classpath = [
+        "/usr/odp/current/tez-client/*",
+        "/usr/odp/current/tez-client/lib/*"
+      ]
+
+      existing_plugins = yarn_props.get("yarn.timeline-service.entity-group-fs-store.group-id-plugin-classes", "")
+      plugin_values = []
+      for plugin in existing_plugins.split(","):
+        plugin = plugin.strip()
+        if plugin and plugin not in plugin_values:
+          plugin_values.append(plugin)
+      for plugin in required_plugins:
+        if plugin not in plugin_values:
+          plugin_values.append(plugin)
+
+      existing_classpath = yarn_props.get("yarn.timeline-service.entity-group-fs-store.group-id-plugin-classpath", "")
+      classpath_values = []
+      for cp in existing_classpath.split(":"):
+        cp = cp.strip()
+        if cp and cp not in classpath_values:
+          classpath_values.append(cp)
+      for cp in required_classpath:
+        if cp not in classpath_values:
+          classpath_values.append(cp)
+
+      putYarnProperty("yarn.timeline-service.enabled", "true")
+      putYarnProperty("yarn.timeline-service.store-class", required_store_class)
+      putYarnProperty("yarn.timeline-service.entity-group-fs-store.group-id-plugin-classes", ",".join(plugin_values))
+      putYarnProperty("yarn.timeline-service.entity-group-fs-store.group-id-plugin-classpath", ":".join(classpath_values))
+
 
   def recommendConfigurationsForSSO(self, configurations, clusterData, services, hosts):
     ambari_configuration = self.get_ambari_configuration(services)

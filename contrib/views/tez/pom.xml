@@ -27,14 +27,14 @@
 
   <groupId>org.apache.ambari.contrib.views</groupId>
   <artifactId>tez-view</artifactId>
-  <version>0.7.0.0-SNAPSHOT</version>
+  <version>0.10.5.0-SNAPSHOT</version>
   <name>Tez</name>
   <description>Tez View</description>
 
   <properties>
     <ambari.dir>${project.parent.parent.parent.basedir}</ambari.dir>
     <tez.view.version>${project.version}</tez.view.version>
-    <tez.version>0.7.0</tez.version>
+    <tez.version>0.10.5</tez.version>
   </properties>
 
   <dependencies>
