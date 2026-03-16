@@ -1024,6 +1024,35 @@ public class ServiceComponentHostTest {
   }
 
   @Test
+  public void testSetRestartRequiredWithoutEventPublishingOnlyUpdatesOnChange() throws Exception {
+    Cluster cluster = clusters.getCluster(clusterName);
+    HostEntity hostEntity = hostDAO.findByName(hostName1);
+    ServiceComponentHost sch = createNewServiceComponentHost(cluster, "HDFS", "NAMENODE", hostName1);
+
+    HostComponentDesiredStateEntity entity = hostComponentDesiredStateDAO.findByIndex(
+      cluster.getClusterId(),
+      sch.getServiceName(),
+      sch.getServiceComponentName(),
+      hostEntity.getHostId()
+    );
+
+    Assert.assertNotNull(entity);
+    Assert.assertFalse(entity.isRestartRequired());
+    Assert.assertFalse(sch.setRestartRequiredWithoutEventPublishing(false));
+
+    Assert.assertTrue(sch.setRestartRequiredWithoutEventPublishing(true));
+    entity = hostComponentDesiredStateDAO.findByIndex(
+      cluster.getClusterId(),
+      sch.getServiceName(),
+      sch.getServiceComponentName(),
+      hostEntity.getHostId()
+    );
+    Assert.assertTrue(entity.isRestartRequired());
+
+    Assert.assertFalse(sch.setRestartRequiredWithoutEventPublishing(true));
+  }
+
+  @Test
   public void testMaintenance() throws Exception {
     String stackVersion = "HDP-2.0.6";
     StackId stackId = new StackId(stackVersion);

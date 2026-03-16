@@ -462,6 +462,7 @@
       </requiredServices>
 
       <configuration-dependencies>
+        <!-- core-site is owned by CORE; HDFS depends on it but must not define it. -->
         <config-type>core-site</config-type>
         <config-type>viewfs-mount-table</config-type>
         <config-type>hdfs-site</config-type>

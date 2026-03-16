@@ -1495,6 +1495,10 @@ public class ServiceComponentHostImpl implements ServiceComponentHost {
 
     HostComponentDesiredStateEntity desiredStateEntity = getDesiredStateEntity();
     if (desiredStateEntity != null) {
+      if (desiredStateEntity.isRestartRequired() == restartRequired) {
+        return false;
+      }
+
       desiredStateEntity.setRestartRequired(restartRequired);
       hostComponentDesiredStateDAO.merge(desiredStateEntity);
       return true;
