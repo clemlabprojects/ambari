@@ -1,3 +1,21 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.ambari.view.k8s.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -2848,17 +2866,17 @@ public class KubernetesService {
     }
 
     /**
-     * Read a single key from an Opaque Secret as a UTF-8 string.
+     * Read a single key from an Opaque Secret as raw bytes.
      *
      * @param namespace  Kubernetes namespace
      * @param secretName Secret name
      * @param dataKey    key inside .data of the Secret
-     * @return Optional containing the decoded UTF-8 value, or empty if the Secret
+     * @return Optional containing the decoded bytes, or empty if the Secret
      *         or key does not exist, or if the value is not valid base64.
      */
-    public Optional<String> readOpaqueSecretKeyAsString(String namespace,
-                                                        String secretName,
-                                                        String dataKey) {
+    public Optional<byte[]> readOpaqueSecretKeyAsBytes(String namespace,
+                                                       String secretName,
+                                                       String dataKey) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(dataKey, "dataKey");
@@ -2891,8 +2909,7 @@ public class KubernetesService {
             }
 
             try {
-                byte[] decoded = Base64.getDecoder().decode(b64);
-                return Optional.of(new String(decoded, StandardCharsets.UTF_8));
+                return Optional.of(Base64.getDecoder().decode(b64));
             } catch (IllegalArgumentException ex) {
                 LOG.warn("Value for key '{}' in Secret '{}/{}' is not valid base64: {}",
                         dataKey, namespace, secretName, ex.toString());
@@ -2910,6 +2927,16 @@ public class KubernetesService {
                     "Failed to read Secret " + namespace + "/" + secretName +
                             " while accessing key '" + dataKey + "': " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Read a single key from an Opaque Secret as a UTF-8 string.
+     */
+    public Optional<String> readOpaqueSecretKeyAsString(String namespace,
+                                                        String secretName,
+                                                        String dataKey) {
+        return readOpaqueSecretKeyAsBytes(namespace, secretName, dataKey)
+                .map(bytes -> new String(bytes, StandardCharsets.UTF_8));
     }
 
     /**

@@ -1,7 +1,27 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.ambari.server.serveraction.kerberos;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,7 +32,6 @@ import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.controller.KerberosHelper;
 import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.ResolvedKerberosPrincipal;
-import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +39,8 @@ import org.slf4j.LoggerFactory;
 import com.google.inject.Inject;
 
 /**
- * Server action to (idempotently) create/rotate a single principal and return its keytab (base64)
- * via structured out. Intended for ad-hoc principals requested by external systems (e.g. webhook).
+ * Server action to (idempotently) create/rotate a single principal and stash its keytab in
+ * Ambari's temporary credential store. structured_out carries only non-secret metadata.
  *
  * Required command params:
  *  - "principal": the Kerberos principal to create/rotate (e.g. "HTTP/myhost@EXAMPLE.COM")
@@ -33,7 +52,8 @@ import com.google.inject.Inject;
  *    "principal": "<principal>",
  *    "kvno": <int>,
  *    "created": true|false,
- *    "keytab_b64": "<base64>"
+ *    "payload_ref": "<temporary-store-reference>",
+ *    "payload_sha256": "<sha256-hex>"
  *  }
  */
 public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
@@ -45,6 +65,9 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
 
     @Inject
     private KerberosHelper kerberosHelper;
+
+    @Inject
+    private AdhocKeytabPayloadStore adhocKeytabPayloadStore;
 
     @Override
     public CommandReport execute(java.util.concurrent.ConcurrentMap<String, Object> requestSharedDataContext) throws AmbariException {
@@ -148,7 +171,7 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
 
             LOG.info("Principal '{}' processed with kvno={} (created={})", principal, kvno, !exists);
 
-            // Generate keytab (write to temp file, then base64 it for structured out)
+            // Generate keytab (write to temp file, then stash it in the temporary credential store)
             tmpKeytab = File.createTempFile("adhoc_", ".keytab");
             LOG.info("Temporary keytab file created at '{}'", tmpKeytab.getAbsolutePath());
 
@@ -158,16 +181,16 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
                     principal, tmpKeytab.length());
 
             byte[] keytabBytes = Files.readAllBytes(tmpKeytab.toPath());
-            String keytabB64 = Base64.encodeBase64String(keytabBytes);
-            LOG.debug("Keytab for principal '{}' encoded to base64 (length={} chars)",
-                    principal, keytabB64 != null ? keytabB64.length() : 0);
+            String payloadRef = adhocKeytabPayloadStore.storePayload(clusterName, keytabBytes);
+            LOG.info("Stored ad-hoc keytab payload in temporary credential store under ref '{}'", payloadRef);
 
             // Structured out payload
             Map<String, Object> out = new HashMap<>();
             out.put("principal", principal);
             out.put("kvno", kvno);
             out.put("created", !exists);
-            out.put("keytab_b64", keytabB64);
+            out.put("payload_ref", payloadRef);
+            out.put("payload_sha256", sha256Hex(keytabBytes));
 
             String structuredOut = toJson(out);
             String stdout = String.format("Keytab generated for principal '%s' (kvno=%d, created=%s)",
@@ -252,5 +275,19 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
             sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
         }
         return sb.toString();
+    }
+
+    private static String sha256Hex(byte[] payload) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(payload);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 digest is not available", e);
+        }
     }
 }

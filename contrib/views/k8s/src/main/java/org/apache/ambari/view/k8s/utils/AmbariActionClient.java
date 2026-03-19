@@ -1,8 +1,27 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.ambari.view.k8s.utils;
 
 import com.google.gson.*;
 import org.apache.ambari.view.URLStreamProvider;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.EncryptionService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,7 +40,9 @@ import javax.ws.rs.core.MultivaluedMap;
  * Tiny client around Ambari Server REST needed for:
  *  - POST /api/v1/clusters/{cluster}/requests  (submit action)
  *  - GET  /api/v1/clusters/{cluster}/requests/{id} (poll status)
- *  - GET  /api/v1/clusters/{cluster}/requests/{id}/tasks?fields=structured_out (fetch keytab b64)
+ *  - GET  /api/v1/clusters/{cluster}/requests/{id}/tasks?fields=structured_out (fetch keytab payload metadata)
+ *  - POST /api/v1/clusters/{cluster}/adhoc_keytab/payloads/{payloadRef}/read (read keytab payload)
+ *  - POST /api/v1/clusters/{cluster}/adhoc_keytab/payloads/{payloadRef}/ack (acknowledge/delete keytab payload)
  *
  * Authentication/headers:
  *  - Uses the View's URLStreamProvider so we don't hand-roll cookies/auth.
@@ -39,6 +60,12 @@ public class AmbariActionClient {
 
 
     private static final Logger LOG = LoggerFactory.getLogger(AmbariActionClient.class);
+    private static final Gson GSON = new Gson();
+    private static final EncryptionService HEADER_ENCRYPTION = new EncryptionService();
+    private static final String PERSISTED_HEADERS_FORMAT_KEY = "_format";
+    private static final String PERSISTED_HEADERS_FORMAT_ENCRYPTED = "encrypted-v1";
+    private static final String PERSISTED_HEADERS_PAYLOAD_KEY = "payload";
+    public record AdhocKeytabPayloadMetadata(String payloadRef, String payloadSha256, Integer kvno, Boolean created) {}
 
     public AmbariActionClient(ViewContext ctx, String ambariApiBase, String clusterName, Map<String,String> defaultHeaders) {
         this.ctx = ctx;
@@ -46,7 +73,7 @@ public class AmbariActionClient {
         this.ambariApiBase = ambariApiBase.endsWith("/") ? ambariApiBase.substring(0, ambariApiBase.length()-1) : ambariApiBase;
         this.clusterName = clusterName;
         this.defaultHeaders = defaultHeaders == null ? new LinkedHashMap<>() : new LinkedHashMap<>(defaultHeaders);
-        LOG.debug("AmbariActionClient initialized with headers: {}", this.defaultHeaders);
+        LOG.debug("AmbariActionClient initialized with header keys: {}", this.defaultHeaders.keySet());
         this.initializeMainConfigurations();
     }
 
@@ -58,7 +85,7 @@ public class AmbariActionClient {
                 : ambariApiBase;
         this.clusterName = null; // will be resolved later by the caller
         this.defaultHeaders = defaultHeaders == null ? new LinkedHashMap<>() : new LinkedHashMap<>(defaultHeaders);
-        LOG.info("AmbariActionClient initialized with headers: {}", this.defaultHeaders);
+        LOG.debug("AmbariActionClient initialized with header keys: {}", this.defaultHeaders.keySet());
         this.initializeMainConfigurations();
     }
     public AmbariActionClient(ViewContext ctx, String ambariApiBase, String clusterName) {
@@ -143,11 +170,11 @@ public class AmbariActionClient {
     }
 
     /**
-     * Read keytab as base64 from structured_out of the tasks for this request.
-     * We look through tasks’ "structured_out" for a "keytab_b64" field (the ServerAction must place it there).
+     * Read issued keytab metadata from structured_out of the latest task for this request.
+     * The keytab bytes themselves are kept in Ambari's temporary credential store and exposed
+     * through a temporary read/ack endpoint pair.
      */
-
-    public Optional<String> fetchKeytabBase64FromTasks(int requestId) throws Exception {
+    public Optional<AdhocKeytabPayloadMetadata> fetchIssuedKeytabPayloadMetadataFromTasks(int requestId) throws Exception {
         // 1) List tasks of the request
         //    We only need the task ids to follow the links.
         String reqUrl = ambariApiBase
@@ -185,7 +212,7 @@ public class AmbariActionClient {
         // Pick a stable choice: highest task id (usually the only one for a server action)
         int taskId = taskIds.stream().max(Integer::compareTo).get();
 
-        // 2) Read that task and pull structured_out.keytab_b64
+        // 2) Read that task and pull structured_out.payload_ref
         String taskUrl = ambariApiBase
                 + "/clusters/" + encode(clusterName)
                 + "/requests/" + requestId
@@ -201,10 +228,15 @@ public class AmbariActionClient {
             var tasksObj = taskRoot.getAsJsonObject("Tasks");
             if (tasksObj.has("structured_out")) {
                 var so = tasksObj.getAsJsonObject("structured_out");
-                if (so.has("keytab_b64") && !so.get("keytab_b64").isJsonNull()) {
-                    String b64 = so.get("keytab_b64").getAsString();
-                    if (b64 != null && !b64.isBlank()) {
-                        return Optional.of(b64);
+                if (so.has("payload_ref") && !so.get("payload_ref").isJsonNull()) {
+                    String payloadRef = so.get("payload_ref").getAsString();
+                    if (payloadRef != null && !payloadRef.isBlank()) {
+                        String payloadSha256 = (so.has("payload_sha256") && !so.get("payload_sha256").isJsonNull())
+                                ? so.get("payload_sha256").getAsString()
+                                : null;
+                        Integer kvno = (so.has("kvno") && !so.get("kvno").isJsonNull()) ? so.get("kvno").getAsInt() : null;
+                        Boolean created = (so.has("created") && !so.get("created").isJsonNull()) ? so.get("created").getAsBoolean() : null;
+                        return Optional.of(new AdhocKeytabPayloadMetadata(payloadRef, payloadSha256, kvno, created));
                     }
                 }
             }
@@ -212,15 +244,55 @@ public class AmbariActionClient {
         return Optional.empty();
     }
 
+    public String readAdhocKeytabPayload(String payloadRef) throws Exception {
+        if (payloadRef == null || payloadRef.isBlank()) {
+            throw new IllegalArgumentException("payloadRef cannot be null or blank");
+        }
+
+        String url = ambariApiBase
+                + "/clusters/" + encode(clusterName)
+                + "/adhoc_keytab/payloads/" + encode(payloadRef)
+                + "/read";
+        try (InputStream is = stream.readFrom(
+                url,
+                "POST",
+                "",
+                withStdHeaders(Map.of("Content-Type", "text/plain")))) {
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (body == null || body.isBlank()) {
+                throw new IllegalStateException("Ad-hoc keytab read endpoint returned an empty payload");
+            }
+            return body.trim();
+        }
+    }
+
+    public void ackAdhocKeytabPayload(String payloadRef) throws Exception {
+        if (payloadRef == null || payloadRef.isBlank()) {
+            throw new IllegalArgumentException("payloadRef cannot be null or blank");
+        }
+
+        String url = ambariApiBase
+                + "/clusters/" + encode(clusterName)
+                + "/adhoc_keytab/payloads/" + encode(payloadRef)
+                + "/ack";
+        try (InputStream is = stream.readFrom(
+                url,
+                "POST",
+                "",
+                withStdHeaders(Map.of("Content-Type", "text/plain")))) {
+            is.readAllBytes();
+        }
+    }
+
     /** this method call the clusters api path on ambari server in order to help discover existing cluster
      * the view is not linked to a cluster
      * @return
      * @throws Exception
      */
-        public List<String> listClusters() throws Exception {
+    public List<String> listClusters() throws Exception {
         String url = ambariApiBase + "/clusters?fields=Clusters/cluster_name";
         LOG.info("Listing clusters from {}", url);
-        LOG.debug("Using headers: {}", this.defaultHeaders);
+        LOG.debug("Using header keys: {}", this.defaultHeaders.keySet());
         try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -329,6 +401,7 @@ public class AmbariActionClient {
 
         Map<String,Object> persisted =
                 (persistedHeadersObj instanceof Map) ? (Map<String,Object>) persistedHeadersObj : Map.of();
+        persisted = decodePersistedHeaders(persisted);
 
         // normalize keys to lowercase for lookup
         Map<String,Object> lc = new LinkedHashMap<>();
@@ -356,6 +429,31 @@ public class AmbariActionClient {
         if (cookie != null && !cookie.isBlank())        h.put("Cookie", cookie);
         if (authorization != null && !authorization.isBlank()) h.put("Authorization", authorization);
         return h;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> decodePersistedHeaders(Map<String, Object> persisted) {
+        Object format = persisted.get(PERSISTED_HEADERS_FORMAT_KEY);
+        Object payload = persisted.get(PERSISTED_HEADERS_PAYLOAD_KEY);
+        if (!PERSISTED_HEADERS_FORMAT_ENCRYPTED.equals(format) || !(payload instanceof String payloadString) || payloadString.isBlank()) {
+            return persisted;
+        }
+
+        try {
+            byte[] encrypted = Base64.getDecoder().decode(payloadString);
+            String decrypted = new String(HEADER_ENCRYPTION.decrypt(encrypted), StandardCharsets.UTF_8);
+            return GSON.fromJson(decrypted, Map.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to decode persisted Ambari auth headers", e);
+        }
+    }
+
+    public static String describePersistedHeaders(Object persistedHeadersObj) {
+        try {
+            return toAuthHeaders(persistedHeadersObj).keySet().toString();
+        } catch (Exception e) {
+            return "[unreadable]";
+        }
     }
 
     /**
@@ -598,12 +696,25 @@ public class AmbariActionClient {
             out.put(key, vals);
         });
 
+        if (out.isEmpty()) {
+            return Map.of();
+        }
+
+        String payloadJson = GSON.toJson(out);
+        String encryptedPayload = Base64.getEncoder().encodeToString(
+                HEADER_ENCRYPTION.encrypt(payloadJson.getBytes(StandardCharsets.UTF_8))
+        );
+
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put(PERSISTED_HEADERS_FORMAT_KEY, PERSISTED_HEADERS_FORMAT_ENCRYPTED);
+        envelope.put(PERSISTED_HEADERS_PAYLOAD_KEY, encryptedPayload);
+
         try {
             LoggerFactory.getLogger(CommandService.class)
                     .info("Persisted caller headers (filtered): {}", out.keySet());
         } catch (Exception ignore) {}
 
-        return out;
+        return envelope;
     }
 
     /**

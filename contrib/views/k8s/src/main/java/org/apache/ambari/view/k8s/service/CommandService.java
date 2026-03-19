@@ -1,3 +1,21 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.ambari.view.k8s.service;
 
 import com.google.gson.reflect.TypeToken;
@@ -46,6 +64,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
@@ -99,6 +119,7 @@ public class CommandService {
     private static final String VIEW_SETTINGS_KEY = "view.settings.json";
     private static final String KERBEROS_INJECTION_MODE_WEBHOOK = "WEBHOOK";
     private static final String KERBEROS_INJECTION_MODE_PRE_PROVISIONED = "PRE_PROVISIONED";
+    private static final int MAX_RETRYABLE_ATTEMPTS = Integer.getInteger("k8s.view.command.maxRetryableAttempts", 5);
 
     // External dependencies (adapters) — injected
     private final HelmService helmService;
@@ -4459,7 +4480,7 @@ public class CommandService {
 
                     Object callerHeadersObj = childParams.get("_callerHeaders");
                     if (callerHeadersObj != null) {
-                        LOG.debug("Persisted caller headers: {}", callerHeadersObj);
+                        LOG.debug("Persisted caller headers keys: {}", AmbariActionClient.describePersistedHeaders(callerHeadersObj));
                     }
 
                     // Required inputs
@@ -4525,24 +4546,25 @@ public class CommandService {
                     );
                     if (!ok) throw new IllegalStateException("Ambari request " + reqId + " did not complete successfully");
 
-                    LOG.info("Ambari request id={} for principal={} cluster={} baseUri={} completed; fetching keytab…",
+                    LOG.info("Ambari request id={} for principal={} cluster={} baseUri={} completed; fetching payload metadata…",
                             reqId, principalFqdn, cluster, baseUri);
 
-                    // add some comment to check re-compilation
                     // Fetch with a short retry loop (handles persist/visibility lag)
-                    Optional<String> keytabB64Opt = ambariActionClient.fetchKeytabBase64FromTasks(reqId);
-                    for (int i = 0; i < 10 && keytabB64Opt.isEmpty(); i++) {   // ~5 seconds total
+                    Optional<AmbariActionClient.AdhocKeytabPayloadMetadata> payloadMetadataOpt =
+                            ambariActionClient.fetchIssuedKeytabPayloadMetadataFromTasks(reqId);
+                    for (int i = 0; i < 10 && payloadMetadataOpt.isEmpty(); i++) {   // ~5 seconds total
                         try { Thread.sleep(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                        keytabB64Opt = ambariActionClient.fetchKeytabBase64FromTasks(reqId);
+                        payloadMetadataOpt = ambariActionClient.fetchIssuedKeytabPayloadMetadataFromTasks(reqId);
                     }
 
-                    String keytabB64 = keytabB64Opt.orElseThrow(() ->
+                    AmbariActionClient.AdhocKeytabPayloadMetadata payloadMetadata = payloadMetadataOpt.orElseThrow(() ->
                             new IllegalStateException("Ambari action " + reqId +
-                                    " completed but keytab_b64 not found in structured_out."));
+                                    " completed but payload_ref not found in structured_out."));
 
                     Map<String, Object> res = new LinkedHashMap<>();
-                    res.put("principal", principalFqdn);
-                    res.put("keytabB64", keytabB64);
+                    res.put("requestId", reqId);
+                    res.put("payloadRef", payloadMetadata.payloadRef());
+                    res.put("payloadSha256", payloadMetadata.payloadSha256());
                     childSt.setResultJson(gson.toJson(res));
                 }
 
@@ -4560,7 +4582,7 @@ public class CommandService {
                             childParams.get("_baseUri"));
                     Object callerHeadersObj = childParams.get("_callerHeaders");
                     if (callerHeadersObj != null) {
-                        LOG.debug("Persisted caller headers: {}", callerHeadersObj);
+                        LOG.debug("Persisted caller headers keys: {}", AmbariActionClient.describePersistedHeaders(callerHeadersObj));
                     }
                     Objects.requireNonNull(namespace, "namespace");
                     Objects.requireNonNull(secretName, "secretName");
@@ -4605,36 +4627,108 @@ public class CommandService {
                     CommandEntity issuerCmd = findCommandById(issuerId);
                     CommandStatusEntity issuerSt = findCommandStatusById(issuerCmd.getCommandStatusId());
                     if (issuerSt == null || issuerSt.getResultJson() == null || issuerSt.getResultJson().isBlank()) {
-                        throw new IllegalStateException("Issuer step has no resultJson with keytabB64");
+                        throw new IllegalStateException("Issuer step has no resultJson with payloadRef");
                     }
 
                     Map<String,Object> issuerRes =
                             gson.fromJson(issuerSt.getResultJson(), java.util.Map.class);
-                    String keytabB64 = issuerRes == null ? null : (String) issuerRes.get("keytabB64");
-                    if (keytabB64 == null || keytabB64.isBlank()) {
-                        throw new IllegalStateException("Issuer resultJson does not contain keytabB64");
+                    String payloadRef = issuerRes == null ? null : (String) issuerRes.get("payloadRef");
+                    if (payloadRef == null || payloadRef.isBlank()) {
+                        throw new IllegalStateException("Issuer resultJson does not contain payloadRef");
+                    }
+                    String payloadSha256 = issuerRes == null ? null : (String) issuerRes.get("payloadSha256");
+                    if (payloadSha256 == null || payloadSha256.isBlank()) {
+                        throw new IllegalStateException("Issuer resultJson does not contain payloadSha256");
                     }
 
-                    byte[] keytabBytes = java.util.Base64.getDecoder().decode(keytabB64);
+                    String baseUriStr = (String) childParams.get("_baseUri");
+                    if (baseUriStr == null || baseUriStr.isBlank()) {
+                        throw new IllegalStateException("Missing baseUri in command params (_baseUri)");
+                    }
+                    String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+                    var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
 
-                    // (optional) ensure namespace exists — harmless if it already exists
-                    try {
-                        this.kubernetesService.createNamespace(namespace);
-                    } catch (Exception ignore) {
-                        // ignore: namespace may already exist or user may not want auto-create
+                    String verifiedSha256 = null;
+                    Optional<byte[]> existingSecretBytes =
+                            this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                    if (existingSecretBytes.isPresent() && payloadSha256.equals(sha256Hex(existingSecretBytes.get()))) {
+                        LOG.info("KEYTAB_CREATE_SECRET: Secret '{}/{}' already contains the expected keytab payload", namespace, secretName);
+                        try {
+                            ambariActionClient.ackAdhocKeytabPayload(payloadRef);
+                        } catch (Exception ackEx) {
+                            throw new CommandUtils.RetryableException("Secret already present but failed to acknowledge payload: " + trim(ackEx.getMessage()), ackEx);
+                        }
+                        verifiedSha256 = payloadSha256;
                     }
 
-                    // write/update the Opaque Secret (relies on your KubeUtil helper)
-                    // signature: createOrUpdateOpaqueSecret(namespace, secretName, dataKey, dataBytes)
-                    this.kubernetesService.createOrUpdateOpaqueSecret(
-                            namespace, secretName, keyNameInSecret, keytabBytes
-                    );
+                    if (verifiedSha256 == null) {
+                        byte[] keytabBytes = null;
+                        try {
+                            String keytabB64 = ambariActionClient.readAdhocKeytabPayload(payloadRef);
+                            keytabBytes = java.util.Base64.getDecoder().decode(keytabB64);
+                        } catch (Exception payloadEx) {
+                            Optional<byte[]> secretBytesAfterReadFailure =
+                                    this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                            if (secretBytesAfterReadFailure.isPresent() && payloadSha256.equals(sha256Hex(secretBytesAfterReadFailure.get()))) {
+                                LOG.info("KEYTAB_CREATE_SECRET: payload '{}' already acknowledged; accepting matching Secret '{}/{}'",
+                                        payloadRef, namespace, secretName);
+                                verifiedSha256 = payloadSha256;
+                            } else if (isPayloadUnavailableError(payloadEx)) {
+                                throw new IllegalStateException(
+                                        String.format("Keytab payload '%s' is no longer available and Secret '%s/%s' could not be verified",
+                                                payloadRef, namespace, secretName),
+                                        payloadEx);
+                            } else {
+                                throw new CommandUtils.RetryableException("Failed to read keytab payload from Ambari: " + trim(payloadEx.getMessage()), payloadEx);
+                            }
+                        }
 
-                    // store a tiny result payload for this step
+                        if (verifiedSha256 == null) {
+                            if (keytabBytes == null || keytabBytes.length == 0) {
+                                throw new CommandUtils.RetryableException("Issued keytab payload is empty");
+                            }
+                            // Ensure namespace exists. This is harmless if it already exists.
+                            try {
+                                this.kubernetesService.createNamespace(namespace);
+                            } catch (Exception ignore) {
+                                // ignore: namespace may already exist or user may not want auto-create
+                            }
+
+                            try {
+                                this.kubernetesService.createOrUpdateOpaqueSecret(
+                                        namespace, secretName, keyNameInSecret, keytabBytes
+                                );
+
+                                Optional<byte[]> verifiedSecretBytes =
+                                        this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                                if (verifiedSecretBytes.isEmpty()) {
+                                    throw new CommandUtils.RetryableException("Secret verification failed: Kubernetes Secret is missing the expected key");
+                                }
+                                verifiedSha256 = sha256Hex(verifiedSecretBytes.get());
+                                if (!payloadSha256.equals(verifiedSha256)) {
+                                    throw new CommandUtils.RetryableException("Secret verification failed: stored keytab hash does not match issued payload");
+                                }
+
+                                try {
+                                    ambariActionClient.ackAdhocKeytabPayload(payloadRef);
+                                } catch (Exception ackEx) {
+                                    throw new CommandUtils.RetryableException("Secret verified but failed to acknowledge keytab payload: " + trim(ackEx.getMessage()), ackEx);
+                                }
+                            } catch (CommandUtils.RetryableException retryableException) {
+                                throw retryableException;
+                            } catch (Exception ex) {
+                                throw new CommandUtils.RetryableException("Failed to create or verify Kubernetes Secret " + namespace + "/" + secretName + ": " + trim(ex.getMessage()), ex);
+                            }
+                        }
+                    }
+
                     java.util.Map<String,Object> res = new java.util.LinkedHashMap<>();
                     res.put("secretName", secretName);
                     res.put("namespace", namespace);
                     res.put("dataKey", keyNameInSecret);
+                    res.put("verifiedSha256", verifiedSha256);
                     childSt.setResultJson(gson.toJson(res));
                 }
 
@@ -4659,12 +4753,24 @@ public class CommandService {
             int attempt = childSt.getAttempt() == null ? 0 : childSt.getAttempt();
             attempt += 1;
             childSt.setAttempt(attempt);
-            childSt.setMessage("Retryable error: " + trim(rex.getMessage()));
+            childSt.setState(CommandState.RUNNING.name());
+            childSt.setMessage("Retryable error (" + attempt + "/" + MAX_RETRYABLE_ATTEMPTS + "): " + trim(rex.getMessage()));
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
 
-            // Keep root RUNNING, back off, and try again
-            rescheduleWithBackoff(id, attempt);
+            if (attempt >= MAX_RETRYABLE_ATTEMPTS) {
+                childSt.setState(CommandState.FAILED.name());
+                childSt.setMessage("Failed after " + attempt + " retry attempts: " + trim(rex.getMessage()));
+                childSt.setUpdatedAt(Instant.now().toString());
+                store(childSt);
+                LOG.error("Step exhausted retry attempts: {}", rex.toString(), rex);
+                try { commandLogService.append(id, "Step exhausted retry attempts: " + trim(rex.getMessage())); } catch (Exception ignored) {}
+                fail(rootSt, "Failed at step '" + (child.getTitle() != null ? child.getTitle() : child.getType()) + "' after " + attempt + " retry attempts: " + trim(rex.getMessage()));
+                refreshCurrentStepSnapshot(root);
+            } else {
+                try { commandLogService.append(id, "Retrying step (" + attempt + "/" + MAX_RETRYABLE_ATTEMPTS + "): " + trim(rex.getMessage())); } catch (Exception ignored) {}
+                rescheduleWithBackoff(id, attempt);
+            }
 
         } catch (Exception ex) {
             // Fail child and propagate to root
@@ -4680,6 +4786,40 @@ public class CommandService {
     }
 
     private static String trim(String m) { return m == null ? null : (m.length() > 512 ? m.substring(0,512) + "…" : m); }
+
+    private static boolean isPayloadUnavailableError(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String text = ((current.getMessage() == null ? "" : current.getMessage()) + " " + current)
+                    .toLowerCase(Locale.ROOT);
+            if (text.contains("404")
+                    || text.contains("410")
+                    || text.contains("gone")
+                    || text.contains("not found")
+                    || text.contains("already consumed")
+                    || text.contains("expired")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(bytes);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(Character.forDigit((b >>> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
 
     private boolean isTerminal(String state) {
         return CommandState.SUCCEEDED.name().equals(state)
