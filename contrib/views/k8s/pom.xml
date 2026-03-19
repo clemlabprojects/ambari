@@ -87,6 +87,11 @@ limitations under the License.
         <!-- Package metadata -->
         <package-version>${project.version}</package-version>
         <package-release>1</package-release>
+        <webhook.rpm.arch>noarch</webhook.rpm.arch>
+        <webhook.deb.arch>all</webhook.deb.arch>
+        <webhook.package.arch.classifier>noarch</webhook.package.arch.classifier>
+        <generated.deb.control.dir>${project.build.directory}/generated-deb-control-flat</generated.deb.control.dir>
+
         <!-- RPM: default to skip; -Prpm toggles to false -->
         <rpm.skip>true</rpm.skip>
     </properties>
@@ -509,6 +514,37 @@ limitations under the License.
                 <version>3.5.0</version>
                 <executions>
                     <execution>
+                        <id>stage-deb-control</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>bash</executable>
+                            <environmentVariables>
+                                <OUT_DIR>${generated.deb.control.dir}</OUT_DIR>
+                                <POSTINST_SRC>${project.basedir}/src/main/package/deb/webhook/postinst</POSTINST_SRC>
+                            </environmentVariables>
+                            <arguments>
+                                <argument>-euo</argument><argument>pipefail</argument>
+                                <argument>-c</argument>
+                                <argument>
+                                    <![CDATA[
+mkdir -p "${OUT_DIR}"
+cat > "${OUT_DIR}/control" <<'EOF'
+Package: ${webhook.package.name}
+Version: ${project.version}-1
+Section: admin
+Priority: optional
+Architecture: ${webhook.deb.arch}
+Maintainer: Clemlab <contact@clemlab.com>
+Description: Clemlab Kerberos Keytab Mutating Webhook manifests and metadata
+EOF
+install -m 0755 "${POSTINST_SRC}" "${OUT_DIR}/postinst"
+]]>
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
                     <id>buildx-multiarch</id>
                     <phase>package</phase>
                     <goals><goal>exec</goal></goals>
@@ -555,6 +591,7 @@ limitations under the License.
                                 <OUT_DIR>${staged.dir}/images</OUT_DIR>
                                 <IMAGE_NAME>${docker.image.name}</IMAGE_NAME>
                                 <IMAGE_TAG>${docker.image.tag}</IMAGE_TAG>
+                                <IMAGE_ARCH>${webhook.package.arch.classifier}</IMAGE_ARCH>
                             </environmentVariables>
                             <arguments>
                                 <argument>-euo</argument><argument>pipefail</argument>
@@ -562,11 +599,12 @@ limitations under the License.
                                 <argument>
                                     <![CDATA[
 mkdir -p "${OUT_DIR}"
+rm -f "${OUT_DIR}"/*.tar.gz "${OUT_DIR}"/*.tar.gz.sha256 "${OUT_DIR}/load.sh"
 # Ensure the image exists locally (built in 'package' phase)
 docker image inspect "${IMAGE}" > /dev/null
 
-# Save ONE tar.gz for this arch (tag already includes -<arch>)
-ARCHIVE="${IMAGE_NAME}-${IMAGE_TAG}.tar.gz"
+# Save one tar.gz for the local package architecture
+ARCHIVE="${IMAGE_NAME}-${IMAGE_TAG}-${IMAGE_ARCH}.tar.gz"
 docker image save "${IMAGE}" | gzip -c > "${OUT_DIR}/${ARCHIVE}"
 (cd "${OUT_DIR}" && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
 
@@ -630,7 +668,7 @@ chmod +x "${OUT_DIR}/load.sh"
                     <group>Development</group>
                     <license>Apache-2.0</license>
                     <autoRequires>false</autoRequires>
-                    <needarch>noarch</needarch>
+                    <needarch>${webhook.rpm.arch}</needarch>
                     <targetOS>linux</targetOS>
                     <version>${package-version}</version>
                     <release>${package-release}</release>
@@ -667,8 +705,8 @@ chmod +x "${OUT_DIR}/load.sh"
                         <phase>package</phase>
                         <goals><goal>jdeb</goal></goals>
                         <configuration>
-                            <controlDir>${project.basedir}/src/main/package/deb/webhook</controlDir>
-                            <deb>${project.basedir}/target/${webhook.package.name}_${package-version}-${package-release}.deb</deb>
+                            <controlDir>${generated.deb.control.dir}</controlDir>
+                            <deb>${project.basedir}/target/${webhook.package.name}_${package-version}-${package-release}_${webhook.deb.arch}.deb</deb>
                             <dataSet>
                                 <data>
                                     <src>${staged.dir}</src>
@@ -791,6 +829,66 @@ chmod +x "${OUT_DIR}/load.sh"
             </properties>
         </profile>
 
+        <profile>
+            <id>arch-amd64</id>
+            <activation>
+                <property>
+                    <name>os.arch</name>
+                    <value>amd64</value>
+                </property>
+            </activation>
+            <properties>
+                <webhook.rpm.arch>x86_64</webhook.rpm.arch>
+                <webhook.deb.arch>amd64</webhook.deb.arch>
+                <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>arch-x86_64</id>
+            <activation>
+                <property>
+                    <name>os.arch</name>
+                    <value>x86_64</value>
+                </property>
+            </activation>
+            <properties>
+                <webhook.rpm.arch>x86_64</webhook.rpm.arch>
+                <webhook.deb.arch>amd64</webhook.deb.arch>
+                <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>arch-aarch64</id>
+            <activation>
+                <property>
+                    <name>os.arch</name>
+                    <value>aarch64</value>
+                </property>
+            </activation>
+            <properties>
+                <webhook.rpm.arch>aarch64</webhook.rpm.arch>
+                <webhook.deb.arch>arm64</webhook.deb.arch>
+                <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>arch-arm64</id>
+            <activation>
+                <property>
+                    <name>os.arch</name>
+                    <value>arm64</value>
+                </property>
+            </activation>
+            <properties>
+                <webhook.rpm.arch>aarch64</webhook.rpm.arch>
+                <webhook.deb.arch>arm64</webhook.deb.arch>
+                <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>
+            </properties>
+        </profile>
+
         <!-- Enable DEB build when -Dbuild-deb=true -->
         <profile>
             <id>deb</id>
@@ -817,6 +915,20 @@ chmod +x "${OUT_DIR}/load.sh"
             <properties>
                 <rpm.skip>false</rpm.skip>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>rpm-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>rpm-webhook</id>
+                                <phase>package</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <!-- Map -Ddocker.push=true to enabling push during package -->
