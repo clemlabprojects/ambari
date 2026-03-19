@@ -1,0 +1,91 @@
+name: Publish k8s webhook image
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["master"]
+    paths:
+      - "contrib/views/k8s/src/main/go/webhooks/kerberos-keytab-mutating-webhook/**"
+      - "contrib/views/k8s/pom.xml"
+      - ".github/workflows/webhook-image-release.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish kerberos-keytab-mutating-webhook
+    runs-on: ubuntu-latest
+    environment: harbor
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract image metadata from k8s pom
+        id: meta
+        run: |
+          python3 <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          pom = Path("contrib/views/k8s/pom.xml")
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          root = ET.parse(pom).getroot()
+
+          def text(path):
+            node = root.find(path, ns)
+            if node is None or not (node.text or "").strip():
+              raise SystemExit(f"Missing required pom value: {path}")
+            return node.text.strip()
+
+          version = text("m:version")
+          registry = text("m:properties/m:docker.image.registry")
+          repository = text("m:properties/m:docker.image.repo")
+          image_name = text("m:properties/m:docker.image.name")
+
+          github_output = Path(__import__("os").environ["GITHUB_OUTPUT"])
+          with github_output.open("a", encoding="utf-8") as fh:
+            fh.write(f"version={version}\n")
+            fh.write(f"registry={registry}\n")
+            fh.write(f"repository={repository}\n")
+            fh.write(f"image_name={image_name}\n")
+            fh.write(f"image={registry}/{repository}/{image_name}\n")
+            fh.write("context=contrib/views/k8s/src/main/go/webhooks/kerberos-keytab-mutating-webhook\n")
+            fh.write("dockerfile=contrib/views/k8s/src/main/go/webhooks/kerberos-keytab-mutating-webhook/Dockerfile\n")
+          PY
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.meta.outputs.registry }}
+          username: ${{ secrets.HARBOR_ROBOT_USERNAME }}
+          password: ${{ secrets.ACTIONS_CLEMLABPROJECTS }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+
+      - name: Verify published manifest
+        run: |
+          docker buildx imagetools inspect "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
