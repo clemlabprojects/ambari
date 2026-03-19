@@ -1,3 +1,20 @@
+<!--
+Licensed to the Apache Software Foundation (ASF) under one or more
+contributor license agreements.  See the NOTICE file distributed with
+this work for additional information regarding copyright ownership.
+The ASF licenses this file to You under the Apache License, Version 2.0
+(the "License"); you may not use this file except in compliance with
+the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -6,7 +23,8 @@
     <parent>
         <groupId>org.apache.ambari.contrib.views</groupId>
         <artifactId>ambari-contrib-views</artifactId>
-        <version>2.8.1.0.0</version>
+        <version>2.8.2.0.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <groupId>org.apache.ambari.views</groupId>
@@ -49,8 +67,9 @@
         <!-- Default platforms (override with -Ddocker.platforms=... if needed) -->
         <docker.platforms>linux/amd64,linux/arm64</docker.platforms>
 
-        <!-- Docker steps ON by default during package/deploy (flip to true/false as you wish) -->
-        <docker.skip>false</docker.skip>
+        <!-- Keep webhook image packaging opt-in so a normal Maven package does not require Docker/buildx -->
+        <docker.skip>true</docker.skip>
+        <!-- When Docker packaging is enabled, push by default unless explicitly disabled -->
         <docker.skip.push>false</docker.skip.push>
         <!-- set platforms at the command line; e.g. -Ddocker.platforms=linux/amd64,linux/arm64 -->
 
@@ -68,7 +87,6 @@
         <!-- Package metadata -->
         <package-version>${project.version}</package-version>
         <package-release>1</package-release>
-
         <!-- RPM: default to skip; -Prpm toggles to false -->
         <rpm.skip>true</rpm.skip>
     </properties>
@@ -290,6 +308,21 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.rat</groupId>
+                <artifactId>apache-rat-plugin</artifactId>
+                <configuration>
+                    <excludes combine.children="append">
+                        <exclude>dependency-reduced-pom.xml</exclude>
+                        <exclude>src/main/go/webhooks/kerberos-keytab-mutating-webhook/go.sum</exclude>
+                        <exclude>src/main/resources/keda-2.17.2-crds.yaml</exclude>
+                        <exclude>src/main/resources/keda-2.18.0-crds.yaml</exclude>
+                        <exclude>src/main/resources/kube-prometheus-stack-77.5.0-crds.yaml</exclude>
+                        <exclude>src/main/resources/kube-prometheus-stack-78.3.2-crds.yaml</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
             <!-- Clean -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -467,19 +500,9 @@
                     <goals><goal>build</goal></goals>
                     </execution>
 
-                    <!-- Keep push execution if you also want a traditional push step for non-buildx builds.
-                        With <buildx><push>true</push> above, this is redundant; you can remove it or keep it no-op. -->
-                    <execution>
-                    <id>push-webhook-image</id>
-                    <phase>deploy</phase>
-                    <goals><goal>push</goal></goals>
-                    <configuration>
-                        <skipPush>${docker.skip.push}</skipPush>
-                    </configuration>
-                    </execution>
                 </executions>
                 </plugin>
-            <!-- use exec plugin to run buildx directly for pushing images, so push is tied to the buildx context and done just after build -->
+            <!-- use exec plugin to run buildx directly for pushing images during package -->
                 <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
@@ -490,6 +513,7 @@
                     <phase>package</phase>
                     <goals><goal>exec</goal></goals>
                     <configuration>
+                        <skip>${docker.skip}</skip>
                         <executable>bash</executable>
                         <environmentVariables>
                         <IMAGE>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</IMAGE>
@@ -499,6 +523,11 @@
                         <argument>-c</argument>
                         <argument>
                             <![CDATA[
+        if [ "${docker.skip.push}" = "true" ]; then
+          echo "Skipping buildx push because docker.skip.push=true"
+          exit 0
+        fi
+
         docker buildx use clem
         docker buildx inspect --bootstrap >/dev/null
 
@@ -514,41 +543,6 @@
                         </arguments>
                     </configuration>
                     </execution>
-                </executions>
-                </plugin>
-            <!-- =========================== -->
-            <!--  WEBHOOK: stage files (YAML) -->
-            <!-- =========================== -->
-            <plugin>
-                <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
-                <executions>
-                    <execution>
-                        <id>stage-webhook-k8s-resources</id>
-                        <phase>prepare-package</phase>
-                        <goals><goal>copy-resources</goal></goals>
-                        <configuration>
-                            <skip>${docker.skip}</skip>
-                            <outputDirectory>${staged.dir}</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>${webhook.k8s.dir}</directory>
-                                    <filtering>false</filtering>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- ===================================== -->
-            <!--  WEBHOOK: write refs + export image   -->
-            <!-- ===================================== -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.0</version>
-                <executions>
                     <execution>
                         <id>save-webhook-image-tar</id>
                         <phase>package</phase>
@@ -593,8 +587,31 @@ chmod +x "${OUT_DIR}/load.sh"
                         </configuration>
                     </execution>
                 </executions>
+                </plugin>
+            <!-- =========================== -->
+            <!--  WEBHOOK: stage files (YAML) -->
+            <!-- =========================== -->
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>stage-webhook-k8s-resources</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <skip>${docker.skip}</skip>
+                            <outputDirectory>${staged.dir}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${webhook.k8s.dir}</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
-
             <!-- ============== -->
             <!--  RPM packaging -->
             <plugin>
@@ -603,7 +620,6 @@ chmod +x "${OUT_DIR}/load.sh"
             <version>2.1.5</version>
             <executions>
                 <execution>
-                <!-- Unbinds RPM creation from the Maven lifecycle -->
                 <id>rpm-webhook</id>
                 <phase>none</phase>
                 <goals>
@@ -799,12 +815,11 @@ chmod +x "${OUT_DIR}/load.sh"
             <id>rpm</id>
             <activation><activeByDefault>false</activeByDefault></activation>
             <properties>
-                <!-- When -Prpm is set, un-skip the rpm plugin -->
                 <rpm.skip>false</rpm.skip>
             </properties>
         </profile>
 
-        <!-- Map -Ddocker.push=true to enabling push at deploy -->
+        <!-- Map -Ddocker.push=true to enabling push during package -->
         <profile>
             <id>push</id>
             <activation>
