@@ -49,15 +49,15 @@ public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
                     new PropertyDescriptor("globalConfigVersion", K8sReleaseEntity.class, "getGlobalConfigVersion", "setGlobalConfigVersion"),
                     new PropertyDescriptor("securityProfile", K8sReleaseEntity.class, "getSecurityProfile", "setSecurityProfile"),
                     new PropertyDescriptor("securityProfileHash", K8sReleaseEntity.class, "getSecurityProfileHash", "setSecurityProfileHash"),
+                    new PropertyDescriptor("vaultProfile", K8sReleaseEntity.class, "getVaultProfile", "setVaultProfile"),
+                    new PropertyDescriptor("vaultProfileHash", K8sReleaseEntity.class, "getVaultProfileHash", "setVaultProfileHash"),
                     new PropertyDescriptor("gitCommitSha", K8sReleaseEntity.class, "getGitCommitSha", "setGitCommitSha"),
                     new PropertyDescriptor("gitBranch", K8sReleaseEntity.class, "getGitBranch", "setGitBranch"),
                     new PropertyDescriptor("gitRepoUrl", K8sReleaseEntity.class, "getGitRepoUrl", "setGitRepoUrl"),
                     new PropertyDescriptor("gitPath", K8sReleaseEntity.class, "getGitPath", "setGitPath"),
                     new PropertyDescriptor("gitCredentialAlias", K8sReleaseEntity.class, "getGitCredentialAlias", "setGitCredentialAlias"),
                     new PropertyDescriptor("gitCommitMode", K8sReleaseEntity.class, "getGitCommitMode", "setGitCommitMode"),
-                    new PropertyDescriptor("gitPrUrl", K8sReleaseEntity.class, "getGitPrUrl", "setGitPrUrl"),
                     new PropertyDescriptor("gitPrNumber", K8sReleaseEntity.class, "getGitPrNumber", "setGitPrNumber"),
-                    new PropertyDescriptor("gitPrState", K8sReleaseEntity.class, "getGitPrState", "setGitPrState"),
                     new PropertyDescriptor("managedByUi", K8sReleaseEntity.class, "isManagedByUi", "setManagedByUi")
             };
         } catch (IntrospectionException e) {

@@ -136,6 +136,7 @@ public class HelmResource {
         final GlobalConfigService globalConfigService = new GlobalConfigService();
         final String currentGlobalFingerprint = globalConfigService.fingerprint();
         final SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
+        final VaultProfileService vaultProfileService = new VaultProfileService(viewContext);
 
         List<Release> releases = helmService.list(namespace, kubeconfigContent);
         int total = releases.size();
@@ -172,14 +173,21 @@ public class HelmResource {
                     releaseDto.restartRequired = false;
                 }
                 releaseDto.securityProfile = metadata.getSecurityProfile();
+                releaseDto.vaultProfile = metadata.getVaultProfile();
                 releaseDto.deploymentMode = metadata.getDeploymentMode();
                 releaseDto.gitCommitSha = metadata.getGitCommitSha();
                 releaseDto.gitBranch = metadata.getGitBranch();
                 releaseDto.gitPath = metadata.getGitPath();
                 releaseDto.gitRepoUrl = metadata.getGitRepoUrl();
-                releaseDto.gitPrUrl = metadata.getGitPrUrl();
                 releaseDto.gitPrNumber = metadata.getGitPrNumber();
-                releaseDto.gitPrState = metadata.getGitPrState();
+                var gitMeta = releaseMetadataService.findGit(metadata.getNamespace(), metadata.getReleaseName());
+                if (gitMeta != null) {
+                    releaseDto.gitPrUrl = gitMeta.getPrUrl();
+                    releaseDto.gitPrState = gitMeta.getPrState();
+                    if (releaseDto.gitPrNumber == null || releaseDto.gitPrNumber.isBlank()) {
+                        releaseDto.gitPrNumber = gitMeta.getPrNumber();
+                    }
+                }
 
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
@@ -191,6 +199,18 @@ public class HelmResource {
                         }
                     } catch (Exception ex) {
                         LOG.warn("Failed to compare security profile for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
+                    }
+                }
+                if (metadata.getVaultProfile() != null && !metadata.getVaultProfile().isBlank()) {
+                    try {
+                        var currentProfile = vaultProfileService.resolveProfile(metadata.getVaultProfile());
+                        String currentHash = vaultProfileService.fingerprint(currentProfile);
+                        String storedHash = metadata.getVaultProfileHash();
+                        if (currentHash != null && storedHash != null && !currentHash.equals(storedHash)) {
+                            releaseDto.vaultProfileStale = true;
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to compare vault profile for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
                     }
                 }
 
@@ -327,9 +347,15 @@ public class HelmResource {
                 status.gitBranch = metadata.getGitBranch();
                 status.gitPath = metadata.getGitPath();
                 status.gitRepoUrl = metadata.getGitRepoUrl();
-                status.gitPrUrl = metadata.getGitPrUrl();
                 status.gitPrNumber = metadata.getGitPrNumber();
-                status.gitPrState = metadata.getGitPrState();
+                var gitMeta = releaseMetadataService.findGit(metadata.getNamespace(), metadata.getReleaseName());
+                if (gitMeta != null) {
+                    status.gitPrUrl = gitMeta.getPrUrl();
+                    status.gitPrState = gitMeta.getPrState();
+                    if (status.gitPrNumber == null || status.gitPrNumber.isBlank()) {
+                        status.gitPrNumber = gitMeta.getPrNumber();
+                    }
+                }
                 status.securityProfile = metadata.getSecurityProfile();
             }
             return Response.ok(status).build();

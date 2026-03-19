@@ -14,6 +14,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.K8sReleaseGitEntity;
+import org.apache.ambari.view.k8s.store.K8sReleaseGitRepo;
 import org.apache.ambari.view.k8s.store.K8sReleaseRepo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,11 +46,13 @@ public class ReleaseMetadataService {
 
     private final ViewContext viewContext;
     private final K8sReleaseRepo releaseRepository;
+    private final K8sReleaseGitRepo releaseGitRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ReleaseMetadataService(ViewContext ctx) {
         this.viewContext = ctx;
         this.releaseRepository = new K8sReleaseRepo(ctx);
+        this.releaseGitRepository = new K8sReleaseGitRepo(ctx);
     }
 
     public K8sReleaseEntity find(String namespace, String name) {
@@ -62,7 +66,9 @@ public class ReleaseMetadataService {
      * @param name      release name
      */
     public void delete(String namespace, String name) {
-        releaseRepository.deleteById(K8sReleaseEntity.idOf(namespace, name));
+        String releaseId = K8sReleaseEntity.idOf(namespace, name);
+        releaseRepository.deleteById(releaseId);
+        releaseGitRepository.deleteById(releaseId);
     }
 
     /**
@@ -76,10 +82,12 @@ public class ReleaseMetadataService {
         if (prState == null) {
             return;
         }
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
-        if (entity != null) {
-            entity.setGitPrState(prState);
-            releaseRepository.update(entity);
+        String releaseId = K8sReleaseEntity.idOf(namespace, name);
+        K8sReleaseEntity releaseEntity = releaseRepository.findById(releaseId);
+        K8sReleaseGitEntity gitEntity = getOrCreateGitEntity(releaseId, releaseEntity);
+        if (gitEntity != null) {
+            gitEntity.setPrState(prState);
+            releaseGitRepository.upsert(gitEntity);
         }
     }
 
@@ -87,25 +95,27 @@ public class ReleaseMetadataService {
         if ((prUrl == null || prUrl.isBlank()) && (prNumber == null || prNumber.isBlank()) && (prState == null || prState.isBlank())) {
             return;
         }
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
-        if (entity == null) {
+        String releaseId = K8sReleaseEntity.idOf(namespace, name);
+        K8sReleaseEntity releaseEntity = releaseRepository.findById(releaseId);
+        K8sReleaseGitEntity gitEntity = getOrCreateGitEntity(releaseId, releaseEntity);
+        if (gitEntity == null) {
             return;
         }
         boolean dirty = false;
-        if (prUrl != null && !prUrl.isBlank() && !prUrl.equals(entity.getGitPrUrl())) {
-            entity.setGitPrUrl(prUrl);
+        if (prUrl != null && !prUrl.isBlank() && !prUrl.equals(gitEntity.getPrUrl())) {
+            gitEntity.setPrUrl(prUrl);
             dirty = true;
         }
-        if (prNumber != null && !prNumber.isBlank() && !prNumber.equals(entity.getGitPrNumber())) {
-            entity.setGitPrNumber(prNumber);
+        if (prNumber != null && !prNumber.isBlank() && !prNumber.equals(gitEntity.getPrNumber())) {
+            gitEntity.setPrNumber(prNumber);
             dirty = true;
         }
-        if (prState != null && !prState.isBlank() && !prState.equals(entity.getGitPrState())) {
-            entity.setGitPrState(prState);
+        if (prState != null && !prState.isBlank() && !prState.equals(gitEntity.getPrState())) {
+            gitEntity.setPrState(prState);
             dirty = true;
         }
         if (dirty) {
-            releaseRepository.update(entity);
+            releaseGitRepository.upsert(gitEntity);
         }
     }
 
@@ -114,6 +124,11 @@ public class ReleaseMetadataService {
      */
     public List<K8sReleaseEntity> findAll() {
         return new java.util.ArrayList<>(releaseRepository.findAll());
+    }
+
+    public K8sReleaseGitEntity findGit(String namespace, String name) {
+        String releaseId = K8sReleaseEntity.idOf(namespace, name);
+        return releaseGitRepository.findById(releaseId);
     }
 
     /**
@@ -135,6 +150,25 @@ public class ReleaseMetadataService {
         return results;
     }
 
+    /**
+     * Returns the logical identifiers of Helm releases wired to the provided Vault profile.
+     *
+     * @param profileName vault profile name
+     * @return list of namespace/release strings
+     */
+    public List<String> findReleasesUsingVaultProfile(String profileName) {
+        if (profileName == null || profileName.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        List<String> results = new java.util.ArrayList<>();
+        for (K8sReleaseEntity entity : releaseRepository.findAll()) {
+            if (profileName.equals(entity.getVaultProfile())) {
+                results.add(entity.getNamespace() + "/" + entity.getReleaseName());
+            }
+        }
+        return results;
+    }
+
     public void recordInstallOrUpgrade(
             String namespace,
             String releaseName,
@@ -148,6 +182,8 @@ public class ReleaseMetadataService {
             String globalConfigVersion,
             String securityProfile,
             String securityProfileHash,
+            String vaultProfile,
+            String vaultProfileHash,
             String deploymentMode,
             String gitCommitSha,
             String gitBranch,
@@ -187,6 +223,12 @@ public class ReleaseMetadataService {
         if (securityProfileHash != null && !securityProfileHash.isBlank()) {
             entity.setSecurityProfileHash(securityProfileHash);
         }
+        if (vaultProfile != null && !vaultProfile.isBlank()) {
+            entity.setVaultProfile(vaultProfile);
+        }
+        if (vaultProfileHash != null && !vaultProfileHash.isBlank()) {
+            entity.setVaultProfileHash(vaultProfileHash);
+        }
         if (deploymentMode != null && !deploymentMode.isBlank()) {
             entity.setDeploymentMode(deploymentMode);
         }
@@ -208,14 +250,8 @@ public class ReleaseMetadataService {
         if (gitCommitMode != null && !gitCommitMode.isBlank()) {
             entity.setGitCommitMode(gitCommitMode);
         }
-        if (gitPrUrl != null && !gitPrUrl.isBlank()) {
-            entity.setGitPrUrl(gitPrUrl);
-        }
         if (gitPrNumber != null && !gitPrNumber.isBlank()) {
             entity.setGitPrNumber(gitPrNumber);
-        }
-        if (gitPrState != null && !gitPrState.isBlank()) {
-            entity.setGitPrState(gitPrState);
         }
 
         // store endpoints snapshot as JSON
@@ -236,6 +272,33 @@ public class ReleaseMetadataService {
         } else {
             releaseRepository.update(entity);
         }
+
+        // Persist PR info in dedicated Git table (avoid exceeding Ambari 65k limit on main entity).
+        if ((gitPrUrl != null && !gitPrUrl.isBlank())
+                || (gitPrNumber != null && !gitPrNumber.isBlank())
+                || (gitPrState != null && !gitPrState.isBlank())) {
+            K8sReleaseGitEntity gitEntity = getOrCreateGitEntity(releaseId, entity);
+            if (gitEntity != null) {
+                if (gitPrUrl != null && !gitPrUrl.isBlank()) gitEntity.setPrUrl(gitPrUrl);
+                if (gitPrNumber != null && !gitPrNumber.isBlank()) gitEntity.setPrNumber(gitPrNumber);
+                if (gitPrState != null && !gitPrState.isBlank()) gitEntity.setPrState(gitPrState);
+                releaseGitRepository.upsert(gitEntity);
+            }
+        }
+    }
+
+    private K8sReleaseGitEntity getOrCreateGitEntity(String releaseId, K8sReleaseEntity releaseEntity) {
+        K8sReleaseGitEntity existing = releaseGitRepository.findById(releaseId);
+        if (existing != null) {
+            return existing;
+        }
+        if (releaseEntity == null) {
+            return null;
+        }
+        K8sReleaseGitEntity created = new K8sReleaseGitEntity();
+        created.setReleaseId(releaseId);
+        created.setRelease(releaseEntity);
+        return created;
     }
 
     public void annotateHelmSecret(String namespace, String releaseName, Map<String,String> annotations) {

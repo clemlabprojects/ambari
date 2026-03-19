@@ -96,6 +96,12 @@ public class K8sReleaseEntity extends BaseModel {
     private String securityProfileHash;
 
     @Column(length = 255)
+    private String vaultProfile;
+
+    @Column(length = 255)
+    private String vaultProfileHash;
+
+    @Column(length = 255)
     private String gitCommitSha;
 
     @Column(length = 255)
@@ -259,6 +265,22 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setSecurityProfileHash(String securityProfileHash) {
         this.securityProfileHash = securityProfileHash;
+    }
+
+    public String getVaultProfile() {
+        return vaultProfile;
+    }
+
+    public void setVaultProfile(String vaultProfile) {
+        this.vaultProfile = vaultProfile;
+    }
+
+    public String getVaultProfileHash() {
+        return vaultProfileHash;
+    }
+
+    public void setVaultProfileHash(String vaultProfileHash) {
+        this.vaultProfileHash = vaultProfileHash;
     }
 
     // ID Helper method

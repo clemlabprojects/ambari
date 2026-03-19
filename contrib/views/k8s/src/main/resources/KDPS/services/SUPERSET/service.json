@@ -298,6 +298,28 @@
             "help": "Optional list of IdP groups to map to the Admin role (e.g., LDAP/OIDC groups)."
           }
         ]
+      },
+      {
+        "name": "vaultConfig",
+        "label": "Vault (CSI)",
+        "type": "group",
+        "fields": [
+          {
+            "name": "vault.csi.enabled",
+            "label": "Enable Vault CSI",
+            "type": "boolean",
+            "defaultValue": false,
+            "help": "Mount secrets from HashiCorp Vault using the CSI driver. Requires a Vault profile and the secrets-store CSI driver."
+          },
+          {
+            "name": "vault.csi.objects",
+            "label": "Vault Objects",
+            "type": "content",
+            "language": "yaml",
+            "defaultValue": "- objectName: \"superset-db-password\"\n  secretPath: \"kv/data/superset\"\n  secretKey: \"password\"",
+            "help": "CSI objects definition (YAML). This defines what to fetch from Vault."
+          }
+        ]
       }
     ]
 }

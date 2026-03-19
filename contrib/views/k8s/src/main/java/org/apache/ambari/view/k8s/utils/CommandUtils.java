@@ -223,6 +223,7 @@ public class CommandUtils {
             Object ranger = p.get("ranger");
             Object endpoints = p.get("endpoints");
             Object securityProfile = p.get("securityProfile");
+            Object vaultProfile = p.get("vaultProfile");
             Object deploymentMode = p.get("deploymentMode");
             Object tls = p.get("tls");
             Object git = p.get("git");
@@ -264,6 +265,9 @@ public class CommandUtils {
             }
             if (securityProfile instanceof String) {
                 req.setSecurityProfile((String) securityProfile);
+            }
+            if (vaultProfile instanceof String) {
+                req.setVaultProfile((String) vaultProfile);
             }
             if (deploymentMode instanceof String) {
                 req.setDeploymentMode((String) deploymentMode);

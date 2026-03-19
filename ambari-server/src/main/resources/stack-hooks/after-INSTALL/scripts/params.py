@@ -103,10 +103,11 @@ has_hdfs_clients = len(hdfs_client_hosts) > 0
 has_namenode = len(namenode_hosts) > 0
 has_hdfs = has_hdfs_clients or has_namenode
 
+mount_table_xml_inclusion_file_full_path = None
+
 if has_hdfs or dfs_type == 'HCFS':
   hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
 
-  mount_table_xml_inclusion_file_full_path = None
   mount_table_content = None
   if 'viewfs-mount-table' in config['configurations']:
     xml_inclusion_file_name = 'viewfs-mount-table.xml'

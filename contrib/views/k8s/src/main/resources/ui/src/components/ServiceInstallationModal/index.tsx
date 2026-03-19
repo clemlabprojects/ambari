@@ -9,7 +9,7 @@ import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 import debounce from 'lodash.debounce';
 
-import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus, getSecurityConfig, type CommandStatus } from '../../api/client';
+import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus, getSecurityConfig, getVaultConfig, type CommandStatus } from '../../api/client';
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
@@ -135,6 +135,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [installMode, setInstallMode] = useState<'repo' | 'direct'>('repo');
   const [overrideChart, setOverrideChart] = useState(false);
   const [securityProfiles, setSecurityProfiles] = useState<{ defaultProfile?: string; profiles: Record<string, any> }>({ profiles: {} });
+  const [vaultProfiles, setVaultProfiles] = useState<{ defaultProfile?: string; profiles: Record<string, any> }>({ profiles: {} });
 
   const [step, setStep] = useState(0);
   const [percent, setPct] = useState(0);
@@ -221,12 +222,13 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 
     (async () => {
       try {
-        const [services, reposList, secProfiles] = await Promise.all([getAvailableServices(), getHelmRepos(), getSecurityConfig()]);
+        const [services, reposList, secProfiles, vaultProfilesResponse] = await Promise.all([getAvailableServices(), getHelmRepos(), getSecurityConfig(), getVaultConfig()]);
         if (cancelled) return;
 
         setAvailableServices(services);
         setRepos(reposList);
         setSecurityProfiles(secProfiles);
+        setVaultProfiles(vaultProfilesResponse);
         
         // Load Git repositories
         try {
@@ -852,6 +854,7 @@ const handleServiceChange = (value: string) => {
             // Do not auto-apply a default security profile; only send if the user selected one.
             // Only send when explicitly selected; prevents implicit profile attachment.
             securityProfile: allValues.securityProfile || undefined,
+            vaultProfile: allValues.vaultProfile || undefined,
             deploymentMode: allValues.deploymentMode || 'DIRECT_HELM',
             git: allValues.git || undefined,
         };
@@ -1191,6 +1194,13 @@ const handleServiceChange = (value: string) => {
           <Form.Item name="securityProfile" label="Security Profile" tooltip="Apply a global security profile (LDAP/AD/OIDC truststore wiring)">
             <Select allowClear placeholder="Default profile">
               {Object.keys(securityProfiles.profiles || {}).map(key => (
+                <Option key={key} value={key}>{key}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item name="vaultProfile" label="Vault Profile" tooltip="Apply a global Vault profile (CSI secret injection)">
+            <Select allowClear placeholder="No Vault profile">
+              {Object.keys(vaultProfiles.profiles || {}).map(key => (
                 <Option key={key} value={key}>{key}</Option>
               ))}
             </Select>

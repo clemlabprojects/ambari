@@ -25,7 +25,7 @@ public class GlobalConfigService {
      */
     public List<StackConfig> listGlobalConfigs() {
         List<StackConfig> out = new ArrayList<>();
-        List<String> files = List.of("global-env.json", "security-env.json", "security.json");
+        List<String> files = List.of("global-env.json", "security-env.json", "security.json", "vault.json");
         for (String f : files) {
             String full = GLOBAL_BASE + "/" + f;
             try (InputStream is = getClass().getClassLoader().getResourceAsStream(full)) {

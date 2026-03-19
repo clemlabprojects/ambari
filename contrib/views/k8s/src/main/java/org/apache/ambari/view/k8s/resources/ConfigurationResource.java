@@ -2,10 +2,12 @@ package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
+import org.apache.ambari.view.k8s.dto.vault.VaultProfilesDTO;
 import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
+import org.apache.ambari.view.k8s.service.VaultProfileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +40,7 @@ public class ConfigurationResource {
     private static final Logger LOG = LoggerFactory.getLogger(ConfigurationResource.class);
     private static final String MANAGED_LABEL = "ambari.clemlab.com/managed-config";
     private static final String SECURITY_SCHEMA = "KDPS/globals/security.json";
+    private static final String VAULT_SCHEMA = "KDPS/globals/vault.json";
 
     @Inject
     private ViewContext viewContext;
@@ -267,7 +270,109 @@ public class ConfigurationResource {
         }
     }
 
+    @GET
+    @Path("/vault")
+    public Response getVaultConfig() {
+        try {
+            VaultProfilesDTO cfg = loadVaultProfilesFromStore();
+            return Response.ok(cfg).build();
+        } catch (Exception e) {
+            LOG.error("Failed to load vault config", e);
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+    }
+
+    @POST
+    @Path("/vault")
+    public Response saveVaultConfig(VaultProfilesDTO cfg) {
+        try {
+            VaultProfilesDTO toSave = cfg != null ? cfg : new VaultProfilesDTO();
+            if (toSave.profiles == null) toSave.profiles = new HashMap<>();
+            new VaultProfileService(viewContext).saveProfiles(toSave);
+            return Response.ok().build();
+        } catch (Exception e) {
+            LOG.error("Failed to save vault config", e);
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Return namespace/release identifiers for the given Vault profile.
+     */
+    @GET
+    @Path("/vault/{profile}/usage")
+    public Response getVaultProfileUsage(@PathParam("profile") String profile) {
+        if (profile == null || profile.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "Profile name is required")).build();
+        }
+
+        VaultProfileService vaultProfileService = new VaultProfileService(viewContext);
+        VaultProfilesDTO profiles = vaultProfileService.loadProfiles();
+        if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
+            return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
+        }
+
+        ReleaseMetadataService releaseMetadataService = new ReleaseMetadataService(viewContext);
+        List<String> releases = releaseMetadataService.findReleasesUsingVaultProfile(profile);
+        return Response.ok(Map.of("releases", releases)).build();
+    }
+
+    /**
+     * Delete a Vault profile if no releases are currently using it.
+     */
+    @DELETE
+    @Path("/vault/{profile}")
+    public Response deleteVaultProfile(@PathParam("profile") String profile) {
+        if (profile == null || profile.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "Profile name is required")).build();
+        }
+
+        VaultProfileService vaultProfileService = new VaultProfileService(viewContext);
+        VaultProfilesDTO profiles = vaultProfileService.loadProfiles();
+        if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
+            return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
+        }
+
+        ReleaseMetadataService releaseMetadataService = new ReleaseMetadataService(viewContext);
+        List<String> releases = releaseMetadataService.findReleasesUsingVaultProfile(profile);
+        if (!releases.isEmpty()) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", "Profile is referenced by active releases", "releases", releases))
+                    .build();
+        }
+
+        try {
+            vaultProfileService.deleteProfile(profile);
+            return Response.ok().build();
+        } catch (Exception e) {
+            LOG.error("Failed to delete vault profile {}", profile, e);
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+
+    }
+
+    @GET
+    @Path("/vault/schema")
+    public Response getVaultSchema() {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(VAULT_SCHEMA)) {
+            if (is == null) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "vault schema not found")).build();
+            }
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            Map<?,?> obj = objectMapper.readValue(json, Map.class);
+            return Response.ok(obj).build();
+        } catch (Exception e) {
+            LOG.error("Failed to load vault schema", e);
+            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+        }
+    }
+
     private SecurityProfilesDTO loadProfilesFromStore() throws Exception {
         return new SecurityProfileService(viewContext).loadProfiles();
+    }
+
+    private VaultProfilesDTO loadVaultProfilesFromStore() throws Exception {
+        return new VaultProfileService(viewContext).loadProfiles();
     }
 }

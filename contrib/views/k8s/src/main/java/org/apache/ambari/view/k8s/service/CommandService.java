@@ -71,8 +71,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
+import org.apache.ambari.view.k8s.dto.vault.VaultConfigDTO;
+import org.apache.ambari.view.k8s.dto.vault.VaultProfilesDTO;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
+import org.apache.ambari.view.k8s.service.VaultProfileService;
+import org.apache.ambari.view.k8s.service.VaultMappingService;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
@@ -2467,6 +2471,20 @@ public class CommandService {
         }
         applySecurityOverrides(securityCfg, params);
 
+        // Apply global Vault overrides if configured
+        String resolvedVaultProfile = resolveVaultProfileName(request.getVaultProfile());
+        if (resolvedVaultProfile != null && !resolvedVaultProfile.isBlank()) {
+            params.put("vaultProfile", resolvedVaultProfile);
+        }
+        VaultConfigDTO vaultCfg = loadVaultConfig(resolvedVaultProfile);
+        String vaultProfileHash = null;
+        try {
+            vaultProfileHash = new VaultProfileService(ctx).fingerprint(vaultCfg);
+        } catch (Exception ex) {
+            LOG.warn("Could not fingerprint vault profile {}: {}", resolvedVaultProfile, ex.toString());
+        }
+        applyVaultOverrides(vaultCfg, params);
+
         // Resolve Kerberos injection mode from view settings and pass it down to Helm values + step params.
         String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
         params.put("kerberosInjectionMode", kerberosInjectionMode);
@@ -2864,6 +2882,8 @@ public class CommandService {
                     globalFingerprint,
                     resolvedSecurityProfile,
                     securityProfileHash,
+                    resolvedVaultProfile,
+                    vaultProfileHash,
                     request.getDeploymentMode(),
                     null, // gitCommitSha (set by GitOps backend in future)
                     null, // gitBranch
@@ -4038,6 +4058,8 @@ public class CommandService {
                                 null,
                                 null,
                                 null,
+                                null,
+                                null,
                                 null
                         );
                     } catch (Exception ex) {
@@ -4781,6 +4803,25 @@ public class CommandService {
     }
 
     /**
+     * Load the persisted global Vault configuration from the datastore.
+     *
+     * @param requestedProfile explicit profile name requested by the caller (may be null/blank)
+     * @return VaultConfigDTO or null when absent/invalid.
+     */
+    private VaultConfigDTO loadVaultConfig(String requestedProfile) {
+        if (requestedProfile == null || requestedProfile.isBlank()) {
+            return null;
+        }
+        try {
+            VaultProfileService profileService = new VaultProfileService(ctx);
+            return profileService.resolveProfile(requestedProfile);
+        } catch (Exception ex) {
+            LOG.warn("Could not load global vault configuration: {}", ex.toString());
+            return null;
+        }
+    }
+
+    /**
      * Resolve the profile name to use, considering defaults.
      *
      * @param requestedProfile explicit profile name requested by caller; may be null/blank
@@ -4803,6 +4844,32 @@ public class CommandService {
             return null;
         } catch (Exception ex) {
             LOG.warn("Could not resolve security profile name: {}", ex.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the Vault profile name to use, considering defaults.
+     *
+     * @param requestedProfile explicit profile name requested by caller; may be null/blank
+     * @return resolved profile name or null when no profiles are stored
+     */
+    private String resolveVaultProfileName(String requestedProfile) {
+        if (requestedProfile == null || requestedProfile.isBlank()) {
+            return null;
+        }
+        try {
+            VaultProfileService profileService = new VaultProfileService(ctx);
+            VaultProfilesDTO profiles = profileService.loadProfiles();
+            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
+                return null;
+            }
+            if (profiles.profiles.containsKey(requestedProfile)) {
+                return requestedProfile;
+            }
+            return null;
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve vault profile name: {}", ex.toString());
             return null;
         }
     }
@@ -4837,6 +4904,51 @@ public class CommandService {
 
         // Apply TLS/truststore mappings
         for (Map.Entry<String, String> entry : tlsMapping.entrySet()) {
+            String fromPath = entry.getKey();
+            String helmPath = entry.getValue();
+            Object val = getByPath(asMap, fromPath);
+            if (val == null) continue;
+            String strVal = String.valueOf(val);
+            if (strVal.isBlank()) continue;
+            CommandUtils.addOverride(params, helmPath, strVal);
+        }
+
+        if (cfg.extraProperties != null && !cfg.extraProperties.isEmpty()) {
+            for (Map.Entry<String, Object> entry : cfg.extraProperties.entrySet()) {
+                if (entry.getKey() == null || entry.getKey().isBlank()) {
+                    continue;
+                }
+                String value = entry.getValue() == null ? "" : String.valueOf(entry.getValue());
+                CommandUtils.addOverride(params, entry.getKey(), value);
+            }
+        }
+    }
+
+    /**
+     * Translate global Vault configuration into Helm overrides (global.vault.*).
+     *
+     * @param cfg    vault config
+     * @param params params map to mutate with _ov entries
+     */
+    private void applyVaultOverrides(VaultConfigDTO cfg, Map<String, Object> params) {
+        if (cfg == null) {
+            return;
+        }
+
+        String authMethod = null;
+        if (cfg.auth != null && cfg.auth.method != null && !cfg.auth.method.isBlank()) {
+            authMethod = cfg.auth.method.toLowerCase();
+        }
+        if (authMethod == null || authMethod.isBlank()) {
+            authMethod = "kubernetes";
+        }
+
+        LOG.info("Applying Vault overrides (authMethod={}, enabled={})", authMethod, cfg.enabled);
+        VaultMappingService mappingService = new VaultMappingService(ctx);
+        Map<String, String> modeMapping = mappingService.mappingForMode(authMethod);
+
+        Map<String, Object> asMap = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(cfg, Map.class);
+        for (Map.Entry<String, String> entry : modeMapping.entrySet()) {
             String fromPath = entry.getKey();
             String helmPath = entry.getValue();
             Object val = getByPath(asMap, fromPath);

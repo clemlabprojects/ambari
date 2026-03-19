@@ -12,6 +12,7 @@ import HelmReleasesPage from './pages/HelmReleasesPage';
 import ConfigurationPage from './pages/ConfigurationPage';
 import WorkloadsPage from './pages/WorkloadsPage';
 const GlobalSecurityPage = React.lazy(() => import('./pages/GlobalSecurityPage'));
+const GlobalVaultPage = React.lazy(() => import('./pages/GlobalVaultPage'));
 const GlobalConfigurationsPage = React.lazy(() => import('./pages/GlobalConfigurationsPage'));
 const ServiceWizardPage = React.lazy(() => import('./pages/ServiceWizardPage'));
 import { Spin} from 'antd';
@@ -53,6 +54,7 @@ const AppRouter: React.FC = () => {
         <Route path="/services/:serviceName" element={<React.Suspense fallback={<Spin />}><ServiceWizardPage /></React.Suspense>} />
         <Route path="/configuration" element={<ConfigurationPage />} />
         <Route path="/global-security" element={<React.Suspense fallback={<Spin />}><GlobalSecurityPage /></React.Suspense>} />
+        <Route path="/global-vault" element={<React.Suspense fallback={<Spin />}><GlobalVaultPage /></React.Suspense>} />
         <Route path="/managed-configs" element={<React.Suspense fallback={<Spin />}><GlobalConfigurationsPage /></React.Suspense>} />
         <Route path="/workloads" element={<WorkloadsPage />} />
         <Route path="/repositories" element={<RepositoriesPage />} />

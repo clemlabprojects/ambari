@@ -21,5 +21,5 @@
     </versions>
     <extends>1.2</extends>
     <minJdk>1.8</minJdk>
-    <maxJdk>1.8</maxJdk>
+    <maxJdk>17</maxJdk>
 </metainfo>

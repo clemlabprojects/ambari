@@ -1,0 +1,86 @@
+{
+  "name": "GLOBAL_VAULT",
+  "label": "Global Vault",
+  "description": "Declarative schema for global Vault profiles (CSI auth + provider settings).",
+  "properties": [
+    {
+      "name": "enabled",
+      "displayName": "Enable Vault",
+      "description": "Toggle Vault integration for compatible charts.",
+      "type": "boolean",
+      "default": false,
+      "helmPath": "global.vault.enabled",
+      "modes": ["kubernetes", "approle"]
+    },
+    {
+      "name": "address",
+      "displayName": "Vault Address",
+      "description": "Vault server URL (e.g. https://vault.example.com:8200)",
+      "type": "string",
+      "helmPath": "global.vault.address",
+      "modes": ["kubernetes", "approle"]
+    },
+    {
+      "name": "namespace",
+      "displayName": "Vault Namespace",
+      "description": "Optional Vault namespace (enterprise)",
+      "type": "string",
+      "helmPath": "global.vault.namespace",
+      "modes": ["kubernetes", "approle"]
+    },
+    {
+      "name": "auth.method",
+      "displayName": "Auth Method",
+      "description": "Select the Vault auth method.",
+      "type": "select",
+      "default": "kubernetes",
+      "options": [
+        { "label": "Kubernetes", "value": "kubernetes" },
+        { "label": "AppRole", "value": "approle" }
+      ],
+      "helmPath": "global.vault.auth.method",
+      "modes": ["kubernetes", "approle"]
+    },
+    {
+      "name": "auth.mountPath",
+      "displayName": "Auth Mount Path",
+      "description": "Vault auth mount path (e.g. kubernetes, approle)",
+      "type": "string",
+      "helmPath": "global.vault.auth.mountPath",
+      "modes": ["kubernetes", "approle"],
+      "default": "kubernetes"
+    },
+    {
+      "name": "auth.kubernetes.role",
+      "displayName": "Kubernetes Role",
+      "description": "Vault Kubernetes auth role name",
+      "type": "string",
+      "helmPath": "global.vault.auth.kubernetes.role",
+      "modes": ["kubernetes"]
+    },
+    {
+      "name": "auth.approle.roleId",
+      "displayName": "AppRole Role ID",
+      "description": "Vault AppRole role_id",
+      "type": "string",
+      "helmPath": "global.vault.auth.approle.roleId",
+      "modes": ["approle"]
+    },
+    {
+      "name": "auth.approle.secretId",
+      "displayName": "AppRole Secret ID",
+      "description": "Vault AppRole secret_id",
+      "type": "password",
+      "helmPath": "global.vault.auth.approle.secretId",
+      "modes": ["approle"]
+    },
+    {
+      "name": "csi.caCertSecret",
+      "displayName": "CA Certificate Secret",
+      "description": "Optional Kubernetes secret containing Vault CA cert",
+      "type": "string",
+      "helmPath": "global.vault.csi.caCertSecret",
+      "modes": ["kubernetes", "approle"]
+    }
+  ]
+}

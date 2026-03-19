@@ -34,3 +34,9 @@ createDDL.jdbc
 ambari_python.egg-info
 db-ambari-test
 .org.chromium.*
+contrib/views/k8s/src/main/resources/ui/.vite/
+clean*
+*.diff
+*.patch
+**/**/.flattened-pom.xml
+contrib/views/k8s/src/main/resources/ui/node/node

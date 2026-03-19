@@ -120,6 +120,27 @@ export interface SecurityConfig {
   extraProperties?: Record<string, any>;
 }
 
+export interface VaultConfig {
+  enabled?: boolean;
+  address?: string;
+  namespace?: string;
+  auth?: {
+    method?: 'kubernetes' | 'approle';
+    mountPath?: string;
+    kubernetes?: {
+      role?: string;
+    };
+    approle?: {
+      roleId?: string;
+      secretId?: string;
+    };
+  };
+  csi?: {
+    caCertSecret?: string;
+  };
+  extraProperties?: Record<string, any>;
+}
+
 // Workloads browsing helpers (namespaces, pods, services, logs)
 export const getNamespaces = async (): Promise<KubeNamespace[]> => {
   const res = await fetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
@@ -328,6 +349,11 @@ export interface SecurityProfiles {
   profiles: Record<string, SecurityConfig>;
 }
 
+export interface VaultProfiles {
+  defaultProfile?: string;
+  profiles: Record<string, VaultConfig>;
+}
+
 export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
   if (import.meta.env.DEV) {
     return getMockSecurityConfig();
@@ -336,6 +362,15 @@ export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load security config');
+  }
+  return res.json();
+};
+
+export const getVaultConfig = async (): Promise<VaultProfiles> => {
+  const res = await fetch(`${API_BASE_URL}/configurations/vault`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load vault config');
   }
   return res.json();
 };
@@ -353,7 +388,24 @@ export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> =
   }
 };
 
+export const saveVaultConfig = async (cfg: VaultProfiles): Promise<void> => {
+  const res = await fetch(`${API_BASE_URL}/configurations/vault`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg || {})
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to save vault config');
+  }
+};
+
 export interface SecurityProfileUsage {
+  releases: string[];
+}
+
+export interface VaultProfileUsage {
   releases: string[];
 }
 
@@ -370,11 +422,32 @@ export const getSecuritySchema = async (): Promise<any> => {
   return res.json();
 };
 
+export const getVaultSchema = async (): Promise<any> => {
+  const res = await fetch(`${API_BASE_URL}/configurations/vault/schema`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load vault schema');
+  }
+  return res.json();
+};
+
 export const getSecurityProfileUsage = async (profile: string): Promise<SecurityProfileUsage> => {
   if (!profile) {
     throw new Error('Profile name is required');
   }
   const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || 'Failed to load profile usage');
+  }
+  return res.json();
+};
+
+export const getVaultProfileUsage = async (profile: string): Promise<VaultProfileUsage> => {
+  if (!profile) {
+    throw new Error('Profile name is required');
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/vault/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load profile usage');
@@ -398,6 +471,28 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
       payload = null;
     }
     const err = new Error(payload?.error || 'Failed to delete security profile');
+    (err as any).status = res.status;
+    (err as any).releases = payload?.releases || [];
+    throw err;
+  }
+};
+
+export const deleteVaultProfile = async (profile: string): Promise<void> => {
+  if (!profile) {
+    throw new Error('Profile name is required');
+  }
+  const res = await fetch(`${API_BASE_URL}/configurations/vault/${encodeURIComponent(profile)}`, {
+    method: 'DELETE',
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    let payload: any = null;
+    try {
+      payload = await res.json();
+    } catch {
+      payload = null;
+    }
+    const err = new Error(payload?.error || 'Failed to delete vault profile');
     (err as any).status = res.status;
     (err as any).releases = payload?.releases || [];
     throw err;
@@ -670,6 +765,7 @@ export async function submitHelmDeploy(payload: {
   values: any;
   serviceKey?: string;
   securityProfile?: string;
+  vaultProfile?: string;
   repoId?: string;
   deploymentMode?: string;
   git?: any;

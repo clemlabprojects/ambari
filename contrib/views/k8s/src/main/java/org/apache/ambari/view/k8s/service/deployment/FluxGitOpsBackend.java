@@ -47,6 +47,8 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
+import org.apache.ambari.view.k8s.service.VaultProfileService;
+import org.apache.ambari.view.k8s.service.VaultMappingService;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
@@ -57,6 +59,8 @@ import org.apache.ambari.view.k8s.model.stack.StackProperty;
 import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
+import org.apache.ambari.view.k8s.dto.vault.VaultConfigDTO;
+import org.apache.ambari.view.k8s.dto.vault.VaultProfilesDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,6 +88,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final HelmService helmService;
     private final ConfigResolutionService configResolutionService = new ConfigResolutionService();
     private final SecurityProfileService securityProfileService;
+    private final VaultProfileService vaultProfileService;
     private final GlobalConfigService globalConfigService = new GlobalConfigService();
 
     /**
@@ -105,6 +110,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
+        this.vaultProfileService = new VaultProfileService(viewContext);
     }
 
     @Override
@@ -416,6 +422,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
         applySecurityOverrides(securityCfg, explicitOverrides);
+
+        // Vault profile
+        String resolvedVaultProfile = resolveVaultProfileName(request.getVaultProfile());
+        if (resolvedVaultProfile != null && !resolvedVaultProfile.isBlank()) {
+            request.setVaultProfile(resolvedVaultProfile);
+        }
+        VaultConfigDTO vaultCfg = loadVaultConfig(resolvedVaultProfile);
+        applyVaultOverrides(vaultCfg, explicitOverrides);
         // Kerberos wiring if security mode indicates it
         if (securityCfg != null && securityCfg.mode != null && securityCfg.mode.toLowerCase().contains("kerberos")) {
             String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
@@ -627,6 +641,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     null, // global config fingerprint unknown here
                     request.getSecurityProfile(),
                     null, // security profile hash not computed here
+                    request.getVaultProfile(),
+                    null, // vault profile hash not computed here
                     "FLUX_GITOPS",
                     commitSha,
                     branch,
@@ -1577,6 +1593,68 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             addOverride(overrides, entry.getValue(), strVal);
         }
         // Extra properties
+        if (cfg.extraProperties != null) {
+            cfg.extraProperties.forEach((k, v) -> {
+                if (k != null && v != null && !k.isBlank() && !String.valueOf(v).isBlank()) {
+                    addOverride(overrides, k, String.valueOf(v));
+                }
+            });
+        }
+    }
+
+    private String resolveVaultProfileName(String requestedProfile) {
+        try {
+            VaultProfilesDTO profiles = vaultProfileService.loadProfiles();
+            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
+                return null;
+            }
+            if (requestedProfile != null && profiles.profiles.containsKey(requestedProfile)) {
+                return requestedProfile;
+            }
+            if (profiles.defaultProfile != null && profiles.profiles.containsKey(profiles.defaultProfile)) {
+                return profiles.defaultProfile;
+            }
+            return profiles.profiles.keySet().stream().findFirst().orElse(null);
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve vault profile name: {}", ex.toString());
+            return null;
+        }
+    }
+
+    private VaultConfigDTO loadVaultConfig(String requestedProfile) {
+        try {
+            return vaultProfileService.resolveProfile(requestedProfile);
+        } catch (Exception ex) {
+            LOG.warn("Could not load vault profile {}: {}", requestedProfile, ex.toString());
+            return null;
+        }
+    }
+
+    private void applyVaultOverrides(VaultConfigDTO cfg, Map<String, String> overrides) {
+        if (cfg == null) {
+            return;
+        }
+        String authMethod = null;
+        if (cfg.auth != null && cfg.auth.method != null && !cfg.auth.method.isBlank()) {
+            authMethod = cfg.auth.method.toLowerCase();
+        }
+        if (authMethod == null || authMethod.isBlank()) {
+            authMethod = "kubernetes";
+        }
+        LOG.info("Applying Vault overrides for Flux (authMethod={}, enabled={})", authMethod, cfg.enabled);
+        VaultMappingService mappingService = new VaultMappingService(viewContext);
+        Map<String, String> modeMapping = mappingService.mappingForMode(authMethod);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> asMap = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(cfg, Map.class);
+
+        for (Map.Entry<String, String> entry : modeMapping.entrySet()) {
+            Object val = getByPath(asMap, entry.getKey());
+            if (val == null) continue;
+            String strVal = String.valueOf(val);
+            if (strVal.isBlank()) continue;
+            addOverride(overrides, entry.getValue(), strVal);
+        }
+
         if (cfg.extraProperties != null) {
             cfg.extraProperties.forEach((k, v) -> {
                 if (k != null && v != null && !k.isBlank() && !String.valueOf(v).isBlank()) {

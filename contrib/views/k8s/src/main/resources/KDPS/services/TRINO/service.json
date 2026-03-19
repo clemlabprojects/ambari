@@ -1376,6 +1376,28 @@
       ]
     },
     {
+      "name": "vaultConfig",
+      "label": "Vault (CSI)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "vault.csi.enabled",
+          "label": "Enable Vault CSI",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Mount secrets from HashiCorp Vault using the CSI driver. Requires a Vault profile and the secrets-store CSI driver."
+        },
+        {
+          "name": "vault.csi.objects",
+          "label": "Vault Objects",
+          "type": "content",
+          "language": "yaml",
+          "defaultValue": "- objectName: \"trino-hive-metastore\"\n  secretPath: \"kv/data/trino\"\n  secretKey: \"hive.metastore.password\"",
+          "help": "CSI objects definition (YAML). This defines what to fetch from Vault."
+        }
+      ]
+    },
+    {
       "name": "networkAccess",
       "label": "Accès Réseau (Service Trino)",
       "type": "group",

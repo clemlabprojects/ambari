@@ -10,6 +10,7 @@ interface InstallStepProps {
   mode: string;
   repos?: any[];
   securityProfiles?: Record<string, any>;
+  vaultProfiles?: Record<string, any>;
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -19,6 +20,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   mode,
   repos = [],
   securityProfiles = {},
+  vaultProfiles = {},
 }) => {
   const [form] = Form.useForm();
 
@@ -94,6 +96,13 @@ const InstallStep: React.FC<InstallStepProps> = ({
             <Form.Item name="securityProfile" label="Security Profile" tooltip="Pick the auth profile to apply (LDAP/AD/OIDC truststore wiring)">
                 <Select allowClear placeholder="Default profile">
                   {Object.keys(securityProfiles).map((p: string) => (
+                    <Select.Option key={p} value={p}>{p}</Select.Option>
+                  ))}
+                </Select>
+            </Form.Item>
+            <Form.Item name="vaultProfile" label="Vault Profile" tooltip="Pick the Vault profile to apply (CSI secret injection)">
+                <Select allowClear placeholder="No Vault profile">
+                  {Object.keys(vaultProfiles).map((p: string) => (
                     <Select.Option key={p} value={p}>{p}</Select.Option>
                   ))}
                 </Select>

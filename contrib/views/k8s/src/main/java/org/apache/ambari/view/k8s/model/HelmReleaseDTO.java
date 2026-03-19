@@ -21,6 +21,8 @@ public class HelmReleaseDTO {
     public boolean restartRequired;
     public String securityProfile;
     public boolean securityProfileStale;
+    public String vaultProfile;
+    public boolean vaultProfileStale;
     public String message;
     public String lastAppliedRevision;
     public String lastAttemptedRevision;

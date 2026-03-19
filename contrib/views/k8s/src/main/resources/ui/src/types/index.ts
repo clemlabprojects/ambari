@@ -33,6 +33,8 @@ export interface HelmRelease {
   chartRef?: string;
   securityProfile?: string;
   securityProfileStale?: boolean;
+  vaultProfile?: string;
+  vaultProfileStale?: boolean;
   restartRequired?: boolean;
   deploymentMode?: string; // DIRECT_HELM | FLUX_GITOPS
   gitCommitSha?: string;

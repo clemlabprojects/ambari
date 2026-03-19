@@ -462,6 +462,12 @@ const HelmReleasesPage: React.FC = () => {
             {r.securityProfileStale ? <Tag color="orange">Stale</Tag> : null}
           </Space>
         ) },
+        { title: 'Vault', key: 'vaultProfile', width: 140, render: (_: any, r: HelmRelease) => (
+          <Space size={4} direction="vertical" align="start">
+            <span>{r.vaultProfile || '—'}</span>
+            {r.vaultProfileStale ? <Tag color="orange">Stale</Tag> : null}
+          </Space>
+        ) },
         { title: 'Status', dataIndex: 'status', key: 'status', width: 220, render: (_: any, record: HelmRelease) => {
             const key = releaseKey(record);
             const combined = mergeReleaseStatus(record);
@@ -524,6 +530,7 @@ const HelmReleasesPage: React.FC = () => {
                 {combined.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
                 {combined.restartRequired && combined.serviceKey ? <Tag color="orange">Restart required</Tag> : null}
                 {combined.securityProfileStale ? <Tag color="orange">Security refresh</Tag> : null}
+                {combined.vaultProfileStale ? <Tag color="orange">Vault refresh</Tag> : null}
                 {combined.deploymentMode === 'FLUX_GITOPS' ? (
                   <Tooltip title={fluxTip || 'Flux GitOps'}>
                     <Tag color="blue">GitOps</Tag>

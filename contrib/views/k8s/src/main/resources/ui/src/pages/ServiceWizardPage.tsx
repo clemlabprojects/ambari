@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, getVaultConfig, type SecurityProfiles, type VaultProfiles, getReleaseValues } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -29,6 +29,7 @@ const ServiceWizardPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [repos, setRepos] = useState<HelmRepo[]>([]);
   const [securityProfiles, setSecurityProfiles] = useState<SecurityProfiles>({ defaultProfile: undefined, profiles: {} });
+  const [vaultProfiles, setVaultProfiles] = useState<VaultProfiles>({ defaultProfile: undefined, profiles: {} });
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
@@ -70,12 +71,13 @@ const ServiceWizardPage: React.FC = () => {
             } catch (repoErr: any) {
               console.warn('Repo load failed', repoErr);
             }
-            // Load security profiles
+            // Load security profiles + vault profiles
             try {
-              const sec = await getSecurityConfig();
-            setSecurityProfiles(sec);
+              const [sec, vault] = await Promise.all([getSecurityConfig(), getVaultConfig()]);
+              setSecurityProfiles(sec);
+              setVaultProfiles(vault);
             } catch (e: any) {
-              console.warn('Security profiles load failed', e);
+              console.warn('Security/Vault profiles load failed', e);
             }
 
             // Initialize defaults
@@ -92,6 +94,9 @@ const ServiceWizardPage: React.FC = () => {
               }
               if (upgradeState.securityProfile) {
                 initial.securityProfile = upgradeState.securityProfile;
+              }
+              if (upgradeState.vaultProfile) {
+                initial.vaultProfile = upgradeState.vaultProfile;
               }
             }
             const applyDefaults = (fields: any[], target: any) => {
@@ -320,6 +325,7 @@ const ServiceWizardPage: React.FC = () => {
               })(),
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
+              vaultProfile: (installValues as any)?.vaultProfile || undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
           }, params);
@@ -336,7 +342,7 @@ const ServiceWizardPage: React.FC = () => {
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
-      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} vaultProfiles={vaultProfiles.profiles} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} /> },
       { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} /> },
