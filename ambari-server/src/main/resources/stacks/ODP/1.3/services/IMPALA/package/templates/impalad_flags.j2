@@ -70,7 +70,8 @@
 {% endif %}
 -use_statestore
 -state_store_host={{impala_state_store_host}}
--be_port={{ impala_backend_port }}
+-state_store_subscriber_port={{ impala_daemon_state_store_subscriber_port }}
+-krpc_port={{ impala_krpc_port }}
 {% if security_enabled %}
 -kerberos_reinit_interval={{ kerberos_reinit_interval }}
 {% if enable_load_balancer %}

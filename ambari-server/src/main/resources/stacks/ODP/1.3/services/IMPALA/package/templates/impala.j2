@@ -1,8 +1,11 @@
 IMPALA_CATALOG_SERVICE_HOST={{impala_catalog_host}}
 IMPALA_STATE_STORE_HOST={{impala_state_store_host}}
 IMPALA_STATE_STORE_PORT={{impala_env['impala_state_store_port']}}
+IMPALA_CATALOG_SERVICE_PORT={{impala_env['impala_catalog_service_port']}}
+IMPALA_KRPC_PORT={{impala_env['impala_krpc_port']}}
+IMPALA_DAEMON_STATE_STORE_SUBSCRIBER_PORT={{impala_env['impala_daemon_state_store_subscriber_port']}}
+IMPALA_CATALOG_STATE_STORE_SUBSCRIBER_PORT={{impala_env['impala_catalog_state_store_subscriber_port']}}
 HIVE_SERVER_HOST={{hive_server_host}}
-IMPALA_BACKEND_PORT={{impala_env['impala_backend_port']}}
 IMPALA_LOG_DIR={{impala_log_dir}}
 IMPALA_SCRATCH_DIR={{impala_env['impala_scratch_dir']}}
 MEM_LIMIT={{impala_env['impalad_mem_limit']}}
@@ -30,6 +33,9 @@ WEBSERVER_PRIVATE_KEY_PWD_CMD={{impala_env['webserver_private_key_password_cmd']
 IMPALA_CATALOG_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
     -hostname={{current_host_name}} \
+    -catalog_service_port=${IMPALA_CATALOG_SERVICE_PORT} \
+    -webserver_port={{impala_env['impala_catalog_webserver_port']}} \
+    -state_store_subscriber_port=${IMPALA_CATALOG_STATE_STORE_SUBSCRIBER_PORT} \
     -state_store_host=${IMPALA_STATE_STORE_HOST} \
     -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
     -num_metadata_loading_threads={{impala_env['num_metadata_loading_threads']}} \
@@ -91,6 +97,7 @@ IMPALA_CATALOG_ARGS=" \
 IMPALA_STATE_STORE_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
     -hostname={{current_host_name}} \
+    -webserver_port={{impala_env['impala_statestore_webserver_port']}} \
     -state_store_port=${IMPALA_STATE_STORE_PORT} \
     -statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}} \
     -statestore_num_update_threads={{impala_env['statestore_num_update_threads']}} \
@@ -153,9 +160,10 @@ IMPALA_STATE_STORE_ARGS=" \
 IMPALA_SERVER_ARGS=" \
     -log_dir=${IMPALA_LOG_DIR} \
     -hostname={{current_host_name}} \
-	--scratch_dirs=${IMPALA_SCRATCH_DIR} \
-	--catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
-	--state_store_host=${IMPALA_STATE_STORE_HOST} \
+    -webserver_port={{impala_env['impala_daemon_webserver_port']}} \
+		--scratch_dirs=${IMPALA_SCRATCH_DIR} \
+		--catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
+		--state_store_host=${IMPALA_STATE_STORE_HOST} \
     -mem_limit=${MEM_LIMIT} \
     -catalog_service_host=${IMPALA_CATALOG_SERVICE_HOST} \
     -state_store_port=${IMPALA_STATE_STORE_PORT} \
@@ -190,6 +198,7 @@ IMPALA_SERVER_ARGS=" \
     -redaction_rules_file={{impala_env['redaction_rules_file']}} \
     -is_coordinator={{impala_env['is_coordinator']}} \
     -is_executor={{impala_env['is_executor']}} \
+    -local_library_dir={{impala_env['local_library_dir']}} \
     {% if enable_ranger %}
     -server_name=${HIVE_SERVER_HOST} \
     -ranger_service_type=${RANGER_SERVICE_TYPE} \
@@ -203,8 +212,9 @@ IMPALA_SERVER_ARGS=" \
     -disable_kudu=true \
     -use_statestore \
     -state_store_host=${IMPALA_STATE_STORE_HOST} \
-    -be_port=${IMPALA_BACKEND_PORT} \
-	{% if security_enabled %}
+    -state_store_subscriber_port=${IMPALA_DAEMON_STATE_STORE_SUBSCRIBER_PORT} \
+    -krpc_port=${IMPALA_KRPC_PORT} \
+		{% if security_enabled %}
     -kerberos_reinit_interval=${KRB_REINIT_INT} \
     {% if enable_load_balancer %}
     -principal=impala/{{impala_load_balancer_host}}@{{realm_name}} \

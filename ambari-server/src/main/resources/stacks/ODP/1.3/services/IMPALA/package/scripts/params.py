@@ -126,7 +126,11 @@ enable_insert_events = _as_bool(default("/configurations/impala-env/enable_inser
 
 ## configure default catalogd flags
 max_log_files = default("/configurations/impala-env/max_log_files", 10)
+impala_catalog_service_port = default("/configurations/impala-env/impala_catalog_service_port", 26000)
 impala_catalog_webserver_port = default("/configurations/impala-env/impala_catalog_webserver_port", 25020)
+impala_catalog_state_store_subscriber_port = default(
+    "/configurations/impala-env/impala_catalog_state_store_subscriber_port", 23020
+)
 
 #The estimated stats size is calculated as 400 bytes * # columns * # partitions. The option prevents you from computing incremental stats on tables with too many columns and partitions (it guards against the scenario where memory usage from incremental stats creeps up and up as tables get larger, eventually causing an outage).
 # So you probably want to set it based on the expected size of the largest table that you will be using incremental stats on (that would help prevent someone accidentally computing incremental stats on an even larger table).
@@ -156,8 +160,8 @@ redaction_rules_file = default("/configurations/impala-env/redaction_rules_file"
 
 ## configure default statestored flags
 max_statestore_log_files = default("/configurations/impala-env/max_statestore_log_files", 10)
-impala_statestore_webserver_port = default("/configurations/impala-env/impala_statestore_webserver_port", 25011)
-impala_state_store_port = default("/configurations/impala-env/impala_state_store_port", 25010)
+impala_statestore_webserver_port = default("/configurations/impala-env/impala_statestore_webserver_port", 25010)
+impala_state_store_port = default("/configurations/impala-env/impala_state_store_port", 24000)
 statestore_update_frequency_ms = default("/configurations/impala-env/statestore_update_frequency_ms", 1000)
 statestore_num_update_threads = default("/configurations/impala-env/statestore_num_update_threads", 4)
 inc_stats_size_limit_bytes = default("/configurations/impala-env/inc_stats_size_limit_bytes", 100 * 1024 * 1024)
@@ -176,7 +180,10 @@ enable_statestored_ha = len(impala_state_store_hosts) == 2
 state_store_ha_port = default("/configurations/impala-env/state_store_ha_port", 25012)
 
 ## configure default impalad flags
-impala_backend_port = default("/configurations/impala-env/impala_backend_port", 22000)
+impala_krpc_port = default("/configurations/impala-env/impala_krpc_port", 27000)
+impala_daemon_state_store_subscriber_port = default(
+    "/configurations/impala-env/impala_daemon_state_store_subscriber_port", 23000
+)
 impala_daemon_webserver_port = default("/configurations/impala-env/impala_daemon_webserver_port", 25000)
 impala_scratch_dir = default("/configurations/impala-env/impala_scratch_dir", "/tmp")
 _default_state_store_host = impala_state_store_hosts[0] if impala_state_store_hosts else hostname

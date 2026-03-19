@@ -3,14 +3,42 @@
     "service": [],
     "IMPALA_CATALOG_SERVICE": [
       {
-        "name": "impala_catalog_process",
-        "label": "impala catalog Process",
-        "description": "This host-level alert is triggered if the impala catalog cannot be determined to be up.",
+        "name": "impala_catalog_health",
+        "label": "Catalogd Health",
+        "description": "This host-level alert is triggered if the catalogd health endpoint is unreachable.",
+        "interval": 1,
+        "scope": "HOST",
+        "source": {
+          "type": "WEB",
+          "uri": {
+            "http": "localhost:{{impala-env/impala_catalog_webserver_port}}/healthz",
+            "https": "localhost:{{impala-env/impala_catalog_webserver_port}}/healthz",
+            "https_property": "{{impala-env/client_services_ssl_enabled}}",
+            "https_property_value": "true",
+            "connection_timeout": 5.0
+          },
+          "reporting": {
+            "ok": {
+              "text": "HTTP {0} response in {2:.3f}s"
+            },
+            "warning": {
+              "text": "HTTP {0} response from {1} in {2:.3f}s ({3})"
+            },
+            "critical": {
+              "text": "Connection failed to {1} ({3})"
+            }
+          }
+        }
+      },
+      {
+        "name": "impala_catalog_rpc_port",
+        "label": "Catalogd RPC Port",
+        "description": "This host-level alert is triggered if the catalogd RPC listener is unreachable.",
         "interval": 1,
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "26000",
+          "uri": "{{impala-env/impala_catalog_service_port}}",
           "default_port": 26000,
           "reporting": {
             "ok": {
@@ -30,14 +58,42 @@
     ],
 	"IMPALA_STATE_STORE": [
       {
-        "name": "impala_state_store_process",
-        "label": "impala state store Process",
-        "description": "This host-level alert is triggered if the impala state store cannot be determined to be up.",
+        "name": "impala_state_store_health",
+        "label": "StateStore Health",
+        "description": "This host-level alert is triggered if the statestored health endpoint is unreachable.",
+        "interval": 1,
+        "scope": "HOST",
+        "source": {
+          "type": "WEB",
+          "uri": {
+            "http": "localhost:{{impala-env/impala_statestore_webserver_port}}/healthz",
+            "https": "localhost:{{impala-env/impala_statestore_webserver_port}}/healthz",
+            "https_property": "{{impala-env/client_services_ssl_enabled}}",
+            "https_property_value": "true",
+            "connection_timeout": 5.0
+          },
+          "reporting": {
+            "ok": {
+              "text": "HTTP {0} response in {2:.3f}s"
+            },
+            "warning": {
+              "text": "HTTP {0} response from {1} in {2:.3f}s ({3})"
+            },
+            "critical": {
+              "text": "Connection failed to {1} ({3})"
+            }
+          }
+        }
+      },
+      {
+        "name": "impala_state_store_rpc_port",
+        "label": "StateStore RPC Port",
+        "description": "This host-level alert is triggered if the statestored RPC listener is unreachable.",
         "interval": 1,
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "24000",
+          "uri": "{{impala-env/impala_state_store_port}}",
           "default_port": 24000,
           "reporting": {
             "ok": {
@@ -57,15 +113,43 @@
     ],
 	"IMPALA_DAEMON": [
       {
-        "name": "impala_daemon_process",
-        "label": "impala daemon Process",
-        "description": "This host-level alert is triggered if the impala daemon cannot be determined to be up.",
+        "name": "impala_daemon_health",
+        "label": "Impalad Health",
+        "description": "This host-level alert is triggered if the impalad health endpoint is unreachable.",
+        "interval": 1,
+        "scope": "HOST",
+        "source": {
+          "type": "WEB",
+          "uri": {
+            "http": "localhost:{{impala-env/impala_daemon_webserver_port}}/healthz",
+            "https": "localhost:{{impala-env/impala_daemon_webserver_port}}/healthz",
+            "https_property": "{{impala-env/client_services_ssl_enabled}}",
+            "https_property_value": "true",
+            "connection_timeout": 5.0
+          },
+          "reporting": {
+            "ok": {
+              "text": "HTTP {0} response in {2:.3f}s"
+            },
+            "warning": {
+              "text": "HTTP {0} response from {1} in {2:.3f}s ({3})"
+            },
+            "critical": {
+              "text": "Connection failed to {1} ({3})"
+            }
+          }
+        }
+      },
+      {
+        "name": "impala_daemon_rpc_port",
+        "label": "Impalad KRPC Port",
+        "description": "This host-level alert is triggered if the impalad KRPC listener is unreachable.",
         "interval": 1,
         "scope": "HOST",
         "source": {
           "type": "PORT",
-          "uri": "{{impala-env/impala_backend_port}}",
-          "default_port": 22000,
+          "uri": "{{impala-env/impala_krpc_port}}",
+          "default_port": 27000,
           "reporting": {
             "ok": {
               "text": "TCP OK - {0:.3f}s response on port {1}"

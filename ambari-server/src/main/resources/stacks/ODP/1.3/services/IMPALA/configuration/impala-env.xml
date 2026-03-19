@@ -112,15 +112,49 @@
     </property>
     <property>
         <name>impala_state_store_port</name>
+        <display-name>StateStore Service Port</display-name>
         <value>24000</value>
-        <description>IMPALA_STATE_STORE_PORT</description>
+        <description>RPC port where statestored accepts subscriber heartbeats and publishes updates.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_catalog_service_port</name>
+        <display-name>Catalog Service Port</display-name>
+        <value>26000</value>
+        <description>RPC port where catalogd serves the CatalogService API.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_krpc_port</name>
+        <display-name>Impalad KRPC Port</display-name>
+        <value>27000</value>
+        <description>Internal KRPC port used for inter-daemon communication between impalad instances.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_daemon_state_store_subscriber_port</name>
+        <display-name>Impalad StateStore Subscriber Port</display-name>
+        <value>23000</value>
+        <description>Internal subscriber port used by impalad to receive updates from statestored.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
+        <name>impala_catalog_state_store_subscriber_port</name>
+        <display-name>Catalogd StateStore Subscriber Port</display-name>
+        <value>23020</value>
+        <description>Internal subscriber port used by catalogd to receive updates from statestored.</description>
     <on-ambari-upgrade add="true"/>
 
     </property>
     <property>
         <name>impala_backend_port</name>
+        <display-name>Deprecated Backend Port</display-name>
         <value>22000</value>
-        <description>IMPALA_BACKEND_PORT</description>
+        <description>Legacy removed flag (--be_port). Ignored by current Impala and kept only for upgrade compatibility.</description>
     <on-ambari-upgrade add="true"/>
 
     </property>
@@ -1106,8 +1140,11 @@
         <value>IMPALA_CATALOG_SERVICE_HOST={{impala_catalog_host}}
 IMPALA_STATE_STORE_HOST={{impala_state_store_host}}
 IMPALA_STATE_STORE_PORT={{impala_env['impala_state_store_port']}}
+IMPALA_CATALOG_SERVICE_PORT={{impala_env['impala_catalog_service_port']}}
+IMPALA_KRPC_PORT={{impala_env['impala_krpc_port']}}
+IMPALA_DAEMON_STATE_STORE_SUBSCRIBER_PORT={{impala_env['impala_daemon_state_store_subscriber_port']}}
+IMPALA_CATALOG_STATE_STORE_SUBSCRIBER_PORT={{impala_env['impala_catalog_state_store_subscriber_port']}}
 HIVE_SERVER_HOST={{hive_server_host}}
-IMPALA_BACKEND_PORT={{impala_env['impala_backend_port']}}
 IMPALA_LOG_DIR={{impala_log_dir}}
 IMPALA_MAX_LOG_FILES={{impala_env['max_log_files']}}
 IMPALA_SCRATCH_DIR={{impala_env['impala_scratch_dir']}}
@@ -1148,6 +1185,9 @@ WEBSERVER_PRIVATE_KEY_PWD_CMD={{impala_env['webserver_private_key_password_cmd']
 IMPALA_CATALOG_ARGS=" \
 -log_dir={{impala_log_dir}} \
 -hostname={{current_host_name}} \
+-catalog_service_port={{impala_env['impala_catalog_service_port']}} \
+-webserver_port={{impala_env['impala_catalog_webserver_port']}} \
+-state_store_subscriber_port={{impala_env['impala_catalog_state_store_subscriber_port']}} \
 -max_log_files={{impala_env['max_log_files']}} \
 -state_store_host={{impala_state_store_host}} \
 -catalog_service_host={{impala_catalog_host}} \
@@ -1256,6 +1296,7 @@ IMPALA_CATALOG_ARGS=" \
 IMPALA_STATE_STORE_ARGS=" \
 -log_dir={{impala_log_dir}} \
 -hostname={{current_host_name}} \
+-webserver_port={{impala_env['impala_statestore_webserver_port']}} \
 -max_log_files={{impala_env['max_log_files']}} \
 -state_store_port={{impala_env['impala_state_store_port']}} \
 -statestore_update_frequency_ms={{impala_env['statestore_update_frequency_ms']}} \
@@ -1364,6 +1405,7 @@ IMPALA_STATE_STORE_ARGS=" \
 IMPALA_SERVER_ARGS=" \
 -log_dir={{impala_log_dir}} \
 -hostname={{current_host_name}} \
+-webserver_port={{impala_env['impala_daemon_webserver_port']}} \
 --scratch_dirs={{impala_env['impala_scratch_dir']}} \
 --state_store_host={{impala_state_store_host}} \
 -mem_limit={{impala_env['impalad_mem_limit']}} \
@@ -1413,7 +1455,7 @@ IMPALA_SERVER_ARGS=" \
 -redaction_rules_file={{impala_env['redaction_rules_file']}} \
 -is_coordinator={{impala_env['is_coordinator']}} \
 -is_executor={{impala_env['is_executor']}} \
--local_library_dir=local_library_dir \
+-local_library_dir={{impala_env['local_library_dir']}} \
 {% if enable_ranger %} \
 -server_name={{hive_server_host}} \
 -ranger_service_type={{impala_env['impala_ranger_service_type']}} \
@@ -1430,7 +1472,8 @@ IMPALA_SERVER_ARGS=" \
 {% endif %} \
 -use_statestore \
 -state_store_host={{impala_state_store_host}} \
--be_port={{impala_env['impala_backend_port']}} \
+-state_store_subscriber_port={{impala_env['impala_daemon_state_store_subscriber_port']}} \
+-krpc_port={{impala_env['impala_krpc_port']}} \
 {% if security_enabled %} \
 -kerberos_reinit_interval={{impala_env['kerberos_reinit_interval']}} \
 {% if enable_load_balancer %} \
