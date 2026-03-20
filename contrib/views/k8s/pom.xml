@@ -94,6 +94,8 @@ limitations under the License.
 
         <!-- RPM: default to skip; -Prpm toggles to false -->
         <rpm.skip>true</rpm.skip>
+        <!-- DEB: default to skip; -Dbuild-deb activates it unless Docker packaging is disabled -->
+        <deb.skip>true</deb.skip>
     </properties>
 
     <dependencies>
@@ -664,6 +666,7 @@ chmod +x "${OUT_DIR}/load.sh"
                     <goal>rpm</goal>
                 </goals>
                 <configuration>
+                    <disabled>${docker.skip}</disabled>
                     <name>${webhook.package.name}</name>
                     <group>Development</group>
                     <license>Apache-2.0</license>
@@ -722,9 +725,9 @@ chmod +x "${OUT_DIR}/load.sh"
                         </configuration>
                     </execution>
                 </executions>
-                <!-- keep default skip; we’ll enable via profile -->
+                <!-- keep default skip; the DEB profile flips this unless docker.skip=true -->
                 <configuration>
-                    <skip>true</skip>
+                    <skip>${deb.skip}</skip>
                 </configuration>
             </plugin>
         </plugins>
@@ -889,23 +892,15 @@ chmod +x "${OUT_DIR}/load.sh"
             </properties>
         </profile>
 
-        <!-- Enable DEB build when -Dbuild-deb=true -->
+        <!-- Enable DEB build when -Dbuild-deb=true, but still skip if Docker packaging is disabled -->
         <profile>
             <id>deb</id>
             <activation>
                 <property><name>build-deb</name></property>
             </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.vafer</groupId>
-                        <artifactId>jdeb</artifactId>
-                        <configuration>
-                            <skip>false</skip>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
+            <properties>
+                <deb.skip>${docker.skip}</deb.skip>
+            </properties>
         </profile>
 
         <!-- Toggle RPM on via profile -->
