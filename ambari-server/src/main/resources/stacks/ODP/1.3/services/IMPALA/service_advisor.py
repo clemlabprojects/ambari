@@ -155,6 +155,7 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
     def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
         putHDFSCoreProperty = self.putProperty(configurations, "core-site", services)
         putHIVECoreProperty = self.putProperty(configurations, "hive-site", services)
+        putHIVEMetastoreProperty = self.putProperty(configurations, "hivemetastore-site", services)
         putImpalaEnvProperty = self.putProperty(configurations, "impala-env", services)
         services_list = self.get_services_list(services)
 
@@ -195,6 +196,11 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
 
         # Required by Impala HMS event processing on secured clusters.
         putHIVECoreProperty("hive.metastore.dml.events", "true")
+        putHIVECoreProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+        putHIVECoreProperty("hive.metastore.event.db.listener.timetolive", "3600")
+        putHIVEMetastoreProperty("hive.metastore.dml.events", "true")
+        putHIVEMetastoreProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+        putHIVEMetastoreProperty("hive.metastore.event.db.listener.timetolive", "3600")
 
         # Toggle integrations based on installed services.
         putImpalaEnvProperty("impala_disable_kudu", "false" if "KUDU" in services_list else "true")

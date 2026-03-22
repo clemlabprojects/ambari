@@ -52,6 +52,7 @@ ambari_java_exec = format("{ambari_java_home}/bin/java")
 impala_home_statestore = os.path.join(stack_root,  "current", "impala-state-store")
 impala_home_catalog = os.path.join(stack_root,  "current", "impala-catalog-service")
 impala_home_daemon = os.path.join(stack_root,  "current", "impala-daemon")
+impala_home_client = os.path.join(stack_root,  "current", "impala-client")
 impala_conf_dir = "/etc/impala/conf"
 
 def _host_aliases(host):
@@ -180,6 +181,7 @@ enable_statestored_ha = len(impala_state_store_hosts) == 2
 state_store_ha_port = default("/configurations/impala-env/state_store_ha_port", 25012)
 
 ## configure default impalad flags
+impala_hs2_port = default("/configurations/impala-env/impala_hs2_port", 21050)
 impala_krpc_port = default("/configurations/impala-env/impala_krpc_port", 27000)
 impala_daemon_state_store_subscriber_port = default(
     "/configurations/impala-env/impala_daemon_state_store_subscriber_port", 23000
@@ -253,6 +255,9 @@ enable_ldap_auth = _as_bool(impala_env['enable_ldap_auth'])
 enable_load_balancer = _as_bool(impala_env['enable_load_balancer'])
 if enable_load_balancer:
     impala_load_balancer_host = impala_env['impala_load_balancer_host']
+impala_service_check_hosts = [impala_load_balancer_host] if enable_load_balancer else impala_daemon_hosts
+impala_service_check_host = impala_service_check_hosts[0] if impala_service_check_hosts else None
+impala_shell_path = os.path.join(impala_home_client, "shell", "impala-shell")
 impala_log4j_properties = config['configurations']['impala-log4j-properties']['content']
 impala_log4j_properties = impala_log4j_properties.replace("${impala.log.dir}",impala_log_dir)
 impala_defaults = config['configurations']['impala-env']['impala_defaults']
@@ -414,6 +419,8 @@ if security_enabled:
     hive_keytab = config['configurations']['hive-site']['hive.server2.authentication.kerberos.keytab']
 
 smokeuser = config['configurations']['cluster-env']['smokeuser']
+smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
+smokeuser_principal = config['configurations']['cluster-env']['smokeuser_principal_name']
 hive_metastore_warehouse_external_dir = config['configurations']['hive-site']["hive.metastore.warehouse.external.dir"]
 hive_hook_proto_base_directory = format(config['configurations']['hive-site']["hive.hook.proto.base-directory"])
 

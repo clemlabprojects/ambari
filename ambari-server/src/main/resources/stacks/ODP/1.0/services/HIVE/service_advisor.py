@@ -187,6 +187,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     putHiveSiteProperty = self.putProperty(configurations, "hive-site", services)
     putHiveProperty = self.putProperty(configurations, "hive-site", services)
     putHiveServerProperty = self.putProperty(configurations, "hiveserver2-site", services)
+    putHiveMetastoreProperty = self.putProperty(configurations, "hivemetastore-site", services)
     putHiveInteractiveEnvProperty = self.putProperty(configurations, "hive-interactive-env", services)
     putHiveInteractiveSiteProperty = self.putProperty(configurations, self.HIVE_INTERACTIVE_SITE, services)
     putRangerHivePluginProperty = self.putProperty(configurations, "ranger-hive-plugin-properties", services)
@@ -200,6 +201,13 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     putHiveAtlasHookPropertyAttribute = self.putPropertyAttribute(configurations,"hive-atlas-application.properties")
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+    impala_user = "impala"
+    if "IMPALA" in servicesList:
+      try:
+        impala_user = services["configurations"]["impala-env"]["properties"].get("impala_user", "impala")
+      except Exception:
+        impala_user = "impala"
+
     preferred_fs_type = self.getCoreFilesystemType(configurations, services)
     putHiveEnvProperty("hive_filesystem_type", preferred_fs_type)
 
@@ -252,6 +260,14 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     if hiveMetastoreHost is not None and len(hiveMetastoreHost) > 0:
       putHiveSiteProperty("hive.metastore.uris", "thrift://" + hiveMetastoreHost["Hosts"]["host_name"] + ":9083")
       putHiveInteractiveSiteProperty("hive.metastore.uris", "thrift://" + hiveMetastoreHost["Hosts"]["host_name"] + ":9083")
+
+    if "IMPALA" in servicesList:
+      putHiveSiteProperty("hive.metastore.dml.events", "true")
+      putHiveSiteProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+      putHiveSiteProperty("hive.metastore.event.db.listener.timetolive", "3600")
+      putHiveMetastoreProperty("hive.metastore.dml.events", "true")
+      putHiveMetastoreProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+      putHiveMetastoreProperty("hive.metastore.event.db.listener.timetolive", "3600")
 
     # DAS Hook
     putHiveEnvProperty("hive_timeline_logging_enabled", "false")

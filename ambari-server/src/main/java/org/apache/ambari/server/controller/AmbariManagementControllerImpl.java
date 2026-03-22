@@ -285,6 +285,10 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
   private static final String CLUSTER_PHASE_PROPERTY = "phase";
   private static final String CLUSTER_PHASE_INITIAL_INSTALL = "INITIAL_INSTALL";
   private static final String CLUSTER_PHASE_INITIAL_START = "INITIAL_START";
+  private static final String HIVE_SERVICE_NAME = "HIVE";
+  private static final String HIVE_METASTORE_COMPONENT = "HIVE_METASTORE";
+  private static final String IMPALA_SERVICE_NAME = "IMPALA";
+  private static final String IMPALA_CATALOG_SERVICE_COMPONENT = "IMPALA_CATALOG_SERVICE";
   private static final String AMBARI_SERVER_HOST = "ambari_server_host";
   private static final String AMBARI_SERVER_PORT = "ambari_server_port";
   private static final String AMBARI_SERVER_USE_SSL = "ambari_server_use_ssl";
@@ -3516,11 +3520,115 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
       requestStages = new RequestStageContainer(actionManager.getNextRequestId(), null, requestFactory, actionManager);
     }
 
+    requestStages = appendHiveMetastoreRestartForInitialImpalaStart(requestStages, cluster,
+        requestProperties, changedHosts, useGeneratedConfigs, useClusterHostInfo);
+
     requestStages = doStageCreation(requestStages, cluster, changedServices, changedComponents,
         changedHosts, requestParameters, requestProperties,
         runSmokeTest, reconfigureClients, useGeneratedConfigs, useClusterHostInfo);
 
     updateServiceStates(cluster, changedServices, changedComponents, changedHosts, ignoredHosts);
+
+    return requestStages;
+  }
+
+  RequestStageContainer appendHiveMetastoreRestartForInitialImpalaStart(
+      RequestStageContainer requestStages, Cluster cluster, Map<String, String> requestProperties,
+      Map<String, Map<State, List<ServiceComponentHost>>> changedHosts, boolean useLatestConfigs,
+      boolean useClusterHostInfo) throws AmbariException {
+
+    // Inject real HIVE_METASTORE stop/start tasks into the same request so the
+    // first catalogd startup sees the new Hive metastore notification settings.
+    List<ServiceComponentHost> metastoresToRestart =
+        getHiveMetastoresToRestartForInitialImpalaStart(cluster, requestProperties, changedHosts);
+
+    if (metastoresToRestart.isEmpty()) {
+      return requestStages;
+    }
+
+    for (ServiceComponentHost metastore : metastoresToRestart) {
+      String requestContext = String.format(
+          "Restart Hive Metastore on host %s for initial IMPALA startup",
+          metastore.getHostName());
+
+      requestStages = appendHostComponentTransitionStages(requestStages, cluster, requestProperties,
+          metastore, State.INSTALLED, requestContext, useLatestConfigs, useClusterHostInfo);
+
+      requestStages = appendHostComponentTransitionStages(requestStages, cluster, requestProperties,
+          metastore, State.STARTED, requestContext, useLatestConfigs, useClusterHostInfo);
+    }
+
+    return requestStages;
+  }
+
+  static List<ServiceComponentHost> getHiveMetastoresToRestartForInitialImpalaStart(
+      Cluster cluster, Map<String, String> requestProperties,
+      Map<String, Map<State, List<ServiceComponentHost>>> changedHosts) throws AmbariException {
+    if (cluster == null || requestProperties == null || changedHosts == null) {
+      return Collections.emptyList();
+    }
+
+    if (!CLUSTER_PHASE_INITIAL_START.equals(requestProperties.get(CLUSTER_PHASE_PROPERTY))) {
+      return Collections.emptyList();
+    }
+
+    Map<State, List<ServiceComponentHost>> catalogTransitions =
+        changedHosts.get(IMPALA_CATALOG_SERVICE_COMPONENT);
+    if (catalogTransitions == null || !catalogTransitions.containsKey(State.STARTED)
+        || catalogTransitions.get(State.STARTED) == null
+        || catalogTransitions.get(State.STARTED).isEmpty()) {
+      return Collections.emptyList();
+    }
+
+    Map<String, Service> services = cluster.getServices();
+    if (services == null || !services.containsKey(IMPALA_SERVICE_NAME) || !services.containsKey(HIVE_SERVICE_NAME)) {
+      return Collections.emptyList();
+    }
+
+    List<ServiceComponentHost> catalogHosts =
+        cluster.getServiceComponentHosts(IMPALA_SERVICE_NAME, IMPALA_CATALOG_SERVICE_COMPONENT);
+    boolean hasStartedCatalog = catalogHosts != null
+        && catalogHosts.stream().anyMatch(sch -> sch != null && sch.getState() == State.STARTED);
+    if (hasStartedCatalog) {
+      return Collections.emptyList();
+    }
+
+    List<ServiceComponentHost> metastores =
+        cluster.getServiceComponentHosts(HIVE_SERVICE_NAME, HIVE_METASTORE_COMPONENT);
+    if (metastores == null || metastores.isEmpty()) {
+      return Collections.emptyList();
+    }
+
+    return metastores.stream()
+        .filter(sch -> sch != null && sch.getState() == State.STARTED
+            && sch.getHostState() != HostState.HEARTBEAT_LOST)
+        .sorted((left, right) -> left.getHostName().compareTo(right.getHostName()))
+        .collect(Collectors.toList());
+  }
+
+  private RequestStageContainer appendHostComponentTransitionStages(
+      RequestStageContainer requestStages, Cluster cluster, Map<String, String> requestProperties,
+      ServiceComponentHost scHost, State targetState, String requestContext,
+      boolean useLatestConfigs, boolean useClusterHostInfo) throws AmbariException {
+
+    Map<String, String> transitionRequestProperties = new HashMap<>();
+    if (requestProperties != null) {
+      transitionRequestProperties.putAll(requestProperties);
+    }
+    transitionRequestProperties.put(REQUEST_CONTEXT_PROPERTY, requestContext);
+    transitionRequestProperties.remove(CLUSTER_PHASE_PROPERTY);
+
+    Map<String, Map<State, List<ServiceComponentHost>>> changedScHosts = new HashMap<>();
+    Map<State, List<ServiceComponentHost>> changedStates = new EnumMap<>(State.class);
+    changedStates.put(targetState, Collections.singletonList(scHost));
+    changedScHosts.put(scHost.getServiceComponentName(), changedStates);
+
+    requestStages = doStageCreation(requestStages, cluster, Collections.emptyMap(),
+        Collections.emptyMap(), changedScHosts, null, transitionRequestProperties,
+        false, false, useLatestConfigs, useClusterHostInfo);
+
+    updateServiceStates(cluster, Collections.emptyMap(), Collections.emptyMap(), changedScHosts,
+        Collections.emptyList());
 
     return requestStages;
   }

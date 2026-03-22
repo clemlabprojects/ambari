@@ -54,6 +54,7 @@
           </logs>
           <configuration-dependencies>
             <config-type>hive-site</config-type>
+            <config-type>hivemetastore-site</config-type>
           </configuration-dependencies>
           <dependency>
               <name>CORE/CORE_CLIENT</name>

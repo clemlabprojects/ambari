@@ -127,6 +127,14 @@
 
     </property>
     <property>
+        <name>impala_hs2_port</name>
+        <display-name>Impalad HS2 Port</display-name>
+        <value>21050</value>
+        <description>HiveServer2 client port used by impala-shell and JDBC/ODBC clients.</description>
+    <on-ambari-upgrade add="true"/>
+
+    </property>
+    <property>
         <name>impala_krpc_port</name>
         <display-name>Impalad KRPC Port</display-name>
         <value>27000</value>

@@ -152,6 +152,12 @@
                 </packages>
               </osSpecific>
             </osSpecifics>
+
+            <commandScript>
+              <script>scripts/service_check.py</script>
+              <scriptType>PYTHON</scriptType>
+              <timeout>600</timeout>
+            </commandScript>
             
             <configuration-dependencies>
                 <config-type>impala-env</config-type>

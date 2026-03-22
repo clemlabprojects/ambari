@@ -76,6 +76,21 @@ limitations under the License.
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>hive.metastore.event.db.notification.api.auth</name>
+    <value/>
+    <description>Comma-separated list of users allowed to access the metastore notification event API.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hive.metastore.event.db.listener.timetolive</name>
+    <value>3600</value>
+    <description>Time to live, in seconds, for metastore notification events retained for listeners such as Impala.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>hive.metastore.transactional.event.listeners</name>
     <value>org.apache.hive.hcatalog.listener.DbNotificationListener</value>
     <description>A comma separated list of Java classes that implement the org.apache.hadoop.hive.metastore.MetaStoreEventListener interface. Both the metastore event and corresponding listener method will be invoked in the same JDO transaction.</description>

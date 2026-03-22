@@ -2074,6 +2074,21 @@ limitations under the License.
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>hive.metastore.event.db.notification.api.auth</name>
+    <value/>
+    <description>Comma-separated list of users allowed to access the metastore notification event API.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>hive.metastore.event.db.listener.timetolive</name>
+    <value>3600</value>
+    <description>Time to live, in seconds, for metastore notification events retained for listeners such as Impala.</description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>hive.repl.cm.enabled</name>
     <value/>
     <description>Turn on ChangeManager, so delete files will go to cmrootdir.</description>
