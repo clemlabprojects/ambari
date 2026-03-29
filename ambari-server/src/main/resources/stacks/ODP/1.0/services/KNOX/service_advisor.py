@@ -226,6 +226,7 @@ class KnoxRecommender(service_advisor.ServiceAdvisor):
     knoxEnvProperties = self.getSiteProperties(services['configurations'], 'knox-env')
 
     if knoxEnvProperties and self.checkSiteProperties(knoxEnvProperties, 'knox_user') and 'KERBEROS' in servicesList:
+      self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
       putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
       putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
       knoxUser = knoxEnvProperties['knox_user']
@@ -274,7 +275,6 @@ class KnoxValidator(service_advisor.ServiceAdvisor):
                                 "item": self.getWarnItem(
                                   "ranger-knox-plugin-properties/ranger-knox-plugin-enabled must correspond ranger-env/ranger-knox-plugin-enabled")})
     return self.toConfigurationValidationProblems(validationItems, "ranger-knox-plugin-properties")
-
 
 
 

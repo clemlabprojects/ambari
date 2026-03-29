@@ -21,6 +21,25 @@ import service_advisor
 
 
 class CoreServiceAdvisor(service_advisor.ServiceAdvisor):
+  def _should_recommend_core_site(self, configurations, services):
+    changed_configs = services.get("changed-configurations", []) if services else []
+    current_default_fs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS", None)
+
+    # Bootstrap cluster configs when core-site/fs.defaultFS does not exist yet.
+    if not current_default_fs:
+      return True
+
+    # Keep old behavior for generic core-site edits: do not rewrite core-site unless
+    # the CORE-owned filesystem selector changed.
+    for changed_config in changed_configs:
+      if changed_config.get("type") == "core-env" and changed_config.get("name") in (
+        "core_filesystem_type",
+        "core_external_default_fs",
+      ):
+        return True
+
+    return False
+
   def getServiceComponentLayoutValidations(self, services, hosts):
     return self.getServiceComponentCardinalityValidations(services, hosts, "CORE")
 
@@ -33,15 +52,17 @@ class CoreServiceAdvisor(service_advisor.ServiceAdvisor):
 
   def recommendCoreConfigurations(self, configurations, clusterData, services, hosts):
     putCoreEnv = self.putProperty(configurations, "core-env", services)
-    putCoreSite = self.putProperty(configurations, "core-site", services)
 
     core_fs_type = self.getCoreFilesystemType(configurations, services)
     putCoreEnv("core_filesystem_type", core_fs_type)
     core_external_default_fs = self.getConfigProperty(configurations, services, "core-env", "core_external_default_fs", "file:///")
     putCoreEnv("core_external_default_fs", core_external_default_fs)
 
-    default_fs = self.getServiceDefaultFs(configurations, services, "core-env", "core_filesystem_type")
-    putCoreSite("fs.defaultFS", default_fs)
+    if self._should_recommend_core_site(configurations, services):
+      self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
+      putCoreSite = self.putProperty(configurations, "core-site", services)
+      default_fs = self.getServiceDefaultFs(configurations, services, "core-env", "core_filesystem_type")
+      putCoreSite("fs.defaultFS", default_fs)
 
   def validateCoreConfigurations(self, properties, recommendedDefaults, configurations, services, hosts):
     validationItems = []

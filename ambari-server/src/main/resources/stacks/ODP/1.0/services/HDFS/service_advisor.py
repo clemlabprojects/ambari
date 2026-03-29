@@ -279,6 +279,7 @@ class HDFSRecommender(service_advisor.ServiceAdvisor):
     """
     Recommend configurations for this service based on HDP 2.2
     """
+    self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
     putHdfsSiteProperty = self.putProperty(configurations, "hdfs-site", services)
     putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
     putHdfsSitePropertyAttribute = self.putPropertyAttribute(configurations, "hdfs-site")

@@ -541,6 +541,7 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
     putHbaseSiteProperty = self.putProperty(configurations, "hbase-site", services)
     putHbaseSitePropertyAttributes = self.putPropertyAttribute(configurations, "hbase-site")
 
+    self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
     putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
     putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
 

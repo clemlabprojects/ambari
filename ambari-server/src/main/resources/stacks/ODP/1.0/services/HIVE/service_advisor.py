@@ -201,6 +201,23 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     putHiveAtlasHookPropertyAttribute = self.putPropertyAttribute(configurations,"hive-atlas-application.properties")
 
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
+
+    def getServiceConfigProperty(config_type, property_name, default_value=""):
+      configs = services.get("configurations", {})
+      for candidate in (config_type, "{0}.xml".format(config_type)):
+        try:
+          return configs[candidate]["properties"].get(property_name, default_value)
+        except Exception:
+          pass
+      return default_value
+
+    def mergeCommaSeparatedValues(current_value, required_values):
+      merged_values = [value.strip() for value in (current_value or "").split(",") if value.strip()]
+      for value in required_values:
+        if value and value not in merged_values:
+          merged_values.append(value)
+      return ",".join(merged_values)
+
     impala_user = "impala"
     if "IMPALA" in servicesList:
       try:
@@ -262,12 +279,31 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
       putHiveInteractiveSiteProperty("hive.metastore.uris", "thrift://" + hiveMetastoreHost["Hosts"]["host_name"] + ":9083")
 
     if "IMPALA" in servicesList:
+      hive_site_api_auth = mergeCommaSeparatedValues(
+        getServiceConfigProperty("hive-site", "hive.metastore.event.db.notification.api.auth"),
+        [impala_user],
+      )
+      hive_metastore_api_auth = mergeCommaSeparatedValues(
+        getServiceConfigProperty("hivemetastore-site", "hive.metastore.event.db.notification.api.auth"),
+        [impala_user],
+      )
+      hive_site_event_listeners = mergeCommaSeparatedValues(
+        getServiceConfigProperty("hive-site", "hive.metastore.transactional.event.listeners"),
+        ["org.apache.hive.hcatalog.listener.DbNotificationListener"],
+      )
+      hive_metastore_event_listeners = mergeCommaSeparatedValues(
+        getServiceConfigProperty("hivemetastore-site", "hive.metastore.transactional.event.listeners"),
+        ["org.apache.hive.hcatalog.listener.DbNotificationListener"],
+      )
+
       putHiveSiteProperty("hive.metastore.dml.events", "true")
-      putHiveSiteProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+      putHiveSiteProperty("hive.metastore.event.db.notification.api.auth", hive_site_api_auth)
       putHiveSiteProperty("hive.metastore.event.db.listener.timetolive", "3600")
+      putHiveSiteProperty("hive.metastore.transactional.event.listeners", hive_site_event_listeners)
       putHiveMetastoreProperty("hive.metastore.dml.events", "true")
-      putHiveMetastoreProperty("hive.metastore.event.db.notification.api.auth", impala_user)
+      putHiveMetastoreProperty("hive.metastore.event.db.notification.api.auth", hive_metastore_api_auth)
       putHiveMetastoreProperty("hive.metastore.event.db.listener.timetolive", "3600")
+      putHiveMetastoreProperty("hive.metastore.transactional.event.listeners", hive_metastore_event_listeners)
 
     # DAS Hook
     putHiveEnvProperty("hive_timeline_logging_enabled", "false")

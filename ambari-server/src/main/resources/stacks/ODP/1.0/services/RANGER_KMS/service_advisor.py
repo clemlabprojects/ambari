@@ -182,6 +182,7 @@ class RangerKMSRecommender(service_advisor.ServiceAdvisor):
     putRangerKmsDbksProperty = self.putProperty(configurations, "dbks-site", services)
     putRangerKmsProperty = self.putProperty(configurations, "kms-properties", services)
     kmsEnvProperties = self.getSiteProperties(services['configurations'], 'kms-env')
+    self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
     putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
     putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
     putRangerKmsAuditProperty = self.putProperty(configurations, "ranger-kms-audit", services)

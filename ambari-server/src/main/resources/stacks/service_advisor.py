@@ -259,6 +259,26 @@ class ServiceAdvisor(DefaultStackAdvisor):
       return services["configurations"][configType]["properties"][propertyName]
     return defaultValue
 
+  def preserveExistingConfigTypeProperties(self, configurations, services, configType):
+    """
+    Seed recommendation output with the currently stored properties for a config type.
+    This avoids dropping unrelated keys when a service advisor only updates a subset.
+    """
+    if not configurations is None:
+      if configType not in configurations:
+        configurations[configType] = {}
+      if "properties" not in configurations[configType]:
+        configurations[configType]["properties"] = {}
+
+    if not services or "configurations" not in services:
+      return
+
+    for candidate in (configType, "{0}.xml".format(configType)):
+      if candidate in services["configurations"] and "properties" in services["configurations"][candidate]:
+        for key, value in services["configurations"][candidate]["properties"].items():
+          if key not in configurations[configType]["properties"]:
+            configurations[configType]["properties"][key] = value
+
   def getPreferredFilesystemType(self, services):
     """
     HDFS is preferred when both HDFS and OZONE are installed.
