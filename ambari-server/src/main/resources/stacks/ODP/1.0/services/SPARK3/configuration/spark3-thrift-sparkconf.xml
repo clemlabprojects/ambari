@@ -88,7 +88,7 @@
   </property>
   <property>
     <name>spark.scheduler.allocation.file</name>
-    <value>{{spark_conf}}/spark-thrift-fairscheduler.xml</value>
+    <value>file://{{spark_conf}}/spark-thrift-fairscheduler.xml</value>
     <description>
       Scheduler configuration file for thriftserver.
     </description>
@@ -280,16 +280,9 @@
     <description></description>
     <on-ambari-upgrade add="false"/>
   </property>
-
-  <property>
-    <name>spark.sql.hive.metastore.version</name>
-    <value>3.0</value>
-    <description></description>
-    <on-ambari-upgrade add="false"/>
-  </property>
   <property>
     <name>spark.sql.hive.metastore.jars</name>
-    <value>/usr/odp/current/spark3-client/standalone-metastore/*</value>
+    <value>builtin</value>
     <description></description>
     <on-ambari-upgrade add="false"/>
   </property>

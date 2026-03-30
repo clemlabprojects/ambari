@@ -118,6 +118,36 @@
             <type>atlas-env</type>
             <set key="atlas.kafka.client.log.level" value="WARN"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_1_0_atlas_logback_metadata_opts_migration">
+            <type>atlas-env</type>
+            <replace key="metadata_opts" find="-Dlog4j.configuration=atlas-log4j.xml" replace-with="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_1_0_atlas_logback_metadata_opts_default">
+            <type>atlas-env</type>
+            <set key="metadata_opts" value="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml" if-key="metadata_opts" if-key-state="absent"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
+    <service name="SPARK3">
+      <component name="SPARK3_CLIENT">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag">
+            <type>spark3-env</type>
+            <set key="spark.atlas.hook" value="false" if-key="spark.atlas.hook" if-key-state="absent"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_0_spark3_thrift_builtin_hive_metastore">
+            <type>spark3-thrift-sparkconf</type>
+            <transfer operation="delete" delete-key="spark.sql.hive.metastore.version"
+                      if-key="spark.sql.hive.metastore.jars"
+                      if-type="spark3-thrift-sparkconf"
+                      if-value="/usr/odp/current/spark3-client/standalone-metastore/*"/>
+            <set key="spark.sql.hive.metastore.jars" value="builtin"
+                 if-key="spark.sql.hive.metastore.jars"
+                 if-type="spark3-thrift-sparkconf"
+                 if-value="/usr/odp/current/spark3-client/standalone-metastore/*"/>
+          </definition>
         </changes>
       </component>
     </service>

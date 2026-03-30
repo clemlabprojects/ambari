@@ -107,6 +107,24 @@
       </component>
     </service>
 
+    <service name="SPARK3">
+      <component name="SPARK3_CLIENT">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_0_spark3_thrift_builtin_hive_metastore">
+            <type>spark3-thrift-sparkconf</type>
+            <transfer operation="delete" delete-key="spark.sql.hive.metastore.version"
+                      if-key="spark.sql.hive.metastore.jars"
+                      if-type="spark3-thrift-sparkconf"
+                      if-value="/usr/odp/current/spark3-client/standalone-metastore/*"/>
+            <set key="spark.sql.hive.metastore.jars" value="builtin"
+                 if-key="spark.sql.hive.metastore.jars"
+                 if-type="spark3-thrift-sparkconf"
+                 if-value="/usr/odp/current/spark3-client/standalone-metastore/*"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
     <service name="ATLAS">
       <component name="ATLAS_SERVER">
         <changes>
