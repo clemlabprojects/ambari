@@ -195,18 +195,31 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     #            (self.__class__.__name__, inspect.stack()[0][3]))
 
     preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    putFlinkEnvProperty("flink_filesystem_type", preferred_fs_type)
+    flink_fs_type = self.getConfigProperty(configurations, services, "flink-env", "flink_filesystem_type", preferred_fs_type)
+    putFlinkEnvProperty("flink_filesystem_type", flink_fs_type)
 
     if 'flink-conf' in services["configurations"]:
       defaultFs = self.getServiceDefaultFs(configurations, services, "flink-env", "flink_filesystem_type")
-      completedJobs = self.getConfigProperty(configurations, services, "flink-conf", "jobmanager.archive.fs.dir", "/apps/flink/completed-jobs")
-      checkpointsDir = self.getConfigProperty(configurations, services, "flink-conf", "state.checkpoints.dir", "/apps/odp/flink/flink-checkpoints")
-      savepointsDir = self.getConfigProperty(configurations, services, "flink-conf", "state.savepoints.dir", "/apps/odp/flink/flink-checkpoints")
+      currentDefaultScheme = self.getConfigProperty(configurations, services, "flink-conf", "fs.default-scheme", "hdfs://localhost:8020")
+      currentCompletedJobs = self.getConfigProperty(configurations, services, "flink-conf", "jobmanager.archive.fs.dir", "hdfs://localhost:8020/apps/odp/flink/completed-jobs/")
+      selectorChanged = self.isConfigPropertyChanged(services, "flink-env", "flink_filesystem_type")
 
-      putClusterProperties("fs.default-scheme", defaultFs)
-      putClusterProperties("jobmanager.archive.fs.dir", self.qualifyPathWithFs(defaultFs, completedJobs))
-      putClusterProperties("state.checkpoints.dir", self.qualifyPathWithFs(defaultFs, checkpointsDir))
-      putClusterProperties("state.savepoints.dir", self.qualifyPathWithFs(defaultFs, savepointsDir))
+      if selectorChanged or self.isBootstrapFilesystemPath(currentDefaultScheme) or self.isBootstrapFilesystemPath(currentCompletedJobs):
+        putClusterProperties("fs.default-scheme", defaultFs)
+        putClusterProperties(
+          "jobmanager.archive.fs.dir",
+          self.buildPathForServiceFilesystem(configurations, services, "flink-env", "flink_filesystem_type", "hdfs:///apps/odp/flink/completed-jobs/")
+        )
+
+      if selectorChanged:
+        putClusterProperties(
+          "state.checkpoints.dir",
+          self.buildPathForServiceFilesystem(configurations, services, "flink-env", "flink_filesystem_type", "/apps/odp/flink/flink-checkpoints")
+        )
+        putClusterProperties(
+          "state.savepoints.dir",
+          self.buildPathForServiceFilesystem(configurations, services, "flink-env", "flink_filesystem_type", "/apps/odp/flink/flink-checkpoints")
+        )
 
       ## configure HighAvailability with Zookeeper
       zk_host_port = self.getZKHostPortString(services)

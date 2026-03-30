@@ -225,10 +225,21 @@ class RangerKMSRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(kmsUserOld)})
         services["forced-configurations"].append({"type" : "core-site", "name" : "hadoop.proxyuser.{0}.groups".format(kmsUser)})
 
-    if "HDFS" in servicesList:
-      if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
-        default_fs = services['configurations']['core-site']['properties']['fs.defaultFS']
-        putRangerKmsAuditProperty('xasecure.audit.destination.hdfs.dir', '{0}/{1}/{2}'.format(default_fs,'ranger','audit'))
+    current_kms_audit_dir = self.getConfigProperty(configurations, services, "ranger-kms-audit", "xasecure.audit.destination.hdfs.dir", "")
+    kms_audit_fs_type = self.getSelectedFilesystemType(configurations, services, "core-env", "core_filesystem_type")
+    include_filesystem_audit = (
+      (kms_audit_fs_type == "HDFS" and "HDFS" in servicesList) or
+      (kms_audit_fs_type == "OZONE" and "OZONE" in servicesList) or
+      kms_audit_fs_type == "EXTERNAL"
+    )
+    if include_filesystem_audit:
+      if self.isConfigPropertyChanged(services, "core-env", "core_filesystem_type") or \
+         self.isConfigPropertyChanged(services, "core-env", "core_external_default_fs") or \
+         self.isBootstrapFilesystemPath(current_kms_audit_dir):
+        putRangerKmsAuditProperty(
+          'xasecure.audit.destination.hdfs.dir',
+          self.buildPathForServiceFilesystem(configurations, services, "core-env", "core_filesystem_type", "/ranger/audit")
+        )
 
     required_services = [{'service' : 'YARN', 'config-type': 'yarn-env', 'property-name': 'yarn_user', 'proxy-category': ['hosts', 'users', 'groups']},
                          {'service' : 'SPARK', 'config-type': 'livy-env', 'property-name': 'livy_user', 'proxy-category': ['hosts', 'users', 'groups']}]

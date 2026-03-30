@@ -279,6 +279,84 @@ class ServiceAdvisor(DefaultStackAdvisor):
           if key not in configurations[configType]["properties"]:
             configurations[configType]["properties"][key] = value
 
+  def isConfigPropertyChanged(self, services, configType, propertyName):
+    if not services or "changed-configurations" not in services:
+      return False
+    return self.isConfigPropertiesChanged(services, configType, [propertyName], False)
+
+  def getSelectedFilesystemType(self, configurations, services, selectorConfigType, selectorPropertyName):
+    selectorValue = self.getConfigProperty(
+      configurations,
+      services,
+      selectorConfigType,
+      selectorPropertyName,
+      self.getCoreFilesystemType(configurations, services)
+    )
+    return str(selectorValue).upper()
+
+  def getHdfsDefaultFs(self, configurations, services):
+    nameServices = self.getConfigProperty(configurations, services, "hdfs-site", "dfs.internal.nameservices")
+    if not nameServices:
+      nameServices = self.getConfigProperty(configurations, services, "hdfs-site", "dfs.nameservices")
+    if nameServices:
+      logicalNameService = str(nameServices).split(",")[0].strip()
+      if logicalNameService:
+        return "hdfs://{0}".format(logicalNameService)
+
+    defaultFs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS")
+    if defaultFs and str(defaultFs).strip().lower().startswith("hdfs://"):
+      return str(defaultFs).strip().rstrip("/")
+
+    return "hdfs://localhost:8020"
+
+  def extractPathSuffix(self, path):
+    if path is None:
+      return path
+
+    pathValue = str(path).strip()
+    if pathValue.startswith("{{"):
+      return pathValue
+
+    uriMatch = re.match(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://[^/]*(/.*)?$', pathValue)
+    if uriMatch:
+      pathValue = uriMatch.group(1) if uriMatch.group(1) else "/"
+
+    if not pathValue.startswith("/"):
+      pathValue = "/" + pathValue
+
+    return pathValue
+
+  def buildPathForServiceFilesystem(self, configurations, services, selectorConfigType, selectorPropertyName, defaultPath):
+    selectorValue = self.getSelectedFilesystemType(configurations, services, selectorConfigType, selectorPropertyName)
+    coreFsType = self.getCoreFilesystemType(configurations, services)
+    pathValue = str(defaultPath).strip() if defaultPath is not None else defaultPath
+    if not pathValue:
+      return pathValue
+    if pathValue.startswith("{{"):
+      return pathValue
+
+    pathSuffix = self.extractPathSuffix(pathValue)
+    if selectorValue == coreFsType:
+      if selectorValue == "HDFS" and pathValue.startswith("hdfs:///"):
+        return "hdfs:///{0}".format(pathSuffix.lstrip("/"))
+      return pathSuffix
+
+    defaultFs = self.getServiceDefaultFs(configurations, services, selectorConfigType, selectorPropertyName)
+    return defaultFs.rstrip("/") + pathSuffix
+
+  def isBootstrapFilesystemPath(self, path):
+    pathValue = str(path or "").strip()
+    if not pathValue:
+      return True
+
+    upperValue = pathValue.upper()
+    if "NAMENODE_HOSTNAME" in upperValue:
+      return True
+    if "LOCALHOST:8020" in upperValue or "LOCALHOST:9870" in upperValue:
+      return True
+
+    return False
+
   def getPreferredFilesystemType(self, services):
     """
     HDFS is preferred when both HDFS and OZONE are installed.
@@ -325,8 +403,7 @@ class ServiceAdvisor(DefaultStackAdvisor):
     """
     Resolve filesystem URI from a service-level selector with deterministic fallback.
     """
-    selectorValue = self.getConfigProperty(configurations, services, selectorConfigType, selectorPropertyName, self.getCoreFilesystemType(configurations, services))
-    selectorValue = str(selectorValue).upper()
+    selectorValue = self.getSelectedFilesystemType(configurations, services, selectorConfigType, selectorPropertyName)
     default_fs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS")
 
     if selectorValue == "OZONE":
@@ -339,9 +416,7 @@ class ServiceAdvisor(DefaultStackAdvisor):
       return "file:///"
 
     if selectorValue == "HDFS":
-      if default_fs and str(default_fs).strip().lower().startswith("hdfs://"):
-        return default_fs
-      return "hdfs://localhost:8020"
+      return self.getHdfsDefaultFs(configurations, services)
 
     if default_fs:
       return default_fs

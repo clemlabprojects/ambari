@@ -33,6 +33,7 @@ from resource_management.libraries.functions.check_process_status import check_p
 from setup_ranger_impala import setup_ranger_impala
 import os
 import subprocess
+import time
 
 
 class ImpalaBase(Script):
@@ -384,7 +385,14 @@ class ImpalaBase(Script):
                 "pid": "/var/run/impala/impalad.pid",
                 "out": "impalad.out",
                 "err": "impalad.err",
-                "impala_home": "{}".format(params.impala_home_daemon)
+                "impala_home": "{}".format(params.impala_home_daemon),
+                "web_port": params.impala_daemon_webserver_port,
+                "ports": [
+                    params.impala_daemon_webserver_port,
+                    params.impala_hs2_port,
+                    params.impala_krpc_port,
+                    params.impala_daemon_state_store_subscriber_port,
+                ],
             }
         if service_name == "impala-catalog-service":
             return {
@@ -392,17 +400,81 @@ class ImpalaBase(Script):
                 "pid": "/var/run/impala/catalogd.pid",
                 "out": "catalogd.out",
                 "err": "catalogd.err",
-                "impala_home": "{}".format(params.impala_home_catalog)
+                "impala_home": "{}".format(params.impala_home_catalog),
+                "web_port": params.impala_catalog_webserver_port,
+                "ports": [
+                    params.impala_catalog_webserver_port,
+                    params.impala_catalog_service_port,
+                    params.impala_catalog_state_store_subscriber_port,
+                ],
             }
         if service_name == "impala-state-store":
+            ports = [
+                params.impala_statestore_webserver_port,
+                params.impala_state_store_port,
+            ]
+            if params.enable_statestored_ha:
+                ports.append(params.state_store_ha_port)
             return {
                 "svc": "statestored",
                 "pid": "/var/run/impala/statestored.pid",
                 "out": "statestored.out",
                 "err": "statestored.err",
-                "impala_home": "{}".format(params.impala_home_statestore)
+                "impala_home": "{}".format(params.impala_home_statestore),
+                "web_port": params.impala_statestore_webserver_port,
+                "ports": ports,
             }
         raise Fail("Unknown Impala service: {0}".format(service_name))
+
+    def _port_probe_lines(self, ports, listen_only=False):
+        port_values = []
+        for port in ports or []:
+            if port is None:
+                continue
+            port_text = str(port).strip()
+            if port_text and port_text not in port_values:
+                port_values.append(port_text)
+        if not port_values:
+            return []
+
+        socket_filter = " or ".join(["sport = :{0}".format(port) for port in port_values])
+        probe_cmd = "ss -H {0} '({1})'".format("-ltnp" if listen_only else "-tanp", socket_filter)
+        result = subprocess.Popen(
+            probe_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True,
+            executable="/bin/bash",
+        )
+        stdout, _ = result.communicate()
+        output = stdout.decode("utf-8", "ignore") if hasattr(stdout, "decode") else stdout
+        return [line.strip() for line in output.splitlines() if line.strip()]
+
+    def _wait_for_web_port_clear(self, service_name, timeout_seconds=15, poll_seconds=1):
+        meta = self._impala_service_meta(service_name)
+        web_port = meta.get("web_port")
+        if not web_port:
+            return
+
+        lingering_lines = self._port_probe_lines([web_port], listen_only=False)
+        if not lingering_lines:
+            return
+
+        Logger.info(
+            "Waiting for port {0} to clear before starting {1}".format(web_port, service_name)
+        )
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            time.sleep(poll_seconds)
+            lingering_lines = self._port_probe_lines([web_port], listen_only=False)
+            if not lingering_lines:
+                return
+
+        raise Fail(
+            "Port {0} is still busy before starting {1}. Socket state:\n{2}".format(
+                web_port, service_name, "\n".join(lingering_lines)
+            )
+        )
 
     def _source_java_home(self, source_file):
         if not source_file or not os.path.isfile(source_file):
@@ -542,6 +614,15 @@ class ImpalaBase(Script):
                   group=params.impala_group,
                   create_parents=True)
 
+        listening_lines = self._port_probe_lines(meta.get("ports", []), listen_only=True)
+        if listening_lines:
+            raise Fail(
+                "Cannot start {0}: one of its configured ports is already listening.\n{1}".format(
+                    service_name, "\n".join(listening_lines)
+                )
+            )
+        self._wait_for_web_port_clear(service_name)
+
         env = self._impala_runtime_env(service_name)
         cmd = self._impala_cmd("start", service_name, extra_args=extra_args)
         Execute(cmd, environment=env, user=params.impala_user, logoutput=True)
@@ -557,7 +638,17 @@ class ImpalaBase(Script):
 
     def status_impala_service(self, service_name):
         meta = self._impala_service_meta(service_name)
-        check_process_status(meta["pid"])
+        try:
+            check_process_status(meta["pid"])
+        except Exception:
+            listening_lines = self._port_probe_lines(meta.get("ports", []), listen_only=True)
+            if listening_lines:
+                raise Fail(
+                    "Impala service {0} has no healthy pidfile-backed process, but its configured ports are listening.\n{1}".format(
+                        service_name, "\n".join(listening_lines)
+                    )
+                )
+            raise
 
     def failover_impala_service(self, service_name, force_flag, ha_enabled, ha_hosts, component_name):
         import params

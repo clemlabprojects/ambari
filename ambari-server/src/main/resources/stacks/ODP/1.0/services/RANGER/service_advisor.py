@@ -282,13 +282,20 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       # For Ranger version 0.4.0
       servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
       putRangerEnvProperty = self.putProperty(configurations, "ranger-env", services)
-      include_hdfs = "HDFS" in servicesList
-      putRangerEnvProperty("ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
-      if include_hdfs:
-        if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
-          default_fs = services['configurations']['core-site']['properties']['fs.defaultFS']
-          default_fs += '/ranger/audit/%app-type%/%time:yyyyMMdd%'
-          putRangerEnvProperty('xasecure.audit.destination.hdfs.dir', default_fs)
+      ranger_audit_fs_type = self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+      putRangerEnvProperty("ranger_audit_filesystem_type", ranger_audit_fs_type)
+      current_ranger_audit_dir = self.getConfigProperty(configurations, services, "ranger-env", "xasecure.audit.destination.hdfs.dir", "")
+      include_filesystem_audit = (
+        (str(ranger_audit_fs_type).upper() == "HDFS" and "HDFS" in servicesList) or
+        (str(ranger_audit_fs_type).upper() == "OZONE" and "OZONE" in servicesList) or
+        str(ranger_audit_fs_type).upper() == "EXTERNAL"
+      )
+      if include_filesystem_audit:
+        if self.isConfigPropertyChanged(services, "ranger-env", "ranger_audit_filesystem_type") or self.isBootstrapFilesystemPath(current_ranger_audit_dir):
+          putRangerEnvProperty(
+            'xasecure.audit.destination.hdfs.dir',
+            self.buildPathForServiceFilesystem(configurations, services, "ranger-env", "ranger_audit_filesystem_type", "/ranger/audit/%app-type%/%time:yyyyMMdd%")
+          )
       else:
         putRangerEnvProperty('xasecure.audit.destination.hdfs', 'false')
 
@@ -473,12 +480,20 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       putRangerAdminProperty('ranger.audit.solr.zookeepers', 'NONE')
 
     # Recommend ranger.audit.solr.zookeepers and xasecure.audit.destination.hdfs.dir
-    include_hdfs = "HDFS" in servicesList
-    putRangerEnvProperty('ranger_audit_filesystem_type', self.getCoreFilesystemType(configurations, services))
-    if include_hdfs:
-      if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
-        default_fs = services['configurations']['core-site']['properties']['fs.defaultFS']
-        putRangerEnvProperty('xasecure.audit.destination.hdfs.dir', '{0}/{1}/{2}'.format(default_fs,'ranger','audit'))
+    ranger_audit_fs_type = self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+    putRangerEnvProperty('ranger_audit_filesystem_type', ranger_audit_fs_type)
+    current_ranger_audit_dir = self.getConfigProperty(configurations, services, "ranger-env", "xasecure.audit.destination.hdfs.dir", "")
+    include_filesystem_audit = (
+      (str(ranger_audit_fs_type).upper() == "HDFS" and "HDFS" in servicesList) or
+      (str(ranger_audit_fs_type).upper() == "OZONE" and "OZONE" in servicesList) or
+      str(ranger_audit_fs_type).upper() == "EXTERNAL"
+    )
+    if include_filesystem_audit:
+      if self.isConfigPropertyChanged(services, "ranger-env", "ranger_audit_filesystem_type") or self.isBootstrapFilesystemPath(current_ranger_audit_dir):
+        putRangerEnvProperty(
+          'xasecure.audit.destination.hdfs.dir',
+          self.buildPathForServiceFilesystem(configurations, services, "ranger-env", "ranger_audit_filesystem_type", "/ranger/audit")
+        )
     else:
       putRangerEnvProperty('xasecure.audit.destination.hdfs', 'false')
 
@@ -717,11 +732,19 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
         else:
           xasecure_audit_destination_hdfs = services['configurations']['ranger-env']['properties']['xasecure.audit.destination.hdfs']
 
-        if 'core-site' in services['configurations'] and ('fs.defaultFS' in services['configurations']['core-site']['properties']):
-          xasecure_audit_destination_hdfs_dir = '{0}/{1}/{2}'.format(services['configurations']['core-site']['properties']['fs.defaultFS'] ,'ranger','audit')
-        elif "HDFS" not in servicesList:
+        atlas_audit_fs_type = str(
+          self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+        ).upper()
+        include_filesystem_audit = (
+          (atlas_audit_fs_type == "HDFS" and "HDFS" in servicesList) or
+          (atlas_audit_fs_type == "OZONE" and "OZONE" in servicesList) or
+          atlas_audit_fs_type == "EXTERNAL"
+        )
+        if not include_filesystem_audit:
           xasecure_audit_destination_hdfs = 'false'
           xasecure_audit_destination_hdfs_dir = ''
+        else:
+          xasecure_audit_destination_hdfs_dir = self.getConfigProperty(configurations, services, "ranger-env", "xasecure.audit.destination.hdfs.dir", "")
 
         if 'xasecure.audit.destination.solr' in configurations['ranger-env']['properties']:
           xasecure_audit_destination_solr = configurations['ranger-env']['properties']['xasecure.audit.destination.solr']

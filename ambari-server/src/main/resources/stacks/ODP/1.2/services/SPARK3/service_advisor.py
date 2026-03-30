@@ -195,7 +195,8 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     putSparkEnvProperty = self.putProperty(configurations, "spark3-env", services)
 
     preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    putSparkEnvProperty("spark3_filesystem_type", preferred_fs_type)
+    spark3_fs_type = self.getConfigProperty(configurations, services, "spark3-env", "spark3_filesystem_type", preferred_fs_type)
+    putSparkEnvProperty("spark3_filesystem_type", spark3_fs_type)
 
     spark_queue = self.recommendYarnQueue(services, "spark3-defaults", "spark.yarn.queue")
     if spark_queue is not None:
@@ -205,22 +206,26 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     if spark_thrift_queue is not None:
       putSparkThriftSparkConf("spark.yarn.queue", spark_thrift_queue)
 
-    defaultFs = self.getServiceDefaultFs(configurations, services, "spark3-env", "spark3_filesystem_type")
-    historyDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.history.fs.logDirectory", "/spark3-history/")
-    eventLogDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.eventLog.dir", "/spark3-history/")
-    warehouseDir = self.getConfigProperty(configurations, services, "spark3-defaults", "spark.sql.warehouse.dir", "/apps/spark/warehouse")
+    if self.isConfigPropertyChanged(services, "spark3-env", "spark3_filesystem_type"):
+      putSparkProperty(
+        "spark.history.fs.logDirectory",
+        self.buildPathForServiceFilesystem(configurations, services, "spark3-env", "spark3_filesystem_type", "hdfs:///spark3-history/")
+      )
+      putSparkProperty(
+        "spark.eventLog.dir",
+        self.buildPathForServiceFilesystem(configurations, services, "spark3-env", "spark3_filesystem_type", "hdfs:///spark3-history/")
+      )
+      putSparkProperty(
+        "spark.sql.warehouse.dir",
+        self.buildPathForServiceFilesystem(configurations, services, "spark3-env", "spark3_filesystem_type", "/apps/spark/warehouse")
+      )
 
-    qualifiedHistoryDir = self.qualifyPathWithFs(defaultFs, historyDir)
-    qualifiedEventLogDir = self.qualifyPathWithFs(defaultFs, eventLogDir)
-    qualifiedWarehouseDir = self.qualifyPathWithFs(defaultFs, warehouseDir)
-
-    putSparkProperty("spark.history.fs.logDirectory", qualifiedHistoryDir)
-    putSparkProperty("spark.eventLog.dir", qualifiedEventLogDir)
-    putSparkProperty("spark.sql.warehouse.dir", qualifiedWarehouseDir)
-
-    putSparkThriftSparkConf("spark.history.fs.logDirectory", qualifiedHistoryDir)
-    putSparkThriftSparkConf("spark.eventLog.dir", qualifiedEventLogDir)
-    putSparkThriftSparkConf("spark.sql.warehouse.dir", qualifiedWarehouseDir)
+      putSparkThriftSparkConf("spark.history.fs.logDirectory", "{{spark_history_dir}}")
+      putSparkThriftSparkConf("spark.eventLog.dir", "{{spark_history_dir}}")
+      putSparkThriftSparkConf(
+        "spark.sql.warehouse.dir",
+        self.buildPathForServiceFilesystem(configurations, services, "spark3-env", "spark3_filesystem_type", "/apps/spark/warehouse")
+      )
 
 
   def recommendSPARK3ConfigurationsFromHDP26(self, configurations, clusterData, services, hosts):

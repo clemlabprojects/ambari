@@ -226,17 +226,20 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
         impala_user = "impala"
 
     preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    putHiveEnvProperty("hive_filesystem_type", preferred_fs_type)
+    hive_fs_type = self.getConfigProperty(configurations, services, "hive-env", "hive_filesystem_type", preferred_fs_type)
+    putHiveEnvProperty("hive_filesystem_type", hive_fs_type)
 
-    hive_default_fs = self.getServiceDefaultFs(configurations, services, "hive-env", "hive_filesystem_type")
-    for property_name, default_value in [
-      ("hive.exec.scratchdir", "/tmp/hive"),
-      ("hive.metastore.warehouse.dir", "/warehouse/tablespace/managed/hive"),
-      ("hive.metastore.warehouse.external.dir", "/warehouse/tablespace/external/hive"),
-      ("hive.repl.rootdir", "/apps/hive/repl")
-    ]:
-      current_value = self.getConfigProperty(configurations, services, "hive-site", property_name, default_value)
-      putHiveSiteProperty(property_name, self.qualifyPathWithFs(hive_default_fs, current_value))
+    if self.isConfigPropertyChanged(services, "hive-env", "hive_filesystem_type"):
+      for property_name, default_value in [
+        ("hive.exec.scratchdir", "/tmp/hive"),
+        ("hive.metastore.warehouse.dir", "/warehouse/tablespace/managed/hive"),
+        ("hive.metastore.warehouse.external.dir", "/warehouse/tablespace/external/hive"),
+        ("hive.repl.rootdir", "")
+      ]:
+        putHiveSiteProperty(
+          property_name,
+          self.buildPathForServiceFilesystem(configurations, services, "hive-env", "hive_filesystem_type", default_value)
+        )
 
     containerSize = clusterData["mapMemory"] if clusterData["mapMemory"] > 2048 else int(clusterData["reduceMemory"])
     containerSize = min(clusterData["containers"] * clusterData["ramPerContainer"], containerSize)

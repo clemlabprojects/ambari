@@ -59,6 +59,16 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>ha.zookeeper.quorum</name>
+    <display-name>ha.zookeeper.quorum</display-name>
+    <value></value>
+    <description>Comma-separated ZooKeeper quorum used by the HDFS ZK Failover Controller in HA deployments.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
     <name>fs.trash.interval</name>
     <value>360</value>
     <description>Number of minutes after which the checkpoint gets deleted.

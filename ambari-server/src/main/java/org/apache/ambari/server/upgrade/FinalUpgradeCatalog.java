@@ -19,9 +19,11 @@
 package org.apache.ambari.server.upgrade;
 
 import java.sql.SQLException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -53,9 +55,34 @@ import com.google.inject.Injector;
 public class FinalUpgradeCatalog extends AbstractFinalUpgradeCatalog {
   private static final String ODP_STACK_NAME = "ODP";
   private static final String HDFS_SERVICE_NAME = "HDFS";
+  private static final String OZONE_SERVICE_NAME = "OZONE";
+  private static final String SPARK2_SERVICE_NAME = "SPARK2";
+  private static final String SPARK3_SERVICE_NAME = "SPARK3";
+  private static final String HIVE_SERVICE_NAME = "HIVE";
+  private static final String FLINK_SERVICE_NAME = "FLINK";
+  private static final String RANGER_SERVICE_NAME = "RANGER";
+  private static final String SQOOP_SERVICE_NAME = "SQOOP";
+  private static final String POLARIS_SERVICE_NAME = "POLARIS";
   private static final String CORE_SERVICE_NAME = "CORE";
+  private static final String CORE_ENV_CONFIG = "core-env";
+  private static final String CORE_SITE_CONFIG = "core-site";
+  private static final String CORE_FILESYSTEM_TYPE_PROPERTY = "core_filesystem_type";
+  private static final String CORE_EXTERNAL_DEFAULT_FS_PROPERTY = "core_external_default_fs";
+  private static final String FS_DEFAULTFS_PROPERTY = "fs.defaultFS";
   private static final String CORE_CLIENT_COMPONENT_NAME = "CORE_CLIENT";
   private static final String CORE_UPGRADE_NOTE = "Migrate CORE service for legacy ODP cluster during Ambari upgrade";
+  private static final String HDFS_FILESYSTEM_TYPE = "HDFS";
+  private static final String OZONE_FILESYSTEM_TYPE = "OZONE";
+  private static final String EXTERNAL_FILESYSTEM_TYPE = "EXTERNAL";
+  private static final SelectorProperty[] LEGACY_FILESYSTEM_SELECTOR_PROPERTIES = new SelectorProperty[] {
+      new SelectorProperty(SPARK2_SERVICE_NAME, "spark2-env", "spark2_filesystem_type"),
+      new SelectorProperty(SPARK3_SERVICE_NAME, "spark3-env", "spark3_filesystem_type"),
+      new SelectorProperty(HIVE_SERVICE_NAME, "hive-env", "hive_filesystem_type"),
+      new SelectorProperty(FLINK_SERVICE_NAME, "flink-env", "flink_filesystem_type"),
+      new SelectorProperty(RANGER_SERVICE_NAME, "ranger-env", "ranger_audit_filesystem_type"),
+      new SelectorProperty(SQOOP_SERVICE_NAME, "sqoop-env", "sqoop_filesystem_type"),
+      new SelectorProperty(POLARIS_SERVICE_NAME, "polaris-env", "polaris_filesystem_type")
+  };
 
   /**
    * Logger.
@@ -71,6 +98,7 @@ public class FinalUpgradeCatalog extends AbstractFinalUpgradeCatalog {
   protected void executeDMLUpdates() throws AmbariException, SQLException {
     updateClusterEnv();
     ensureCoreServiceForLegacyOdpClusters();
+    ensureFilesystemSelectorDefaultsForLegacyOdpClusters();
   }
 
   /**
@@ -237,6 +265,136 @@ public class FinalUpgradeCatalog extends AbstractFinalUpgradeCatalog {
       if (changed) {
         cluster.createServiceConfigVersion(CORE_SERVICE_NAME, AUTHENTICATED_USER_NAME, CORE_UPGRADE_NOTE, null);
       }
+    }
+  }
+
+  /**
+   * Backfills the service-level filesystem selector properties introduced in
+   * ODP service env configs so legacy clusters upgraded in-place through
+   * Ambari have deterministic defaults before any later stack advisor pass.
+   * <p>
+   * This is intentionally add-only: if an administrator already set a
+   * selector, upgrade must not overwrite it. When {@code core-env} is still
+   * missing the selector values, this helper infers the effective cluster
+   * filesystem from the current {@code core-site/fs.defaultFS}.
+   */
+  protected void ensureFilesystemSelectorDefaultsForLegacyOdpClusters() throws AmbariException {
+    AmbariManagementController ambariManagementController = injector.getInstance(
+        AmbariManagementController.class);
+    Clusters clusters = ambariManagementController.getClusters();
+
+    for (final Cluster cluster : getCheckedClusterMap(clusters).values()) {
+      StackId stackId = cluster.getDesiredStackVersion();
+      if (stackId == null || !ODP_STACK_NAME.equals(stackId.getStackName())) {
+        continue;
+      }
+
+      Map<String, Service> installedServices = cluster.getServices();
+      String clusterFilesystemType = resolveClusterFilesystemType(cluster, installedServices);
+      String currentDefaultFs = getDesiredConfigProperty(cluster, CORE_SITE_CONFIG, FS_DEFAULTFS_PROPERTY);
+
+      Map<String, String> coreEnvUpdates = new HashMap<>();
+      if (!hasText(getDesiredConfigProperty(cluster, CORE_ENV_CONFIG, CORE_FILESYSTEM_TYPE_PROPERTY))) {
+        coreEnvUpdates.put(CORE_FILESYSTEM_TYPE_PROPERTY, clusterFilesystemType);
+      }
+      if (EXTERNAL_FILESYSTEM_TYPE.equals(clusterFilesystemType)
+          && hasText(currentDefaultFs)
+          && !hasText(getDesiredConfigProperty(cluster, CORE_ENV_CONFIG, CORE_EXTERNAL_DEFAULT_FS_PROPERTY))) {
+        coreEnvUpdates.put(CORE_EXTERNAL_DEFAULT_FS_PROPERTY, currentDefaultFs);
+      }
+      if (!coreEnvUpdates.isEmpty()) {
+        LOG.info("Backfilling CORE filesystem selector defaults {} for cluster {}", coreEnvUpdates.keySet(),
+            cluster.getClusterName());
+        updateConfigurationPropertiesForCluster(cluster, CORE_ENV_CONFIG, coreEnvUpdates, false, false);
+      }
+
+      for (SelectorProperty selectorProperty : LEGACY_FILESYSTEM_SELECTOR_PROPERTIES) {
+        if (!installedServices.containsKey(selectorProperty.serviceName)) {
+          continue;
+        }
+        updateConfigurationPropertiesForCluster(
+            cluster,
+            selectorProperty.configType,
+            Collections.singletonMap(selectorProperty.propertyName, clusterFilesystemType),
+            false,
+            false);
+      }
+    }
+  }
+
+  private String resolveClusterFilesystemType(Cluster cluster, Map<String, Service> installedServices) {
+    String configuredCoreFilesystemType = getDesiredConfigProperty(cluster, CORE_ENV_CONFIG, CORE_FILESYSTEM_TYPE_PROPERTY);
+    if (hasText(configuredCoreFilesystemType)) {
+      String normalized = configuredCoreFilesystemType.trim().toUpperCase(Locale.ENGLISH);
+      if (HDFS_FILESYSTEM_TYPE.equals(normalized)
+          || OZONE_FILESYSTEM_TYPE.equals(normalized)
+          || EXTERNAL_FILESYSTEM_TYPE.equals(normalized)) {
+        return normalized;
+      }
+    }
+
+    String defaultFs = getDesiredConfigProperty(cluster, CORE_SITE_CONFIG, FS_DEFAULTFS_PROPERTY);
+    if (hasText(defaultFs)) {
+      return inferFilesystemTypeFromDefaultFs(defaultFs, installedServices);
+    }
+
+    return getPreferredFilesystemType(installedServices);
+  }
+
+  private String inferFilesystemTypeFromDefaultFs(String defaultFs, Map<String, Service> installedServices) {
+    String normalizedDefaultFs = defaultFs.trim().toLowerCase(Locale.ENGLISH);
+    if (normalizedDefaultFs.startsWith("ofs://") || normalizedDefaultFs.startsWith("o3fs://")) {
+      return installedServices.containsKey(OZONE_SERVICE_NAME) ? OZONE_FILESYSTEM_TYPE : EXTERNAL_FILESYSTEM_TYPE;
+    }
+
+    if (normalizedDefaultFs.startsWith("hdfs://")
+        || normalizedDefaultFs.startsWith("viewfs://")
+        || normalizedDefaultFs.startsWith("webhdfs://")) {
+      return installedServices.containsKey(HDFS_SERVICE_NAME) ? HDFS_FILESYSTEM_TYPE : EXTERNAL_FILESYSTEM_TYPE;
+    }
+
+    if (normalizedDefaultFs.matches("^[a-z][a-z0-9+\\-.]*://.*$")) {
+      return EXTERNAL_FILESYSTEM_TYPE;
+    }
+
+    return getPreferredFilesystemType(installedServices);
+  }
+
+  private String getPreferredFilesystemType(Map<String, Service> installedServices) {
+    if (installedServices.containsKey(HDFS_SERVICE_NAME)) {
+      return HDFS_FILESYSTEM_TYPE;
+    }
+    if (installedServices.containsKey(OZONE_SERVICE_NAME)) {
+      return OZONE_FILESYSTEM_TYPE;
+    }
+    return EXTERNAL_FILESYSTEM_TYPE;
+  }
+
+  private String getDesiredConfigProperty(Cluster cluster, String configType, String propertyName) {
+    if (cluster == null || propertyName == null) {
+      return null;
+    }
+
+    org.apache.ambari.server.state.Config config = cluster.getDesiredConfigByType(configType);
+    if (config == null || config.getProperties() == null) {
+      return null;
+    }
+    return config.getProperties().get(propertyName);
+  }
+
+  private boolean hasText(String value) {
+    return value != null && !value.trim().isEmpty();
+  }
+
+  private static final class SelectorProperty {
+    private final String serviceName;
+    private final String configType;
+    private final String propertyName;
+
+    private SelectorProperty(String serviceName, String configType, String propertyName) {
+      this.serviceName = serviceName;
+      this.configType = configType;
+      this.propertyName = propertyName;
     }
   }
 
