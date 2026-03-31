@@ -18,7 +18,9 @@ limitations under the License.
 """
 
 import os
+import socket
 import subprocess
+import time
 
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
@@ -28,6 +30,9 @@ from resource_management.libraries.script.script import Script
 
 
 class ImpalaServiceCheck(Script):
+    _HS2_WAIT_TIMEOUT_SECONDS = 120
+    _HS2_WAIT_POLL_SECONDS = 5
+
     def _resolve_impala_shell(self, params):
         candidates = [
             params.impala_shell_path,
@@ -77,6 +82,33 @@ class ImpalaServiceCheck(Script):
 
         return " ".join(["'{0}'".format(arg.replace("'", "'\"'\"'")) for arg in command])
 
+    def _is_reachable(self, host, port, timeout_sec=2.0):
+        sock = None
+        try:
+            sock = socket.create_connection((host, int(port)), timeout_sec)
+            return True
+        except Exception:
+            return False
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _wait_for_hs2_listener(self, host, port):
+        deadline = time.time() + self._HS2_WAIT_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            if self._is_reachable(host, port):
+                return True
+            Logger.info(
+                "Impala HS2 listener is not ready on {0}:{1}. Waiting {2} seconds.".format(
+                    host, port, self._HS2_WAIT_POLL_SECONDS
+                )
+            )
+            time.sleep(self._HS2_WAIT_POLL_SECONDS)
+        return False
+
     def service_check(self, env):
         import params
         env.set_params(params)
@@ -101,6 +133,12 @@ class ImpalaServiceCheck(Script):
                 )
             )
             try:
+                if not self._wait_for_hs2_listener(host, params.impala_hs2_port):
+                    raise Fail(
+                        "Impala HS2 listener on {0}:{1} did not become reachable within {2} seconds.".format(
+                            host, params.impala_hs2_port, self._HS2_WAIT_TIMEOUT_SECONDS
+                        )
+                    )
                 Execute(
                     self._build_check_command(params, impala_shell, host),
                     user=params.smokeuser,

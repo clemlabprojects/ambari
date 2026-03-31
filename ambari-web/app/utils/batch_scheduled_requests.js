@@ -210,7 +210,7 @@ module.exports = {
    * Restart list of host components
    * @param {Ember.Enumerable} hostComponentsList list of host components should be restarted
    * @param {String} context message to show in BG popup
-   * @param {String} level - operation level, can be ("CLUSTER", "SERVICE", "HOST", "HOSTCOMPONENT")
+   * @param {String} level - operation level, can be ("CLUSTER", "SERVICE", "HOST", "HOST_COMPONENT")
    * @param {String} query
    */
   restartHostComponents: function (hostComponentsList, context, level, query) {
@@ -272,7 +272,7 @@ module.exports = {
   },
 
   /**
-   * @param {String} level - operation level name, can be ("CLUSTER", "SERVICE", "HOST", "HOSTCOMPONENT")
+   * @param {String} level - operation level name, can be ("CLUSTER", "SERVICE", "HOST", "HOST_COMPONENT")
    * @param {String} serviceName
    * @param {String} componentName
    * @returns {Object} {{level: *, cluster_name: *}} - operation level object

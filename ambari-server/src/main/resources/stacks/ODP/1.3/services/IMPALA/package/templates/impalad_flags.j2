@@ -8,6 +8,7 @@
 --state_store_host={{impala_state_store_host}}
 -mem_limit={{impalad_mem_limit}}
 -catalog_service_host={{impala_catalog_host}}
+-catalog_service_port={{impala_catalog_service_port}}
 -state_store_port={{impala_state_store_port}}
 {% if enable_catalogd_ha %}
 -enable_catalogd_ha=true
@@ -46,6 +47,7 @@
 -convert_legacy_hive_parquet_utc_timestamps={{ impala_convert_legacy_hive_parquet_utc_timestamps }}
 -insert_inherit_permissions
 -use_local_catalog={{ use_local_catalog }}
+-catalog_topic_mode={{ catalog_topic_mode }}
 -enable_legacy_avx_support={{ enable_legacy_avx_support }}
 -disk_spill_encryption={{ disk_spill_encryption }}
 -abort_on_failed_audit_event={{ abort_on_failed_audit_event }}

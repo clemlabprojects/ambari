@@ -217,12 +217,13 @@ max_audit_event_log_file_size = default("/configurations/impala-env/max_audit_ev
 max_audit_event_log_files = default("/configurations/impala-env/max_audit_event_log_files", 10)
 impala_use_local_tz_for_unix_timestamp_conversions = _as_bool(default("/configurations/impala-env/impala_use_local_tz_for_unix_timestamp_conversions", False))
 impala_convert_legacy_hive_parquet_utc_timestamps = _as_bool(default("/configurations/impala-env/impala_convert_legacy_hive_parquet_utc_timestamps", False))
-use_local_catalog =  _as_bool(default("/configurations/impala-env/use_local_catalog", False))
+use_local_catalog =  _as_bool(default("/configurations/impala-env/use_local_catalog", True))
+catalog_topic_mode = default("/configurations/impala-env/catalog_topic_mode", "minimal")
 disk_spill_encryption = default("/configurations/impala-env/disk_spill_encryption", "none")
 abort_on_failed_audit_event = _as_bool(default("/configurations/impala-env/abort_on_failed_audit_event", False))
 lineage_event_log_dir = default("/configurations/impala-env/lineage_event_log_dir", os.path.join(impala_log_dir, "lineage"))
 max_lineage_log_file_size = default("/configurations/impala-env/max_lineage_log_file_size", 100 * 1024 * 1024)
-is_coordinator = current_host_name in impala_catalog_hosts
+is_coordinator = current_host_name in impala_daemon_hosts
 is_executor = current_host_name in impala_daemon_hosts
 local_library_dir = default("/configurations/impala-env/local_library_dir", "/usr/lib/impala/lib")
 # 

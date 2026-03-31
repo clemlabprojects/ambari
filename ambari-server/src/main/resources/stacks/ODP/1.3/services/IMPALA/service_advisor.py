@@ -210,6 +210,15 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
         putImpalaEnvProperty("impala_service_java_options", " ".join(options))
         putImpalaEnvProperty("impalad_mem_limit", self._recommended_impalad_mem_limit(services, hosts))
 
+        use_local_catalog = str(getServiceConfigProperty("impala-env", "use_local_catalog", "false")).lower() == "true"
+        current_catalog_topic_mode = getServiceConfigProperty("impala-env", "catalog_topic_mode", "").strip().lower()
+        if use_local_catalog:
+            if current_catalog_topic_mode in ("", "full"):
+                putImpalaEnvProperty("catalog_topic_mode", "minimal")
+        else:
+            if current_catalog_topic_mode in ("", "minimal"):
+                putImpalaEnvProperty("catalog_topic_mode", "full")
+
         # Required by Impala HMS event processing on secured clusters.
         hive_site_api_auth = mergeCommaSeparatedValues(
             getServiceConfigProperty("hive-site", "hive.metastore.event.db.notification.api.auth"),

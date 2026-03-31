@@ -17,6 +17,7 @@
  */
 var App = require('app');
 var stringUtils = require('utils/string_utils');
+var batchScheduledRequests = require('utils/batch_scheduled_requests');
 
 App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
 
@@ -423,6 +424,20 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
             return role + Em.I18n.t('installer.step9.serviceStatus.stop.failed');
         }
         break;
+      case 'RESTART' :
+        switch (task.status) {
+          case 'PENDING':
+            return 'Pending restart of ' + role;
+          case 'QUEUED' :
+            return 'Queued restart of ' + role;
+          case 'IN_PROGRESS':
+            return 'Restarting ' + role;
+          case 'COMPLETED' :
+            return role + ' restart completed';
+          case 'FAILED':
+            return role + ' restart failed';
+        }
+        break;
       case 'CUSTOM_COMMAND':
         role = App.format.commandDetail(task.command_detail, task.request_input, task.ops_display_name);
       case 'EXECUTE' :
@@ -458,6 +473,135 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   },
 
   /**
+   * @returns {string[]}
+   * @method getAddedServicesList
+   */
+  getAddedServicesList: function () {
+    var servicesList = this.get('content.services').filterProperty('isSelected').filterProperty('isInstalled', false).mapProperty('serviceName');
+    if (servicesList.contains('OOZIE')) {
+      servicesList = servicesList.concat(['HDFS', 'YARN', 'MAPREDUCE2']);
+    }
+    return servicesList;
+  },
+
+  /**
+   * @param {string} componentName
+   * @returns {App.HostComponent[]}
+   * @method getStartedHostComponents
+   */
+  getStartedHostComponents: function (componentName) {
+    return App.HostComponent.find().filterProperty('componentName', componentName).filterProperty('workStatus', App.HostComponentStatus.started);
+  },
+
+  /**
+   * @returns {boolean}
+   * @method shouldRestartHiveMetastoreBeforeStartingImpala
+   */
+  shouldRestartHiveMetastoreBeforeStartingImpala: function () {
+    return this.get('content.controllerName') === 'addServiceController' &&
+      this.getAddedServicesList().contains('IMPALA') &&
+      this.getStartedHostComponents('HIVE_METASTORE').length > 0;
+  },
+
+  /**
+   * Run any required pre-start orchestration before starting newly added services.
+   * @return {$.ajax|null}
+   * @method launchPreStartServiceActions
+   */
+  launchPreStartServiceActions: function () {
+    if (this.shouldRestartHiveMetastoreBeforeStartingImpala()) {
+      return this.restartHiveMetastoreBeforeStartingImpala();
+    }
+    return this.launchStartServices();
+  },
+
+  /**
+   * Restart Hive Metastore before the first Impala start so metastore notification
+   * settings written by the Impala advisor are active before catalogd starts.
+   * @return {$.ajax|null}
+   * @method restartHiveMetastoreBeforeStartingImpala
+   */
+  restartHiveMetastoreBeforeStartingImpala: function () {
+    var hiveMetastoreHosts = this.getStartedHostComponents('HIVE_METASTORE').mapProperty('hostName').uniq();
+
+    if (!hiveMetastoreHosts.length) {
+      return this.launchStartServices();
+    }
+
+    if (App.get('testMode')) {
+      this.set('numPolls', 6);
+    }
+
+    return App.ajax.send({
+      name: 'restart.hostComponents',
+      sender: this,
+      data: {
+        context: 'Restart Hive Metastore before starting Impala',
+        resource_filters: [{
+          service_name: 'HIVE',
+          component_name: 'HIVE_METASTORE',
+          hosts: hiveMetastoreHosts.join(',')
+        }],
+        operation_level: batchScheduledRequests.getOperationLevelObject('HOST_COMPONENT', 'HIVE', 'HIVE_METASTORE')
+      },
+      success: 'restartHiveMetastoreBeforeStartingImpalaSuccessCallback',
+      error: 'restartHiveMetastoreBeforeStartingImpalaErrorCallback'
+    });
+  },
+
+  /**
+   * @param {object} jsonData
+   * @method restartHiveMetastoreBeforeStartingImpalaSuccessCallback
+   */
+  restartHiveMetastoreBeforeStartingImpalaSuccessCallback: function (jsonData) {
+    if (!jsonData) {
+      return this.launchStartServices();
+    }
+
+    this.saveClusterStatus({
+      status: 'INSTALLED',
+      requestId: jsonData.Requests.id,
+      isStartError: false,
+      isCompleted: false,
+      pendingStartAction: 'RESTART_HIVE_METASTORE'
+    });
+
+    App.clusterStatus.setClusterStatus({
+      clusterState: 'SERVICE_STARTING_3',
+      wizardControllerName: this.get('content.controllerName'),
+      localdb: App.db.data
+    });
+
+    this.startPolling();
+  },
+
+  /**
+   * @method restartHiveMetastoreBeforeStartingImpalaErrorCallback
+   */
+  restartHiveMetastoreBeforeStartingImpalaErrorCallback: function () {
+    this.set('startCallFailed', true);
+    this.saveClusterStatus({
+      status: 'START FAILED',
+      isStartError: true,
+      isCompleted: false,
+      pendingStartAction: null
+    });
+    this.get('hosts').forEach(function (host) {
+      host.set('progress', '100');
+    });
+    this.set('progress', '100');
+
+    App.ModalPopup.show({
+      encodeBody: false,
+      primary: Em.I18n.t('ok'),
+      header: Em.I18n.t('installer.step9.service.start.header'),
+      secondary: false,
+      body: Em.I18n.t('installer.step9.service.start.failed'),
+      'data-qa': 'start-failed-modal'
+    });
+  },
+
+  /**
    * Run start/check services after installation phase.
    * Does Ajax call to start all services
    * @return {$.ajax|null}
@@ -484,10 +628,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         };
         break;
       case 'addServiceController':
-        var servicesList = this.get('content.services').filterProperty('isSelected').filterProperty('isInstalled', false).mapProperty('serviceName');
-        if (servicesList.contains('OOZIE')) {
-          servicesList = servicesList.concat(['HDFS', 'YARN', 'MAPREDUCE2']);
-        }
+        var servicesList = this.getAddedServicesList();
         name = 'common.services.update';
         data = {
           "context": Em.I18n.t("requestInfo.startAddedServices"),
@@ -530,7 +671,8 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         status: 'INSTALLED',
         requestId: requestId,
         isStartError: false,
-        isCompleted: false
+        isCompleted: false,
+        pendingStartAction: 'START_SERVICES'
       };
       this.hostHasClientsOnly(false);
       this.saveClusterStatus(clusterStatus);
@@ -540,7 +682,8 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       clusterStatus = {
         status: 'STARTED',
         isStartError: false,
-        isCompleted: true
+        isCompleted: true,
+        pendingStartAction: null
       };
       this.saveClusterStatus(clusterStatus);
       this.set('status', 'success');
@@ -591,9 +734,10 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   launchStartServicesErrorCallback: function (jqXHR, ajaxOptions, error, opt) {
     this.set('startCallFailed', true);
     var clusterStatus = {
-      status: 'INSTALL FAILED',
-      isStartError: false,
-      isCompleted: false
+      status: 'START FAILED',
+      isStartError: true,
+      isCompleted: false,
+      pendingStartAction: null
     };
     this.saveClusterStatus(clusterStatus);
     this.get('hosts').forEach(function (host) {
@@ -800,11 +944,27 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   isServicesStarted: function (polledData) {
     var clusterStatus = {};
     if (!polledData.someProperty('Tasks.status', 'PENDING') && !polledData.someProperty('Tasks.status', 'QUEUED') && !polledData.someProperty('Tasks.status', 'IN_PROGRESS')) {
+      if (this.get('content.cluster.pendingStartAction') === 'RESTART_HIVE_METASTORE') {
+        this.saveClusterStatus({
+          pendingStartAction: null
+        });
+        if (this.isSuccess(polledData)) {
+          this.launchStartServices();
+        } else {
+          this.saveClusterStatus({
+            status: 'START FAILED',
+            requestId: this.get('content.cluster.requestId'),
+            isCompleted: true
+          });
+        }
+        return true;
+      }
       this.set('progress', '100');
       clusterStatus = {
         status: 'INSTALLED',
         requestId: this.get('content.cluster.requestId'),
-        isCompleted: true
+        isCompleted: true,
+        pendingStartAction: null
       };
       if (this.isSuccess(polledData)) {
         clusterStatus.status = 'STARTED';
@@ -1167,7 +1327,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         this.set('progress', '100');
         this.changeParseHostInfo(true);
       } else {
-        this.launchStartServices();
+        this.launchPreStartServiceActions();
       }
     }
   },

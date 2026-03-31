@@ -626,7 +626,7 @@
     </property>
     <property>
         <name>use_local_catalog</name>
-        <value>false</value>
+        <value>true</value>
         <description>Enable catalog metadata caching locally</description>
         <value-attributes>
             <type>boolean</type>
