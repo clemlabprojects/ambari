@@ -11,14 +11,15 @@
         "source": {
           "type": "WEB",
           "uri": {
-              "http": "{{spark3-defaults/spark.yarn.historyServer.address}}",
-              "https": "{{spark3-defaults/spark.yarn.historyServer.address}}",
-              "kerberos_keytab": "{{cluster-env/smokeuser_keytab}}",
-              "kerberos_principal": "{{cluster-env/smokeuser_principal_name}}",
-              "https_property": "{{spark3-defaults/spark.ssl.enabled}}",
-              "https_property_value": "true",
-              "connection_timeout": 5.0
-            },
+            "http": "{{spark3-defaults/spark.history.ui.port}}",
+            "https": "{{spark3-defaults/spark.ssl.historyServer.port}}",
+            "https_property": "{{spark3-defaults/spark.ssl.enabled}}",
+            "https_property_value": "true",
+            "kerberos_keytab": "{{cluster-env/smokeuser_keytab}}",
+            "kerberos_principal": "{{cluster-env/smokeuser_principal_name}}",
+            "connection_timeout": 5.0,
+            "default_port": 18082
+          },
           "reporting": {
             "ok": {
               "text": "HTTP {0} response in {2:.3f}s"
@@ -69,7 +70,7 @@
         "scope": "ANY",
         "source": {
           "type": "SCRIPT",
-          "path": "ODP/1.2/services/SPARK3/package/scripts/alerts/alert_spark3_thrift_port.py",
+          "path": "ODP/1.2/services/SPARK3/package/scripts/alerts/alert_spark2_thrift_port.py",
           "parameters": [
             {
               "name": "check.command.timeout",
