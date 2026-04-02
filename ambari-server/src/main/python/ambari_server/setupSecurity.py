@@ -54,7 +54,8 @@ from ambari_server.serverConfiguration import configDefaults, parse_properties_f
   get_resources_location, SECURITY_MASTER_KEY_LOCATION, SETUP_OR_UPGRADE_MSG, \
   CHECK_AMBARI_KRB_JAAS_CONFIGURATION_PROPERTY
 from ambari_server.serverUtils import is_server_runing, get_ambari_server_api_base, \
-  get_ambari_admin_username_password_pair, perform_changes_via_rest_api, get_ssl_context
+  get_ambari_admin_username_password_pair, perform_changes_via_rest_api, get_ssl_context, \
+  create_json_request_body
 from ambari_server.setupActions import SETUP_ACTION, LDAP_SETUP_ACTION
 from ambari_server.userInput import get_validated_string_input, get_prompt_default, read_password, get_YN_input, \
   quit_if_has_answer
@@ -414,7 +415,7 @@ def sync_ldap(options):
   if get_verbose():
     sys.stdout.write('\nCalling API ' + url + ' : ' + str(bodies) + '\n')
 
-  request.data=json.dumps(bodies)
+  request.data = create_json_request_body(bodies)
   request.get_method = lambda: 'POST'
 
   try:
@@ -434,7 +435,7 @@ def sync_ldap(options):
   request.add_header('Authorization', 'Basic %s' % admin_auth)
   request.add_header('X-Requested-By', 'ambari')
   body = [{"LDAP":{"synced_groups":"*","synced_users":"*"}}]
-  request.data=json.dumps(body)
+  request.data = create_json_request_body(body)
   request.get_method = lambda: 'GET'
   request_in_progress = True
 

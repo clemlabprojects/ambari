@@ -221,7 +221,7 @@ def perform_changes_via_rest_api(properties, admin_login, admin_password, url_po
   request.add_header('Authorization', 'Basic %s' % admin_auth)
   request.add_header('X-Requested-By', 'ambari')
   if request_data is not None:
-    request.data=json.dumps(request_data)
+    request.data = create_json_request_body(request_data)
   request.get_method = lambda: get_method
 
   with closing(urllib.request.urlopen(request, context=get_ssl_context(properties))) as response:
@@ -230,6 +230,10 @@ def perform_changes_via_rest_api(properties, admin_login, admin_password, url_po
       err = 'Error while performing changes via Ambari REST API. Http status code - ' + str(
         response_status_code)
       raise FatalException(1, err)
+
+
+def create_json_request_body(request_data):
+  return json.dumps(request_data).encode('utf-8')
 
 
 def get_ssl_context(properties, requested_protocol=None):

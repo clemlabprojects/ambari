@@ -97,7 +97,7 @@ class TestServerUpgrade(TestCase):
     self.assertTrue(urlopen_mock.called)
     request = urlopen_mock.call_args_list[0][0][0]
     self.assertEqual(request.get_full_url(), 'http://127.0.0.1:8080/api/v1/clusters/cc/stack_versions')
-    self.assertEqual(request.data, '{"ClusterStackVersions": {"repository_version": "HDP-2.2.2.0-2561", "state": "CURRENT", "force": false}}')
+    self.assertEqual(request.data, b'{"ClusterStackVersions": {"repository_version": "HDP-2.2.2.0-2561", "state": "CURRENT", "force": false}}')
     self.assertEqual(request.origin_req_host, '127.0.0.1')
     self.assertEqual(request.headers, {'X-requested-by': 'ambari', 'Authorization': 'Basic ZHVtbXlfc3RyaW5nOmR1bW15X3N0cmluZw=='})
 
@@ -151,7 +151,7 @@ class TestServerUpgrade(TestCase):
     self.assertTrue(urlopen_mock.called)
     request = urlopen_mock.call_args_list[0][0][0]
     self.assertEqual(request.get_full_url(), 'http://127.0.0.1:8080/api/v1/clusters/cc/stack_versions')
-    self.assertEqual(request.data, '{"ClusterStackVersions": {"repository_version": "HDP-2.2.2.0-2561", "state": "CURRENT", "force": true}}')
+    self.assertEqual(request.data, b'{"ClusterStackVersions": {"repository_version": "HDP-2.2.2.0-2561", "state": "CURRENT", "force": true}}')
     self.assertEqual(request.origin_req_host, '127.0.0.1')
     self.assertEqual(request.headers, {'X-requested-by': 'ambari', 'Authorization': 'Basic ZHVtbXlfc3RyaW5nOmR1bW15X3N0cmluZw=='})
 
