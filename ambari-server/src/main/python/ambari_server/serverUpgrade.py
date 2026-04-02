@@ -46,7 +46,8 @@ from ambari_server.serverConfiguration import configDefaults, get_resources_loca
 from ambari_server.setupSecurity import adjust_directory_permissions, \
   generate_env, ensure_can_start_under_current_user
 from ambari_server.utils import compare_versions, get_json_url_from_repo_file, update_latest_in_repoinfos_for_stacks
-from ambari_server.serverUtils import is_server_runing, get_ambari_server_api_base, get_ssl_context
+from ambari_server.serverUtils import is_server_runing, get_ambari_server_api_base, get_ssl_context, \
+  create_json_request_body
 from ambari_server.userInput import get_validated_string_input, get_prompt_default, read_password, get_YN_input
 from ambari_server.serverClassPath import ServerClassPath
 from ambari_server.serverSetup import JDKSetup, getJDKVersion
@@ -417,7 +418,7 @@ def set_current(options):
   if get_verbose():
     sys.stdout.write('\nCalling API ' + url + ' : ' + str(data) + '\n')
 
-  request.data=json.dumps(data)
+  request.data = create_json_request_body(data)
   request.get_method = lambda: 'PUT'
 
   try:

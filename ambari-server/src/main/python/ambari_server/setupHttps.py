@@ -343,7 +343,7 @@ def get_fqdn(timeout=2):
 
   get_fqdn_service_url = properties[GET_FQDN_SERVICE_URL]
   try:
-    handle = urllib.request.urlopen(get_fqdn_service_url, '', timeout)
+    handle = urllib.request.urlopen(get_fqdn_service_url, timeout=timeout)
     str = handle.read()
     handle.close()
     return str

@@ -7222,6 +7222,7 @@ class TestAmbariServer(TestCase):
     requestCall = urlopen_mock.call_args_list[0]
     args, kwargs = requestCall
     request = args[0]
+    self.assertTrue(isinstance(request.data, bytes))
     requestData = json.loads(request.data)
     self.assertTrue(isinstance(requestData, dict))
     ldapProperties = requestData['Configuration']['properties'];
@@ -7252,6 +7253,7 @@ class TestAmbariServer(TestCase):
     requestCall = urlopen_mock.call_args_list[0]
     args, kwargs = requestCall
     request = args[0]
+    self.assertTrue(isinstance(request.data, bytes))
     requestData = json.loads(request.data)
     self.assertTrue(isinstance(requestData, dict))
     ldapProperties = requestData['Configuration']['properties'];
@@ -7419,6 +7421,7 @@ class TestAmbariServer(TestCase):
     requestCall = urlopen_mock.call_args_list[0]
     args, kwargs = requestCall
     request = args[0]
+    self.assertTrue(isinstance(request.data, bytes))
     requestData = json.loads(request.data)
     self.assertTrue(isinstance(requestData, dict))
     ldapProperties = requestData['Configuration']['properties'];
@@ -7565,6 +7568,7 @@ class TestAmbariServer(TestCase):
     requestCall = urlopen_method.call_args_list[0]
     args, kwargs = requestCall
     request = args[0]
+    self.assertTrue(isinstance(request.data, bytes))
     requestData = json.loads(request.data)
     self.assertTrue(isinstance(requestData, dict))
     ldapProperties = requestData['Configuration']['properties'];
@@ -7807,7 +7811,7 @@ class TestAmbariServer(TestCase):
     request = urlopen_mock.call_args_list[0][0][0]
 
     self.assertEqual(url, str(request.get_full_url()))
-    self.assertEqual('[{"Event": {"specs": [{"principal_type": "users", "sync_type": "all"}, {"principal_type": "groups", "sync_type": "all"}]}}]', request.data)
+    self.assertEqual(b'[{"Event": {"specs": [{"principal_type": "users", "sync_type": "all"}, {"principal_type": "groups", "sync_type": "all"}]}}]', request.data)
 
     self.assertTrue(response.getcode.called)
     self.assertTrue(response.read.called)
@@ -7853,7 +7857,7 @@ class TestAmbariServer(TestCase):
 
     request = urlopen_mock.call_args_list[0][0][0]
 
-    self.assertEqual('[{"Event": {"specs": [{"principal_type": "users", "sync_type": "specific", "names": "bob, tom"}]}}]', request.data)
+    self.assertEqual(b'[{"Event": {"specs": [{"principal_type": "users", "sync_type": "specific", "names": "bob, tom"}]}}]', request.data)
 
     self.assertTrue(response.getcode.called)
     self.assertTrue(response.read.called)
@@ -7899,7 +7903,7 @@ class TestAmbariServer(TestCase):
 
     request = urlopen_mock.call_args_list[0][0][0]
 
-    self.assertEqual('[{"Event": {"specs": [{"principal_type": "groups", "sync_type": "specific", "names": "group1, group2"}]}}]', request.data)
+    self.assertEqual(b'[{"Event": {"specs": [{"principal_type": "groups", "sync_type": "specific", "names": "group1, group2"}]}}]', request.data)
 
     self.assertTrue(response.getcode.called)
     self.assertTrue(response.read.called)
