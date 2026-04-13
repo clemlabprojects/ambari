@@ -102,6 +102,8 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
 
     OidcDescriptor descriptor = new OidcDescriptorFactory().createInstance(
       new File("src/main/resources/stacks/ODP/1.3/services/POLARIS/oidc.json"));
+    Assert.assertEquals("polaris.oidc.client.secret",
+      descriptor.getServices().get("POLARIS").getClients().get(0).getSecretAlias());
 
     Map<String, Service> services = new HashMap<>();
     services.put("POLARIS", createNiceMock(Service.class));
@@ -282,6 +284,67 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
+  }
+
+  @Test
+  public void testConfigureOidcDeletesRequestedServiceClientsEvenWhenServiceRemoved() throws Exception {
+    Map<String, Map<String, String>> existingConfigurations = new HashMap<>();
+    Map<String, String> oidcEnv = new HashMap<>();
+    oidcEnv.put(ConfigureOidcServerAction.OIDC_PROVIDER, "keycloak");
+    oidcEnv.put(ConfigureOidcServerAction.OIDC_ADMIN_URL, "https://keycloak.example.com");
+    oidcEnv.put(ConfigureOidcServerAction.OIDC_REALM, "example");
+    oidcEnv.put(ConfigureOidcServerAction.OIDC_ADMIN_CLIENT_SECRET, "admin-secret");
+    existingConfigurations.put(ConfigureOidcServerAction.OIDC_ENV, oidcEnv);
+
+    OidcDescriptor descriptor = new OidcDescriptorFactory().createInstance(
+      new File("src/main/resources/stacks/ODP/1.3/services/POLARIS/oidc.json"));
+
+    expect(controller.getClusters()).andReturn(clusters).anyTimes();
+    expect(clusters.getCluster(CLUSTER_NAME)).andReturn(cluster).anyTimes();
+    expect(controller.getAmbariMetaInfo()).andReturn(metaInfo).anyTimes();
+    expect(metaInfo.getOidcDescriptor("ODP", "1.3")).andReturn(descriptor).anyTimes();
+
+    expect(cluster.getClusterName()).andReturn(CLUSTER_NAME).anyTimes();
+    expect(cluster.getDesiredStackVersion()).andReturn(STACK_ID).anyTimes();
+    expect(cluster.getServices()).andReturn(new HashMap<String, Service>()).anyTimes();
+
+    expect(configHelper.calculateExistingConfigurations(controller, cluster, null, null))
+      .andReturn(existingConfigurations).once();
+
+    PrincipalKeyCredential adminCredential = new PrincipalKeyCredential("admin", "password");
+    expect(credentialStoreService.getCredential(CLUSTER_NAME,
+      ConfigureOidcServerAction.OIDC_ADMIN_CREDENTIAL_ALIAS)).andReturn(adminCredential).once();
+
+    expect(oidcOperationHandlerFactory.getHandler("keycloak")).andReturn(handler).once();
+    handler.open(eq(adminCredential), org.easymock.EasyMock.anyObject(OidcProviderConfiguration.class));
+    expectLastCall().once();
+
+    Capture<OidcClientDescriptor> clientCapture = Capture.newInstance();
+    handler.deleteClient(capture(clientCapture), eq("example"));
+    expectLastCall().once();
+
+    credentialStoreService.removeCredential(eq(CLUSTER_NAME), eq("polaris.oidc.client.secret"));
+    expectLastCall().once();
+
+    handler.close();
+    expectLastCall().once();
+
+    replayAll();
+
+    ExecutionCommand executionCommand = new ExecutionCommand();
+    executionCommand.setClusterName(CLUSTER_NAME);
+    Map<String, String> commandParams = new HashMap<>();
+    commandParams.put(ConfigureOidcServerAction.OIDC_OPERATION, ConfigureOidcServerAction.OPERATION_DELETE);
+    commandParams.put(ConfigureOidcServerAction.OIDC_SERVICES, "POLARIS");
+    executionCommand.setCommandParams(commandParams);
+    action.setExecutionCommand(executionCommand);
+    action.execute(null);
+
+    verifyAll();
+
+    OidcClientDescriptor resolvedClient = clientCapture.getValue();
+    Assert.assertEquals(CLUSTER_NAME + "-polaris", resolvedClient.getClientId());
+    Assert.assertEquals("example", resolvedClient.getRealm());
   }
 
   private static void setField(Object target, String fieldName, Object value) {

@@ -18,7 +18,6 @@ limitations under the License.
 """
 
 import functools
-import glob
 import os
 import socket
 
@@ -123,33 +122,6 @@ for _kudu_cli in _kudu_cli_candidates:
 ranger_kudu_config_path = kudu_conf_dir
 _candidate_java_path = format('{java_home}/bin/java') if java_home else '/usr/bin/java'
 ranger_kudu_java_path = _candidate_java_path if os.path.exists(_candidate_java_path) else '/usr/bin/java'
-_role_name = str(config.get('role', '')).upper()
-_role_to_kudu_package = {
-    'KUDU_MASTER': 'kudu-master',
-    'KUDU_TSERVER': 'kudu-tserver',
-}
-_default_kudu_package = _role_to_kudu_package.get(_role_name, 'kudu-master')
-try:
-    _current_kudu_package = stack_select.get_package_name(default_package=_default_kudu_package)
-except Exception:
-    _current_kudu_package = _default_kudu_package
-_ranger_kudu_jar_dirs = [
-    '/usr/odp/current/{0}/lib/ranger-kudu-plugin-impl'.format(_current_kudu_package),
-    '/usr/odp/current/kudu-master/lib/ranger-kudu-plugin-impl',
-    '/usr/odp/current/kudu-tserver/lib/ranger-kudu-plugin-impl',
-    '/usr/odp/current/kudu/lib/ranger-kudu-plugin-impl',
-    '/usr/odp/current/ranger-kudu-plugin/lib/ranger-kudu-plugin-impl',
-    '/usr/odp/current/ranger-kudu-plugin/lib/ranger-hive-plugin-impl'
-]
-ranger_kudu_jar_path = '{0}/*'.format(_ranger_kudu_jar_dirs[0])
-for _jar_dir in _ranger_kudu_jar_dirs:
-    if os.path.isdir(_jar_dir):
-        _jar_files = sorted(glob.glob(os.path.join(_jar_dir, '*.jar')))
-        if _jar_files:
-            ranger_kudu_jar_path = ':'.join(_jar_files)
-        else:
-            ranger_kudu_jar_path = '{0}/*'.format(_jar_dir)
-        break
 
 kudu_master_pid_file = format('{kudu_run_dir}/kudu-master.pid')
 kudu_tserver_pid_file = format('{kudu_run_dir}/kudu-tserver.pid')
