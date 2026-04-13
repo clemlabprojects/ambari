@@ -19,11 +19,78 @@ limitations under the License.
 
 # Python imports
 from importlib.machinery import SourceFileLoader
+import inspect
 import os
 import traceback
 import re
 import socket
 import fnmatch
+import subprocess
+
+
+HIVE_TEZ_DEFAULT_OPTS_JDK8 = (
+  "-server "
+  "-Djava.net.preferIPv4Stack=true "
+  "-XX:NewRatio=8 "
+  "-XX:+UseNUMA "
+  "-XX:+UseG1GC "
+  "-XX:+ResizeTLAB "
+  "-XX:+PrintGCDetails "
+  "-verbose:gc "
+  "-XX:+PrintGCTimeStamps"
+)
+
+HIVE_TEZ_DEFAULT_OPTS_JDK11_PLUS = (
+  "-server "
+  "-Djava.net.preferIPv4Stack=true "
+  "-XX:NewRatio=8 "
+  "-XX:+UseNUMA "
+  "-Xlog:gc*,gc+heap*=info,gc+age=trace "
+  "--add-opens=java.base/java.lang=ALL-UNNAMED "
+  "--add-opens=java.base/java.net=ALL-UNNAMED "
+  "--add-opens=java.base/java.nio=ALL-UNNAMED "
+  "--add-opens=java.base/java.util=ALL-UNNAMED "
+  "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED "
+  "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
+)
+
+
+def _parse_java_major(version_str):
+  v = version_str.strip().strip('"').strip()
+  if v.startswith("1."):
+    parts = v.split(".")
+    return int(parts[1])
+  return int(v.split(".")[0])
+
+
+def get_hive_tez_java_opts(java_version_str):
+  major = _parse_java_major(java_version_str)
+  if major >= 11:
+    return HIVE_TEZ_DEFAULT_OPTS_JDK11_PLUS
+  return HIVE_TEZ_DEFAULT_OPTS_JDK8
+
+
+def _get_java_version_from_services(services):
+  server_properties = services.get("ambari-server-properties")
+  if not server_properties or not isinstance(server_properties, dict):
+    return None
+
+  if "java.version" in server_properties:
+    return server_properties["java.version"]
+
+  java_home = server_properties.get("java.home")
+  if not java_home:
+    return None
+
+  try:
+    java_version_output = subprocess.check_output([java_home + "/bin/java", "-version"], stderr=subprocess.STDOUT)
+    match = re.search(r'version \"([^\"]+)\"', java_version_output.decode())
+    if match:
+      return match.group(1)
+  except Exception:
+    pass
+
+  return None
 
 
 
@@ -545,10 +612,9 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
       putHiveEnvPropertyAttribute("hive.metastore.heapsize", "maximum", max(1024, hs_host_ram))
       putHiveEnvPropertyAttribute("hive.heapsize", "maximum", max(1024, hs_host_ram))
 
-    # TEZ JVM options
-    # These jvm params are jdk8 only may not work on prior jdk versions but thats ok since HDP3 is jdk8 only
-    jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
-    putHiveSiteProperty("hive.tez.java.opts", "-server -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA " + jvmGCParams + " -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps")
+    # Keep Hive Tez JVM options aligned with the selected runtime JDK.
+    java_version_str = _get_java_version_from_services(services) or "8"
+    putHiveSiteProperty("hive.tez.java.opts", get_hive_tez_java_opts(java_version_str))
 
     # if hive using sqla db, then we should add DataNucleus property
     sqla_db_used = "hive-env" in services["configurations"] and "hive_database" in services["configurations"]["hive-env"]["properties"] and \

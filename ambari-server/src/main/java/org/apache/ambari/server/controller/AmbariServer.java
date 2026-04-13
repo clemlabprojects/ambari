@@ -111,6 +111,7 @@ import org.apache.ambari.server.security.unsecured.rest.CertificateDownload;
 import org.apache.ambari.server.security.unsecured.rest.CertificateSign;
 import org.apache.ambari.server.security.unsecured.rest.ConnectionInfo;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.KerberosKeytabController;
+import org.apache.ambari.server.stack.HiveJdkConfigurationSync;
 import org.apache.ambari.server.stack.TezJdkConfigurationSync;
 import org.apache.ambari.server.stack.UpdateActiveRepoVersionOnStartup;
 import org.apache.ambari.server.state.Clusters;
@@ -1077,6 +1078,11 @@ public class AmbariServer {
         injector.getInstance(TezJdkConfigurationSync.class).process();
       } catch (Exception ex) {
         LOG.warn("Failed to synchronize Tez JVM options after JDK change: {}", ex.getMessage(), ex);
+      }
+      try {
+        injector.getInstance(HiveJdkConfigurationSync.class).process();
+      } catch (Exception ex) {
+        LOG.warn("Failed to synchronize Hive Tez JVM options after JDK change: {}", ex.getMessage(), ex);
       }
       CertificateManager certMan = injector.getInstance(CertificateManager.class);
       certMan.initRootCert();

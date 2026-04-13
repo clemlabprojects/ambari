@@ -820,6 +820,9 @@
           <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeHiveEnv">
             <summary>Update Hive HMS/HS2  Env Configuration for JDK 11/17 Runtime</summary>
           </task>
+          <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeHiveTezConfig">
+            <summary>Update Hive Tez JVM Configuration for JDK 11/17 Runtime</summary>
+          </task>
         </pre-upgrade>
         <pre-downgrade/>
         <upgrade>
