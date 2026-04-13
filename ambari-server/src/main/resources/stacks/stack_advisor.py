@@ -2860,6 +2860,7 @@ class DefaultStackAdvisor(StackAdvisor):
     if 'forced-configurations' not in services:
       services["forced-configurations"] = []
 
+    self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
     putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
     putCoreSitePropertyAttribute = self.putPropertyAttribute(configurations, "core-site")
 
@@ -2899,6 +2900,7 @@ class DefaultStackAdvisor(StackAdvisor):
     if 'forced-configurations' not in services:
       services["forced-configurations"] = []
 
+    self.preserveExistingConfigTypeProperties(configurations, services, "httpfs-site")
     putHTTPFSSiteProperty = self.putProperty(configurations, "httpfs-site", services)
     putHTTPFSSitePropertyAttribute = self.putPropertyAttribute(configurations, "httpfs-site")
 

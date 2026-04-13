@@ -535,6 +535,10 @@ describe('App.EnhancedConfigsMixin', function () {
       sinon.stub(mixin, 'addRecommendationRequestParams');
       sinon.stub(mixin, 'getRecommendationsRequest');
       sinon.stub(mixin, 'loadAdditionalSites');
+      sinon.stub(App.Service, 'find').returns(Em.A([
+        Em.Object.create({serviceName: 'CORE'}),
+        Em.Object.create({serviceName: 'HDFS'})
+      ]));
     });
 
     afterEach(function() {
@@ -544,6 +548,7 @@ describe('App.EnhancedConfigsMixin', function () {
       mixin.addRecommendationRequestParams.restore();
       mixin.getRecommendationsRequest.restore();
       mixin.loadAdditionalSites.restore();
+      App.Service.find.restore();
     });
 
     it("changedConfigs is null", function() {
@@ -565,6 +570,7 @@ describe('App.EnhancedConfigsMixin', function () {
       expect(mixin.getConfigRecommendationsParams.calledWith(false)).to.be.true;
       expect(mixin.modifyRecommendationConfigGroups.calledOnce).to.be.true;
       expect(mixin.loadAdditionalSites.calledOnce).to.be.true;
+      expect(mixin.loadAdditionalSites.calledWith([{site: 'cluster-env', serviceName: 'MISC'}, {site: 'core-site', serviceName: 'CORE'}])).to.be.true;
     });
 
     it("changedConfigs is correct, MISC service present", function() {
@@ -575,6 +581,17 @@ describe('App.EnhancedConfigsMixin', function () {
       expect(mixin.modifyRecommendationConfigGroups.calledOnce).to.be.true;
       expect(mixin.addRecommendationRequestParams.calledOnce).to.be.true;
       expect(mixin.getRecommendationsRequest.calledOnce).to.be.true;
+    });
+
+    it("falls back to HDFS for core-site on legacy clusters", function() {
+      App.Service.find.restore();
+      sinon.stub(App.Service, 'find').returns(Em.A([
+        Em.Object.create({serviceName: 'HDFS'})
+      ]));
+      mixin.set('stepConfigs', []);
+      mixin.set('recommendationsConfigs', null);
+      mixin.loadConfigRecommendations([], mock.onComplete);
+      expect(mixin.loadAdditionalSites.calledWith([{site: 'cluster-env', serviceName: 'MISC'}, {site: 'core-site', serviceName: 'HDFS'}])).to.be.true;
     });
   });
 
@@ -1505,4 +1522,3 @@ describe('App.EnhancedConfigsMixin', function () {
     });
   });
 });
-

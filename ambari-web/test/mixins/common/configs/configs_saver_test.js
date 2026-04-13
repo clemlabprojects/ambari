@@ -603,6 +603,13 @@ describe('App.ConfigsSaverMixin', function() {
       expect(mixin.allowSaveCoreSite()).to.be.false;
     });
 
+    it("CORE service can save core-site", function() {
+      mixin.reopen({
+        currentServices: [Em.Object.create({serviceName: 'CORE', serviceType: 'MISC'})]
+      });
+      expect(mixin.allowSaveCoreSite()).to.be.true;
+    });
+
     it("coreSiteServiceNames has current service", function() {
       mixin.set('coreSiteServiceNames', ['S1']);
       mixin.reopen({
@@ -1234,4 +1241,3 @@ describe('App.ConfigsSaverMixin', function() {
   });
 
 });
-

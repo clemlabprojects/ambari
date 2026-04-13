@@ -744,9 +744,14 @@ App.AddSecurityConfigs = Em.Mixin.create({
    * @returns {string}
    */
   getServiceByFilename: function(fileName) {
-    // core-site properties goes to HDFS
-    if (fileName === 'core-site' && App.Service.find().someProperty('serviceName', 'HDFS')) {
-      return 'HDFS';
+    // core-site is owned by CORE on modern ODP stacks, with HDFS fallback for legacy clusters.
+    if (fileName === 'core-site') {
+      if (App.Service.find().someProperty('serviceName', 'CORE')) {
+        return 'CORE';
+      }
+      if (App.Service.find().someProperty('serviceName', 'HDFS')) {
+        return 'HDFS';
+      }
     }
     var associatedService = App.StackService.find().filter(function(service) {
       return Em.keys(service.get('configTypes')).contains(fileName);

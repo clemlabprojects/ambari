@@ -68,7 +68,7 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    *
    * @type {string[]}
    */
-  coreSiteServiceNames: ['HDFS', 'GLUSTERFS', 'RANGER_KMS'],
+  coreSiteServiceNames: ['CORE', 'HDFS', 'GLUSTERFS', 'RANGER_KMS'],
 
   /**
    * List of services which configs should be saved

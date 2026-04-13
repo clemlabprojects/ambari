@@ -762,7 +762,12 @@ describe('App.KerberosWizardStep4Controller', function() {
       App.StackService.find.restore();
     });
 
-    it("should return 'HDFS' ", function() {
+    it("should return 'CORE' when CORE is installed", function() {
+      this.mockService.returns([{serviceName: 'CORE'}, {serviceName: 'HDFS'}]);
+      expect(c.getServiceByFilename('core-site')).to.be.equal('CORE');
+    });
+
+    it("should return 'HDFS' as fallback for legacy clusters", function() {
       this.mockService.returns([{serviceName: 'HDFS'}]);
       expect(c.getServiceByFilename('core-site')).to.be.equal('HDFS');
     });

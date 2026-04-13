@@ -212,6 +212,22 @@ App.EnhancedConfigsMixin = Em.Mixin.create(App.ConfigWithOverrideRecommendationP
   },
 
   /**
+   * Resolve the logical owner for core-site.
+   * CORE owns it on modern ODP stacks, while legacy clusters still expose it through HDFS.
+   *
+   * @returns {string|null}
+   */
+  getCoreSiteServiceName: function() {
+    if (App.Service.find().someProperty('serviceName', 'CORE')) {
+      return 'CORE';
+    }
+    if (App.Service.find().someProperty('serviceName', 'HDFS')) {
+      return 'HDFS';
+    }
+    return null;
+  },
+
+  /**
    * sends request to get values for dependent configs
    * @param {{type: string, name: string}[]} changedConfigs - list of changed configs to track recommendations
    * @param {Function} [onComplete]
@@ -243,8 +259,9 @@ App.EnhancedConfigsMixin = Em.Mixin.create(App.ConfigWithOverrideRecommendationP
         this.set('currentlyChangedConfig', null);
       }
 
-      if (App.Service.find().someProperty('serviceName', 'HDFS') && !stepConfigs.someProperty('serviceName', 'HDFS')) {
-        requiredTags.push({site: 'core-site', serviceName: 'HDFS'});
+      var coreSiteServiceName = this.getCoreSiteServiceName();
+      if (coreSiteServiceName && !stepConfigs.someProperty('serviceName', coreSiteServiceName)) {
+        requiredTags.push({site: 'core-site', serviceName: coreSiteServiceName});
       }
       
       this.setUserContext(dataToSend);
