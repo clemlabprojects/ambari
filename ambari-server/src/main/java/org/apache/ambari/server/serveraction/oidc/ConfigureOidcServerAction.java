@@ -75,6 +75,8 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
 
   public static final String AUTHENTICATED_USER_NAME = "authenticated_user_name";
   public static final String UPDATE_CONFIGURATION_NOTE = "update_configuration_note";
+  public static final String OIDC_OPERATION = "oidc_operation";
+  public static final String OIDC_SERVICES = "oidc_services";
 
   public static final String OIDC_ENV = "oidc-env";
   public static final String OIDC_ADMIN_CREDENTIAL_ALIAS = "oidc.admin.credential";
@@ -85,6 +87,8 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
   public static final String OIDC_ADMIN_CLIENT_ID = "oidc_admin_client_id";
   public static final String OIDC_ADMIN_CLIENT_SECRET = "oidc_admin_client_secret";
   public static final String OIDC_VERIFY_TLS = "oidc_verify_tls";
+  public static final String OPERATION_ENSURE = "ENSURE";
+  public static final String OPERATION_DELETE = "DELETE";
 
   private static final String DEFAULT_ADMIN_REALM = "master";
   private static final String DEFAULT_ADMIN_CLIENT_ID = "admin-cli";
@@ -118,6 +122,8 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
 
     String clusterName = getExecutionCommand().getClusterName();
     Cluster cluster = controller.getClusters().getCluster(clusterName);
+    String operation = defaultIfEmpty(getCommandParameterValue(getCommandParameters(), OIDC_OPERATION), OPERATION_ENSURE);
+    Set<String> requestedServices = parseServiceFilter(getCommandParameterValue(getCommandParameters(), OIDC_SERVICES));
     LOG.info("Starting OIDC provisioning for cluster {}", clusterName);
 
     // Calculate the effective configuration map so variable replacement and descriptor
@@ -171,10 +177,13 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
       oidcDescriptor.getServices().size(), stackId.getStackName(), stackId.getStackVersion());
 
     Map<String, Service> installedServices = cluster.getServices();
-    if (installedServices == null || installedServices.isEmpty()) {
+    if ((installedServices == null || installedServices.isEmpty()) && !(isDeleteOperation(operation) && !requestedServices.isEmpty())) {
       LOG.info("OIDC provisioning skipped for cluster {} because there are no installed services", clusterName);
       actionLog.writeStdOut("No installed services found; skipping OIDC provisioning.");
       return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
+    }
+    if (installedServices == null) {
+      installedServices = new HashMap<>();
     }
     LOG.debug("Cluster {} has {} installed service(s)", clusterName, installedServices.size());
 
@@ -211,9 +220,22 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
         }
         LOG.debug("Evaluating OIDC descriptor service '{}'", serviceDescriptor.getName());
 
-        if (!installedServices.containsKey(serviceDescriptor.getName())) {
+        boolean serviceRequested = requestedServices.isEmpty() || requestedServices.contains(serviceDescriptor.getName());
+        if (!serviceRequested) {
+          LOG.debug("Skipping OIDC descriptor service '{}' because it is not in the requested service filter {}",
+            serviceDescriptor.getName(), requestedServices);
+          continue;
+        }
+
+        boolean serviceInstalled = installedServices.containsKey(serviceDescriptor.getName());
+        if (!serviceInstalled && !isDeleteOperation(operation)) {
           LOG.debug("Skipping OIDC descriptor service '{}' because it is not installed in cluster {}",
             serviceDescriptor.getName(), clusterName);
+          continue;
+        }
+        if (!serviceInstalled && isDeleteOperation(operation) && requestedServices.isEmpty()) {
+          LOG.debug("Skipping OIDC descriptor service '{}' because it is not installed and no explicit delete filter was supplied",
+            serviceDescriptor.getName());
           continue;
         }
 
@@ -223,7 +245,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
           continue;
         }
 
-        if (serviceDescriptor.getConfigurations() != null) {
+        if (!isDeleteOperation(operation) && serviceDescriptor.getConfigurations() != null) {
           LOG.debug("Applying service-level OIDC config overlays for '{}'", serviceDescriptor.getName());
           applyConfigurations(serviceDescriptor.getConfigurations(), propertiesToSet, configTypes,
             buildReplacementMap(cluster, existingConfigurations, providerConfiguration, null, null));
@@ -262,34 +284,52 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             clientDescriptor.getAttributes(),
             clientDescriptor.getConfigurations(),
             clientDescriptor.getSecretAlias());
-          LOG.debug("Ensuring OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
-
-          OidcClientResult result = handler.ensureClient(resolvedDescriptor, resolvedRealm);
-          if (result == null) {
-            LOG.warn("OIDC provider returned null result for client '{}' in realm '{}'; skipping config updates",
-              resolvedClientId, resolvedRealm);
-            continue;
-          }
-          LOG.info("OIDC client '{}' ensured in realm '{}' for service '{}'",
-            resolvedClientId, resolvedRealm, serviceDescriptor.getName());
-
-          if (!StringUtils.isEmpty(clientDescriptor.getSecretAlias()) && result.getSecret() != null) {
-            try {
-              LOG.debug("Persisting OIDC client secret for alias '{}' in cluster '{}'",
-                clientDescriptor.getSecretAlias(), clusterName);
-              credentialStoreService.setCredential(clusterName, clientDescriptor.getSecretAlias(),
-                new GenericKeyCredential(result.getSecret().toCharArray()), CredentialStoreType.PERSISTED);
-            } catch (AmbariException e) {
-              throw new OidcOperationException("Failed to store OIDC client secret in credential store", e);
+          if (isDeleteOperation(operation)) {
+            LOG.debug("Deleting OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
+            handler.deleteClient(resolvedDescriptor, resolvedRealm);
+            String secretAlias = resolvedDescriptor.getSecretAlias();
+            if (!StringUtils.isEmpty(secretAlias)) {
+              try {
+                LOG.debug("Removing OIDC client secret for alias '{}' in cluster '{}'",
+                  secretAlias, clusterName);
+                credentialStoreService.removeCredential(clusterName, secretAlias);
+              } catch (AmbariException e) {
+                throw new OidcOperationException("Failed to remove OIDC client secret from credential store", e);
+              }
             }
-          }
+            LOG.info("OIDC client '{}' deleted in realm '{}' for service '{}'",
+              resolvedClientId, resolvedRealm, serviceDescriptor.getName());
+          } else {
+            LOG.debug("Ensuring OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
 
-          // Apply client-level configuration overlays with replacement values such as:
-          // ${client_id}, ${client_secret}, ${auth_server_url}, ${oidc_realm}.
-          Map<String, Map<String, String>> replacements = buildReplacementMap(
-            cluster, existingConfigurations, providerConfiguration, result, resolvedRealm);
-          if (clientDescriptor.getConfigurations() != null) {
-            applyConfigurations(clientDescriptor.getConfigurations(), propertiesToSet, configTypes, replacements);
+            OidcClientResult result = handler.ensureClient(resolvedDescriptor, resolvedRealm);
+            if (result == null) {
+              LOG.warn("OIDC provider returned null result for client '{}' in realm '{}'; skipping config updates",
+                resolvedClientId, resolvedRealm);
+              continue;
+            }
+            LOG.info("OIDC client '{}' ensured in realm '{}' for service '{}'",
+              resolvedClientId, resolvedRealm, serviceDescriptor.getName());
+
+            String secretAlias = resolvedDescriptor.getSecretAlias();
+            if (!StringUtils.isEmpty(secretAlias) && result.getSecret() != null) {
+              try {
+                LOG.debug("Persisting OIDC client secret for alias '{}' in cluster '{}'",
+                  secretAlias, clusterName);
+                credentialStoreService.setCredential(clusterName, secretAlias,
+                  new GenericKeyCredential(result.getSecret().toCharArray()), CredentialStoreType.PERSISTED);
+              } catch (AmbariException e) {
+                throw new OidcOperationException("Failed to store OIDC client secret in credential store", e);
+              }
+            }
+
+            // Apply client-level configuration overlays with replacement values such as:
+            // ${client_id}, ${client_secret}, ${auth_server_url}, ${oidc_realm}.
+            Map<String, Map<String, String>> replacements = buildReplacementMap(
+              cluster, existingConfigurations, providerConfiguration, result, resolvedRealm);
+            if (clientDescriptor.getConfigurations() != null) {
+              applyConfigurations(clientDescriptor.getConfigurations(), propertiesToSet, configTypes, replacements);
+            }
           }
         }
       }
@@ -514,6 +554,25 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
    */
   private String defaultIfEmpty(String value, String defaultValue) {
     return StringUtils.isEmpty(value) ? defaultValue : value;
+  }
+
+  private boolean isDeleteOperation(String operation) {
+    return OPERATION_DELETE.equalsIgnoreCase(operation);
+  }
+
+  private Set<String> parseServiceFilter(String rawServices) {
+    Set<String> services = new HashSet<>();
+    if (StringUtils.isBlank(rawServices)) {
+      return services;
+    }
+
+    for (String service : StringUtils.split(rawServices, ',')) {
+      if (StringUtils.isNotBlank(service)) {
+        services.add(service.trim());
+      }
+    }
+
+    return services;
   }
 
   /**

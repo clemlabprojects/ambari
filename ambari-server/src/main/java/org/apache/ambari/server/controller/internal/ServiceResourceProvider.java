@@ -66,6 +66,7 @@ import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.serveraction.kerberos.KerberosAdminAuthenticationException;
 import org.apache.ambari.server.serveraction.kerberos.KerberosInvalidConfigurationException;
 import org.apache.ambari.server.serveraction.kerberos.KerberosMissingAdminCredentialsException;
+import org.apache.ambari.server.serveraction.oidc.ConfigureOidcServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.MaintenanceState;
@@ -236,16 +237,15 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
     for (Map<String, Object> propertyMap : request.getProperties()) {
       requests.add(getRequest(propertyMap));
     }
-    createResources(new Command<Void>() {
+    RequestStatusResponse response = createResources(new Command<RequestStatusResponse>() {
       @Override
-      public Void invoke() throws AmbariException, AuthorizationException {
-        createServices(requests);
-        return null;
+      public RequestStatusResponse invoke() throws AmbariException, AuthorizationException {
+        return createServicesAndConfigureOidc(requests);
       }
     });
     notifyCreate(Resource.Type.Service, request);
 
-    return getRequestStatus(null);
+    return getRequestStatus(response);
   }
 
   @Override
@@ -455,15 +455,20 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
   // Create services from the given request.
   public void createServices(Set<ServiceRequest> requests)
       throws AmbariException, AuthorizationException {
+    createServicesAndConfigureOidc(requests);
+  }
 
+  protected RequestStatusResponse createServicesAndConfigureOidc(Set<ServiceRequest> requests)
+      throws AmbariException, AuthorizationException {
     if (requests.isEmpty()) {
       LOG.warn("Received an empty requests set");
-      return;
+      return null;
     }
 
     Clusters clusters = getManagementController().getClusters();
     // do all validation checks
     validateCreateRequests(requests, clusters);
+    Map<Cluster, Set<String>> oidcServiceNamesByCluster = new HashMap<>();
 
     for (ServiceRequest request : requests) {
       Cluster cluster = clusters.getCluster(request.getClusterName());
@@ -520,7 +525,19 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
 
       // Initialize service widgets
       getManagementController().initializeWidgetsAndLayouts(cluster, s);
+
+      if (shouldManageOidcLifecycle(cluster, serviceInfo)) {
+        oidcServiceNamesByCluster.computeIfAbsent(cluster, key -> new HashSet<>()).add(request.getServiceName());
+      }
     }
+
+    RequestStageContainer requestStages = appendOidcLifecycleStages(
+      oidcServiceNamesByCluster,
+      ConfigureOidcServerAction.OPERATION_ENSURE,
+      "Configure OIDC for added services",
+      null);
+
+    return persistRequestStages(requestStages);
   }
 
   // Get services from the given set of requests.
@@ -931,6 +948,8 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
     Clusters clusters    = getManagementController().getClusters();
 
     Set<Service> removable = new HashSet<>();
+    Map<Cluster, Set<String>> oidcServiceNamesByCluster = new HashMap<>();
+    AmbariMetaInfo ambariMetaInfo = null;
 
     for (ServiceRequest serviceRequest : request) {
       if (StringUtils.isEmpty(serviceRequest.getClusterName()) || StringUtils.isEmpty(serviceRequest.getServiceName())) {
@@ -970,8 +989,29 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
         }
 
         removable.add(service);
+
+        if (kerberosHelper != null && service.getCluster().getDesiredConfigByType(ConfigureOidcServerAction.OIDC_ENV) != null) {
+          if (ambariMetaInfo == null) {
+            ambariMetaInfo = getManagementController().getAmbariMetaInfo();
+          }
+
+          StackId serviceStackId = service.getDesiredStackId();
+          if (serviceStackId != null) {
+            ServiceInfo serviceInfo = ambariMetaInfo.getService(serviceStackId.getStackName(),
+              serviceStackId.getStackVersion(), service.getName());
+            if (shouldManageOidcLifecycle(service.getCluster(), serviceInfo)) {
+              oidcServiceNamesByCluster.computeIfAbsent(service.getCluster(), key -> new HashSet<>()).add(service.getName());
+            }
+          }
+        }
       }
     }
+
+    RequestStageContainer requestStages = appendOidcLifecycleStages(
+      oidcServiceNamesByCluster,
+      ConfigureOidcServerAction.OPERATION_DELETE,
+      "Delete OIDC clients for removed services",
+      null);
 
     DeleteHostComponentStatusMetaData deleteMetaData = new DeleteHostComponentStatusMetaData();
     for (Service service : removable) {
@@ -980,7 +1020,47 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
     }
     STOMPComponentsDeleteHandler.processDeleteByMetaData(deleteMetaData);
 
-    return null;
+    return persistRequestStages(requestStages);
+  }
+
+  private RequestStageContainer appendOidcLifecycleStages(Map<Cluster, Set<String>> serviceNamesByCluster,
+                                                          String operation,
+                                                          String note,
+                                                          RequestStageContainer requestStageContainer)
+      throws AmbariException {
+    if (kerberosHelper == null || serviceNamesByCluster == null || serviceNamesByCluster.isEmpty()) {
+      return requestStageContainer;
+    }
+
+    for (Map.Entry<Cluster, Set<String>> entry : serviceNamesByCluster.entrySet()) {
+      if (entry.getKey() == null || CollectionUtils.isEmpty(entry.getValue())) {
+        continue;
+      }
+      requestStageContainer = kerberosHelper.configureOidc(
+        entry.getKey(),
+        requestStageContainer,
+        entry.getValue(),
+        operation,
+        note);
+    }
+
+    return requestStageContainer;
+  }
+
+  private RequestStatusResponse persistRequestStages(RequestStageContainer requestStages) throws AmbariException {
+    if (requestStages == null) {
+      return null;
+    }
+
+    requestStages.persist();
+    return requestStages.getRequestStatusResponse();
+  }
+
+  private boolean shouldManageOidcLifecycle(Cluster cluster, ServiceInfo serviceInfo) {
+    return cluster != null
+      && cluster.getDesiredConfigByType(ConfigureOidcServerAction.OIDC_ENV) != null
+      && serviceInfo != null
+      && serviceInfo.getOidcDescriptorFile() != null;
   }
 
   // calculate the service state, accounting for the state of the host components

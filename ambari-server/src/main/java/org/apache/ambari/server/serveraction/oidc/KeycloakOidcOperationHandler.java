@@ -85,6 +85,40 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
   }
 
   @Override
+  public void deleteClient(OidcClientDescriptor descriptor, String realm) throws OidcOperationException {
+    if (descriptor == null) {
+      throw new OidcOperationException("Missing OIDC client descriptor");
+    }
+    if (descriptor.getClientId() == null) {
+      throw new OidcOperationException("Missing OIDC client_id for descriptor");
+    }
+
+    String targetRealm = (realm == null || realm.isEmpty())
+      ? configuration.getRealm()
+      : realm;
+
+    String token = getAdminAccessToken();
+    String clientInternalId = getClientInternalId(token, targetRealm, descriptor.getClientId());
+    if (clientInternalId == null) {
+      return;
+    }
+
+    String endpoint = String.format("%s/admin/realms/%s/clients/%s",
+      normalizeBaseUrl(configuration.getBaseUrl()), targetRealm, clientInternalId);
+
+    Response response = client.target(endpoint)
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header("Authorization", "Bearer " + token)
+      .delete();
+
+    if (response.getStatus() / 100 != 2 && response.getStatus() != 404) {
+      String message = response.readEntity(String.class);
+      throw new OidcOperationException(String.format("Failed to delete Keycloak client %s (status %s): %s",
+        descriptor.getClientId(), response.getStatus(), message));
+    }
+  }
+
+  @Override
   public void close() throws OidcOperationException {
     if (client != null) {
       client.close();

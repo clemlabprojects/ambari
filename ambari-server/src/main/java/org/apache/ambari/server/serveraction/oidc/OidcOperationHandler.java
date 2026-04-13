@@ -26,6 +26,8 @@ public interface OidcOperationHandler extends AutoCloseable {
 
   OidcClientResult ensureClient(OidcClientDescriptor descriptor, String realm) throws OidcOperationException;
 
+  void deleteClient(OidcClientDescriptor descriptor, String realm) throws OidcOperationException;
+
   @Override
   void close() throws OidcOperationException;
 }

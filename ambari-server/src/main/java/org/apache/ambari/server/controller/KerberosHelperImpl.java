@@ -374,6 +374,20 @@ public class KerberosHelperImpl implements KerberosHelper {
   private RequestStageContainer addConfigureOidcOnlyStage(Cluster cluster,
                                                            RequestStageContainer requestStageContainer)
     throws AmbariException {
+    return configureOidc(cluster, requestStageContainer, null,
+      ConfigureOidcServerAction.OPERATION_ENSURE, "Configure OIDC");
+  }
+
+  @Override
+  public RequestStageContainer configureOidc(Cluster cluster,
+                                             RequestStageContainer requestStageContainer,
+                                             Collection<String> serviceNames,
+                                             String operation,
+                                             String updateConfigurationNote) throws AmbariException {
+    if (cluster == null) {
+      return requestStageContainer;
+    }
+
     if (requestStageContainer == null) {
       requestStageContainer = new RequestStageContainer(
         actionManager.getNextRequestId(),
@@ -398,8 +412,16 @@ public class KerberosHelperImpl implements KerberosHelper {
 
     Map<String, String> commandParameters = new HashMap<>();
     commandParameters.put(KerberosServerAction.AUTHENTICATED_USER_NAME, ambariManagementController.getAuthName());
-    commandParameters.put(KerberosServerAction.UPDATE_CONFIGURATION_NOTE, "Configure OIDC");
     commandParameters.put(KerberosServerAction.UPDATE_CONFIGURATION_POLICY, UpdateConfigurationPolicy.ALL.name());
+    if (StringUtils.isNotBlank(updateConfigurationNote)) {
+      commandParameters.put(KerberosServerAction.UPDATE_CONFIGURATION_NOTE, updateConfigurationNote);
+    }
+    if (StringUtils.isNotBlank(operation)) {
+      commandParameters.put(ConfigureOidcServerAction.OIDC_OPERATION, operation);
+    }
+    if (serviceNames != null && !serviceNames.isEmpty()) {
+      commandParameters.put(ConfigureOidcServerAction.OIDC_SERVICES, StringUtils.join(serviceNames, ","));
+    }
 
     new EnableKerberosHandler(true).addConfigureOidcStage(
       cluster,

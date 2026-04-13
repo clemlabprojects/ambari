@@ -833,6 +833,27 @@ public interface KerberosHelper {
   Boolean getConfigureOidcDirective(Map<String, String> requestProperties);
 
   /**
+   * Schedules an OIDC lifecycle server action for the supplied service set.
+   * <p>
+   * This mirrors Kerberos' staged server-side orchestration model while keeping
+   * the actual OIDC provider interaction in {@code ConfigureOidcServerAction}.
+   * </p>
+   *
+   * @param cluster the relevant cluster
+   * @param requestStageContainer an existing request stage container, or {@code null}
+   * @param serviceNames the service names to reconcile
+   * @param operation the OIDC lifecycle operation (for example {@code ENSURE} or {@code DELETE})
+   * @param updateConfigurationNote optional request note shown on resulting config updates
+   * @return the supplied or newly created request stage container, or {@code null} if no stage was added
+   * @throws AmbariException if the stage cannot be created
+   */
+  RequestStageContainer configureOidc(Cluster cluster,
+                                      RequestStageContainer requestStageContainer,
+                                      Collection<String> serviceNames,
+                                      String operation,
+                                      String updateConfigurationNote) throws AmbariException;
+
+  /**
    * Given a list of KerberosIdentityDescriptors, returns a Map fo configuration types to property
    * names and values.
    * <p/>
