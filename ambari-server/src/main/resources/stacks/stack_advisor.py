@@ -2198,6 +2198,27 @@ class DefaultStackAdvisor(StackAdvisor):
       return None
     return siteConfig.get("properties")
 
+  def preserveExistingConfigTypeProperties(self, configurations, services, configType):
+    """
+    Seed recommendation output with the currently stored properties for a config type.
+    This is shared by stack advisors and service advisors to avoid dropping unrelated
+    keys when only a subset of properties is being updated.
+    """
+    if configurations is not None:
+      if configType not in configurations:
+        configurations[configType] = {}
+      if "properties" not in configurations[configType]:
+        configurations[configType]["properties"] = {}
+
+    if not services or "configurations" not in services:
+      return
+
+    for candidate in (configType, "{0}.xml".format(configType)):
+      if candidate in services["configurations"] and "properties" in services["configurations"][candidate]:
+        for key, value in services["configurations"][candidate]["properties"].items():
+          if key not in configurations[configType]["properties"]:
+            configurations[configType]["properties"][key] = value
+
   def putProperty(self, config, configType, services=None):
     userConfigs = {}
     changedConfigs = []
