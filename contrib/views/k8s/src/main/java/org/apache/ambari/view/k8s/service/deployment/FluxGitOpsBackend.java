@@ -37,7 +37,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
@@ -71,6 +74,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 500L;
     private static final long HTTP_RETRY_BASE_DELAY_MS = 250L;
+
+    // Flux API versions — promoted from v2beta2/v1beta2 (deprecated in Flux 2.3, removed in Flux 3.x)
+    static final String FLUX_HR_API_VERSION  = "helm.toolkit.fluxcd.io/v2";
+    static final String FLUX_SRC_API_VERSION = "source.toolkit.fluxcd.io/v1";
+
+    /**
+     * One lock per release key (namespace:releaseName).
+     * Ensures concurrent apply/destroy operations on the SAME release are serialised
+     * while operations on DIFFERENT releases still run in parallel.
+     */
+    private static final ConcurrentHashMap<String, ReentrantLock> WORKSPACE_LOCKS = new ConcurrentHashMap<>();
 
     private final Path fluxRoot;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -166,9 +180,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw new IllegalArgumentException("GitOps over SSH requires sshKey or HTTPS token");
         }
 
-        Path repoDir = fluxRoot.resolve("gitops-workdir");
+        // Each release owns its own git workspace directory.
+        // Operations on the same release are serialised via a per-release lock;
+        // operations on different releases still run in parallel.
+        Path repoDir = workspaceForRelease(namespace, release);
+        ReentrantLock workspaceLock = lockForRelease(namespace, release);
+        workspaceLock.lock();
+        try {
+
         GitClient gitClient = new GitClient(repoDir, repoUrl, baseBranch, token, sshKey)
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari");
+        try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "sync " + repoUrl);
 
         String branchCandidate = firstNonBlank(git.getBranch(), existingMeta != null ? existingMeta.getGitBranch() : null, GitClient.generateBranch("flux"));
@@ -353,11 +375,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         }
                     }
                     
-                    String depValuesJson = gson.toJson(depValues);
-                    
+                    String depValuesYaml = serializeValuesAsYaml(depValues);
+
                     // Create dependency HelmRelease YAML
                     String depHrYaml = """
-                            apiVersion: helm.toolkit.fluxcd.io/v2beta2
+                            apiVersion: %s
                             kind: HelmRelease
                             metadata:
                               name: %s
@@ -372,8 +394,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                                     kind: HelmRepository
                                     name: %s
                                     namespace: flux-system
-                              values: %s
-                            """.formatted(depReleaseName, depNamespace, depChart, depVersion, depRepoName, depValuesJson);
+                              values:
+                            %s
+                            """.formatted(FLUX_HR_API_VERSION, depReleaseName, depNamespace, depChart, depVersion, depRepoName, depValuesYaml);
                     
                     // Write dependency HelmRelease to Git
                     gitClient.writeFile(depDir.resolve(depReleaseName + "-helmrelease.yaml"), depHrYaml);
@@ -519,11 +542,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         mergedValues.remove("_ov");
         request.setValues(mergedValues);
 
-        // Compose YAML (JSON-in-YAML is allowed; JSON is a subset of YAML)
-        String valuesJson = gson.toJson(mergedValues);
+        // Serialize values as proper YAML for readable git diffs.
+        String valuesYaml = serializeValuesAsYaml(mergedValues);
 
         String repoYaml = """
-                apiVersion: source.toolkit.fluxcd.io/v1beta2
+                apiVersion: %s
                 kind: HelmRepository
                 metadata:
                   name: %s
@@ -531,11 +554,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 spec:
                   interval: 5m
                   url: %s
-                """.formatted(repoName, repoUrl);
+                """.formatted(FLUX_SRC_API_VERSION, repoName, repoUrl);
 
         String dependsYaml = buildDependsOnYaml(depRefs);
         String hrYaml = ("""
-                apiVersion: helm.toolkit.fluxcd.io/v2beta2
+                apiVersion: %s
                 kind: HelmRelease
                 metadata:
                   name: %s
@@ -551,8 +574,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         kind: HelmRepository
                         name: %s
                         namespace: flux-system
-                  values: %s
-                """).formatted(release, namespace, chart, version, repoName, valuesJson);
+                  values:
+                %s
+                """).formatted(FLUX_HR_API_VERSION, release, namespace, chart, version, repoName, valuesYaml);
 
         gitClient.writeFile(targetDir.resolve("helmrepository.yaml"), repoYaml);
         gitClient.writeFile(targetDir.resolve("helmrelease.yaml"), hrYaml);
@@ -643,6 +667,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         return commitSha;
+
+        } catch (Exception applyEx) {
+            // Reset workspace so the next deploy attempt starts from a clean tree.
+            resetWorkspaceOnFailure(repoDir);
+            throw applyEx;
+        }
+        } finally {
+            workspaceLock.unlock();
+        }
     }
 
     private HelmDeployRequest.GitOptions mergeGitOptions(HelmDeployRequest request, K8sReleaseEntity existingMeta) {
@@ -1156,7 +1189,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             errors.add("Credential resolution failed: " + ex.getMessage());
         }
         try {
-            destroy(repoUrl, branch, path, token, sshKey);
+            destroy(repoUrl, branch, path, token, sshKey, namespace, releaseName);
             gitDeleted = true;
         } catch (Exception ex) {
             errors.add("Git cleanup failed: " + ex.getMessage());
@@ -1194,12 +1227,30 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @param sshKey    SSH private key (optional).
      */
     public void destroy(String repoUrl, String branch, String repoPath, String authToken, String sshKey) throws Exception {
+        destroy(repoUrl, branch, repoPath, authToken, sshKey, null, null);
+    }
+
+    /**
+     * Internal destroy overload that accepts namespace + releaseName so the workspace
+     * directory and lock are consistent with the apply() path for the same release.
+     */
+    void destroy(String repoUrl, String branch, String repoPath,
+                 String authToken, String sshKey,
+                 String namespace, String releaseName) throws Exception {
         if (repoUrl == null || repoUrl.isBlank()) {
             LOG.warn("Flux destroy skipped because repoUrl is missing");
             return;
         }
         String effectiveBranch = (branch == null || branch.isBlank()) ? "main" : branch;
-        Path repoDir = fluxRoot.resolve("gitops-workdir-destroy");
+        // Use the same per-release workspace as apply() so both operations share the clone.
+        Path repoDir = (namespace != null && releaseName != null)
+                ? workspaceForRelease(namespace, releaseName)
+                : fluxRoot.resolve("gitops-destroy-" + sanitizePathComponent(repoPath));
+        ReentrantLock workspaceLock = (namespace != null && releaseName != null)
+                ? lockForRelease(namespace, releaseName)
+                : new ReentrantLock();
+        workspaceLock.lock();
+        try {
         GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey);
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         withGitRetry(() -> { gitClient.checkoutBranch(effectiveBranch); return null; }, "destroy-checkout");
@@ -1214,6 +1265,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.info("Flux GitOps deleted {} on branch {} commit {}", deletePath, effectiveBranch, sha);
         } else {
             LOG.info("Flux GitOps delete skipped commit because no changes detected at {}", deletePath);
+        }
+        } finally {
+            workspaceLock.unlock();
         }
     }
 
@@ -1243,6 +1297,60 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return list;
     }
 
+    // -----------------------------------------------------------------------
+    // Workspace helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Strips characters that are unsafe in directory names, lowercases the result.
+     * Used to build deterministic, filesystem-safe workspace directory names.
+     */
+    private static String sanitizePathComponent(String s) {
+        if (s == null || s.isBlank()) return "unknown";
+        return s.replaceAll("[^a-zA-Z0-9._-]", "_").toLowerCase();
+    }
+
+    /**
+     * Returns the per-release git workspace directory.
+     * Each release gets its own clone so concurrent deploys to different
+     * releases never interfere.  Concurrent operations on the SAME release
+     * are serialised via {@link #lockForRelease}.
+     */
+    private Path workspaceForRelease(String namespace, String releaseName) {
+        return fluxRoot.resolve(
+            "gitops-" + sanitizePathComponent(namespace) + "-" + sanitizePathComponent(releaseName)
+        );
+    }
+
+    /**
+     * Returns (and creates if absent) the per-release ReentrantLock.
+     * Lock before touching the workspace; unlock in a finally block.
+     */
+    private ReentrantLock lockForRelease(String namespace, String releaseName) {
+        return WORKSPACE_LOCKS.computeIfAbsent(
+            namespace + ":" + releaseName,
+            k -> new ReentrantLock()
+        );
+    }
+
+    /**
+     * Best-effort reset of a git workspace after a failed operation so the next
+     * attempt starts from a clean tree rather than a dirty / mid-rebase state.
+     */
+    private void resetWorkspaceOnFailure(Path repoDir) {
+        if (!Files.exists(repoDir.resolve(".git"))) return;
+        try {
+            int code = new ProcessBuilder("git", "reset", "--hard", "HEAD")
+                    .directory(repoDir.toFile())
+                    .redirectErrorStream(true)
+                    .start()
+                    .waitFor();
+            if (code != 0) LOG.warn("git reset --hard failed (exit {}) in {}", code, repoDir);
+        } catch (Exception ex) {
+            LOG.warn("Could not reset workspace {} after failure: {}", repoDir, ex.getMessage());
+        }
+    }
+
     static Path validateRelative(Path path) {
         Path normalized = path.normalize();
         if (normalized.isAbsolute()) {
@@ -1254,6 +1362,39 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
         return normalized;
+    }
+
+    /**
+     * Serialises a values map as a properly-indented YAML block suitable for
+     * embedding directly under the {@code values:} key of a HelmRelease manifest.
+     *
+     * <p>Using real YAML (rather than inline JSON) produces readable git diffs
+     * and avoids edge-cases where multi-line string values get JSON-escaped into
+     * a single unreadable line.
+     *
+     * <p>The returned string is already indented with 4 spaces per level so it can
+     * be placed after {@code "  values:\n"} in the manifest template.
+     *
+     * <p>Falls back to Gson JSON if the YAML library is unavailable (should never
+     * happen since jackson-dataformat-yaml is a runtime dependency).
+     */
+    private String serializeValuesAsYaml(Map<String, Object> values) {
+        if (values == null || values.isEmpty()) return "{}";
+        try {
+            com.fasterxml.jackson.dataformat.yaml.YAMLFactory yf =
+                com.fasterxml.jackson.dataformat.yaml.YAMLFactory.builder()
+                    .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
+                    .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.SPLIT_LINES)
+                    .build();
+            String yaml = new com.fasterxml.jackson.databind.ObjectMapper(yf)
+                    .writeValueAsString(values)
+                    .trim();
+            // Indent every line by 4 spaces so the block sits correctly under "  values:"
+            return "    " + yaml.replace("\n", "\n    ");
+        } catch (Exception e) {
+            LOG.warn("YAML serialisation failed for values map, falling back to JSON inline: {}", e.getMessage());
+            return gson.toJson(values);
+        }
     }
 
     private String firstNonBlank(String... values) {

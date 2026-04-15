@@ -31,6 +31,7 @@ import javax.persistence.Id;
 import javax.persistence.Index;
 import javax.persistence.Table;
 import javax.persistence.Transient;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -125,11 +126,13 @@ public class K8sReleaseEntity extends BaseModel {
     // Flag: managed by UI (true if registered here)
     private boolean managedByUi;
 
-    // timestamps are transient to stay well below Ambari's 65K row limit
-    @Transient
+    // ISO-8601 timestamps (e.g. "2025-04-15T10:30:00Z") — persisted so they
+    // survive Ambari restarts and upgrades.  Length 40 is generous for any
+    // ISO-8601 variant; they add negligible bytes to the row.
+    @Column(length = 40)
     private String createdAt;
 
-    @Transient
+    @Column(length = 40)
     private String updatedAt;
 
     // Small cache of endpoints (computed on the fly but cached to avoid recompute).
@@ -166,27 +169,27 @@ public class K8sReleaseEntity extends BaseModel {
     }
 
     @Override
-    @Transient
-    @java.beans.Transient
     public String getCreatedAt() {
         return createdAt;
     }
 
     @Override
     public void setCreatedAt(String createdAt) {
-        this.createdAt = createdAt;
+        if (createdAt == null) {
+            this.createdAt = Instant.now().toString();
+        } else {
+            this.createdAt = createdAt;
+        }
     }
 
     @Override
-    @Transient
-    @java.beans.Transient
     public String getUpdatedAt() {
         return updatedAt;
     }
 
     @Override
     public void setUpdatedAt(String updatedAt) {
-        this.updatedAt = updatedAt;
+        this.updatedAt = (updatedAt != null) ? updatedAt : Instant.now().toString();
     }
 
     public String getServiceKey() {

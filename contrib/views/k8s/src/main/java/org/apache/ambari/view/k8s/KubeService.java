@@ -158,8 +158,8 @@ public class KubeService {
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     public Response uploadKubeconfig(@Context HttpHeaders headers,
                                      @Context UriInfo ui, InputStream fileInputStream) {
-        // new AuthHelper(viewContext).checkConfigurationPermission();
-        
+        new AuthHelper(viewContext).checkConfigurationPermission();
+
         try {
             ViewConfigurationService configurationService = this.getConfigService();
 
@@ -201,7 +201,6 @@ public class KubeService {
     @Path("/cluster/configured")
     @Produces(MediaType.APPLICATION_JSON)
     public Response checkIsViewConfigured(InputStream fileInputStream) {
-        // new AuthHelper(viewContext).checkConfigurationPermission();
         ViewConfigurationService configurationService = this.getConfigService();
         boolean isConfigured = configurationService.isConfigured();
         LOG.info("/cluster/configured: Received request to check if the view is configured: {}", isConfigured);

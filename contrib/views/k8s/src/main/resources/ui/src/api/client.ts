@@ -10,7 +10,7 @@ import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/Ku
  * do not break the frontend. Falls back to the known default if parsing fails.
  */
 const resolveApiBase = (): string => {
-  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.1/instances/K8S_VIEW_INSTANCE/resources/api`;
+  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.5/instances/K8S_VIEW_INSTANCE/resources/api`;
   if (typeof window === 'undefined') return fallback;
   try {
     // Examples of pathname we might see:
@@ -658,10 +658,12 @@ export function needsLogin(repoId: string, repos: HelmRepo[]): boolean {
 }
 
 export const saveHelmRepo = (repo: HelmRepo, secret?: string) =>
-  fetchJson<void>(
-    "/helm/repos" + (secret ? `?secret=${encodeURIComponent(secret)}` : ""),
-    { method: "POST", body: JSON.stringify(repo) }
-  );
+  // secret is embedded in the JSON body (as plainSecret) — never in the URL
+  // to prevent it appearing in server logs and browser history.
+  fetchJson<void>("/helm/repos", {
+    method: "POST",
+    body: JSON.stringify({ ...repo, plainSecret: secret ?? null }),
+  });
 
 export async function submitHelmDeploy(payload: {
   chart: string;

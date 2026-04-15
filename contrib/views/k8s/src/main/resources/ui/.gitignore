@@ -8,6 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+# Bundled Node.js binary downloaded by frontend-maven-plugin — never commit
+node
 dist
 dist-ssr
 *.local

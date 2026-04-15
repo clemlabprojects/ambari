@@ -24,6 +24,7 @@ import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.Table;
+import javax.persistence.Transient;
 import java.net.URI;
 
 /**
@@ -72,6 +73,15 @@ public class HelmRepoEntity extends BaseModel {
 
     private boolean authInvalid;
 
+    /**
+     * Transient carrier for the plain-text registry secret.
+     * Never persisted to the DataStore; read from the JSON request body and
+     * consumed immediately by HelmRepositoryService.save() to store in the
+     * credential store. Keeping it on the entity avoids a separate wrapper DTO
+     * while still ensuring the secret never travels as a URL query parameter.
+     */
+    @Transient
+    private String plainSecret;
 
     // Getters and setters
     public String getType() { 
@@ -166,6 +176,14 @@ public class HelmRepoEntity extends BaseModel {
 
     public void setImageRegistryHostOverride(String imageRegistryHostOverride) {
         this.imageRegistryHostOverride = imageRegistryHostOverride;
+    }
+
+    public String getPlainSecret() {
+        return plainSecret;
+    }
+
+    public void setPlainSecret(String plainSecret) {
+        this.plainSecret = plainSecret;
     }
 
     public String getEffectiveRegistryHost() {

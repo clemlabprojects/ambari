@@ -57,9 +57,10 @@ public class HelmRepoResource {
   }
 
   @POST
-  public HelmRepoDTO save(HelmRepoEntity e, @QueryParam("secret") String plainSecret) {
+  public HelmRepoDTO save(HelmRepoEntity e) {
+    // plainSecret is carried in the JSON body as a @Transient field — never in the URL.
     var svc = new HelmRepositoryService(viewContext);
-    HelmRepoEntity out = svc.save(e, plainSecret);
+    HelmRepoEntity out = svc.save(e, e.getPlainSecret());
     return HelmRepoDTO.fromEntity(out);
   }
 

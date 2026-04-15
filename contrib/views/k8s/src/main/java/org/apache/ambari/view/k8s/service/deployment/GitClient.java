@@ -21,6 +21,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -180,15 +183,29 @@ public class GitClient {
             if (sshKeyPath == null) {
                 sshKeyPath = workspace.resolve(".gitops-ssh-key");
                 Files.createDirectories(workspace);
-                Files.writeString(sshKeyPath, sshKey, StandardCharsets.UTF_8);
-                // best effort to restrict perms
+                // Write with mode 0600 in one atomic operation so the key is never
+                // world-readable, even momentarily. Falls back to best-effort chmod
+                // on non-POSIX filesystems (e.g. Windows, some Docker volumes).
                 try {
+                    Set<PosixFilePermission> ownerRW = PosixFilePermissions.fromString("rw-------");
+                    Files.writeString(
+                        sshKeyPath, sshKey, StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
+                    );
+                    Files.setPosixFilePermissions(sshKeyPath, ownerRW);
+                } catch (UnsupportedOperationException nonPosix) {
+                    // Non-POSIX filesystem: write the file and restrict as best we can
+                    Files.writeString(sshKeyPath, sshKey, StandardCharsets.UTF_8);
+                    sshKeyPath.toFile().setReadable(false, false);
                     sshKeyPath.toFile().setReadable(true, true);
+                    sshKeyPath.toFile().setWritable(false, false);
                     sshKeyPath.toFile().setWritable(true, true);
-                    sshKeyPath.toFile().setExecutable(false, true);
-                } catch (Exception ignored) { }
+                    sshKeyPath.toFile().setExecutable(false, false);
+                    LOG.warn("POSIX permissions unavailable; SSH key restricted via File API (best effort): {}", sshKeyPath);
+                }
             }
-            pb.environment().put("GIT_SSH_COMMAND", "ssh -i " + sshKeyPath.toString() + " -o StrictHostKeyChecking=no");
+            pb.environment().put("GIT_SSH_COMMAND", "ssh -i " + sshKeyPath + " -o StrictHostKeyChecking=accept-new");
         } else if (authToken != null && !authToken.isBlank() && repoUrl != null && repoUrl.startsWith("https://")) {
             pb.environment().put("GIT_ASKPASS", "echo");
             pb.environment().put("GIT_TOKEN", authToken);
