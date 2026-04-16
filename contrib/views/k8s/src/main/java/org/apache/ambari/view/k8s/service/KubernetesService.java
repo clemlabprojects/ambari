@@ -932,6 +932,29 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Discover monitoring and self-heal a stale FAILED bootstrap state.
+     * If the service is found healthy but the stored state is FAILED (e.g. because
+     * a prior bootstrap timed out waiting for pods), update the state to COMPLETED.
+     * This is the method the GET discovery endpoint should call — it never triggers installs.
+     */
+    public MonitoringInfo discoverAndHealMonitoringState() {
+        MonitoringInfo info = discoverMonitoringPrometheus();
+        if (info != null) {
+            try {
+                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                if (!"COMPLETED".equals(storedState)) {
+                    LOG.info("Monitoring service found healthy; healing bootstrap state from '{}' to COMPLETED", storedState);
+                    updateMonitoringBootstrapState("COMPLETED",
+                            "Monitoring present: " + info.release() + " in " + info.namespace());
+                }
+            } catch (Exception e) {
+                LOG.warn("Could not heal monitoring bootstrap state: {}", e.getMessage());
+            }
+        }
+        return info;
+    }
+
     private MonitoringInfo discoverOpenShiftMonitoring() {
         if (!isOpenShift(client)) return null;
         String url = viewContext.getAmbariProperty("openshift.thanos.url");
@@ -1098,8 +1121,8 @@ public class KubernetesService {
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret for monitoring repoId {}: {}", repoId, ex.getMessage());
             }
-            // Keep service account defaults; users can override via view properties later.
-            // Install without waiting to avoid long blocks
+            // Install without waiting — Helm submits manifests and returns immediately;
+            // pods start asynchronously. We poll below for the service to appear.
             LOG.info("Installing/upgrading monitoring stack via Helm... and using overrides: {}", overrides.keySet());
             helmService.deployOrUpgrade(
                     chart,
@@ -1111,7 +1134,7 @@ public class KubernetesService {
                     repoId,
                     version,
                     600,
-                    true,
+                    false,  // wait=false: don't block until pods are ready — we poll below
                     false,
                     false
             );
@@ -1128,12 +1151,26 @@ public class KubernetesService {
         } catch (Exception ex) {
             LOG.warn("Failed to persist monitoring.repoId: {}", ex.toString());
         }
-        MonitoringInfo discovered = discoverMonitoringPrometheus();
+        // Poll for the Prometheus service to appear (pods take time to start after Helm returns).
+        // State remains RUNNING during this window so the UI shows progress, not failure.
+        MonitoringInfo discovered = null;
+        int pollIntervalSec = 15;
+        int maxAttempts = 40; // 40 × 15s = 10 minutes
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            discovered = discoverMonitoringPrometheus();
+            if (discovered != null) break;
+            LOG.info("Monitoring service not yet available after Helm install (attempt {}/{}), waiting {}s...",
+                    attempt + 1, maxAttempts, pollIntervalSec);
+            try { Thread.sleep(pollIntervalSec * 1000L); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
         if (discovered != null) {
             updateMonitoringBootstrapState("COMPLETED",
                     "Monitoring present: " + discovered.release() + " in " + discovered.namespace());
         } else {
-            updateMonitoringBootstrapState("FAILED", "Monitoring stack not found after install attempt");
+            updateMonitoringBootstrapState("FAILED", "Monitoring service not found after 10 minutes — pods may still be starting");
         }
         return discovered;
     }

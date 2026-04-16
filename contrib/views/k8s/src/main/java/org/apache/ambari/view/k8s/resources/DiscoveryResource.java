@@ -115,18 +115,23 @@ public class DiscoveryResource {
 
     /**
      * Discover monitoring stack (kube-prometheus-stack) deployment to provide namespace/release info to charts.
+     * This endpoint only reads cluster state — it never triggers an install.
+     * If the service is found healthy after a prior FAILED bootstrap, the state is self-healed to COMPLETED.
+     * If the service is not yet found, the stored bootstrap state (RUNNING/FAILED/SKIPPED) is returned so
+     * the UI can show meaningful progress rather than a generic 404.
      */
     @GET
     @Path("/monitoring/prometheus")
     @Produces(MediaType.APPLICATION_JSON)
     public Response discoverMonitoringPrometheus() {
         try {
-            var info = kubernetesService.ensureMonitoringInstalled(null);
-            if (info == null) {
-                return Response.status(Response.Status.NOT_FOUND).entity(Collections.singletonMap("error", "Monitoring stack not found or bootstrap failed")).build();
-            }
+            var info = kubernetesService.discoverAndHealMonitoringState();
             String state = viewContext.getInstanceData("monitoring.bootstrap.state");
             String message = viewContext.getInstanceData("monitoring.bootstrap.message");
+            if (info == null) {
+                // Bootstrap in progress or not started — return stored state so UI shows RUNNING/FAILED badge.
+                return Response.ok(new MonitoringDiscoveryResponse(null, null, null, state, message)).build();
+            }
             return Response.ok(new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message)).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);
