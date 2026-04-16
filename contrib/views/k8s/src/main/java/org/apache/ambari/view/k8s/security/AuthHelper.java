@@ -62,13 +62,24 @@ public class AuthHelper {
     }
 
     public void checkConfigurationPermission() {
-        LOG.info("Performing configuration permission check for user '{}'", viewContext.getUsername());
-        if (isUserInList("view.admin.users")) {
-            LOG.info("Configuration permission GRANTED for user '{}' based on instance properties.", viewContext.getUsername());
-            return;
+        String username = viewContext.getUsername();
+        LOG.info("Performing configuration permission check for user '{}'", username);
+
+        // If view.admin.users is explicitly configured, enforce it strictly.
+        String adminListRaw = viewContext.getProperties().get("view.admin.users");
+        if (adminListRaw != null && !adminListRaw.trim().isEmpty()) {
+            if (isUserInList("view.admin.users")) {
+                LOG.info("Configuration permission GRANTED for user '{}' via view.admin.users property.", username);
+                return;
+            }
+            LOG.warn("Configuration permission DENIED for user '{}'. User not in view.admin.users.", username);
+            throw new ForbiddenException("L'utilisateur n'a pas les droits pour configurer la vue.");
         }
-        LOG.warn("Configuration permission DENIED for user '{}'. User not in admin list.", viewContext.getUsername());
-        throw new ForbiddenException("L'utilisateur n'a pas les droits pour configurer la vue.");
+
+        // Property not configured: fall back to Ambari's own view ACL.
+        // Access to the view itself is already restricted to CLUSTER.ADMINISTRATOR
+        // and above by the view instance roles — any authenticated view user may configure.
+        LOG.info("view.admin.users not configured — configuration permission GRANTED for user '{}' via Ambari view ACL.", username);
     }
 
     public void checkWritePermission() {

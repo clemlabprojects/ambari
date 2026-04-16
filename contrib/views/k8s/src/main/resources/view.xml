@@ -58,6 +58,18 @@ limitations under the License.
         <required>false</required>
         <default-value>true</default-value>
     </parameter>
+    <parameter>
+        <name>view.admin.users</name>
+        <description>Comma-separated list of Ambari usernames allowed to configure the view (upload kubeconfig, manage repos). When left empty, any user with access to the view instance may configure it.</description>
+        <label>View Admin Users</label>
+        <required>false</required>
+    </parameter>
+    <parameter>
+        <name>view.operator.users</name>
+        <description>Comma-separated list of Ambari usernames with operator (write) access — may deploy/destroy releases but cannot change view configuration.</description>
+        <label>View Operator Users</label>
+        <required>false</required>
+    </parameter>
 
     <persistence>
         <!-- Fully qualified name of your @Entity class -->
