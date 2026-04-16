@@ -24,7 +24,7 @@ import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases,
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
@@ -384,6 +384,17 @@ const HelmReleasesPage: React.FC = () => {
           icon: <SafetyCertificateOutlined />,
           label: 'Reapply Ranger repository',
           onClick: () => triggerRangerRepositoryReapply(record)
+        }] : []),
+        ...(record.serviceKey === 'SQL-ASSISTANT' ? [{
+          key: 'open-sql-assistant',
+          icon: <ExperimentOutlined />,
+          label: 'Open SQL Assistant',
+          onClick: () => {
+            // The Ambari view instance name matches the Helm release name (1:1 mapping).
+            // Navigate to the SQL Assistant view instance provisioned by the post-deploy step.
+            const url = `${window.location.origin}/views/SQL-ASSISTANT-VIEW/1.0.0.0/${record.name}/`;
+            window.open(url, '_blank', 'noreferrer');
+          }
         }] : []),
         {
           type: 'divider',

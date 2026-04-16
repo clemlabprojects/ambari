@@ -52,4 +52,10 @@ public class StackServiceDef {
     public List<String> dynamicValues;
     public List<Map<String, Object>> tls;
     public List<Map<String, Object>> kerberos;
+    /**
+     * Optional post-deploy actions run as command steps after the main Helm install.
+     * Currently supports:
+     *   postDeploy.ambariViewInstance — auto-provisions a linked Ambari view instance.
+     */
+    public Map<String, Object> postDeploy;
 }

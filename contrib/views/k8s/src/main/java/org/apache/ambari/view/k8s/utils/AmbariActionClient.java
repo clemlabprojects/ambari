@@ -1012,6 +1012,62 @@ public class AmbariActionClient {
         return Collections.unmodifiableMap(result);
     }
 
+    /**
+     * Creates or updates an Ambari view instance via PUT (idempotent create-or-update).
+     *
+     * <p>After a successful SQL Assistant Helm deploy the K8s view calls this to wire
+     * the deployed service URL into a new view instance automatically, removing the need
+     * for manual post-deploy configuration.
+     *
+     * @param viewName     Ambari view name, e.g. "SQL-ASSISTANT-VIEW"
+     * @param viewVersion  View version string, e.g. "1.0.0.0"
+     * @param instanceName Instance identifier (use the Helm release name for 1:1 mapping)
+     * @param label        Human-readable label shown in the Ambari top menu
+     * @param description  Optional description (may be null)
+     * @param properties   View instance parameter map (e.g. sql.assistant.semantic.service.url → value)
+     */
+    public void createOrUpdateViewInstance(
+            String viewName,
+            String viewVersion,
+            String instanceName,
+            String label,
+            String description,
+            Map<String, String> properties
+    ) throws Exception {
+        String url = ambariApiBase
+                + "/views/" + encode(viewName)
+                + "/versions/" + encode(viewVersion)
+                + "/instances/" + encode(instanceName);
+
+        JsonObject info = new JsonObject();
+        if (label != null && !label.isBlank()) {
+            info.addProperty("label", label);
+        }
+        if (description != null && !description.isBlank()) {
+            info.addProperty("description", description);
+        }
+        if (properties != null && !properties.isEmpty()) {
+            JsonObject props = new JsonObject();
+            properties.forEach(props::addProperty);
+            info.add("properties", props);
+        }
+        JsonObject body = new JsonObject();
+        body.add("ViewInstanceInfo", info);
+
+        LOG.info("Provisioning Ambari view instance: PUT {} label='{}' properties={}",
+                url, label, properties == null ? "none" : properties.keySet());
+
+        try (InputStream is = stream.readFrom(
+                url,
+                "PUT",
+                body.toString(),
+                withStdHeaders(Map.of("Content-Type", "application/json"))
+        )) {
+            String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            LOG.info("View instance provisioned ({}): status response length={}", instanceName, resp.length());
+        }
+    }
+
     private void initializeMainConfigurations(){
         if (this.defaultConfigTypes == null){
             this.defaultConfigTypes = new HashMap<>();

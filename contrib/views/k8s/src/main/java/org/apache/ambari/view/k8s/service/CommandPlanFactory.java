@@ -677,6 +677,106 @@ public class CommandPlanFactory {
 
     }
 
+    /**
+     * Creates a post-deploy step that provisions (or updates) an Ambari view instance
+     * for the just-deployed Helm release.  The step is appended to the root command's
+     * child list after the main HELM_DEPLOY command, so it only runs once the chart is
+     * successfully installed.
+     *
+     * <p>The {@code viewSpec} comes from {@code service.json → postDeploy.ambariViewInstance}
+     * and supports the following keys:
+     * <ul>
+     *   <li>{@code viewName}           — Ambari view name (default: SQL-ASSISTANT-VIEW)</li>
+     *   <li>{@code viewVersion}        — View version string (default: 1.0.0.0)</li>
+     *   <li>{@code serviceUrlTemplate} — URL template with {@code {{releaseName}}} and {@code {{namespace}}} tokens</li>
+     * </ul>
+     *
+     * @param rootCmd     root command entity (must already be persisted)
+     * @param viewSpec    postDeploy.ambariViewInstance spec map from service.json
+     * @param releaseName Helm release name (becomes the Ambari view instance name)
+     * @param namespace   Kubernetes namespace (used for URL template resolution)
+     */
+    public void createAmbariViewProvisionCommand(
+            CommandEntity rootCmd,
+            Map<String, Object> viewSpec,
+            String releaseName,
+            String namespace
+    ) {
+        final String now = Instant.now().toString();
+        String id = rootCmd.getId() + "-" + UUID.randomUUID();
+
+        // Resolve the service URL template — supports {{releaseName}} and {{namespace}}
+        String serviceUrlTemplate = (String) viewSpec.getOrDefault(
+                "serviceUrlTemplate",
+                "http://{{releaseName}}-ollama.{{namespace}}.svc.cluster.local:8090"
+        );
+        String serviceUrl = serviceUrlTemplate
+                .replace("{{releaseName}}", releaseName)
+                .replace("{{namespace}}", namespace);
+
+        String viewName    = (String) viewSpec.getOrDefault("viewName",    "SQL-ASSISTANT-VIEW");
+        String viewVersion = (String) viewSpec.getOrDefault("viewVersion", "1.0.0.0");
+        String instanceLabel = "SQL Assistant — " + releaseName;
+        String instanceDesc  = "Auto-provisioned after Helm deploy of " + releaseName
+                + " in namespace " + namespace;
+
+        CommandEntity cmd = new CommandEntity();
+        cmd.setId(id);
+        cmd.setViewInstance(ctx.getInstanceName());
+        cmd.setType(CommandType.AMBARI_VIEW_PROVISION.name());
+        cmd.setTitle("Provision Ambari view instance: " + releaseName);
+
+        // Build params — copy auth context from root so the step can call Ambari REST
+        Map<String, Object> params = new LinkedHashMap<>();
+        Type mapType = new TypeToken<Map<String, Object>>(){}.getType();
+        try {
+            String rawRoot = CommandUtils.resolveParamsPayload(rootCmd.getParamsJson());
+            Map<String, Object> rootParams = gson.fromJson(rawRoot, mapType);
+            if (rootParams != null) {
+                if (rootParams.containsKey("_baseUri"))       params.put("_baseUri",       rootParams.get("_baseUri"));
+                if (rootParams.containsKey("_callerHeaders")) params.put("_callerHeaders", rootParams.get("_callerHeaders"));
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not copy auth context to AMBARI_VIEW_PROVISION params for {}: {}", id, e.toString());
+        }
+        params.put("viewName",             viewName);
+        params.put("viewVersion",          viewVersion);
+        params.put("instanceName",         releaseName);     // 1:1 mapping: instanceName = releaseName
+        params.put("instanceLabel",        instanceLabel);
+        params.put("instanceDescription",  instanceDesc);
+        params.put("serviceUrl",           serviceUrl);
+
+        cmd.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        cmd.setCommandStatusId(status.getId());
+
+        // Append to root's child list
+        Type listType = new TypeToken<ArrayList<String>>(){}.getType();
+        List<String> children;
+        try {
+            children = gson.fromJson(rootCmd.getChildListJson(), listType);
+            if (children == null) children = new ArrayList<>();
+        } catch (Exception e) {
+            children = new ArrayList<>();
+        }
+        children.add(id);
+        rootCmd.setChildListJson(gson.toJson(children));
+
+        store(status);
+        store(cmd);
+        store(rootCmd);
+
+        LOG.info("Added AMBARI_VIEW_PROVISION step {} — will provision view instance '{}' at '{}'",
+                id, releaseName, serviceUrl);
+    }
+
     // Helper to store within this factory
     private void store(Object e) {
         try {

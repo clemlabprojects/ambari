@@ -3147,6 +3147,34 @@ public class CommandService {
         this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
         this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
 
+        // 4. Post-deploy: auto-provision an Ambari view instance if the service spec defines it.
+        //    This creates a linked SQL-ASSISTANT-VIEW instance for each sql-assistant-* Helm release,
+        //    removing all manual wiring after deploy.
+        if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
+            try {
+                StackDefinitionService stackDefSvc = new StackDefinitionService(this.ctx);
+                var serviceDef = stackDefSvc.getServiceDefinition(request.getServiceKey());
+                if (serviceDef != null && serviceDef.postDeploy != null) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> viewSpec =
+                            (Map<String, Object>) serviceDef.postDeploy.get("ambariViewInstance");
+                    if (viewSpec != null) {
+                        this.commandPlanFactory.createAmbariViewProvisionCommand(
+                                rootCommand,
+                                viewSpec,
+                                request.getReleaseName(),
+                                request.getNamespace()
+                        );
+                        LOG.info("Queued AMBARI_VIEW_PROVISION post-deploy step for release '{}' (serviceKey={})",
+                                request.getReleaseName(), request.getServiceKey());
+                    }
+                }
+            } catch (Exception ex) {
+                LOG.warn("Could not queue post-deploy Ambari view provision step for '{}': {}",
+                        request.getReleaseName(), ex.toString());
+            }
+        }
+
         // Publish correlation ConfigMap so the mutating webhook can attach keytab requests to this command tree.
         if (isWebhookInjectionMode(kerberosInjectionMode)) {
             try {
@@ -4466,6 +4494,41 @@ public class CommandService {
 //                    var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
 
 
+                }
+                case AMBARI_VIEW_PROVISION -> {
+                    String viewName      = (String) childParams.get("viewName");
+                    String viewVersion   = (String) childParams.get("viewVersion");
+                    String instanceName  = (String) childParams.get("instanceName");
+                    String instanceLabel = (String) childParams.get("instanceLabel");
+                    String instanceDesc  = (String) childParams.get("instanceDescription");
+                    String serviceUrl    = (String) childParams.get("serviceUrl");
+                    String baseUriStr    = (String) childParams.get("_baseUri");
+
+                    if (baseUriStr == null || baseUriStr.isBlank()) {
+                        throw new IllegalStateException("AMBARI_VIEW_PROVISION: _baseUri is missing from params");
+                    }
+                    String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+
+                    LOG.info("AMBARI_VIEW_PROVISION: view={}/{} instance={} serviceUrl={}",
+                            viewName, viewVersion, instanceName, serviceUrl);
+                    appendCommandLog(id, "Provisioning Ambari view instance "
+                            + viewName + "/" + viewVersion + "/" + instanceName
+                            + " → " + serviceUrl);
+
+                    var ambariClient = new AmbariActionClient(ctx, ambariApiBase, authHeaders);
+                    ambariClient.createOrUpdateViewInstance(
+                            viewName,
+                            viewVersion,
+                            instanceName,
+                            instanceLabel,
+                            instanceDesc,
+                            serviceUrl != null
+                                    ? Map.of("sql.assistant.semantic.service.url", serviceUrl)
+                                    : Map.of()
+                    );
+                    appendCommandLog(id, "View instance '" + instanceName + "' provisioned successfully.");
+                    LOG.info("AMBARI_VIEW_PROVISION completed for instance '{}'", instanceName);
                 }
                 // in CommandService.runNextStep(...) switch
                 case KEYTAB_ISSUE_PRINCIPAL -> {

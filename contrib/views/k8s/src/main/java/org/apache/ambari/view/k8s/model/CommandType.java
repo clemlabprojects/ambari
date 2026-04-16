@@ -58,4 +58,7 @@ public enum CommandType {
     RANGER_REPOSITORY_CREATION,
     RANGER_USER_CREATION,
     RANGER_REPOSITORY_REAPPLY,
+
+    // Post-deploy: automatically provision a matching Ambari view instance
+    AMBARI_VIEW_PROVISION,
 }

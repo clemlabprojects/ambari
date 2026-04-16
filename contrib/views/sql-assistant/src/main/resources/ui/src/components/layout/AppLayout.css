@@ -1,0 +1,134 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+/* ui/src/components/layout/AppLayout.css */
+
+:global(html.sql-view-no-scroll) { overflow: hidden !important; }
+:global(body.sql-view-no-scroll) { overflow: hidden !important; }
+:global(html) { height: 100%; }
+:global(body) { height: 100%; }
+:global(#root) { height: 100%; }
+
+.app-layout {
+  --header-height: 56px;
+  height: 100vh;
+  background-color: #f0f2f5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 1024px;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fff !important;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0 16px !important;
+  height: var(--header-height) !important;
+  line-height: var(--header-height) !important;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-radius: 14px;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+.logo-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.header-menu {
+  border-bottom: none !important;
+  line-height: calc(var(--header-height) - 2px) !important;
+  flex: 1;
+  min-width: 0;
+}
+
+.app-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 6px 8px 6px;
+}
+
+.content-shell {
+  display: flex;
+  height: calc(100vh - var(--header-height) - 14px);
+  min-height: 0;
+}
+
+.main-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  padding-top: 1px;
+  padding-bottom: 12px;
+}
+
+.app-breadcrumb {
+  margin: 6px 0 10px 0;
+}
+
+.page-content {
+  background: #fff;
+  padding: 0;
+  border-radius: 8px;
+  min-height: calc(100% - 32px);
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Shared action button (compact, rounded) */
+.action-button {
+  border: 1px solid #d0d5dd !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #27364b !important;
+  padding: 4px 10px !important;
+  box-shadow: none !important;
+  font-weight: 500;
+}
+.action-button:hover {
+  border-color: #1677ff !important;
+  color: #1677ff !important;
+  background: #f5f8ff !important;
+}

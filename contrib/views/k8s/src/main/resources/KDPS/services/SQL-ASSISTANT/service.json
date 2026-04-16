@@ -1,0 +1,333 @@
+{
+  "label": "SQL Assistant",
+  "chart": "clemlabprojects/ollama",
+  "pattern": "sql-assistant-.*",
+  "secretName": "registry-credentials",
+  "version": "0.1.0",
+
+  "endpoints": [
+    {
+      "id": "sql-assistant-api",
+      "label": "SQL Assistant API",
+      "type": "template",
+      "template": "http://{{host}}:{{port}}/health",
+      "properties": {
+        "host": {
+          "source": "template",
+          "type": "string",
+          "template": "{{releaseName}}-ollama.{{namespace}}.svc.cluster.local"
+        },
+        "port": {
+          "source": "helm",
+          "type": "integer",
+          "path": "sqlAssistant.service.port"
+        }
+      }
+    },
+    {
+      "id": "ollama-api",
+      "label": "Ollama API",
+      "type": "template",
+      "template": "http://{{host}}:{{port}}/api/tags",
+      "properties": {
+        "host": {
+          "source": "template",
+          "type": "string",
+          "template": "{{releaseName}}-ollama.{{namespace}}.svc.cluster.local"
+        },
+        "port": {
+          "source": "helm",
+          "type": "integer",
+          "path": "service.port"
+        }
+      }
+    }
+  ],
+
+  "variables": [
+    { "name": "ollamaModel",       "from": { "type": "form", "field": "ollama.model" } },
+    { "name": "polarisUrl",        "from": { "type": "form", "field": "catalog.polarisUrl" } },
+    { "name": "trinoHost",         "from": { "type": "form", "field": "sql.trinoHost" } },
+    { "name": "trinoPort",         "from": { "type": "form", "field": "sql.trinoPort" } },
+    { "name": "hiveHost",          "from": { "type": "form", "field": "sql.hiveHost" } },
+    { "name": "hivePort",          "from": { "type": "form", "field": "sql.hivePort" } },
+    { "name": "gpuEnabled",        "from": { "type": "form", "field": "gpu.enabled" } },
+    { "name": "persistenceSize",   "from": { "type": "form", "field": "persistence.size" } },
+    { "name": "ingressEnabled",    "from": { "type": "form", "field": "ingress.enabled" } },
+    { "name": "ingressHost",       "from": { "type": "form", "field": "ingress.host" } },
+    { "name": "ingressClassName",  "from": { "type": "form", "field": "ingress.className" } }
+  ],
+
+  "bindings": [
+    {
+      "name": "ollama-model-pull",
+      "targets": [
+        {
+          "path": "models.pull[0]",
+          "from": { "type": "var", "name": "ollamaModel" }
+        },
+        {
+          "path": "sqlAssistant.env.OLLAMA_MODEL",
+          "from": { "type": "var", "name": "ollamaModel" }
+        }
+      ]
+    },
+    {
+      "name": "polaris-url",
+      "skipIfVarEmpty": "polarisUrl",
+      "targets": [
+        {
+          "path": "sqlAssistant.env.POLARIS_MCP_URL",
+          "from": { "type": "var", "name": "polarisUrl" }
+        }
+      ]
+    },
+    {
+      "name": "trino-connection",
+      "skipIfVarEmpty": "trinoHost",
+      "targets": [
+        {
+          "path": "sqlAssistant.env.TRINO_HOST",
+          "from": { "type": "var", "name": "trinoHost" }
+        },
+        {
+          "path": "sqlAssistant.env.TRINO_PORT",
+          "from": { "type": "var", "name": "trinoPort" }
+        }
+      ]
+    },
+    {
+      "name": "hive-connection",
+      "skipIfVarEmpty": "hiveHost",
+      "targets": [
+        {
+          "path": "sqlAssistant.env.HIVE_HOST",
+          "from": { "type": "var", "name": "hiveHost" }
+        },
+        {
+          "path": "sqlAssistant.env.HIVE_PORT",
+          "from": { "type": "var", "name": "hivePort" }
+        }
+      ]
+    },
+    {
+      "name": "gpu-setup",
+      "targets": [
+        {
+          "path": "gpu.enabled",
+          "from": { "type": "var", "name": "gpuEnabled" }
+        }
+      ]
+    },
+    {
+      "name": "persistence-size",
+      "skipIfVarEmpty": "persistenceSize",
+      "targets": [
+        {
+          "path": "persistence.size",
+          "from": { "type": "var", "name": "persistenceSize" }
+        }
+      ]
+    },
+    {
+      "name": "ingress-setup",
+      "skipIfVarEmpty": "ingressHost",
+      "targets": [
+        {
+          "path": "ingress.enabled",
+          "from": { "type": "var", "name": "ingressEnabled" }
+        },
+        {
+          "path": "ingress.className",
+          "from": { "type": "var", "name": "ingressClassName" }
+        },
+        {
+          "path": "ingress.hosts[0].host",
+          "from": { "type": "var", "name": "ingressHost" }
+        },
+        {
+          "path": "ingress.hosts[0].paths[0].path",
+          "value": "/"
+        },
+        {
+          "path": "ingress.hosts[0].paths[0].pathType",
+          "value": "Prefix"
+        }
+      ]
+    },
+    {
+      "name": "sidecar-ollama-url",
+      "targets": [
+        {
+          "path": "sqlAssistant.env.OLLAMA_BASE_URL",
+          "value": "http://localhost:11434"
+        },
+        {
+          "path": "sqlAssistant.env.LLM_ADAPTER",
+          "value": "ollama"
+        },
+        {
+          "path": "sqlAssistant.env.CATALOG_ADAPTER",
+          "value": "polaris_mcp"
+        },
+        {
+          "path": "sqlAssistant.enabled",
+          "value": true
+        }
+      ]
+    }
+  ],
+
+  "postDeploy": {
+    "ambariViewInstance": {
+      "viewName": "SQL-ASSISTANT-VIEW",
+      "viewVersion": "1.0.0.0",
+      "serviceUrlTemplate": "http://{{releaseName}}-ollama.{{namespace}}.svc.cluster.local:8090"
+    }
+  },
+
+  "form": [
+    {
+      "name": "releaseName",
+      "label": "Release name",
+      "type": "string",
+      "required": true,
+      "defaultValue": "sql-assistant",
+      "help": "Helm release name. Must start with 'sql-assistant-' or match pattern sql-assistant-.*"
+    },
+    {
+      "name": "namespace",
+      "label": "Kubernetes namespace",
+      "type": "string",
+      "required": true,
+      "defaultValue": "sql-assistant",
+      "help": "Namespace where Ollama + SQL Assistant will be deployed."
+    },
+    {
+      "name": "llmConfig",
+      "label": "LLM Configuration",
+      "type": "group",
+      "fields": [
+        {
+          "name": "ollama.model",
+          "label": "Ollama model",
+          "type": "select",
+          "required": true,
+          "defaultValue": "sqlcoder:7b",
+          "options": [
+            { "value": "sqlcoder:7b",   "label": "SQLCoder 7B (recommended — SQL specialist)" },
+            { "value": "llama3.1:8b",   "label": "Llama 3.1 8B (general purpose)" },
+            { "value": "mistral:7b",    "label": "Mistral 7B (fast, lightweight)" },
+            { "value": "llama3.1:70b",  "label": "Llama 3.1 70B (high quality, needs GPU)" }
+          ],
+          "help": "Model to pull and use for SQL generation. SQLCoder is fine-tuned specifically for text-to-SQL."
+        }
+      ]
+    },
+    {
+      "name": "catalogConfig",
+      "label": "Catalog (Polaris)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "catalog.polarisUrl",
+          "label": "Polaris REST Catalog URL",
+          "type": "string",
+          "required": true,
+          "defaultValue": "http://master03.dev01.hadoop.clemlab.com:8181",
+          "help": "Base URL of the Apache Polaris server (Iceberg REST catalog). Used for schema discovery."
+        }
+      ]
+    },
+    {
+      "name": "trinoDiscovery",
+      "label": "Connect to Trino",
+      "type": "k8s-discovery",
+      "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
+      "help": "Select a running Trino coordinator to auto-fill host/port."
+    },
+    {
+      "name": "sqlConfig",
+      "label": "SQL Engines",
+      "type": "group",
+      "fields": [
+        {
+          "name": "sql.trinoHost",
+          "label": "Trino host",
+          "type": "string",
+          "help": "Trino coordinator hostname or service name."
+        },
+        {
+          "name": "sql.trinoPort",
+          "label": "Trino port",
+          "type": "number",
+          "defaultValue": 8080,
+          "help": "Trino coordinator HTTP port."
+        },
+        {
+          "name": "sql.hiveHost",
+          "label": "HiveServer2 host",
+          "type": "string",
+          "help": "HiveServer2 hostname. Leave empty to disable Hive support."
+        },
+        {
+          "name": "sql.hivePort",
+          "label": "HiveServer2 port",
+          "type": "number",
+          "defaultValue": 10000,
+          "help": "HiveServer2 Thrift port."
+        }
+      ]
+    },
+    {
+      "name": "resourceConfig",
+      "label": "Resources & Storage",
+      "type": "group",
+      "fields": [
+        {
+          "name": "persistence.size",
+          "label": "Model storage size",
+          "type": "string",
+          "defaultValue": "50Gi",
+          "help": "PersistentVolumeClaim size for Ollama model storage. SQLCoder 7B ~4 GB, Llama 70B ~40 GB."
+        },
+        {
+          "name": "gpu.enabled",
+          "label": "Enable GPU",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Enable NVIDIA GPU support (requires nvidia.com/gpu device plugin on a GPU node)."
+        }
+      ]
+    },
+    {
+      "name": "ingressConfig",
+      "label": "Ingress (optional)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "ingress.enabled",
+          "label": "Enable Ingress",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Expose the SQL Assistant API externally via an Ingress."
+        },
+        {
+          "name": "ingress.className",
+          "label": "Ingress class",
+          "type": "string",
+          "help": "Ingress controller class (e.g. nginx).",
+          "condition": { "field": "ingress.enabled", "value": true }
+        },
+        {
+          "name": "ingress.host",
+          "label": "External hostname",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "DNS hostname to expose the SQL Assistant API (e.g. sql-assistant.example.com).",
+          "condition": { "field": "ingress.enabled", "value": true }
+        }
+      ]
+    }
+  ]
+}
