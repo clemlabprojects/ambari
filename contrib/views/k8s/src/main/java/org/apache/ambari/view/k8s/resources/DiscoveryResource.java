@@ -141,17 +141,40 @@ public class DiscoveryResource {
 
     /**
      * Advertise backend feature flags to the UI so it can enable/disable flows (e.g., Flux GitOps).
+     * FLUX_GITOPS is enabled when Flux controllers are detected in the cluster (flux-system namespace).
      */
     @GET
     @Path("/features")
     @Produces(MediaType.APPLICATION_JSON)
     public Response discoverFeatures() {
-        // For now, only Direct Helm is supported; Flux GitOps wiring is not live yet.
         Map<String, Object> features = new LinkedHashMap<>();
-        features.put("supportedDeploymentModes", List.of("DIRECT_HELM")); // future: add "FLUX_GITOPS"
-        features.put("defaultDeploymentMode", "DIRECT_HELM");
-        features.put("fluxGitopsSupported", false);
+        boolean fluxPresent = isFluxInstalled();
+        if (fluxPresent) {
+            features.put("supportedDeploymentModes", List.of("DIRECT_HELM", "FLUX_GITOPS"));
+            features.put("defaultDeploymentMode", "DIRECT_HELM");
+        } else {
+            features.put("supportedDeploymentModes", List.of("DIRECT_HELM"));
+            features.put("defaultDeploymentMode", "DIRECT_HELM");
+        }
+        features.put("fluxGitopsSupported", fluxPresent);
         return Response.ok(features).build();
+    }
+
+    /**
+     * Detect whether Flux is installed by checking for the helm-controller Deployment in flux-system.
+     */
+    private boolean isFluxInstalled() {
+        try {
+            var deploy = kubernetesService.getClient()
+                    .apps().deployments()
+                    .inNamespace("flux-system")
+                    .withName("helm-controller")
+                    .get();
+            return deploy != null;
+        } catch (Exception e) {
+            LOG.debug("Flux detection failed (cluster may be unconfigured): {}", e.getMessage());
+            return false;
+        }
     }
 
     // -- Private Helpers --
