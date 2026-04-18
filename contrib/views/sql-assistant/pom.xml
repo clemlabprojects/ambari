@@ -116,6 +116,20 @@ limitations under the License.
     </dependencies>
 
     <build>
+        <resources>
+            <!-- Default resources (view.xml, META-INF, etc.) -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+            <!-- Bundle runtime deps into WEB-INF/lib (Ambari view classloader convention) -->
+            <resource>
+                <targetPath>WEB-INF/lib</targetPath>
+                <filtering>false</filtering>
+                <directory>target/lib</directory>
+            </resource>
+        </resources>
+
         <plugins>
 
             <!-- Java 17 compiler -->
@@ -196,6 +210,43 @@ limitations under the License.
                         </manifest>
                     </archive>
                 </configuration>
+            </plugin>
+
+            <!-- Copy runtime deps into target/lib (picked up as WEB-INF/lib by the resource above),
+                 then copy the assembled JAR into ../target/views-jars for the package module. -->
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-runtime-deps</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <includeScope>runtime</includeScope>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-artifact</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>${project.groupId}</groupId>
+                                    <artifactId>${project.artifactId}</artifactId>
+                                    <version>${project.version}</version>
+                                    <type>${project.packaging}</type>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${views.jars.dir.rel}</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
         </plugins>

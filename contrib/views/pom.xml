@@ -46,6 +46,7 @@
     <module>k8s</module>
     <!-- <module>pig</module> -->
     <module>capacity-scheduler</module>
+    <module>sql-assistant</module>
     <!-- <module>wfmanager</module> -->
     <!--ambari-views-package should be last in the module list for it to function properly-->
     <module>ambari-views-package</module>
