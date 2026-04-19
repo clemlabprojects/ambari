@@ -28,6 +28,7 @@ import javax.inject.Inject;
 import javax.ws.rs.*;
 import javax.ws.rs.core.*;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -211,7 +212,8 @@ public class SqlAssistantService {
     }
 
     private static String requestId(HttpHeaders headers) {
-        String id = headers.getHeaderString("X-Request-ID");
-        return (id != null && !id.isBlank()) ? id : UUID.randomUUID().toString();
+        List<String> vals = headers.getRequestHeader("X-Request-ID");
+        String id = (vals != null && !vals.isEmpty()) ? vals.get(0) : null;
+        return (id != null && !id.isEmpty()) ? id : UUID.randomUUID().toString();
     }
 }

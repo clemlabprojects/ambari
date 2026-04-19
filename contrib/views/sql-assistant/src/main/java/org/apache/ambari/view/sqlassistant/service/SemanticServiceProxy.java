@@ -116,7 +116,7 @@ public class SemanticServiceProxy {
         } catch (IOException e) {
             LOG.error("Semantic service unreachable at {}: {}", serviceBaseUrl, e.getMessage());
             throw new WebApplicationException(
-                    Response.status(Response.Status.BAD_GATEWAY)
+                    Response.status(502)
                             .entity("{\"error\":\"Semantic service unavailable: " + e.getMessage() + "\"}")
                             .build()
             );
