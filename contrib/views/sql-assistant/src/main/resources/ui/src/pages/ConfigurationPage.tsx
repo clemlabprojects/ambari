@@ -69,7 +69,7 @@ const ConfigurationPage: React.FC = () => {
     );
 
   return (
-    <div style={{ padding: 24, maxWidth: 800 }}>
+    <div style={{ padding: 24, maxWidth: 800, height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
       <div
         style={{
           display: 'flex',

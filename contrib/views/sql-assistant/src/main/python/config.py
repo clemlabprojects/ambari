@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # ── Service ─────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
-    port: int = 8090
+    port: int = 8095
     log_level: str = "INFO"
     max_result_rows: int = 10_000
     query_timeout_seconds: int = 120

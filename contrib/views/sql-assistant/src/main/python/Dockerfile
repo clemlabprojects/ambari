@@ -30,9 +30,9 @@ USER sqlassistant
 ENV PYTHONUNBUFFERED=1
 ENV HISTORY_DB_PATH=/var/lib/sql-assistant/history.db
 
-EXPOSE 8090
+EXPOSE 8095
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD python -c "import httpx; r = httpx.get('http://localhost:8090/health', timeout=8); exit(0 if r.status_code == 200 else 1)"
+  CMD python -c "import httpx; r = httpx.get('http://localhost:8095/health', timeout=8); exit(0 if r.status_code == 200 else 1)"
 
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8095"]

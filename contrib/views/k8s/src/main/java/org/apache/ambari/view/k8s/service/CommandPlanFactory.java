@@ -716,6 +716,9 @@ public class CommandPlanFactory {
 
         String viewName    = (String) viewSpec.getOrDefault("viewName",    "SQL-ASSISTANT-VIEW");
         String viewVersion = (String) viewSpec.getOrDefault("viewVersion", "1.0.0.0");
+        String instanceName = viewSpec.containsKey("instanceName")
+                ? (String) viewSpec.get("instanceName")
+                : releaseName;
         String instanceLabel = "SQL Assistant — " + releaseName;
         String instanceDesc  = "Auto-provisioned after Helm deploy of " + releaseName
                 + " in namespace " + namespace;
@@ -741,7 +744,7 @@ public class CommandPlanFactory {
         }
         params.put("viewName",             viewName);
         params.put("viewVersion",          viewVersion);
-        params.put("instanceName",         releaseName);     // 1:1 mapping: instanceName = releaseName
+        params.put("instanceName",         instanceName);
         params.put("instanceLabel",        instanceLabel);
         params.put("instanceDescription",  instanceDesc);
         params.put("serviceUrl",           serviceUrl);

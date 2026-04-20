@@ -390,9 +390,7 @@ const HelmReleasesPage: React.FC = () => {
           icon: <ExperimentOutlined />,
           label: 'Open SQL Assistant',
           onClick: () => {
-            // The Ambari view instance name matches the Helm release name (1:1 mapping).
-            // Navigate to the SQL Assistant view instance provisioned by the post-deploy step.
-            const url = `${window.location.origin}/views/SQL-ASSISTANT-VIEW/1.0.0.0/${record.name}/`;
+            const url = `${window.location.origin}/views/SQL-ASSISTANT-VIEW/1.0.0.0/SQL_ASSISTANT_INSTANCE/`;
             window.open(url, '_blank', 'noreferrer');
           }
         }] : []),

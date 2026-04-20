@@ -47,6 +47,22 @@ limitations under the License.
         <!-- Frontend build (mirrors k8s view) -->
         <node.version>v22.12.0</node.version>
         <yarn.version>v1.22.22</yarn.version>
+
+        <!-- RPM/DEB packaging -->
+        <package-version>${project.version}</package-version>
+        <package-release>1</package-release>
+
+        <!-- Docker image for the Python semantic service sidecar.
+             Build is opt-in: pass -Ddocker.skip=false to enable.
+             Push is on by default when Docker is enabled; disable with -Ddocker.skip.push=true. -->
+        <docker.image.registry>registry.clemlab.com</docker.image.registry>
+        <docker.image.repo>clemlabprojects</docker.image.repo>
+        <docker.image.name>sql-assistant-service</docker.image.name>
+        <docker.image.tag>${project.version}</docker.image.tag>
+        <docker.platforms>linux/amd64,linux/arm64</docker.platforms>
+        <docker.skip>true</docker.skip>
+        <docker.skip.push>false</docker.skip.push>
+        <python.service.dir>${basedir}/src/main/python</python.service.dir>
     </properties>
 
     <dependencies>
@@ -117,9 +133,17 @@ limitations under the License.
 
     <build>
         <resources>
-            <!-- Default resources (view.xml, META-INF, etc.) -->
+            <!-- Only view.xml from resources root — exclude ui/ source tree entirely -->
             <resource>
                 <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <includes>
+                    <include>view.xml</include>
+                </includes>
+            </resource>
+            <!-- Built UI: place dist contents at JAR root so Ambari finds index.html -->
+            <resource>
+                <directory>src/main/resources/ui/dist</directory>
                 <filtering>false</filtering>
             </resource>
             <!-- Bundle runtime deps into WEB-INF/lib (Ambari view classloader convention) -->
@@ -177,28 +201,6 @@ limitations under the License.
                 </executions>
             </plugin>
 
-            <!-- Bundle UI dist into the JAR under /ui -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>copy-ui-dist</id>
-                        <phase>prepare-package</phase>
-                        <goals><goal>copy-resources</goal></goals>
-                        <configuration>
-                            <outputDirectory>${project.build.outputDirectory}/ui</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>${ui.directory}/dist</directory>
-                                    <filtering>false</filtering>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
             <!-- JAR assembly -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -249,7 +251,114 @@ limitations under the License.
                 </executions>
             </plugin>
 
+            <!-- RPM packaging: installs the view JAR into the Ambari views directory -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>rpm-maven-plugin</artifactId>
+                <version>2.1.4</version>
+                <executions>
+                    <execution>
+                        <phase>none</phase>
+                        <goals><goal>rpm</goal></goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <name>${project.artifactId}</name>
+                    <version>${package-version}</version>
+                    <release>${package-release}</release>
+                    <license>Apache License, Version 2.0</license>
+                    <group>Development</group>
+                    <description>SQL Assistant Ambari View — natural-language SQL workbench for ODP clusters.</description>
+                    <requires>
+                        <require>ambari-server >= ${ambari.version}</require>
+                    </requires>
+                    <mappings>
+                        <mapping>
+                            <directory>/var/lib/ambari-server/resources/views</directory>
+                            <filemode>644</filemode>
+                            <username>root</username>
+                            <groupname>root</groupname>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/${project.artifactId}-${project.version}.jar</location>
+                                </source>
+                            </sources>
+                        </mapping>
+                    </mappings>
+                </configuration>
+            </plugin>
+
+            <!-- ── Python service Docker image (multi-arch, opt-in) ──────────
+                 Mirrors the kerberos-keytab-mutating-webhook pattern in the k8s view.
+                 Trigger: mvn package -Ddocker.skip=false
+                 Push:    mvn package -Ddocker.skip=false              (push on by default)
+                 No push: mvn package -Ddocker.skip=false -Ddocker.skip.push=true -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>buildx-multiarch</id>
+                        <phase>package</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <skip>${docker.skip}</skip>
+                            <executable>bash</executable>
+                            <environmentVariables>
+                                <IMAGE>${docker.image.registry}/${docker.image.repo}/${docker.image.name}:${docker.image.tag}</IMAGE>
+                                <PLATFORMS>${docker.platforms}</PLATFORMS>
+                                <CONTEXT_DIR>${python.service.dir}</CONTEXT_DIR>
+                                <SKIP_PUSH>${docker.skip.push}</SKIP_PUSH>
+                            </environmentVariables>
+                            <arguments>
+                                <argument>-euo</argument><argument>pipefail</argument>
+                                <argument>-c</argument>
+                                <argument><![CDATA[
+docker buildx use clem
+docker buildx inspect --bootstrap >/dev/null
+
+if [ "${SKIP_PUSH}" = "true" ]; then
+  echo "[sql-assistant] Building multi-arch image (no push): ${IMAGE}"
+  docker buildx build \
+    --builder clem \
+    --platform "${PLATFORMS}" \
+    -t "${IMAGE}" \
+    "${CONTEXT_DIR}"
+else
+  echo "[sql-assistant] Building and pushing multi-arch image: ${IMAGE}"
+  docker buildx build \
+    --builder clem \
+    --platform "${PLATFORMS}" \
+    -t "${IMAGE}" \
+    --push \
+    "${CONTEXT_DIR}"
+fi
+]]>
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Enable push by activating -Ppush on the command line, mirroring the k8s view convention. -->
+        <profile>
+            <id>push</id>
+            <activation>
+                <property>
+                    <name>docker.push</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <docker.skip.push>false</docker.skip.push>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>

@@ -44,10 +44,10 @@ limitations under the License.
 
     <parameter>
         <name>sql.assistant.semantic.service.url</name>
-        <description>URL of the Python semantic service (FastAPI). Example: http://edge01.dev01.hadoop.clemlab.com:8090</description>
+        <description>URL of the Python semantic service (FastAPI). Example: http://edge01.dev01.hadoop.clemlab.com:8095</description>
         <label>Semantic Service URL</label>
         <required>true</required>
-        <default-value>http://localhost:8090</default-value>
+        <default-value>http://localhost:8095</default-value>
     </parameter>
 
     <parameter>

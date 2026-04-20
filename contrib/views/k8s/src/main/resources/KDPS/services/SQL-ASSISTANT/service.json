@@ -182,7 +182,8 @@
     "ambariViewInstance": {
       "viewName": "SQL-ASSISTANT-VIEW",
       "viewVersion": "1.0.0.0",
-      "serviceUrlTemplate": "http://{{releaseName}}-ollama.{{namespace}}.svc.cluster.local:8090"
+      "instanceName": "SQL_ASSISTANT_INSTANCE",
+      "serviceUrlTemplate": "http://{{releaseName}}-ollama.{{namespace}}.svc.cluster.local:8095"
     }
   },
 
