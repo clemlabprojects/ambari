@@ -18,7 +18,7 @@ limitations under the License.
 <view>
     <name>K8S-VIEW</name>
     <label>Ambari K8S View</label>
-    <version>1.0.0.5</version>
+    <version>1.0.0.6</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
 

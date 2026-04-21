@@ -104,6 +104,7 @@
   min-width: 0;
   height: 100%;
   overflow: auto;
+  overscroll-behavior: contain;
   padding-top: 1px;
   padding-bottom: 12px;
 }
