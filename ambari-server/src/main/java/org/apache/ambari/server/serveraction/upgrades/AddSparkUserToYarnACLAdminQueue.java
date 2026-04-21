@@ -31,6 +31,7 @@ import org.apache.ambari.server.state.Host;
 
 
 public class AddSparkUserToYarnACLAdminQueue extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AddSparkUserToYarnACLAdminQueue.class);
   private static final String CAPACITY_SCHEDULER_CONFIG_TYPE = "capacity-scheduler";
   private static final String SPARK_ENV_CONFIG_TYPE = "spark2-env";
 
@@ -49,13 +50,15 @@ public class AddSparkUserToYarnACLAdminQueue extends AbstractUpgradeServerAction
     Config sparkEnvConfig = cluster.getDesiredConfigByType(SPARK_ENV_CONFIG_TYPE);
 
     if (capacitySchedulerConfig == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-              String.format("Source type %s not found", CAPACITY_SCHEDULER_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", CAPACITY_SCHEDULER_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     if (sparkEnvConfig == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-              String.format("Source type %s not found", SPARK_ENV_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", SPARK_ENV_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     Map<String, String> capacitySchedulerProperties = capacitySchedulerConfig.getProperties();

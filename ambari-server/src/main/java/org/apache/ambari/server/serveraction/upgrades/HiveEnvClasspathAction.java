@@ -35,6 +35,7 @@ import org.apache.ambari.server.state.Host;
  * Append hive-env config type with HIVE_HOME and HIVE_CONF_DIR variables if they are absent
  */
 public class HiveEnvClasspathAction extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(HiveEnvClasspathAction.class);
   private static final String TARGET_CONFIG_TYPE = "hive-env";
   private static final String CONTENT_PROPERTY_NAME = "content";
 
@@ -56,8 +57,9 @@ public class HiveEnvClasspathAction extends AbstractUpgradeServerAction {
     Config config = cluster.getDesiredConfigByType(TARGET_CONFIG_TYPE);
 
     if (config == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-        String.format("Source type %s not found", TARGET_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", TARGET_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     Pattern regex = Pattern.compile(String.format(VERIFY_REGEXP, HIVE_HOME, HIVE_CONF_DIR), Pattern.MULTILINE);

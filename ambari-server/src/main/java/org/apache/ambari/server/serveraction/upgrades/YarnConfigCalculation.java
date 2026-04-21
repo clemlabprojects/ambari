@@ -34,6 +34,7 @@ import org.apache.ambari.server.state.Host;
  * HDP-2.1 to HDP-2.3 in that upgrade pack.
  */
 public class YarnConfigCalculation extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(YarnConfigCalculation.class);
   private static final String YARN_SITE_CONFIG_TYPE = "yarn-site";
 
   private static final String YARN_RM_ZK_ADDRESS_PROPERTY_NAME = "yarn.resourcemanager.zk-address";
@@ -50,8 +51,9 @@ public class YarnConfigCalculation extends AbstractUpgradeServerAction {
     Config yarnSiteConfig = cluster.getDesiredConfigByType(YARN_SITE_CONFIG_TYPE);
 
     if (yarnSiteConfig == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-          String.format("Source type %s not found", YARN_SITE_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", YARN_SITE_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     Map<String, String> yarnSiteProperties = yarnSiteConfig.getProperties();

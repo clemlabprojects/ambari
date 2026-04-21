@@ -35,6 +35,7 @@ import org.apache.ambari.server.state.Host;
  * HDP-2.2 to HDP-2.3 in that upgrade pack.
  */
 public class HBaseConfigCalculation extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(HBaseConfigCalculation.class);
   private static final String SOURCE_CONFIG_TYPE = "hbase-site";
   private static final String OLD_UPPER_LIMIT_PROPERTY_NAME = "hbase.regionserver.global.memstore.upperLimit";
   private static final String OLD_LOWER_LIMIT_PROPERTY_NAME = "hbase.regionserver.global.memstore.lowerLimit";
@@ -52,8 +53,9 @@ public class HBaseConfigCalculation extends AbstractUpgradeServerAction {
     Config config = cluster.getDesiredConfigByType(SOURCE_CONFIG_TYPE);
 
     if (config == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-                                   String.format("Source type %s not found", SOURCE_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", SOURCE_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     Map<String, String> properties = config.getProperties();

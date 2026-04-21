@@ -43,6 +43,7 @@ import org.apache.commons.lang.StringUtils;
  * These properties available starting from HDP-2.4 stack.
  */
 public class SparkShufflePropertyConfig extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SparkShufflePropertyConfig.class);
   private static final String YARN_SITE_CONFIG_TYPE = "yarn-site";
 
   private static final String YARN_NODEMANAGER_AUX_SERVICES = "yarn.nodemanager.aux-services";
@@ -59,8 +60,9 @@ public class SparkShufflePropertyConfig extends AbstractUpgradeServerAction {
     Config yarnSiteConfig = cluster.getDesiredConfigByType(YARN_SITE_CONFIG_TYPE);
 
     if (yarnSiteConfig == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-              String.format("Source type %s not found", YARN_SITE_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", YARN_SITE_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
       Map<String, String> yarnSiteProperties = yarnSiteConfig.getProperties();
 

@@ -28,12 +28,16 @@ import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.Host;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Computes Ranger properties.  This class is only used when moving from
  * HDP-2.2 to HDP-2.3 in that upgrade pack.
  */
 public class RangerConfigCalculation extends AbstractUpgradeServerAction {
+  private static final Logger LOG = LoggerFactory.getLogger(RangerConfigCalculation.class);
+
   private static final String SOURCE_CONFIG_TYPE = "admin-properties";
   private static final String RANGER_ENV_CONFIG_TYPE = "ranger-env";
   private static final String RANGER_ADMIN_SITE_CONFIG_TYPE = "ranger-admin-site";
@@ -126,6 +130,11 @@ public class RangerConfigCalculation extends AbstractUpgradeServerAction {
     stdout.append(MessageFormat.format("Database user jdbc url: {0}", userJDBCUrl));
 
     Config config = cluster.getDesiredConfigByType(RANGER_ADMIN_SITE_CONFIG_TYPE);
+    if (config == null) {
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", RANGER_ADMIN_SITE_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
+    }
     Map<String, String> targetValues = config.getProperties();
     targetValues.put("ranger.jpa.jdbc.driver", driver);
     targetValues.put("ranger.jpa.jdbc.url", url);
@@ -139,6 +148,11 @@ public class RangerConfigCalculation extends AbstractUpgradeServerAction {
     config.save();
 
     config = cluster.getDesiredConfigByType(RANGER_ENV_CONFIG_TYPE);
+    if (config == null) {
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", RANGER_ENV_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
+    }
     targetValues = config.getProperties();
     targetValues.put("ranger_privelege_user_jdbc_url", userJDBCUrl);
     config.setProperties(targetValues);

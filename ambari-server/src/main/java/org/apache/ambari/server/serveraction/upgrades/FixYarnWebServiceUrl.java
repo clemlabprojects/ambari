@@ -35,6 +35,7 @@ import org.apache.ambari.server.state.Host;
  * This class is used when moving from HDP-2.3/HDP-2.4/HDP-2.5 to HDP2.6
  */
 public class FixYarnWebServiceUrl extends AbstractUpgradeServerAction {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FixYarnWebServiceUrl.class);
     private static final String SOURCE_CONFIG_TYPE = "yarn-site";
     private static final String YARN_TIMELINE_WEBAPP_HTTPADDRESS = "yarn.timeline-service.webapp.address";
     private static final String YARN_TIMELINE_WEBAPP_HTTPSADDRESS = "yarn.timeline-service.webapp.https.address";
@@ -52,8 +53,9 @@ public class FixYarnWebServiceUrl extends AbstractUpgradeServerAction {
         Config config = cluster.getDesiredConfigByType(SOURCE_CONFIG_TYPE);
 
         if (config == null) {
-            return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-                    String.format("Source type %s not found", SOURCE_CONFIG_TYPE), "");
+            String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", SOURCE_CONFIG_TYPE);
+            LOG.warn(skipMsg);
+            return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
         }
 
         Map<String, String> properties = config.getProperties();

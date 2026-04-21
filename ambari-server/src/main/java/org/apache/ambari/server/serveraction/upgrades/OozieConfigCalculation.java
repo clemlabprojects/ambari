@@ -43,6 +43,7 @@ import com.google.inject.Inject;
  * and oozie-site (removes oozie.service.ELService.ext.functions.*) during upgrade
  */
 public class OozieConfigCalculation extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(OozieConfigCalculation.class);
 
   private static final String FALCON_SERVICE_NAME = "FALCON";
   @Inject
@@ -97,7 +98,8 @@ public class OozieConfigCalculation extends AbstractUpgradeServerAction {
     Config config = cluster.getDesiredConfigByType(OOZIE_SITE_TARGET_CONFIG_TYPE);
 
     if (config == null) {
-      throw new AmbariException(String.format("Target config not found %s", OOZIE_SITE_TARGET_CONFIG_TYPE));
+      LOG.warn("Config type '{}' not present on this cluster; skipping.", OOZIE_SITE_TARGET_CONFIG_TYPE);
+      return;
     }
 
     Map<String, String> properties = config.getProperties();
@@ -127,7 +129,8 @@ public class OozieConfigCalculation extends AbstractUpgradeServerAction {
     Config config = cluster.getDesiredConfigByType(OOZIE_ENV_TARGET_CONFIG_TYPE);
 
     if (config == null) {
-      throw new AmbariException(String.format("Target config not found %s", OOZIE_ENV_TARGET_CONFIG_TYPE));
+      LOG.warn("Config type '{}' not present on this cluster; skipping.", OOZIE_ENV_TARGET_CONFIG_TYPE);
+      return;
     }
 
     Map<String, String> properties = config.getProperties();

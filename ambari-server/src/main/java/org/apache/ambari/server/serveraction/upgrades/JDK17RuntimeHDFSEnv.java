@@ -28,6 +28,7 @@ import com.google.inject.Injector;
 //
 public class JDK17RuntimeHDFSEnv extends AbstractUpgradeServerAction{
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(JDK17RuntimeHDFSEnv.class);
 
     private static final String CONTENT_PROPERTY_NAME = "content";
     private static final String TARGET_CONFIG_TYPE = "hadoop-env";
@@ -44,6 +45,11 @@ public class JDK17RuntimeHDFSEnv extends AbstractUpgradeServerAction{
         Cluster cluster = getClusters().getCluster(clusterName);
 //        Set<String> installedServices = cluster.getServices().keySet();
         Config config = cluster.getDesiredConfigByType(TARGET_CONFIG_TYPE);
+        if (config == null) {
+            String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", TARGET_CONFIG_TYPE);
+            LOG.warn(skipMsg);
+            return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
+        }
         AmbariMetaInfo ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
         AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
         upgradeContext = getUpgradeContext(cluster);

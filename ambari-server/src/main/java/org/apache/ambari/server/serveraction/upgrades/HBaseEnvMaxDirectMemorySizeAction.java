@@ -36,6 +36,7 @@ import org.apache.ambari.server.state.Host;
  * This class is only used when moving from HDP-2.3 to HDP-2.4 and HDP-2.3 to HDP-2.5
  */
 public class HBaseEnvMaxDirectMemorySizeAction extends AbstractUpgradeServerAction {
+  private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(HBaseEnvMaxDirectMemorySizeAction.class);
   private static final String SOURCE_CONFIG_TYPE = "hbase-env";
   private static final String CONTENT_NAME = "content";
   private static final String APPEND_CONTENT_LINE = "export HBASE_MASTER_OPTS=\"$HBASE_MASTER_OPTS {% if hbase_max_direct_memory_size %} -XX:MaxDirectMemorySize={{hbase_max_direct_memory_size}}m {% endif %}\"";
@@ -51,8 +52,9 @@ public class HBaseEnvMaxDirectMemorySizeAction extends AbstractUpgradeServerActi
     Config config = cluster.getDesiredConfigByType(SOURCE_CONFIG_TYPE);
 
     if (config == null) {
-      return  createCommandReport(0, HostRoleStatus.FAILED,"{}",
-                                   String.format("Source type %s not found", SOURCE_CONFIG_TYPE), "");
+      String skipMsg = String.format("Config type '%s' not present on this cluster; skipping upgrade step.", SOURCE_CONFIG_TYPE);
+      LOG.warn(skipMsg);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMsg, "");
     }
 
     Map<String, String> properties = config.getProperties();
