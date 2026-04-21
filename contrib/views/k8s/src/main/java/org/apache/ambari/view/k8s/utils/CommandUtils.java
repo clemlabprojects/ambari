@@ -47,6 +47,12 @@ public class CommandUtils {
     private final KubernetesService kubernetesService;
     private final Gson gson = new GsonBuilder().create();
 
+    /**
+     * Constructs a CommandUtils instance for the given view and Kubernetes service.
+     *
+     * @param ctx               active Ambari view context for property and cluster lookups
+     * @param kubernetesService service used for Kubernetes API operations
+     */
     public CommandUtils(ViewContext ctx, KubernetesService kubernetesService){
         this.ctx = ctx;
         this.isAutoDiscoveryEnabled = this.isAutoDiscoveryEnabled();
@@ -115,9 +121,12 @@ public class CommandUtils {
     }
 
     public static final Map<String, AmbariConfigRef> DYNAMIC_SOURCE_MAP = Map.of(
-            // token                      // configType     // property key
-            "AMBARI_KERBEROS_REALM",      new AmbariConfigRef("kerberos-env", "realm")
-            // add more here as needed
+            // token                        // configType     // property key
+            "AMBARI_KERBEROS_REALM",        new AmbariConfigRef("kerberos-env", "realm"),
+            "AMBARI_OIDC_ISSUER_URL",       new AmbariConfigRef("oidc-env", "oidc_issuer_url"),
+            "AMBARI_OIDC_REALM",            new AmbariConfigRef("oidc-env", "oidc_realm"),
+            "AMBARI_OIDC_ADMIN_URL",        new AmbariConfigRef("oidc-env", "oidc_admin_url"),
+            "AMBARI_OIDC_VERIFY_TLS",       new AmbariConfigRef("oidc-env", "oidc_verify_tls")
     );
 
     public static final class AmbariConfigRef {
@@ -163,6 +172,15 @@ public class CommandUtils {
         }
     }
 
+    /**
+     * Append a Helm value override to the {@code _ov} map inside {@code params}.
+     * Creates the override map if it does not already exist. No-op when either
+     * {@code helmPath} or {@code value} is null.
+     *
+     * @param params   mutable command parameter map that may contain an {@code _ov} sub-map
+     * @param helmPath dot-separated Helm values path (e.g., {@code "global.image.tag"})
+     * @param value    string value to assign at {@code helmPath}
+     */
     @SuppressWarnings("unchecked")
     public static void addOverride(Map<String, Object> params, String helmPath, String value) {
         if (helmPath == null || helmPath.isBlank()) return;
@@ -177,6 +195,13 @@ public class CommandUtils {
     }
 
 
+    /**
+     * Coerce a mounts value (which may be a {@code Map}, a JSON string, or null) into a
+     * {@code Map<String, Object>}. Returns an empty map for unrecognized or unparseable input.
+     *
+     * @param raw raw mounts value from a command parameter map
+     * @return the parsed mounts map, never null
+     */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> normalizeMountsObject(Object raw) {
         if (raw == null) return Collections.emptyMap();
@@ -199,7 +224,14 @@ public class CommandUtils {
         public RetryableException(String m) { super(m); }
         public RetryableException(String m, Throwable t) { super(m, t); }
     }
-    /** Build a HelmDeployRequest from the root command's paramsJson (chart, releaseName, namespace, version, values). */
+    /**
+     * Reconstruct a {@link HelmDeployRequest} from the JSON parameters stored on a root
+     * {@link CommandEntity}, including chart reference, release name, namespace, values,
+     * ranger spec, OIDC, Git, and all other deploy-time fields.
+     *
+     * @param root the root command entity whose {@code paramsJson} carries the original deploy request
+     * @return a populated {@link HelmDeployRequest}; fields may be absent if the JSON was incomplete
+     */
     public HelmDeployRequest buildRequestFromRootParams(CommandEntity root) {
         HelmDeployRequest req = new HelmDeployRequest();
         try {
@@ -352,12 +384,26 @@ public class CommandUtils {
     }
 
 
+    /**
+     * Cast a raw object to a {@code Map<String, Object>} when possible, returning an
+     * empty map for null or non-Map values.
+     *
+     * @param raw value from a parameter map, expected to be a {@code Map<String, Object>}
+     * @return the cast map, or an empty map when {@code raw} is not a {@code Map}
+     */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> extractValues(Object raw) {
         if (raw instanceof Map) return (Map<String, Object>) raw;
         return Collections.emptyMap();
     }
 
+    /**
+     * Load Helm values from a command parameter map. Prefers reading from the file path
+     * stored under {@code valuesPath}; falls back to the inlined {@code values} entry.
+     *
+     * @param params command parameter map potentially containing {@code valuesPath} or {@code values}
+     * @return the resolved values map, never null
+     */
     public Map<String, Object> loadValuesFromParams(Map<String, Object> params) {
         // Prefer file path if present
         Object valuesPathObj = params.get("valuesPath");
@@ -377,6 +423,15 @@ public class CommandUtils {
     }
 
     // ----- helpers for submitKeytabRequest -----
+
+    /**
+     * Copy persisted session headers (Cookie, Authorization, and others) onto an outgoing
+     * HTTP request builder so that downstream Ambari calls authenticate correctly.
+     * The {@code x-requested-by} header is always set by the caller and is not copied.
+     *
+     * @param b         the HTTP request builder to populate with headers
+     * @param persisted map of header name to header value(s) saved from the original request
+     */
     public static void copySessionHeaders(java.net.http.HttpRequest.Builder b, Map<String,Object> persisted) {
         if (persisted == null) return;
         // We mainly need Cookie / Authorization (depending on your Ambari auth mode)
@@ -400,15 +455,36 @@ public class CommandUtils {
         }
     }
 
+    /**
+     * URL-encode a string using UTF-8, returning the original value on failure.
+     *
+     * @param s the string to encode
+     * @return the percent-encoded string
+     */
     public static String url(String s) {
         try { return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8); }
         catch (Exception e) { return s; }
     }
+
+    /**
+     * Wrap a string as a JSON string literal, escaping backslashes and double-quotes.
+     * Returns {@code "null"} when {@code s} is null.
+     *
+     * @param s the raw string value
+     * @return a JSON-safe quoted string (including surrounding double-quote characters)
+     */
     public static String jsonString(String s) {
         if (s == null) return "null";
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
+    /**
+     * Extract the Ambari API base URL (up to and including {@code /api/v1}) from a JAX-RS
+     * {@link UriInfo} whose base URI contains the view path segment.
+     *
+     * @param ui JAX-RS request URI info from within the view
+     * @return the Ambari REST API base URL, e.g. {@code http://host:8080/api/v1}
+     */
     public static String ambariApiBaseFrom(UriInfo ui) {
         String base = ui.getBaseUri().toString(); // ends with '/api/v1/views/...'
         int i = base.indexOf("/api/v1/views/");

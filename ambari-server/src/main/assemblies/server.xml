@@ -403,6 +403,11 @@
     </file>
     <file>
       <fileMode>755</fileMode>
+      <source>src/main/resources/oidc.json</source>
+      <outputDirectory>/var/lib/ambari-server/resources</outputDirectory>
+    </file>
+    <file>
+      <fileMode>755</fileMode>
       <source>src/main/resources/widgets.json</source>
       <outputDirectory>/var/lib/ambari-server/resources</outputDirectory>
     </file>

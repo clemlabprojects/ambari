@@ -51,10 +51,21 @@ public class HelmRepositoryService {
     private final EncryptionService encryptionService = new EncryptionService();
     private final PathConfig pathConfig;
 
+    /**
+     * Constructs a {@code HelmRepositoryService} using the default {@link HelmClientDefault}.
+     *
+     * @param ctx the Ambari view context providing configuration and instance data
+     */
     public HelmRepositoryService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
     }
 
+    /**
+     * Constructs a {@code HelmRepositoryService} with an explicit Helm client.
+     *
+     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param helm the Helm client to use for repository operations
+     */
     public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
         this.viewContext = ctx;
         this.repositoryDao = new HelmRepoRepo(ctx.getDataStore());
@@ -65,14 +76,32 @@ public class HelmRepositoryService {
 
     // Repository CRUD Operations
 
+    /**
+     * Returns all configured Helm repository entities.
+     *
+     * @return collection of all repository entities; never {@code null}
+     */
     public Collection<HelmRepoEntity> list() {
         return repositoryDao.findAll();
     }
 
+    /**
+     * Finds a repository entity by its unique identifier.
+     *
+     * @param id the repository ID to look up
+     * @return the matching entity, or {@code null} if not found
+     */
     public HelmRepoEntity get(String id) {
         return repositoryDao.findById(id);
     }
 
+    /**
+     * Persists (creates or updates) a repository entity, encrypting and storing the credential secret.
+     *
+     * @param entity      the repository entity to save; must not be {@code null}
+     * @param plainSecret the plaintext password/token to encrypt and store; may be {@code null} if no credentials
+     * @return the persisted entity after upsert
+     */
     public HelmRepoEntity save(HelmRepoEntity entity, String plainSecret) {
         Objects.requireNonNull(entity, "repo must not be null");
         validate(entity);
@@ -95,6 +124,13 @@ public class HelmRepositoryService {
         return repositoryDao.upsert(entity);
     }
 
+    /**
+     * Deletes a repository and its stored credentials.
+     * Throws {@link IllegalStateException} if any managed release still references the repository.
+     *
+     * @param id the ID of the repository to delete
+     * @throws IllegalStateException if the repository is still in use by at least one release
+     */
     public void delete(String id) {
         // Prevent deletion if any managed release still references this repo
         try {
@@ -131,6 +167,12 @@ public class HelmRepositoryService {
 
     // Secret Management
 
+    /**
+     * Decrypts and returns the plaintext credential associated with the given secret reference.
+     *
+     * @param secretRef the instance-data key under which the encrypted secret is stored; may be {@code null}
+     * @return the decrypted plaintext credential, or {@code null} if the reference is blank or not found
+     */
     public String readPlainSecret(String secretRef) {
         if (secretRef == null || secretRef.isBlank()) return null;
         String base64Data = viewContext.getInstanceData(secretRef);
@@ -142,6 +184,13 @@ public class HelmRepositoryService {
 
     // Helm Operations
 
+    /**
+     * Resolves the human-readable name of a repository from its ID.
+     *
+     * @param repoId the repository ID to look up
+     * @return the repository name
+     * @throws RuntimeException wrapping {@link AmbariException} if the repository is not found
+     */
     public String getRepositoryNameFromId(String repoId){
         HelmRepoEntity entity = repositoryDao.findById(repoId);
         if (entity != null ){
@@ -155,6 +204,13 @@ public class HelmRepositoryService {
         }
 
     }
+    /**
+     * Ensures the HTTP Helm repository is registered in the local {@code repositories.yaml}.
+     *
+     * @param repoId the ID of the HTTP repository to register
+     * @return the path to the updated {@code repositories.yaml} file
+     * @throws IllegalArgumentException if the repository is not of type HTTP
+     */
     public Path ensureHttpRepo(String repoId) {
         HelmRepoEntity entity = mustGet(repoId);
         if (!"HTTP".equalsIgnoreCase(entity.getType())) {
@@ -170,6 +226,12 @@ public class HelmRepositoryService {
         return configPath;
     }
 
+    /**
+     * Authenticates against an OCI registry and stores the credentials in the local registry config.
+     *
+     * @param repoId the ID of the OCI repository to log in to
+     * @throws IllegalArgumentException if the repository is not of type OCI
+     */
     public void ociLogin(String repoId) {
         HelmRepoEntity entity = mustGet(repoId);
         if (!"OCI".equalsIgnoreCase(entity.getType())) {
@@ -217,16 +279,34 @@ public class HelmRepositoryService {
         }
     }
 
+    /**
+     * Returns the repository entity for the given ID, throwing if it does not exist.
+     *
+     * @param id the repository ID to look up
+     * @return the repository entity; never {@code null}
+     * @throws IllegalArgumentException if no repository with the given ID is found
+     */
     public HelmRepoEntity mustGet(String id) {
         HelmRepoEntity entity = repositoryDao.findById(id);
         if (entity == null) throw new IllegalArgumentException("Unknown repository: " + id);
         return entity;
     }
 
-    public PathConfig paths() { 
-        return pathConfig; 
+    /**
+     * Returns the {@link PathConfig} holding Helm directory paths for this service.
+     *
+     * @return the path configuration
+     */
+    public PathConfig paths() {
+        return pathConfig;
     }
 
+    /**
+     * Returns {@code true} if the repository is configured for anonymous (unauthenticated) access.
+     *
+     * @param e the repository entity to inspect
+     * @return {@code true} when the auth mode is "anonymous" (case-insensitive)
+     */
     public static boolean isAnonymous(HelmRepoEntity e) {
         return e.getAuthMode() != null && e.getAuthMode().equalsIgnoreCase("anonymous");
     }
@@ -403,16 +483,35 @@ public class HelmRepositoryService {
         return host + "/" + project.trim();        // "registry.clemlab.com/clemlabprojects"
     }
 
+    /**
+     * Resolves the registry hostname (e.g. {@code registry.example.com}) for the given repository.
+     *
+     * @param repoId the repository ID to look up
+     * @return the registry host string, or {@code null} if it cannot be determined
+     */
     public String getRegistryHost(String repoId) {
         HelmRepoEntity entity = mustGet(repoId);
         return computeRegistryHost(entity);
     }
 
+    /**
+     * Resolves the full image registry path (host + optional project, e.g. {@code registry.example.com/myproject})
+     * for the given repository.
+     *
+     * @param repoId the repository ID to look up
+     * @return the image registry path, or {@code null} if it cannot be determined
+     */
     public String getImageRegistry(String repoId) {
         HelmRepoEntity entity = mustGet(repoId);
         return computeImageRegistry(entity);
     }
 
+    /**
+     * Returns the effective image registry value stored on the repository entity.
+     *
+     * @param repoId the repository ID to look up
+     * @return the effective image registry string from the entity, or {@code null} if not set
+     */
     public String getEffectiveImageRegistry(String repoId){
         HelmRepoEntity entity = mustGet(repoId);
         return entity.getEffectiveImageRegistry();

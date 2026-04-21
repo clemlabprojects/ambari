@@ -93,4 +93,15 @@
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
+
+  <property>
+    <name>oidc_issuer_url</name>
+    <display-name>OIDC Issuer URL</display-name>
+    <value></value>
+    <description>Full OIDC issuer URL (e.g. https://keycloak.example.com/realms/odp). Computed as {oidc_admin_url}/realms/{oidc_realm} when left empty.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
 </configuration>

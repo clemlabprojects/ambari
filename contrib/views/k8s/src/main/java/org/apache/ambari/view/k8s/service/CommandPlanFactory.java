@@ -65,6 +65,14 @@ public class CommandPlanFactory {
     // Injected service to access webHook logic if needed inside planning
     private final WebHookConfigurationService webHookService;
 
+    /**
+     * Constructs a {@code CommandPlanFactory} with the services required for building command plans.
+     *
+     * @param ctx            the Ambari view context providing data store access and instance metadata
+     * @param gson           the Gson instance used for JSON serialisation of command params
+     * @param webHookService the webhook service used when building webhook-related sub-commands
+     * @param commandUtils   utility helper for resolving cluster names and Ambari properties
+     */
     public CommandPlanFactory(ViewContext ctx, Gson gson, WebHookConfigurationService webHookService, CommandUtils commandUtils) {
         this.ctx = ctx;
         this.dataStore = ctx.getDataStore();

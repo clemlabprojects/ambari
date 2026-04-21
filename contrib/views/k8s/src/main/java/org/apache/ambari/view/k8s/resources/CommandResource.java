@@ -47,6 +47,11 @@ public class CommandResource {
   @Context
   private HttpServletRequest request;
 
+  /**
+   * Creates a CommandResource bound to the given view context with default alias resolution.
+   *
+   * @param vc active Ambari view context
+   */
   public CommandResource(ViewContext vc) {
 
     this.viewContext = vc;
@@ -54,12 +59,29 @@ public class CommandResource {
     this.commandLogService = new CommandLogService(vc);
   }
 
+  /**
+   * Creates a CommandResource with a custom alias resolver (primarily for testing).
+   *
+   * @param vc                  active Ambari view context
+   * @param ambariAliasResolver resolver to use for Ambari host/port alias substitution
+   */
   public CommandResource(ViewContext vc, AmbariAliasResolver ambariAliasResolver) {
     this.viewContext = vc;
     this.ambariAliasResolver = ambariAliasResolver;
     this.commandLogService = new CommandLogService(vc);
   }
 
+  /**
+   * Submit an asynchronous Helm deploy command and return its tracking id immediately.
+   *
+   * @param req        chart, release name, namespace, and values for the deploy
+   * @param repoId     optional repository id from which to fetch the chart
+   * @param version    optional chart version to install
+   * @param kubeContext optional kubeconfig context override
+   * @param headers    incoming request headers forwarded for Ambari authentication
+   * @param ui         request URI info used to construct the command status URL
+   * @return HTTP 202 with the command {@code id}, or 400 on invalid input
+   */
   @POST
   @Path("/helm/deploy")
   @Consumes(MediaType.APPLICATION_JSON)
@@ -80,6 +102,13 @@ public class CommandResource {
     }
   }
 
+  /**
+   * Return a paginated list of all background commands, most recent first.
+   *
+   * @param limit  maximum number of commands to return
+   * @param offset zero-based index of the first result
+   * @return paginated command list, or an error response on failure
+   */
   @GET
   @Path("/")
   public Response listCommands(@QueryParam("limit") @DefaultValue("10") int limit,
@@ -91,6 +120,12 @@ public class CommandResource {
     }
   }
 
+  /**
+   * Return all child (sub-step) commands for a given parent command id.
+   *
+   * @param id parent command id
+   * @return list of child command statuses, or an error response on failure
+   */
   @GET
   @Path("/{id}/children")
   public Response listChildren(@PathParam("id") String id) {
@@ -101,6 +136,12 @@ public class CommandResource {
     }
   }
 
+  /**
+   * Retrieve the current status of a single command by its id.
+   *
+   * @param id command id to look up
+   * @return the command status, or HTTP 404 if the id is unknown
+   */
   @GET
   @Path("/{id}")
   public Response getStatus(@PathParam("id") String id) {
@@ -109,6 +150,12 @@ public class CommandResource {
     return Response.ok(st).build();
   }
 
+  /**
+   * Request cancellation of a running command.
+   *
+   * @param id id of the command to cancel
+   * @return HTTP 202 with the command id and state {@code CANCELLED}
+   */
   @POST
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id) {
@@ -118,6 +165,14 @@ public class CommandResource {
             .build();
   }
 
+  /**
+   * Stream a chunk of the log output produced by a command.
+   *
+   * @param id     command id whose log to read
+   * @param offset byte offset within the log file to start reading from
+   * @param limit  maximum number of bytes to return in this chunk
+   * @return JSON containing {@code content}, {@code nextOffset}, {@code eof}, and {@code size} fields
+   */
   @GET
   @Path("/{id}/logs")
   public Response getLogs(@PathParam("id") String id,

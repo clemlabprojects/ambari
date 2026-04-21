@@ -53,6 +53,20 @@ public class StackServiceDef {
     public List<Map<String, Object>> tls;
     public List<Map<String, Object>> kerberos;
     /**
+     * OIDC client registration entries. Each entry drives an OIDC_REGISTER_CLIENT +
+     * OIDC_CREATE_SECRET command pair during deploy (parallel to kerberos[]).
+     * Fields per entry:
+     *   key               – logical name (default: "default")
+     *   clientIdTemplate  – template for the Keycloak client_id (tokens: {{releaseName}}, {{namespace}}, {{realm}})
+     *   secretNameTemplate – K8s Secret name template (default: "{{releaseName}}-oidc-client")
+     *   redirectUriTemplate – redirect URI template (tokens: {{ingressHost}}, {{releaseName}}, {{namespace}})
+     *   vaultPath         – optional Vault KV path; when set credentials are also written to Vault
+     *   publicClient      – boolean, default false
+     *   standardFlowEnabled – boolean, default true
+     *   enabled           – boolean, default true
+     */
+    public List<Map<String, Object>> oidc;
+    /**
      * Optional post-deploy actions run as command steps after the main Helm install.
      * Currently supports:
      *   postDeploy.ambariViewInstance — auto-provisions a linked Ambari view instance.

@@ -53,10 +53,21 @@ public class HelmService {
      final HelmRepositoryService repositoryService;
     private final PathConfig pathConfiguration;
 
+    /**
+     * Constructs a {@code HelmService} using the default {@link HelmClientDefault} implementation.
+     *
+     * @param ctx the Ambari view context providing configuration and instance data
+     */
     public HelmService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
     }
 
+    /**
+     * Constructs a {@code HelmService} with an explicit Helm client (useful for testing).
+     *
+     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param helm the Helm client to delegate low-level Helm operations to
+     */
     public HelmService(ViewContext ctx, HelmClient helm) {
         this.viewContext = ctx;
         this.helmClient = helm;
@@ -64,15 +75,37 @@ public class HelmService {
         this.pathConfiguration = repositoryService.paths();
     }
 
+    /**
+     * Lists all Helm releases in the given namespace.
+     *
+     * @param namespace  the Kubernetes namespace to query, or {@code null} for all namespaces
+     * @param kubeconfig path or content of the kubeconfig file to authenticate with the cluster
+     * @return list of discovered Helm releases
+     */
     public List<Release> list(String namespace, String kubeconfig) {
         LOG.info("Listing Helm releases in namespace: '{}'", namespace);
         return helmClient.list(namespace, kubeconfig, false);
     }
 
+    /**
+     * Uninstalls a Helm release from the specified namespace.
+     *
+     * @param namespace  the Kubernetes namespace containing the release
+     * @param name       the Helm release name to uninstall
+     * @param kubeconfig path or content of the kubeconfig used to authenticate
+     */
     public void uninstall(String namespace, String name, String kubeconfig) {
         helmClient.uninstall(name, namespace, kubeconfig);
     }
 
+    /**
+     * Rolls back a Helm release to a specific revision.
+     *
+     * @param namespace  the Kubernetes namespace containing the release
+     * @param name       the Helm release name to roll back
+     * @param revision   the target revision number to roll back to
+     * @param kubeconfig path or content of the kubeconfig used to authenticate
+     */
     public void rollback(String namespace, String name, int revision, String kubeconfig) {
         helmClient.rollback(name, namespace, revision, kubeconfig);
     }
@@ -80,6 +113,15 @@ public class HelmService {
     /* --------------------------- Public entry points --------------------------- */
 
     // Original entry point kept (defaults + dryRun=false)
+    /**
+     * Installs or upgrades a Helm release using defaults (dryRun=false, wait=true, atomic=false, timeout=900s).
+     *
+     * @param req        the deploy request containing chart name, release name, namespace, and values
+     * @param kubeconfig path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt  optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt optional chart version constraint; may be {@code null}
+     * @return the resulting Helm {@link Release}
+     */
     public Release deployOrUpgrade(HelmDeployRequest req, String kubeconfig, String repoIdOpt, String versionOpt) {
         int timeoutSeconds = 900;
         boolean wait = true;
@@ -102,6 +144,16 @@ public class HelmService {
     }
 
     // New overload to match callers that also pass dryRun explicitly with a HelmDeployRequest
+    /**
+     * Installs or upgrades a Helm release from a {@link HelmDeployRequest}, with explicit dry-run control.
+     *
+     * @param req        the deploy request containing chart name, release name, namespace, and values
+     * @param kubeconfig path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt  optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt optional chart version constraint; may be {@code null}
+     * @param dryRun     when {@code true} Helm performs a dry run without making cluster changes
+     * @return the resulting Helm {@link Release}
+     */
     public Release deployOrUpgrade(HelmDeployRequest req, String kubeconfig, String repoIdOpt, String versionOpt, boolean dryRun) {
         int timeoutSeconds = 900;
         boolean wait = true;
@@ -123,6 +175,18 @@ public class HelmService {
     }
 
     // Overload preserved from your original shapes (defaults + dryRun=true)
+    /**
+     * Installs or upgrades a Helm release using per-field parameters and dry-run mode enabled.
+     *
+     * @param chartName   the chart name or OCI reference
+     * @param releaseName the Helm release name
+     * @param namespace   the target Kubernetes namespace
+     * @param values      chart values to pass as {@code --values}
+     * @param kubeconfig  path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt   optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt  optional chart version constraint; may be {@code null}
+     * @return the resulting Helm {@link Release}
+     */
     public Release deployOrUpgrade(
             String chartName,
             String releaseName,
@@ -141,6 +205,20 @@ public class HelmService {
 
     // *** Overload added to satisfy CommandService calls ***
     // matches: deployOrUpgrade(String, String, String, Map<String,Object>, Map<String,String>, String kubeconfig, String repoId, String version, boolean dryRun)
+    /**
+     * Installs or upgrades a Helm release with override options and explicit dry-run control.
+     *
+     * @param chartName       the chart name or OCI reference
+     * @param releaseName     the Helm release name
+     * @param namespace       the target Kubernetes namespace
+     * @param values          chart values to pass as {@code --values}
+     * @param overrideOptions additional dot-path key/value overrides applied on top of {@code values}
+     * @param kubeconfig      path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt       optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt      optional chart version constraint; may be {@code null}
+     * @param dryRun          when {@code true} Helm performs a dry run without making cluster changes
+     * @return the resulting Helm {@link Release}
+     */
     public Release deployOrUpgrade(
             String chartName,
             String releaseName,
@@ -162,6 +240,24 @@ public class HelmService {
     }
 
     // Full canonical implementation
+    /**
+     * Canonical install-or-upgrade implementation with full control over all Helm flags.
+     * Checks whether the release already exists to decide between {@code helm install} and {@code helm upgrade}.
+     *
+     * @param chartName       the chart name or OCI reference
+     * @param releaseName     the Helm release name
+     * @param namespace       the target Kubernetes namespace
+     * @param values          chart values to pass as {@code --values}
+     * @param overrideOptions additional dot-path key/value overrides applied on top of {@code values}
+     * @param kubeconfig      path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt       optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt      optional chart version constraint; may be {@code null}
+     * @param timeoutSec      Helm operation timeout in seconds
+     * @param wait            when {@code true} Helm waits until all resources are ready
+     * @param atomic          when {@code true} Helm rolls back automatically on failure
+     * @param dryRun          when {@code true} Helm performs a dry run without making cluster changes
+     * @return the resulting Helm {@link Release}
+     */
     public Release deployOrUpgrade(
             String chartName,
             String releaseName,
@@ -311,6 +407,13 @@ public class HelmService {
     }
 
     /* --------------------------- Repo login (restored) --------------------------- */
+    /**
+     * Authenticates against the repository referenced by {@code repoIdOpt} before a deploy.
+     * For HTTP repos this updates the local repositories.yaml; for OCI it performs a registry login.
+     *
+     * @param req       the deploy request whose chart reference may be used for logging
+     * @param repoIdOpt optional repository ID; when {@code null} or blank no login is performed
+     */
     public void repoLogin(HelmDeployRequest req, String repoIdOpt){
         String chartReference = req.getChart();
         if (repoIdOpt != null && !repoIdOpt.isBlank()) {
@@ -540,6 +643,11 @@ public class HelmService {
     }
 
 
+    /**
+     * Returns the underlying {@link HelmClient} for advanced or low-level Helm operations.
+     *
+     * @return the Helm client in use by this service
+     */
     public HelmClient helm() {
         return this.helmClient;
     }
@@ -576,6 +684,15 @@ public class HelmService {
         return u.replaceAll("/+$", "").trim();
     }
 
+    /**
+     * Creates or refreshes a {@code kubernetes.io/dockerconfigjson} imagePullSecret derived from
+     * the credentials stored for the given repository, and optionally patches service accounts.
+     *
+     * @param repoId                 the repository ID whose credentials will populate the secret
+     * @param namespace              the Kubernetes namespace where the secret will be created
+     * @param secretName             the desired name of the imagePullSecret
+     * @param serviceAccountsToPatch list of service account names to patch with the secret; may be {@code null}
+     */
     public void ensureImagePullSecretFromRepo(String repoId,
                                               String namespace,
                                               String secretName,
@@ -602,11 +719,24 @@ public class HelmService {
         kubernetesService.ensureImagePullSecretWithUsernameAndPassword(repoId,namespace,secretName,username,password,registryServer,serviceAccountsToPatch);
     }
 
+    /**
+     * Retrieves the default {@code values.yaml} for a chart and returns it as a parsed map.
+     *
+     * @param chartName  the chart name or OCI reference
+     * @param repoIdOpt  optional repository ID used for authentication; may be {@code null}
+     * @param versionOpt optional chart version constraint; may be {@code null}
+     * @return parsed values map, or an empty map if no values could be retrieved
+     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> showValuesAsMap(String chartName, String repoIdOpt, String versionOpt) {
         return this.repositoryService.showValuesAsMap(chartName,repoIdOpt,versionOpt);
     }
 
+    /**
+     * Returns the {@link HelmRepositoryService} used by this service for repository management.
+     *
+     * @return the repository service instance
+     */
     public HelmRepositoryService getRepositoryService(){
         return this.repositoryService;
     }

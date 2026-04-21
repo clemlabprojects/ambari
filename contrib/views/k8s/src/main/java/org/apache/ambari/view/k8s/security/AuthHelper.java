@@ -32,6 +32,11 @@ public class AuthHelper {
     private final ViewContext viewContext;
     private static final Logger LOG = LoggerFactory.getLogger(AuthHelper.class);
 
+    /**
+     * Creates an AuthHelper bound to the given view context.
+     *
+     * @param viewContext active Ambari view context used for username and property lookups
+     */
     public AuthHelper(ViewContext viewContext) {
         this.viewContext = viewContext;
     }
@@ -51,6 +56,12 @@ public class AuthHelper {
         return isPresent;
     }
 
+    /**
+     * Determine the effective permissions for the currently authenticated user.
+     * Checks the {@code view.admin.users} and {@code view.operator.users} property lists in order.
+     *
+     * @return a {@link UserPermissions} instance reflecting the user's role and capability flags
+     */
     public UserPermissions getPermissions() {
         if (isUserInList("view.admin.users")) {
             return new UserPermissions("ADMIN", true, true);
@@ -61,6 +72,13 @@ public class AuthHelper {
         return new UserPermissions("VIEWER", false, false);
     }
 
+    /**
+     * Assert that the current user is allowed to modify view configuration.
+     * When {@code view.admin.users} is configured, only listed users are permitted;
+     * otherwise the Ambari view ACL is sufficient.
+     *
+     * @throws ForbiddenException if the user does not hold configuration permission
+     */
     public void checkConfigurationPermission() {
         String username = viewContext.getUsername();
         LOG.info("Performing configuration permission check for user '{}'", username);
@@ -82,6 +100,12 @@ public class AuthHelper {
         LOG.info("view.admin.users not configured — configuration permission GRANTED for user '{}' via Ambari view ACL.", username);
     }
 
+    /**
+     * Assert that the current user is allowed to perform write operations (deploy, upgrade, delete).
+     * Users must appear in either {@code view.admin.users} or {@code view.operator.users}.
+     *
+     * @throws ForbiddenException if the user does not hold write permission
+     */
     public void checkWritePermission() {
         LOG.info("Performing write permission check for user '{}'", viewContext.getUsername());
         if (isUserInList("view.admin.users") || isUserInList("view.operator.users")) {

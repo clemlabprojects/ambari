@@ -52,6 +52,12 @@ public class ViewConfigurationService {
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
 
+    /**
+     * Constructs a {@code ViewConfigurationService} and validates the kubeconfig state on startup.
+     * If the stored kubeconfig path no longer points to an existing file, the uploaded flag is cleared.
+     *
+     * @param viewContext the Ambari view context providing instance data and properties
+     */
     public ViewConfigurationService(ViewContext viewContext) {
         LOG.info("Initializing ViewConfigurationService for view context: {}", viewContext.getInstanceName());
         this.viewContext = viewContext;
@@ -80,6 +86,15 @@ public class ViewConfigurationService {
         LOG.info("ViewConfigurationService initialization completed");
     }
 
+    /**
+     * Encrypts and saves the uploaded kubeconfig file to the view's working directory.
+     * The resulting path is also persisted via {@link #saveKubeconfigPath}.
+     *
+     * @param inputStream the raw kubeconfig content to encrypt and save
+     * @param fileName    the original filename; used to derive the on-disk name
+     * @return the saved (encrypted) {@link File}
+     * @throws IOException if the working directory cannot be created or the file cannot be written
+     */
     public File saveKubeconfigFile(InputStream inputStream, String fileName) throws IOException {
         LOG.info("Starting saveKubeconfigFile operation for file: {}", fileName);
         
@@ -143,6 +158,11 @@ public class ViewConfigurationService {
         }
     }
 
+    /**
+     * Persists the kubeconfig file path into view instance data and marks the view as configured.
+     *
+     * @param kubeconfigPath the absolute path to the encrypted kubeconfig file to store
+     */
     public void saveKubeconfigPath(String kubeconfigPath) {
         LOG.info("Attempting to save instance data. Key: '{}', Value: '{}'", KUBECONFIG_PATH_KEY, kubeconfigPath);
         try {
@@ -207,6 +227,11 @@ public class ViewConfigurationService {
         }
     }
 
+    /**
+     * Returns the stored path to the encrypted kubeconfig file.
+     *
+     * @return the kubeconfig file path, or {@code null} if not yet configured
+     */
     public String getKubeconfigPath() {
         LOG.debug("Attempting to retrieve instance data for key: '{}'", KUBECONFIG_PATH_KEY);
         String configurationPath = viewContext.getInstanceData(KUBECONFIG_PATH_KEY);
@@ -218,6 +243,9 @@ public class ViewConfigurationService {
         return configurationPath;
     }
 
+    /**
+     * Removes the stored kubeconfig path from view instance data, typically called when the stored path is stale.
+     */
     public void removeKubeconfigPath() {
         LOG.warn("Removing stale kubeconfig path entry. Key: '{}'", KUBECONFIG_PATH_KEY);
         try {
@@ -228,6 +256,11 @@ public class ViewConfigurationService {
         }
     }
 
+    /**
+     * Returns whether the view has been configured with an uploaded kubeconfig file.
+     *
+     * @return {@code true} if a kubeconfig has been successfully uploaded and validated
+     */
     public boolean isConfigured() {
         LOG.debug("Checking if view is configured...");
         String uploadedFlag = viewContext.getInstanceData(KUBECONFIG_UPLOADED);
@@ -236,6 +269,12 @@ public class ViewConfigurationService {
         return isConfigured;
     }
     
+    /**
+     * Returns the base working directory path for this view instance.
+     * Falls back to a version-derived default when the {@code k8s.view.working.dir} property is not set.
+     *
+     * @return the absolute path to the view's working directory
+     */
     public String getConfigurationDirectoryPath(){
         LOG.debug("Reading Configuration Working Dir...");
         String workingDirectoryPath = viewContext.getProperties().get("k8s.view.working.dir");
@@ -250,6 +289,12 @@ public class ViewConfigurationService {
         return workingDirectoryPath;
     }
     
+    /**
+     * Returns the resource path for this view instance.
+     * Falls back to a version-derived default when the {@code k8s.view.resource.path} property is not set.
+     *
+     * @return the absolute path to the view's resource directory
+     */
     public String getViewResourcePath(){
         LOG.debug("Reading View Resource Path...");
         String resourcePath = viewContext.getProperties().get("k8s.view.resource.path");

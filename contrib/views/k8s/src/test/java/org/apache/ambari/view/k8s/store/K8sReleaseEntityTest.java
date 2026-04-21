@@ -53,15 +53,17 @@ public class K8sReleaseEntityTest {
 
     @Test
     public void testTransientEndpointsAndTimestamps() throws Exception {
-        // endpointsJson must be transient
+        // endpointsJson must be transient (computed/cached, not persisted)
         Field endpoints = K8sReleaseEntity.class.getDeclaredField("endpointsJson");
         assertTrue("endpointsJson must be @Transient", endpoints.isAnnotationPresent(Transient.class));
 
-        // createdAt/updatedAt are transient (inherited access field-based)
+        // createdAt/updatedAt are persisted columns (survive Ambari restarts) — must NOT be @Transient
         Field createdAt = K8sReleaseEntity.class.getDeclaredField("createdAt");
         Field updatedAt = K8sReleaseEntity.class.getDeclaredField("updatedAt");
-        assertTrue("createdAt must be @Transient", createdAt.isAnnotationPresent(Transient.class));
-        assertTrue("updatedAt must be @Transient", updatedAt.isAnnotationPresent(Transient.class));
+        assertFalse("createdAt must be persisted (@Column), not @Transient", createdAt.isAnnotationPresent(Transient.class));
+        assertFalse("updatedAt must be persisted (@Column), not @Transient", updatedAt.isAnnotationPresent(Transient.class));
+        assertTrue("createdAt must have @Column", createdAt.isAnnotationPresent(javax.persistence.Column.class));
+        assertTrue("updatedAt must have @Column", updatedAt.isAnnotationPresent(javax.persistence.Column.class));
     }
 
     @Test

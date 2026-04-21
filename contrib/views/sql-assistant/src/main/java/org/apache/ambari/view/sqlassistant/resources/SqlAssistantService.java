@@ -54,6 +54,17 @@ public class SqlAssistantService {
 
     // ── NL-to-SQL ─────────────────────────────────────────────────────────────
 
+    /**
+     * Translates a natural-language question into a SQL statement by forwarding
+     * the request body to the semantic service's {@code /api/v1/nl-to-sql} endpoint.
+     *
+     * @param body    JSON request payload containing the natural-language query and
+     *                any dialect/context hints
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON body returned by the semantic
+     *         service, containing the generated SQL and metadata
+     */
     @POST
     @Path("nl-to-sql")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -65,6 +76,17 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Executes a SQL statement by forwarding the request body to the semantic
+     * service's {@code /api/v1/execute} endpoint and returning the query results.
+     *
+     * @param body    JSON request payload containing the SQL to execute and any
+     *                execution options (catalog, namespace, row limit, etc.)
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON body returned by the semantic
+     *         service, containing the result set and execution metadata
+     */
     @POST
     @Path("execute")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -77,6 +99,14 @@ public class SqlAssistantService {
 
     // ── Schema ────────────────────────────────────────────────────────────────
 
+    /**
+     * Lists all catalogs available in the configured data source by proxying
+     * to the semantic service's {@code GET /api/v1/schema/catalogs} endpoint.
+     *
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON array of catalog names
+     */
     @GET
     @Path("schema/catalogs")
     @Produces(MediaType.APPLICATION_JSON)
@@ -85,6 +115,15 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Lists all namespaces (databases/schemas) within the specified catalog by
+     * proxying to {@code GET /api/v1/schema/catalogs/{catalog}/namespaces}.
+     *
+     * @param catalog the catalog name whose namespaces should be listed
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON array of namespace names
+     */
     @GET
     @Path("schema/catalogs/{catalog}/namespaces")
     @Produces(MediaType.APPLICATION_JSON)
@@ -96,6 +135,16 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Lists all tables within the specified catalog and namespace by proxying to
+     * {@code GET /api/v1/schema/catalogs/{catalog}/namespaces/{namespace}/tables}.
+     *
+     * @param catalog   the catalog that contains the target namespace
+     * @param namespace the namespace (database/schema) whose tables should be listed
+     * @param headers   HTTP request headers; the {@code X-Request-ID} header is
+     *                  forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON array of table names
+     */
     @GET
     @Path("schema/catalogs/{catalog}/namespaces/{namespace}/tables")
     @Produces(MediaType.APPLICATION_JSON)
@@ -108,6 +157,17 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Retrieves the column schema for a specific table by proxying to
+     * {@code GET /api/v1/schema/catalogs/{catalog}/namespaces/{namespace}/tables/{table}}.
+     *
+     * @param catalog   the catalog that contains the target namespace
+     * @param namespace the namespace (database/schema) that contains the target table
+     * @param table     the table whose column definitions should be returned
+     * @param headers   HTTP request headers; the {@code X-Request-ID} header is
+     *                  forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is a JSON object describing the table's columns
+     */
     @GET
     @Path("schema/catalogs/{catalog}/namespaces/{namespace}/tables/{table}")
     @Produces(MediaType.APPLICATION_JSON)
@@ -121,6 +181,14 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Triggers a full schema refresh on the semantic service by posting to
+     * {@code /api/v1/schema/refresh}, causing it to re-introspect the data source.
+     *
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON confirmation from the semantic service
+     */
     @POST
     @Path("schema/refresh")
     @Produces(MediaType.APPLICATION_JSON)
@@ -131,6 +199,20 @@ public class SqlAssistantService {
 
     // ── History ───────────────────────────────────────────────────────────────
 
+    /**
+     * Returns a paginated, optionally filtered list of past NL-to-SQL requests by
+     * proxying to the semantic service's {@code GET /api/v1/history} endpoint.
+     * Only non-null query parameters are forwarded.
+     *
+     * @param limit   maximum number of history entries to return; omit for service default
+     * @param offset  zero-based index of the first entry to return; omit to start from the beginning
+     * @param search  optional free-text filter applied to history entry content
+     * @param dialect optional SQL dialect filter (e.g. {@code hive}, {@code spark})
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is a JSON object containing the history entries
+     *         and total-count metadata
+     */
     @GET
     @Path("history")
     @Produces(MediaType.APPLICATION_JSON)
@@ -148,6 +230,15 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Deletes a single query history entry identified by its ID by proxying to
+     * the semantic service's {@code DELETE /api/v1/history/{id}} endpoint.
+     *
+     * @param id      the unique identifier of the history entry to delete
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON confirmation from the semantic service
+     */
     @DELETE
     @Path("history/{id}")
     @Produces(MediaType.APPLICATION_JSON)
@@ -157,6 +248,14 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Removes all query history entries by proxying to the semantic service's
+     * {@code DELETE /api/v1/history} endpoint.
+     *
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON confirmation from the semantic service
+     */
     @DELETE
     @Path("history")
     @Produces(MediaType.APPLICATION_JSON)
@@ -167,6 +266,15 @@ public class SqlAssistantService {
 
     // ── Health / Config ───────────────────────────────────────────────────────
 
+    /**
+     * Checks the liveness of the semantic service by proxying to its
+     * {@code GET /health} endpoint.
+     *
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the health-check JSON from the semantic
+     *         service; a non-2xx status from the service is re-raised as an HTTP error
+     */
     @GET
     @Path("health")
     @Produces(MediaType.APPLICATION_JSON)
@@ -175,6 +283,15 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Returns the runtime configuration of the semantic service by proxying to
+     * its {@code GET /api/v1/config} endpoint.
+     *
+     * @param headers HTTP request headers; the {@code X-Request-ID} header is
+     *                forwarded to the semantic service (generated if absent)
+     * @return a 200 response whose entity is the JSON configuration object from
+     *         the semantic service
+     */
     @GET
     @Path("config")
     @Produces(MediaType.APPLICATION_JSON)
@@ -183,6 +300,17 @@ public class SqlAssistantService {
         return ok(result);
     }
 
+    /**
+     * Returns the Ambari view instance configuration as seen by this Java backend,
+     * including the resolved semantic service URL and a boolean indicating whether
+     * the view has been configured with a non-default URL.
+     *
+     * <p>This endpoint reads from Ambari's {@link ViewContext} directly and does
+     * not make any outbound call to the semantic service.
+     *
+     * @return a 200 response with a JSON body of the form
+     *         {@code {"serviceUrl":"...","configured":true|false}}
+     */
     @GET
     @Path("view-config")
     @Produces(MediaType.APPLICATION_JSON)

@@ -64,11 +64,23 @@ public class ReleaseMetadataService {
     private final K8sReleaseRepo releaseRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Constructs a {@code ReleaseMetadataService} bound to the given view context.
+     *
+     * @param ctx the Ambari view context providing the data store and instance configuration
+     */
     public ReleaseMetadataService(ViewContext ctx) {
         this.viewContext = ctx;
         this.releaseRepository = new K8sReleaseRepo(ctx);
     }
 
+    /**
+     * Looks up the metadata record for a specific release.
+     *
+     * @param namespace the Kubernetes namespace of the release
+     * @param name      the Helm release name
+     * @return the entity if found, or {@code null} if no record exists
+     */
     public K8sReleaseEntity find(String namespace, String name) {
         return releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
     }
@@ -101,6 +113,16 @@ public class ReleaseMetadataService {
         }
     }
 
+    /**
+     * Updates PR-related fields (URL, number, state) on an existing release metadata record.
+     * Only non-blank values that differ from the current record are written.
+     *
+     * @param namespace the Kubernetes namespace of the release
+     * @param name      the Helm release name
+     * @param prUrl     the pull request URL; ignored if blank
+     * @param prNumber  the pull request number; ignored if blank
+     * @param prState   the pull request state (open/closed/merged); ignored if blank
+     */
     public void updatePrInfo(String namespace, String name, String prUrl, String prNumber, String prState) {
         if ((prUrl == null || prUrl.isBlank()) && (prNumber == null || prNumber.isBlank()) && (prState == null || prState.isBlank())) {
             return;
@@ -153,6 +175,33 @@ public class ReleaseMetadataService {
         return results;
     }
 
+    /**
+     * Creates or updates the metadata record for a Helm install or upgrade operation.
+     * All nullable parameters are ignored when {@code null} or blank.
+     *
+     * @param namespace            the Kubernetes namespace
+     * @param releaseName          the Helm release name
+     * @param serviceKey           optional service key identifying the chart type; may be {@code null}
+     * @param chartRef             the chart reference used for the deployment
+     * @param repoId               the repository ID; may be {@code null}
+     * @param version              the chart version deployed; may be {@code null}
+     * @param values               the values map applied; may be {@code null}
+     * @param deploymentId         a UUID identifying the deployment operation; may be {@code null}
+     * @param endpoints            discovered endpoint list to snapshot; may be {@code null}
+     * @param globalConfigVersion  version string of the global config applied; may be {@code null}
+     * @param securityProfile      the security profile name applied; may be {@code null}
+     * @param securityProfileHash  hash of the applied security profile; may be {@code null}
+     * @param deploymentMode       deployment mode identifier (e.g. "git", "ui"); may be {@code null}
+     * @param gitCommitSha         the git commit SHA; may be {@code null}
+     * @param gitBranch            the git branch name; may be {@code null}
+     * @param gitPath              the path within the git repository; may be {@code null}
+     * @param gitRepoUrl           the git repository URL; may be {@code null}
+     * @param gitCredentialAlias   the credential alias for git; may be {@code null}
+     * @param gitCommitMode        the commit mode (e.g. "direct", "pr"); may be {@code null}
+     * @param gitPrUrl             the pull request URL; may be {@code null}
+     * @param gitPrNumber          the pull request number; may be {@code null}
+     * @param gitPrState           the pull request state; may be {@code null}
+     */
     public void recordInstallOrUpgrade(
             String namespace,
             String releaseName,
@@ -256,6 +305,14 @@ public class ReleaseMetadataService {
         }
     }
 
+    /**
+     * Annotates the latest Helm-managed secret for a release with the provided key-value pairs.
+     * Failures are logged but not propagated.
+     *
+     * @param namespace   the Kubernetes namespace of the release
+     * @param releaseName the Helm release name whose secret should be annotated
+     * @param annotations the annotations to merge into the secret's metadata
+     */
     public void annotateHelmSecret(String namespace, String releaseName, Map<String,String> annotations) {
         try {
             KubernetesService kubernetesService = KubernetesService.get(viewContext);
@@ -330,6 +387,13 @@ public class ReleaseMetadataService {
     }
 
 
+    /**
+     * Persists an updated endpoint snapshot for an existing release metadata record.
+     *
+     * @param namespace   the Kubernetes namespace of the release
+     * @param releaseName the Helm release name
+     * @param endpoints   the new list of endpoint maps to store; {@code null} is a no-op
+     */
     public void recordEndpoints(String namespace,
                                 String releaseName,
                                 List<Map<String,Object>> endpoints) {

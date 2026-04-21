@@ -23,6 +23,13 @@ public class UserPermissions {
     private final boolean canConfigure;
     private final boolean canWrite;
 
+    /**
+     * Creates a UserPermissions value object with an explicit role and capability flags.
+     *
+     * @param role         logical role name (e.g., {@code "ADMIN"}, {@code "OPERATOR"}, {@code "VIEWER"})
+     * @param canConfigure whether the user may modify view configuration
+     * @param canWrite     whether the user may perform write operations such as deploy or delete
+     */
     public UserPermissions(String role, boolean canConfigure, boolean canWrite) {
         this.role = role;
         this.canConfigure = canConfigure;

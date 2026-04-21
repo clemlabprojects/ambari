@@ -29,6 +29,7 @@ import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
 import org.apache.ambari.view.k8s.model.HelmReleasesResponse;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.HelmUpgradeRequest;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.*;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
@@ -38,6 +39,7 @@ import org.apache.ambari.view.k8s.service.CommandService;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
+import javax.ws.rs.ForbiddenException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
@@ -80,6 +82,7 @@ public class HelmResource {
     private final FluxGitOpsBackend fluxGitOpsBackend;
     private final CommandService commandService;
     private final ReleaseMetadataService releaseMetadataService;
+    private final AuthHelper authHelper;
 
     // Lightweight in-memory cache for releases to avoid hammering Helm/K8s on frequent polls
     private static final Map<String, CachedReleases> RELEASE_CACHE = new ConcurrentHashMap<>();
@@ -93,6 +96,7 @@ public class HelmResource {
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
         this.commandService = new CommandService(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
+        this.authHelper = new AuthHelper(viewContext);
     }
 
     /**
@@ -144,6 +148,16 @@ public class HelmResource {
         return configService.getKubeconfigContents();
     }
 
+    /**
+     * List all Helm releases across the cluster, optionally filtered by namespace.
+     * Results are paginated; each entry is enriched with metadata, status, endpoints,
+     * and version information resolved in parallel.
+     *
+     * @param namespace optional Kubernetes namespace to filter results; lists all namespaces when null
+     * @param limit     maximum number of releases to return per page
+     * @param offset    zero-based index of the first result to return
+     * @return paginated response containing release DTOs and total count
+     */
     @GET
     @Path("/releases")
     public HelmReleasesResponse list(@QueryParam("namespace") String namespace,
@@ -322,6 +336,13 @@ public class HelmResource {
         return new HelmReleasesResponse(releaseList, total);
     }
 
+    /**
+     * Retrieve the current status and metadata for a single Helm release.
+     *
+     * @param namespace   Kubernetes namespace of the release
+     * @param releaseName name of the Helm release
+     * @return the release status DTO, or an error response on failure
+     */
     @GET
     @Path("/releases/{namespace}/{release}/status")
     public Response releaseStatus(@PathParam("namespace") String namespace,
@@ -373,6 +394,7 @@ public class HelmResource {
                                              @Context HttpHeaders requestHeaders,
                                              @Context UriInfo uriInfo) {
         try {
+            authHelper.checkWritePermission();
             LOG.info("Submitting keytab regeneration for release {}/{}", namespace, releaseName);
             String commandId = commandService.submitReleaseKeytabRegeneration(
                     namespace,
@@ -384,6 +406,10 @@ public class HelmResource {
             return Response.status(Response.Status.ACCEPTED)
                     .entity(Map.of("id", commandId, "href", commandLocation.toString()))
                     .location(commandLocation)
+                    .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
                     .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
@@ -412,6 +438,7 @@ public class HelmResource {
                                                    @Context HttpHeaders requestHeaders,
                                                    @Context UriInfo uriInfo) {
         try {
+            authHelper.checkWritePermission();
             LOG.info("Submitting Ranger repository reapply for release {}/{}", namespace, releaseName);
             String commandId = commandService.submitReleaseRangerRepositoryReapply(
                     namespace,
@@ -424,6 +451,10 @@ public class HelmResource {
                     .entity(Map.of("id", commandId, "href", commandLocation.toString()))
                     .location(commandLocation)
                     .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Map.of("error", iae.getMessage()))
@@ -434,6 +465,63 @@ public class HelmResource {
         }
     }
 
+    /**
+     * Register (or re-register) the OIDC client(s) for a deployed release without re-installing
+     * the chart.  Reads oidc[] from the service definition, calls Keycloak admin API, and
+     * writes/rotates the resulting credentials in a Kubernetes Secret.
+     *
+     * @param namespace      release namespace
+     * @param releaseName    release name
+     * @param requestHeaders caller headers for Ambari/Keycloak auth
+     * @param uriInfo        request URI context for building command links
+     * @return HTTP 202 with command id and href
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/oidc")
+    public Response registerReleaseOidcClient(@PathParam("namespace") String namespace,
+                                              @PathParam("release") String releaseName,
+                                              @Context HttpHeaders requestHeaders,
+                                              @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            LOG.info("Submitting OIDC client registration for release {}/{}", namespace, releaseName);
+            String commandId = commandService.submitReleaseOidcRegistration(
+                    namespace,
+                    releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("OIDC registration failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Deploy or upgrade a Helm chart synchronously.
+     *
+     * @param deployRequest    chart, release name, namespace, and Helm values to apply
+     * @param repositoryId     optional repository id to look up the chart
+     * @param chartVersion     optional chart version to install; uses the latest when omitted
+     * @param kubeContext      optional kubeconfig content; defaults to the view-configured kubeconfig
+     * @param timeoutSeconds   maximum seconds to wait for the release to become ready
+     * @param waitForCompletion whether to block until all Kubernetes resources are ready
+     * @param atomicUpgrade    whether to roll back automatically on failure
+     * @return the deployed release details, or an error response on failure
+     */
     @POST
     @Path("/deploy")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -466,6 +554,12 @@ public class HelmResource {
         }
     }
 
+    /**
+     * Upgrade an existing Helm release to a new chart or values set.
+     *
+     * @param upgradeRequest release name, namespace, chart reference, version, repo id, and new values
+     * @return the updated release DTO
+     */
     @POST
     @Path("/upgrade")
     public HelmReleaseDTO upgrade(HelmUpgradeRequest upgradeRequest) {
@@ -571,6 +665,18 @@ public class HelmResource {
         return base + "resources/api/commands";
     }
 
+    /**
+     * Uninstall a Helm release and delete its stored metadata.
+     * For Flux GitOps releases, the corresponding Git manifests are removed first.
+     *
+     * @param namespace    Kubernetes namespace of the release
+     * @param releaseName  name of the Helm release to uninstall
+     * @param gitRepoUrl   optional Git repository URL to override the stored value (Flux mode only)
+     * @param gitAuthToken optional Git token to override the stored credential (Flux mode only)
+     * @param gitSshKey    optional SSH private key to override the stored credential (Flux mode only)
+     * @param gitBranch    optional Git branch to override the stored value (Flux mode only)
+     * @return HTTP 200 on success, or an error response on failure
+     */
     @DELETE
     @Path("/release/{namespace}/{name}")
     public Response uninstall(@PathParam("namespace") String namespace,
@@ -627,6 +733,14 @@ public class HelmResource {
         return Response.ok().build();
     }
 
+    /**
+     * Roll back a Helm release to a previously installed revision.
+     *
+     * @param namespace   Kubernetes namespace of the release
+     * @param releaseName name of the Helm release to roll back
+     * @param revision    target revision number to restore
+     * @return HTTP 200 on success, or an error response on failure
+     */
     @POST
     @Path("/rollback")
     public Response rollback(@QueryParam("namespace") String namespace,
@@ -637,6 +751,14 @@ public class HelmResource {
         return Response.ok().build();
     }
 
+    /**
+     * Check whether a chart exists in the given repository and report the latest available version.
+     *
+     * @param repositoryId repository id whose index to search
+     * @param chartName    name of the chart to look up
+     * @param chartVersion specific chart version to check; pass null to check any version
+     * @return JSON with {@code exists} (boolean) and {@code latest} (version string) fields
+     */
     @GET
     @Path("validate")
     @Produces(MediaType.APPLICATION_JSON)
@@ -660,7 +782,17 @@ public class HelmResource {
         }
     }
 
-    @POST 
+    /**
+     * Validate a chart reference from a deploy request, ensuring the repository is synced
+     * and returning the resolved chart existence and latest version.
+     *
+     * @param requestBody  deploy request carrying the chart reference to validate
+     * @param repositoryId optional repository id to sync before validating; inferred from chart prefix when absent
+     * @param chartVersion optional chart version to verify
+     * @param kubeContext  optional kubeconfig context (currently unused during validation)
+     * @return JSON with {@code exists}, {@code resolvedChartRef}, and {@code latest} fields
+     */
+    @POST
     @Path("/validate")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
@@ -712,6 +844,13 @@ public class HelmResource {
     }
 
 
+    /**
+     * Retrieve the computed Helm values currently applied to a release.
+     *
+     * @param namespace   Kubernetes namespace of the release
+     * @param releaseName name of the Helm release
+     * @return the effective values map, or an error response on failure
+     */
     @GET
     @Path("/{namespace}/{releaseName}/values")
     @Produces(MediaType.APPLICATION_JSON)

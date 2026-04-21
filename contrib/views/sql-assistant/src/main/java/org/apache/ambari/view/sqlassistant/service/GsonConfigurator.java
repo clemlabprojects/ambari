@@ -34,6 +34,14 @@ public class GsonConfigurator implements ContextResolver<Gson> {
                 .create();
     }
 
+    /**
+     * Returns the shared {@link Gson} instance configured for this view, regardless
+     * of the requested type.  Jersey calls this method to resolve a {@code Gson}
+     * instance during JSON serialisation and deserialisation.
+     *
+     * @param type the class for which a {@link Gson} instance is requested (not used)
+     * @return the shared {@link Gson} instance with null-serialisation enabled
+     */
     @Override
     public Gson getContext(Class<?> type) {
         return gson;

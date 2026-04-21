@@ -42,6 +42,12 @@ public class ViewConfigurationService {
 
     private final ViewContext viewContext;
 
+    /**
+     * Constructs a new configuration service backed by the given Ambari view context.
+     *
+     * @param viewContext the Ambari {@link ViewContext} for the current view instance,
+     *                    used to read view-level parameters
+     */
     public ViewConfigurationService(ViewContext viewContext) {
         this.viewContext = viewContext;
     }
@@ -63,6 +69,14 @@ public class ViewConfigurationService {
                 "/var/lib/ambari-server/resources/views/work/SQL-ASSISTANT-VIEW{1.0.0.0}");
     }
 
+    /**
+     * Returns {@code true} if the view instance has been configured with a
+     * non-default semantic service URL, indicating that the view is ready to use.
+     * Returns {@code false} when the URL is absent or still set to the
+     * {@value #DEFAULT_SERVICE_URL} placeholder.
+     *
+     * @return {@code true} if a custom semantic service URL has been configured
+     */
     public boolean isConfigured() {
         String url = getSemanticServiceUrl();
         return url != null && !url.isEmpty() && !url.equals(DEFAULT_SERVICE_URL);

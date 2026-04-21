@@ -194,12 +194,25 @@ public class KubernetesService {
         return t;
     });
 
+    /**
+     * Returns (or creates) the singleton {@code KubernetesService} for the given view instance,
+     * and schedules a one-time async monitoring bootstrap if the service is configured.
+     *
+     * @param ctx the Ambari view context identifying the view instance
+     * @return the shared {@code KubernetesService} for this view instance
+     */
     public static KubernetesService get(ViewContext ctx) {
         KubernetesService svc = INSTANCES.computeIfAbsent(ctx.getInstanceName(), k -> new KubernetesService(ctx));
         svc.scheduleMonitoringBootstrapAsync();
         return svc;
     }
 
+    /**
+     * Constructs a {@code KubernetesService} from an existing client, primarily for testing.
+     *
+     * @param client       the Kubernetes client to use
+     * @param isConfigured whether the service should be considered configured
+     */
     public KubernetesService(KubernetesClient client, boolean isConfigured) {
         this.viewContext = null; // Default constructor for testing
         this.client = client;
@@ -210,6 +223,13 @@ public class KubernetesService {
         this.configurationService = null;
     }
 
+    /**
+     * Constructs a {@code KubernetesService} with a view context and a pre-built Kubernetes client.
+     *
+     * @param viewContext  the Ambari view context
+     * @param client       the Kubernetes client to use
+     * @param isConfigured whether the service should be considered configured
+     */
     public KubernetesService(ViewContext viewContext, KubernetesClient client, boolean isConfigured) {
         this.viewContext = viewContext;
         this.client = client;
@@ -220,6 +240,14 @@ public class KubernetesService {
         this.configurationService = new ViewConfigurationService(viewContext);
     }
 
+    /**
+     * Constructs a {@code KubernetesService} with explicit Kubernetes and Helm clients, typically for testing.
+     *
+     * @param ctx          the Ambari view context
+     * @param k8s          the Kubernetes client to use
+     * @param helmClient   the Helm client to use
+     * @param isConfigured whether the service should be considered configured
+     */
     public KubernetesService(ViewContext ctx, KubernetesClient k8s, HelmClient helmClient, boolean isConfigured) {
         this.viewContext = ctx;
         this.client = k8s;
@@ -230,6 +258,14 @@ public class KubernetesService {
         this.helmService = new HelmService(ctx, helmClient);
     }
 
+    /**
+     * Primary constructor that fully initializes the service from the stored kubeconfig.
+     * Reads and decrypts the kubeconfig, installs the cluster CA into the JVM SSL context,
+     * and builds the Kubernetes client. Marks the service as unconfigured if no valid kubeconfig is found.
+     *
+     * @param viewContext the Ambari view context providing configuration properties and instance data
+     * @throws IllegalStateException if the kubeconfig file exists but cannot be read or parsed
+     */
     public KubernetesService(ViewContext viewContext) {
         this.configurationService = new ViewConfigurationService(viewContext);
         String kubeconfigPath = configurationService.getKubeconfigPath();
@@ -336,6 +372,13 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Returns a paginated list of cluster nodes enriched with CPU and memory usage metrics.
+     *
+     * @param limit  the maximum number of nodes to return; must be at least 1
+     * @param offset the zero-based starting index into the full node list
+     * @return list of {@link ClusterNode} objects for the requested page
+     */
     public List<ClusterNode> getNodes(int limit, int offset) {
         checkConfiguration();
         LOG.info("Fetching node list from Kubernetes API.");
@@ -365,11 +408,21 @@ public class KubernetesService {
         return nodes;
     }
 
+    /**
+     * Returns the total number of nodes in the cluster.
+     *
+     * @return node count
+     */
     public int countNodes() {
         checkConfiguration();
         return client.nodes().list().getItems().size();
     }
 
+    /**
+     * Returns the health status of all core Kubernetes components.
+     *
+     * @return list of {@link ComponentStatus} objects
+     */
     public List<ComponentStatus> getComponentStatuses() {
         checkConfiguration();
         LOG.info("Fetching component statuses from Kubernetes API.");
@@ -378,6 +431,11 @@ public class KubernetesService {
                 .collect(Collectors.toList());
     }
     
+    /**
+     * Returns the 20 most-recent cluster events across all namespaces, sorted newest first.
+     *
+     * @return list of {@link ClusterEvent} objects
+     */
     public List<ClusterEvent> getClusterEvents() {
         checkConfiguration();
         LOG.info("Fetching recent events from Kubernetes API.");
@@ -396,6 +454,13 @@ public class KubernetesService {
             .collect(Collectors.toList());
     }
 
+    /**
+     * Returns aggregated cluster statistics (CPU, memory, pods, nodes, Helm releases).
+     * Results are cached for 30 seconds unless {@code forceRefresh} is set.
+     *
+     * @param forceRefresh when {@code true} bypasses the cache and recomputes stats from the cluster
+     * @return the current {@link ClusterStats}
+     */
     public ClusterStats getClusterStats(boolean forceRefresh) {
         ClusterStats cachedStats = statsCache.getIfPresent("clusterStats");
         if (cachedStats != null && !forceRefresh) {
@@ -1344,7 +1409,7 @@ public class KubernetesService {
             overrides.put("prometheus.ingress.enabled", true);
             overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
             overrides.put("prometheus.ingress.hosts", List.of(desiredHost));
-            overrides.put("prometheus.ingress.path", "/");
+            overrides.put("prometheus.ingress.paths", List.of("/"));
             overrides.put("prometheus.ingress.pathType", "Prefix");
 
             String externalUrl = desiredHost.startsWith("http") ? desiredHost : "http://" + desiredHost;
@@ -1371,7 +1436,7 @@ public class KubernetesService {
         overrides.put("prometheus.ingress.enabled", true);
         overrides.put("prometheus.ingress.ingressClassName", effectiveIngressClass);
         overrides.put("prometheus.ingress.hosts", List.of(""));
-        overrides.put("prometheus.ingress.path", "/");
+        overrides.put("prometheus.ingress.paths", List.of("/"));
         overrides.put("prometheus.ingress.pathType", "Prefix");
         LOG.warn("Could not compute Prometheus NodePort URL (missing node IP or nodePort); ingress created with catch-all rule.");
         return null;
@@ -1625,6 +1690,12 @@ public class KubernetesService {
         );
     }
 
+    /**
+     * Propagates all view properties prefixed with {@code k8sview.} into JVM system properties,
+     * stripping the prefix before setting each one.
+     *
+     * @param context the Ambari view context supplying the properties to propagate
+     */
     public static void loadK8sPropsAsSystemProperties(ViewContext context) {
         Map<String, String> contextProperties = context.getProperties();
 
@@ -1644,6 +1715,12 @@ public class KubernetesService {
         }
     }
     
+    /**
+     * Loads the {@code charts.json} catalog from the configured directory or from the classpath fallback.
+     *
+     * @return the raw JSON string of available charts
+     * @throws IOException if the file cannot be found or read
+     */
     public String loadAvailableCharts() throws IOException {
         String chartsDirectoryPath = null;
         // Read property from ambari.properties via ViewContext
@@ -2161,6 +2238,14 @@ public class KubernetesService {
             throw e;
         }
     }
+    /**
+     * Applies a YAML manifest from the filesystem, stamping Helm ownership metadata on CRDs
+     * and creating or replacing all other resources.
+     *
+     * @param yamlPath         path to the YAML file containing one or more Kubernetes resources
+     * @param releaseName      the Helm release name used to stamp {@code meta.helm.sh/release-name}
+     * @param releaseNamespace the namespace used to stamp {@code meta.helm.sh/release-namespace}
+     */
     public void applyYaml(Path yamlPath, String releaseName, String releaseNamespace) {
         LOG.info("Applying YAML manifest from file: {}, for Helm release {}/{}", yamlPath, releaseNamespace, releaseName);
         Objects.requireNonNull(yamlPath, "yamlPath");
@@ -2241,6 +2326,15 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Loads a YAML template from the classpath, performs {@code {{KEY}}} token substitution,
+     * and applies the resulting resources into the target namespace.
+     *
+     * @param resourcePathOnClasspath classpath-relative path to the YAML template resource
+     * @param releaseName             the Helm release name (used for context/logging)
+     * @param targetNamespace         the Kubernetes namespace into which resources are applied
+     * @param variables               map of token keys to replacement values; may be {@code null}
+     */
     public void applyClasspathYamlTemplate(String resourcePathOnClasspath,
                                            String releaseName,
                                            String targetNamespace,
@@ -2298,11 +2392,22 @@ public class KubernetesService {
         md.getAnnotations().put("meta.helm.sh/release-namespace", releaseNamespace);
     }
 
-    /** Surcharge pratique si tu passes un String. */
+    /**
+     * Convenience overload of {@link #applyYaml(Path, String, String)} that accepts a string path.
+     *
+     * @param yamlPath         string path to the YAML file
+     * @param releaseName      the Helm release name used for ownership metadata
+     * @param releaseNamespace the namespace used for ownership metadata
+     */
     public void applyYaml(String yamlPath, String releaseName, String releaseNamespace) {
         applyYaml(java.nio.file.Paths.get(Objects.requireNonNull(yamlPath, "yamlPath")), releaseName, releaseNamespace);
     }
 
+    /**
+     * Returns the underlying {@link KubernetesClient} for advanced or direct API access.
+     *
+     * @return the Kubernetes client, or {@code null} if the service is not yet configured
+     */
     public KubernetesClient getClient() {
         return client;
     }
@@ -2339,10 +2444,27 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Returns the {@link ViewConfigurationService} for this service instance.
+     *
+     * @return the view configuration service
+     */
     public ViewConfigurationService getConfigurationService(){
         return this.configurationService;
     }
 
+    /**
+     * Creates or updates a {@code kubernetes.io/dockerconfigjson} imagePullSecret from explicit credentials,
+     * and patches the specified service accounts to reference it.
+     *
+     * @param repoId                 the repository ID (used for logging only)
+     * @param namespace              the Kubernetes namespace where the secret will be created
+     * @param secretName             the desired name of the imagePullSecret
+     * @param userName               the registry username
+     * @param password               the registry password
+     * @param registryServer         the registry hostname (e.g. {@code registry.example.com})
+     * @param serviceAccountsToPatch list of service account names to patch; may be {@code null}
+     */
     public void ensureImagePullSecretWithUsernameAndPassword(String repoId,
                                               String namespace,
                                               String secretName,
@@ -2435,12 +2557,41 @@ public class KubernetesService {
         return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
+    /**
+     * Ensures the persistent-volume mounts described by the spec are provisioned for the given release.
+     *
+     * @param namespace   the Kubernetes namespace
+     * @param releaseName the Helm release name the mounts belong to
+     * @param mounts      a map describing the mount configuration (structure is mount-manager specific)
+     */
     public void createMounts(String namespace, String releaseName, Map<String,Object> mounts){
         if(mountManager == null) {
             this.mountManager = new MountManager(this.client);
             mountManager.ensureMounts(namespace, releaseName, mounts);
         }
 
+    }
+
+    /**
+     * Verify that the requested namespace is within the operator-configured allowlist.
+     * If the view property {@code k8s.view.allowed.namespaces} is set (comma-separated),
+     * any Secret or ConfigMap write to a namespace outside that list is rejected.
+     * When the property is absent or blank, all namespaces are permitted (backward-compatible).
+     */
+    private void checkNamespaceAllowed(String namespace) {
+        String allowedProp = (viewContext == null || viewContext.getProperties() == null)
+                ? null
+                : viewContext.getProperties().get("k8s.view.allowed.namespaces");
+        if (allowedProp == null || allowedProp.isBlank()) return;
+        Set<String> allowed = Arrays.stream(allowedProp.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (!allowed.contains(namespace)) {
+            throw new SecurityException("Namespace '" + namespace
+                    + "' is not in the allowed list (k8s.view.allowed.namespaces). "
+                    + "Permitted namespaces: " + allowed);
+        }
     }
 
     /**
@@ -2469,6 +2620,7 @@ public class KubernetesService {
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(dataKey, "dataKey");
         Objects.requireNonNull(data, "data");
+        checkNamespaceAllowed(namespace);
         checkConfiguration();
 
         try {
@@ -2812,6 +2964,7 @@ public class KubernetesService {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(binaryData, "binaryData");
+        checkNamespaceAllowed(namespace);
         checkConfiguration();
 
         try {
@@ -3214,6 +3367,12 @@ public class KubernetesService {
         return readOpaqueSecretKeyAsString(namespace, name, filename).orElse("");
     }
 
+    /**
+     * Deletes a Kubernetes Secret from the given namespace.
+     *
+     * @param namespace the Kubernetes namespace containing the secret
+     * @param name      the name of the secret to delete
+     */
     public void deleteSecret(String namespace, String name) {
         checkConfiguration();
         client.secrets().inNamespace(namespace).withName(name).delete();

@@ -32,6 +32,13 @@ public class PathConfig {
     private final Path repositoriesConfig;
     private final Path registryConfig;
 
+    /**
+     * Constructs a {@code PathConfig} from the given view context, resolving all Helm-related
+     * directory paths from view properties with sensible defaults.
+     *
+     * @param ctx the Ambari view context supplying the {@code k8s.view.working.dir},
+     *            {@code k8s.view.helm.repositoriesConfig}, and {@code k8s.view.helm.registryConfig} properties
+     */
     public PathConfig(ViewContext ctx) {
         String workingDirectory = getProperty(ctx, "k8s.view.working.dir", "/var/lib/ambari/views/work/K8S-VIEW{3}");
         String repositoriesPath = getProperty(ctx, "k8s.view.helm.repositoriesConfig", "");
@@ -52,6 +59,12 @@ public class PathConfig {
         return (value == null || value.isBlank()) ? defaultValue : value;
     }
 
+    /**
+     * Creates all required Helm directories ({@code workDir}, {@code repositoriesConfig} parent,
+     * and {@code registryConfig} parent) if they do not already exist.
+     *
+     * @throws RuntimeException if any directory cannot be created
+     */
     public void ensureDirs() {
         try {
             Files.createDirectories(workDir);

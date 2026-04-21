@@ -32,6 +32,13 @@ import java.util.Set;
  */
 public class SqlAssistantViewApplication extends Application {
 
+    /**
+     * Returns the set of JAX-RS root resource and provider classes for this application.
+     * Registers {@link SqlAssistantService} as the root resource and
+     * {@link GsonConfigurator} as the JSON provider.
+     *
+     * @return an unmodifiable set of JAX-RS component classes to be instantiated per request
+     */
     @Override
     public Set<Class<?>> getClasses() {
         final Set<Class<?>> classes = new HashSet<>();

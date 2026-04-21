@@ -53,6 +53,7 @@ import org.apache.ambari.view.k8s.service.deployment.GitClient;
 import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
 
 import org.apache.ambari.view.k8s.utils.*;
+import org.apache.ambari.view.k8s.client.KeycloakAdminClient;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -696,6 +697,252 @@ public class CommandService {
         childCommandIds.add(createSecretCommandId);
 
         LOG.info("Added Kerberos keytab steps for entry {}: issueId={}, createId={}", kerberosEntryKey, issueCommandId, createSecretCommandId);
+    }
+
+    // =========================================================================
+    // OIDC client registration lifecycle (mirrors Kerberos PRE_PROVISIONED)
+    // =========================================================================
+
+    /**
+     * Append OIDC client registration steps (register in Keycloak + create K8s Secret) to the
+     * current command plan.  Called during deploy when the service definition contains oidc[].
+     */
+    private void appendOidcRegistrationSteps(CommandEntity rootCommand,
+                                             List<String> childCommandIds,
+                                             Map<String, Object> rootParams,
+                                             String desiredClientId,
+                                             String redirectUri,
+                                             String secretName,
+                                             String oidcEntryKey,
+                                             String vaultPath) {
+        final String now = Instant.now().toString();
+
+        // Step 1: register/update the OIDC client in Keycloak
+        String registerCmdId = rootCommand.getId() + "-oidc-" + UUID.randomUUID();
+        Map<String, Object> registerParams = new LinkedHashMap<>(rootParams);
+        registerParams.put("oidcClientId", desiredClientId);
+        registerParams.put("oidcRedirectUri", redirectUri != null ? redirectUri : "");
+        registerParams.put("oidcSecretName", secretName);
+        registerParams.put("oidcEntryKey", oidcEntryKey);
+        if (vaultPath != null && !vaultPath.isBlank()) {
+            registerParams.put("oidcVaultPath", vaultPath);
+        }
+
+        CommandEntity registerCmd = new CommandEntity();
+        registerCmd.setId(registerCmdId);
+        registerCmd.setViewInstance(ctx.getInstanceName());
+        registerCmd.setType(CommandType.OIDC_REGISTER_CLIENT.name());
+        registerCmd.setTitle("Keycloak: register OIDC client " + desiredClientId);
+        registerCmd.setParamsJson(gson.toJson(registerParams));
+
+        CommandStatusEntity registerStatus = new CommandStatusEntity();
+        registerStatus.setId(registerCmdId + "-status");
+        registerStatus.setAttempt(0);
+        registerStatus.setState(CommandState.PENDING.name());
+        registerStatus.setCreatedBy(ctx.getUsername());
+        registerStatus.setCreatedAt(now);
+        registerStatus.setUpdatedAt(now);
+        registerCmd.setCommandStatusId(registerStatus.getId());
+
+        // Step 2: write credentials to K8s Secret (and optionally Vault)
+        String createSecretCmdId = rootCommand.getId() + "-oidc-" + UUID.randomUUID();
+        Map<String, Object> createParams = new LinkedHashMap<>(registerParams);
+        createParams.put("oidcRegisterId", registerCmdId);
+
+        CommandEntity createSecretCmd = new CommandEntity();
+        createSecretCmd.setId(createSecretCmdId);
+        createSecretCmd.setViewInstance(ctx.getInstanceName());
+        createSecretCmd.setType(CommandType.OIDC_CREATE_SECRET.name());
+        createSecretCmd.setTitle("K8s: create/update OIDC secret " + secretName);
+        createSecretCmd.setParamsJson(gson.toJson(createParams));
+
+        CommandStatusEntity createSecretStatus = new CommandStatusEntity();
+        createSecretStatus.setId(createSecretCmdId + "-status");
+        createSecretStatus.setAttempt(0);
+        createSecretStatus.setState(CommandState.PENDING.name());
+        createSecretStatus.setCreatedBy(ctx.getUsername());
+        createSecretStatus.setCreatedAt(now);
+        createSecretStatus.setUpdatedAt(now);
+        createSecretCmd.setCommandStatusId(createSecretStatus.getId());
+
+        store(registerStatus);
+        store(registerCmd);
+        store(createSecretStatus);
+        store(createSecretCmd);
+
+        childCommandIds.add(registerCmdId);
+        childCommandIds.add(createSecretCmdId);
+
+        LOG.info("Added OIDC registration steps for entry {}: registerId={}, createSecretId={}",
+                oidcEntryKey, registerCmdId, createSecretCmdId);
+    }
+
+    /**
+     * Resolve the OIDC issuer URL from Ambari cluster config.
+     * Returns the oidc_issuer_url property if non-blank; otherwise computes it as
+     * {oidc_admin_url}/realms/{oidc_realm}.
+     */
+    private String resolveOidcIssuerUrl(AmbariActionClient client, String cluster) {
+        try {
+            String explicit = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_issuer_url");
+            if (explicit != null && !explicit.isBlank()) return explicit;
+            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
+            if (adminUrl != null && realm != null) {
+                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve OIDC issuer URL from cluster {}: {}", cluster, ex.toString());
+        }
+        return null;
+    }
+
+    /**
+     * Render an OIDC template string replacing {{releaseName}}, {{namespace}}, {{realm}}.
+     * Validates the result contains only safe characters to prevent injection.
+     */
+    private String renderOidcTemplate(String template, String releaseName, String namespace, String realm) {
+        if (template == null || template.isBlank()) return "";
+        String result = template
+                .replace("{{releaseName}}", releaseName != null ? releaseName : "")
+                .replace("{{namespace}}", namespace != null ? namespace : "")
+                .replace("{{realm}}", realm != null ? realm : "");
+        validateOidcClientId(result);
+        return result;
+    }
+
+    /**
+     * Validate that a client ID contains only safe characters.
+     * Prevents injection via templates.
+     */
+    private static void validateOidcClientId(String clientId) {
+        if (clientId == null || clientId.isBlank()) return;
+        if (!clientId.matches("[a-zA-Z0-9._/@:+\\-]{1,255}")) {
+            throw new IllegalArgumentException(
+                    "OIDC client ID contains invalid characters: " + clientId);
+        }
+    }
+
+    private static void validateKerberosPrincipal(String principal) {
+        if (principal == null || principal.isBlank()) return;
+        // Allow the character set valid in Kerberos principals: primary[/instance]@REALM
+        // Reject anything that could be used for injection (shell metacharacters, whitespace, etc.)
+        if (!principal.matches("[a-zA-Z0-9._/@:\\-]{1,512}")) {
+            throw new IllegalArgumentException(
+                    "Kerberos principal contains invalid characters: " + principal);
+        }
+    }
+
+    /**
+     * Submit a standalone OIDC client re-registration for an already-deployed release.
+     * Parallel to submitReleaseKeytabRegeneration().
+     */
+    public String submitReleaseOidcRegistration(String namespace,
+                                                String releaseName,
+                                                MultivaluedMap<String, String> callerHeaders,
+                                                URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+
+        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
+                || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+
+        StackServiceDef serviceDefinition =
+                new StackDefinitionService(ctx).getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null || serviceDefinition.oidc == null || serviceDefinition.oidc.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Service definition for " + releaseMetadata.getServiceKey() + " has no OIDC entries.");
+        }
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName;
+        try {
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to resolve Ambari cluster name.", ex);
+        }
+        AmbariActionClient ambariClient =
+                new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+
+        String oidcRealm = "";
+        try {
+            oidcRealm = ambariClient.getDesiredConfigProperty(clusterName, "oidc-env", "oidc_realm");
+        } catch (Exception ex) {
+            LOG.warn("Could not read oidc_realm from cluster {}: {}", clusterName, ex.toString());
+        }
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.REGISTER_OIDC_CLIENT.name());
+        rootCommand.setTitle("Register OIDC client(s) for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("_cluster", clusterName);
+        rootParams.put("_baseUri", baseUri.toString());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        rootParams.put("oidcRealm", oidcRealm);
+
+        List<String> childCommandIds = new ArrayList<>();
+        boolean stepsAdded = false;
+
+        int idx = 0;
+        for (Map<String, Object> entry : serviceDefinition.oidc) {
+            idx++;
+            if (!isEntryEnabled(entry.get("enabled"))) continue;
+            String entryKey  = resolveStringValue(entry.get("key"), "entry-" + idx);
+            String clientIdT = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
+            String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
+            String redirectT = resolveStringValue(entry.get("redirectUriTemplate"), "");
+            String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
+
+            String clientId   = renderOidcTemplate(clientIdT,  releaseName, namespace, oidcRealm);
+            String secretName = renderOidcTemplate(secretT,     releaseName, namespace, oidcRealm);
+            String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm);
+
+            appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
+                    clientId, redirectUri, secretName, entryKey, vaultPath);
+            stepsAdded = true;
+        }
+
+        if (!stepsAdded) {
+            throw new IllegalStateException("No OIDC entries were scheduled for release " + releaseName);
+        }
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+        store(rootStatus);
+        store(rootCommand);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /** Null-safe enabled check used for both kerberos and oidc entries. */
+    private static boolean isEntryEnabled(Object v) {
+        if (v == null) return true;
+        if (v instanceof Boolean b) return b;
+        return !"false".equalsIgnoreCase(String.valueOf(v));
     }
 
     /**
@@ -2150,6 +2397,7 @@ public class CommandService {
                 LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
                 continue;
             }
+            validateKerberosPrincipal(principalFqdn);
 
             String secretName = resolveKerberosEntrySecretName(
                     kerberosEntry,
@@ -3077,6 +3325,7 @@ public class CommandService {
                                 LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
                                 continue;
                             }
+                            validateKerberosPrincipal(principalFqdn);
 
                             String secretName = resolveKerberosEntrySecretName(
                                     kerberosEntry,
@@ -3124,6 +3373,72 @@ public class CommandService {
                 rootCommand.setChildListJson(gson.toJson(childCommands));
                 rootCommand.setParamsJson(gson.toJson(params));
                 store(rootCommand);
+            }
+        }
+
+        // 2b. Pre-provision OIDC client credentials if the service definition has oidc[] entries.
+        if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
+            StackDefinitionService oidcSds = new StackDefinitionService(this.ctx);
+            StackServiceDef oidcServiceDef = oidcSds.getServiceDefinition(request.getServiceKey());
+            List<Map<String, Object>> oidcEntries =
+                    (oidcServiceDef != null && oidcServiceDef.oidc != null) ? oidcServiceDef.oidc : Collections.emptyList();
+
+            if (!oidcEntries.isEmpty()) {
+                String oidcRealm = "";
+                if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+                    try {
+                        oidcRealm = ambariActionClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
+                    } catch (Exception ex) {
+                        LOG.warn("Could not read oidc_realm from cluster {}: {}", cluster, ex.toString());
+                    }
+                }
+                params.put("oidcRealm", oidcRealm);
+
+                boolean oidcStepsAdded = false;
+                boolean oidcHelmOverridesApplied = false;
+                int oidcIdx = 0;
+                for (Map<String, Object> entry : oidcEntries) {
+                    oidcIdx++;
+                    if (!isEntryEnabled(entry.get("enabled"))) {
+                        LOG.info("Skipping disabled OIDC entry {}", entry.getOrDefault("key", oidcIdx));
+                        continue;
+                    }
+                    String entryKey  = resolveStringValue(entry.get("key"), "entry-" + oidcIdx);
+                    String clientIdT = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
+                    String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
+                    String redirectT = resolveStringValue(entry.get("redirectUriTemplate"), "");
+                    String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
+
+                    String clientId    = renderOidcTemplate(clientIdT,  request.getReleaseName(), request.getNamespace(), oidcRealm);
+                    String secretName  = renderOidcTemplate(secretT,    request.getReleaseName(), request.getNamespace(), oidcRealm);
+                    String redirectUri = renderOidcTemplate(redirectT,  request.getReleaseName(), request.getNamespace(), oidcRealm);
+
+                    appendOidcRegistrationSteps(rootCommand, childCommands, params,
+                            clientId, redirectUri, secretName, entryKey, vaultPath);
+                    oidcStepsAdded = true;
+
+                    if (!oidcHelmOverridesApplied) {
+                        // Wire first entry into global.security.auth.* Helm values
+                        this.commandUtils.addOverride(params, "global.security.auth.mode", "oidc");
+                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.name", secretName);
+                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientIdKey", "client_id");
+                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientSecretKey", "client_secret");
+                        oidcHelmOverridesApplied = true;
+                    }
+                }
+
+                if (oidcStepsAdded) {
+                    // Resolve issuer URL from Ambari and set as Helm override
+                    if (ambariActionClient != null && cluster != null) {
+                        String issuerUrl = resolveOidcIssuerUrl(ambariActionClient, cluster);
+                        if (issuerUrl != null && !issuerUrl.isBlank()) {
+                            this.commandUtils.addOverride(params, "global.security.auth.oidc.issuerUrl", issuerUrl);
+                        }
+                    }
+                    rootCommand.setChildListJson(gson.toJson(childCommands));
+                    rootCommand.setParamsJson(gson.toJson(params));
+                    store(rootCommand);
+                }
             }
         }
 
@@ -4796,6 +5111,160 @@ public class CommandService {
                 }
 
 
+                case OIDC_REGISTER_CLIENT -> {
+                    LOG.info("OIDC_REGISTER_CLIENT starting for id={} title={}", child.getId(), child.getTitle());
+
+                    String baseUriStr = (String) childParams.get("_baseUri");
+                    if (baseUriStr == null || baseUriStr.isBlank()) {
+                        throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
+                    }
+                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    String clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+                    String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+                    var ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
+
+                    // Load Keycloak admin settings from Ambari oidc-env config
+                    String oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
+                    String oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
+                    String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
+                    String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
+                    String adminClientSec  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+                    String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
+                    boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
+
+                    if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
+                        throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config");
+                    }
+                    if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
+                    if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+
+                    String desiredClientId = (String) childParams.get("oidcClientId");
+                    String redirectUri     = (String) childParams.get("oidcRedirectUri");
+                    Object publicClientObj = childParams.get("publicClient");
+                    boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
+                    Object stdFlowObj      = childParams.get("standardFlowEnabled");
+                    boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
+
+                    validateOidcClientId(desiredClientId);
+
+                    var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
+                            oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTls);
+
+                    appendCommandLog(child.getId(), "Registering OIDC client '" + desiredClientId
+                            + "' in realm '" + oidcRealm + "'");
+
+                    var oidcResult = keycloakClient.registerClient(
+                            desiredClientId, redirectUri, publicClient, stdFlow, !publicClient);
+
+                    String issuerUrl = resolveOidcIssuerUrl(ambariCli, clstr);
+                    if (issuerUrl == null || issuerUrl.isBlank()) {
+                        issuerUrl = oidcResult.issuerUrl();
+                    }
+
+                    Map<String, Object> res = new LinkedHashMap<>();
+                    res.put("clientId",   oidcResult.clientId());
+                    res.put("issuerUrl",  issuerUrl);
+                    // clientSecret intentionally NOT logged; stored encrypted via childSt.resultJson
+                    res.put("clientSecret", oidcResult.clientSecret());
+                    childSt.setResultJson(gson.toJson(res));
+                    appendCommandLog(child.getId(), "OIDC client registered successfully: clientId=" + oidcResult.clientId());
+                    LOG.info("OIDC_REGISTER_CLIENT completed: clientId={}, issuerUrl={}", oidcResult.clientId(), issuerUrl);
+                }
+
+                case OIDC_CREATE_SECRET -> {
+                    LOG.info("OIDC_CREATE_SECRET starting for id={} title={}", child.getId(), child.getTitle());
+
+                    String namespace   = (String) childParams.get("namespace");
+                    String secretName  = (String) childParams.get("oidcSecretName");
+                    String vaultPath   = (String) childParams.get("oidcVaultPath");
+                    Objects.requireNonNull(namespace,  "namespace");
+                    Objects.requireNonNull(secretName, "oidcSecretName");
+
+                    // Locate sibling OIDC_REGISTER_CLIENT result
+                    String registerId = (String) childParams.get("oidcRegisterId");
+                    if (registerId == null || registerId.isBlank()) {
+                        Type listType = new com.google.gson.reflect.TypeToken<ArrayList<String>>(){}.getType();
+                        List<String> siblings = gson.fromJson(root.getChildListJson(), listType);
+                        if (siblings != null) {
+                            registerId = siblings.stream()
+                                    .filter(cid -> {
+                                        CommandEntity c = findCommandById(cid);
+                                        return c != null && CommandType.OIDC_REGISTER_CLIENT.name().equals(c.getType());
+                                    })
+                                    .findFirst().orElse(null);
+                        }
+                    }
+                    if (registerId == null) {
+                        throw new IllegalStateException("Missing OIDC_REGISTER_CLIENT sibling before OIDC_CREATE_SECRET");
+                    }
+
+                    CommandEntity registerCmd = findCommandById(registerId);
+                    CommandStatusEntity registerSt = findCommandStatusById(registerCmd.getCommandStatusId());
+                    if (registerSt == null || registerSt.getResultJson() == null || registerSt.getResultJson().isBlank()) {
+                        throw new IllegalStateException("OIDC_REGISTER_CLIENT has no resultJson with credentials");
+                    }
+
+                    Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
+                    String clientId     = (String) regRes.get("clientId");
+                    String clientSecret = (String) regRes.get("clientSecret");
+                    String issuerUrl    = (String) regRes.get("issuerUrl");
+                    if (clientId == null || clientId.isBlank()) {
+                        throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
+                    }
+
+                    // Build multi-key secret payload
+                    Map<String, byte[]> secretData = new LinkedHashMap<>();
+                    secretData.put("client_id",     clientId.getBytes(StandardCharsets.UTF_8));
+                    secretData.put("client_secret", (clientSecret != null ? clientSecret : "")
+                            .getBytes(StandardCharsets.UTF_8));
+                    if (issuerUrl != null && !issuerUrl.isBlank()) {
+                        secretData.put("issuer_url", issuerUrl.getBytes(StandardCharsets.UTF_8));
+                    }
+
+                    Map<String, String> secretLabels = Map.of(
+                            "managed-by",                  "ambari-k8s-view",
+                            "ambari.clemlab.com/type",     "oidc-client",
+                            "ambari.clemlab.com/clientId", clientId
+                    );
+
+                    try {
+                        this.kubernetesService.createNamespace(namespace);
+                    } catch (Exception ignore) {}
+
+                    this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
+                    appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + secretName + "' created/updated");
+                    LOG.info("OIDC_CREATE_SECRET: Secret '{}/{}' written for client '{}'", namespace, secretName, clientId);
+
+                    // Optionally write to Vault when a vaultPath is configured
+                    if (vaultPath != null && !vaultPath.isBlank()) {
+                        try {
+                            String vaultAddr = ctx.getProperties() == null ? null
+                                    : ctx.getProperties().get("k8s.view.vault.address");
+                            String vaultToken = ctx.getProperties() == null ? null
+                                    : ctx.getProperties().get("k8s.view.vault.token");
+                            if (vaultAddr != null && !vaultAddr.isBlank()
+                                    && vaultToken != null && !vaultToken.isBlank()) {
+                                writeOidcToVault(vaultAddr, vaultToken, vaultPath, clientId, clientSecret, issuerUrl);
+                                appendCommandLog(child.getId(), "Vault path '" + vaultPath + "' updated");
+                                LOG.info("OIDC_CREATE_SECRET: Vault path '{}' updated for client '{}'", vaultPath, clientId);
+                            } else {
+                                LOG.info("OIDC_CREATE_SECRET: vaultPath set but k8s.view.vault.address/token not configured; skipping Vault write");
+                            }
+                        } catch (Exception vaultEx) {
+                            LOG.warn("OIDC_CREATE_SECRET: Vault write failed (non-fatal, K8s Secret was written): {}", vaultEx.toString());
+                            appendCommandLog(child.getId(), "Vault write failed (non-fatal): " + vaultEx.getMessage());
+                        }
+                    }
+
+                    Map<String, Object> res = new LinkedHashMap<>();
+                    res.put("secretName",  secretName);
+                    res.put("namespace",   namespace);
+                    res.put("clientId",    clientId);
+                    res.put("issuerUrl",   issuerUrl);
+                    if (vaultPath != null && !vaultPath.isBlank()) res.put("vaultPath", vaultPath);
+                    childSt.setResultJson(gson.toJson(res));
+                }
+
                 default -> throw new IllegalStateException("Unsupported step type: " + child.getType());
             }
 
@@ -5353,5 +5822,49 @@ public class CommandService {
             }
         }
         INSTANCES.clear();
+    }
+
+    /**
+     * Write OIDC client credentials to HashiCorp Vault KV v2 at the given path.
+     * Uses the Vault HTTP API directly (no SDK dependency).
+     * This is a best-effort complement to the K8s Secret — failures are non-fatal.
+     *
+     * @param vaultAddr    Vault address (e.g. https://vault.example.com)
+     * @param vaultToken   Vault token with write permission on vaultPath
+     * @param vaultPath    KV v2 path, e.g. "secret/data/oidc/superset-prod"
+     * @param clientId     OIDC client_id
+     * @param clientSecret OIDC client_secret
+     * @param issuerUrl    OIDC issuer URL
+     */
+    private void writeOidcToVault(String vaultAddr, String vaultToken, String vaultPath,
+                                   String clientId, String clientSecret, String issuerUrl) throws Exception {
+        // KV v2 write: POST {vaultAddr}/v1/{vaultPath}
+        // Payload: {"data": {"client_id": "...", "client_secret": "...", "issuer_url": "..."}}
+        String url = vaultAddr.replaceAll("/$", "") + "/v1/" + vaultPath;
+        String body = "{\"data\":{\"client_id\":" + jsonStr(clientId)
+                + ",\"client_secret\":" + jsonStr(clientSecret)
+                + ",\"issuer_url\":" + jsonStr(issuerUrl) + "}}";
+
+        var req = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header("X-Vault-Token", vaultToken)
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        var httpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .build();
+        var resp = httpClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+            throw new IllegalStateException("Vault write to '" + vaultPath
+                    + "' returned HTTP " + resp.statusCode());
+        }
+    }
+
+    private static String jsonStr(String s) {
+        if (s == null) return "null";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 }

@@ -25,7 +25,20 @@
       }
     },
     "dynamicValues": [
-      "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
+      "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
+      "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
+      "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl"
+    ],
+    "oidc": [
+      {
+        "key": "superset",
+        "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+        "secretNameTemplate": "{{releaseName}}-oidc-client",
+        "redirectUriTemplate": "",
+        "publicClient": false,
+        "standardFlowEnabled": true,
+        "enabled": true
+      }
     ],
     "kerberos": [
       {
@@ -155,6 +168,19 @@
           {
             "path": "configOverrides.load_custom",
             "value": "from superset_config_custom import *"
+          }
+        ]
+      },
+      {
+        "name": "oidc-redirect-uri",
+        "skipIfVarEmpty": "ingressHost",
+        "targets": [
+          {
+            "path": "global.security.auth.oidc.redirectUri",
+            "from": {
+              "type": "template",
+              "template": "https://${ingressHost}/oauth-authorized/generic"
+            }
           }
         ]
       },
