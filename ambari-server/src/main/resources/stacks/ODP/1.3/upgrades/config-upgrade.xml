@@ -151,6 +151,9 @@
                  if-type="spark3-thrift-sparkconf"
                  if-value="/usr/odp/current/spark3-client/standalone-metastore/*"/>
           </definition>
+          <!-- spark3-atlas-application.properties only exists on clusters that had ODP 1.2 SPARK3
+               with Atlas integration enabled. ConfigureAction skips this step gracefully when
+               the config type is absent, so clusters without Atlas are not blocked. -->
           <definition xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs">
             <type>spark3-atlas-application.properties</type>
             <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag" value="required"/>

@@ -271,7 +271,12 @@ public class ConfigureAction extends AbstractUpgradeServerAction {
     Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     DesiredConfig desiredConfig = desiredConfigs.get(configType);
     if (desiredConfig == null) {
-      throw new AmbariException("Could not find desired config type with name " + configType);
+      // Config type is not present on this cluster (e.g. optional Atlas integration not installed).
+      // Skipping is safe: there is nothing to configure, and failing would block the entire upgrade.
+      String skipMessage = String.format(
+          "Config type '%s' does not exist on this cluster; skipping upgrade configuration step.", configType);
+      LOG.warn(skipMessage);
+      return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", skipMessage, "");
     }
 
     Config config = cluster.getConfig(configType, desiredConfig.getTag());
