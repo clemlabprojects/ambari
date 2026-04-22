@@ -197,14 +197,21 @@ def convert_conf_directories_to_symlinks(package, version, dirs):
   :param version: the version number to use with <conf-selector-tool> (2.3.0.0-1234)
   :param dirs: the directories associated with the package (from get_package_dirs())
   """
-  # if the conf_dir doesn't exist, then that indicates that the package's service is not installed
-  # on this host and nothing should be done with conf symlinks
+  # Determine whether the package is installed on this host before doing any conf-select work.
+  # Three cases require proceeding even when conf_dir is absent or unresolvable:
+  #   1. conf_dir is a broken symlink (exists() returns False) — corrupt from a bad RPM upgrade,
+  #      needs repair; islink() catches this.
+  #   2. conf_dir has never been created yet (e.g. tez: RPM only ships conf.dist, not conf) —
+  #      the parent /etc/<component>/ directory is the installed indicator in this case.
+  #   3. conf_dir exists and resolves — normal path, proceed unconditionally.
+  # Only skip when the parent directory doesn't exist, which means the RPM was never installed.
   stack_name = Script.get_stack_name()
   for directory_struct in dirs:
-    if not os.path.exists(directory_struct['conf_dir']):
-      Logger.info(f"Skipping the conf-select tool on {package} since {directory_struct['conf_dir']} does not exist.")
-
-      return
+    conf_dir = directory_struct['conf_dir']
+    if not os.path.exists(conf_dir) and not os.path.islink(conf_dir):
+      if not os.path.isdir(os.path.dirname(conf_dir)):
+        Logger.info(f"Skipping the conf-select tool on {package} since {conf_dir} does not exist.")
+        return
 
   # determine which directories would be created, if any are needed
   dry_run_directory = create(stack_name, package, version, dry_run = True)
