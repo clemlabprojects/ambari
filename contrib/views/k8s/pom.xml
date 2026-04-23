@@ -427,6 +427,27 @@ limitations under the License.
                 </executions>
             </plugin>
 
+            <!-- Remove stale k8s-view-*.jar from shared views-jars dir before copying new version -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>remove-old-k8s-view-jars</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <delete>
+                                    <fileset dir="${views.jars.dir.rel}" includes="k8s-view-*.jar" erroronmissingdir="false"/>
+                                </delete>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Copy runtime deps & artifact -->
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>

@@ -49,7 +49,7 @@ limitations under the License.
         <description>Le répertoire sur le serveur Ambari où stocker les fichiers de configuration de la vue.</description>
         <label>Répertoire de Travail</label>
         <required>false</required>
-        <default-value>/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.5}</default-value>
+        <default-value>/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.6}</default-value>
     </parameter>
     <parameter>
         <name>ambari.cluster.discovery.enabled</name>
