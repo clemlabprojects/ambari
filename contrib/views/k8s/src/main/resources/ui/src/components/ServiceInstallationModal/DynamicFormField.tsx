@@ -91,8 +91,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       );
     case 'boolean':
       return (
-        <Form.Item name={nameParts} label={field.label} valuePropName="checked" help={field.help}>
-          <Checkbox disabled={disabledProp} />
+        <Form.Item name={nameParts} valuePropName="checked" help={field.help} style={{ marginBottom: 8 }}>
+          <Checkbox disabled={disabledProp}>{field.label}</Checkbox>
         </Form.Item>
       );
     case 'string':

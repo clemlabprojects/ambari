@@ -1,7 +1,7 @@
 {
   "label": "GitLab CE",
   "description": "Self-hosted Git repository manager with CI/CD, issue tracking and container registry. Deploy a local GitLab to use as a GitOps repository source with Flux.",
-  "chart": "clemlabprojects/gitlab",
+  "chart": "gitlab",
   "version": "8.11.2",
   "defaultRepo": "clemlabprojects",
   "pattern": "gitlab-.*",

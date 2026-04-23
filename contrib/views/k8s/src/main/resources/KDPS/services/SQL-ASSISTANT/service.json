@@ -1,6 +1,6 @@
 {
   "label": "SQL Assistant",
-  "chart": "clemlabprojects/ollama",
+  "chart": "ollama",
   "pattern": "sql-assistant-.*",
   "defaultRepo": "clemlabprojects",
   "secretName": "registry-credentials",
