@@ -18,9 +18,15 @@
 
 import React, { useEffect, useState } from "react";
 import type { ColumnsType } from "antd/es/table";
-import { Col, Form, Input, Select, Button, Table, Space, Popconfirm, Row, Tooltip, Spin, message, Tag } from "antd";
-import { DeleteOutlined, ReloadOutlined, EditOutlined } from "@ant-design/icons";
+import {
+  Form, Input, Select, Button, Table, Space, Popconfirm,
+  Tooltip, message, Tag, Modal, Typography, Empty, Divider, Row, Col,
+} from "antd";
+import { DeleteOutlined, ReloadOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { required, url } from "../utils/formRules";
+import './Page.css';
+
+const { Title, Text } = Typography;
 
 interface GitRepo {
   id: string;
@@ -31,69 +37,71 @@ interface GitRepo {
   description?: string;
 }
 
-// Simple in-memory storage (can be replaced with backend API later)
 const STORAGE_KEY = 'k8s-view-git-repos';
-
 const loadRepos = (): GitRepo[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
 };
-
-const saveRepos = (repos: GitRepo[]) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(repos));
-  } catch (e) {
-    console.error('Failed to save Git repos', e);
-  }
+const persistRepos = (repos: GitRepo[]) => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(repos)); } catch { /* storage unavailable */ }
 };
 
 export default function GitRepositoriesPage() {
   const [repos, setRepos] = useState<GitRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingRepo, setEditingRepo] = useState<GitRepo | null>(null);
   const [form] = Form.useForm();
+  const typeWatch = Form.useWatch("type", form);
 
-  const fetchRepos = async () => {
+  const fetchRepos = () => {
     setLoading(true);
-    try {
-      const data = loadRepos();
-      setRepos(data);
-    } catch (err: any) {
-      message.error(`Repository loading error: ${err}`);
-    } finally {
-      setLoading(false);
-    }
+    try { setRepos(loadRepos()); }
+    catch (err: any) { message.error(`Failed to load: ${err}`); }
+    finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    fetchRepos();
-  }, []);
+  useEffect(() => { fetchRepos(); }, []);
+
+  const openAdd = () => {
+    setEditingRepo(null);
+    form.resetFields();
+    form.setFieldsValue({ type: "HTTPS" });
+    setModalOpen(true);
+  };
+
+  const openEdit = (r: GitRepo) => {
+    setEditingRepo(r);
+    form.resetFields();
+    form.setFieldsValue({ id: r.id, name: r.name, url: r.url, type: r.type, description: r.description, secret: '' });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingRepo(null);
+    form.resetFields();
+  };
 
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
       const { secret, ...entity } = values;
-      const newRepo: GitRepo = {
+      const repo: GitRepo = {
         id: entity.id,
         name: entity.name,
         url: entity.url,
-        type: entity.type || (entity.url.startsWith('git@') || entity.url.startsWith('ssh://') ? 'SSH' : 'HTTPS'),
-        credentialAlias: secret ? `git-${entity.id}-${Date.now()}` : undefined,
+        type: entity.type || (entity.url?.startsWith('git@') || entity.url?.startsWith('ssh://') ? 'SSH' : 'HTTPS'),
+        credentialAlias: secret ? `git-${entity.id}-${Date.now()}` : editingRepo?.credentialAlias,
         description: entity.description,
       };
-
-      const updated = repos.find(r => r.id === newRepo.id)
-        ? repos.map(r => r.id === newRepo.id ? newRepo : r)
-        : [...repos, newRepo];
-      
-      saveRepos(updated);
+      const updated = repos.find(r => r.id === repo.id)
+        ? repos.map(r => r.id === repo.id ? repo : r)
+        : [...repos, repo];
+      persistRepos(updated);
       setRepos(updated);
-      message.success("Repository saved");
-      form.resetFields();
+      message.success(editingRepo ? "Repository updated" : "Repository added");
+      closeModal();
     } catch (err: any) {
       message.error(`Save error: ${err}`);
     } finally {
@@ -101,90 +109,38 @@ export default function GitRepositoriesPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      const updated = repos.filter(r => r.id !== id);
-      saveRepos(updated);
-      setRepos(updated);
-      message.success("Repository deleted");
-    } catch (err: any) {
-      message.error(`Delete error: ${err}`);
-    }
+  const handleDelete = (id: string) => {
+    const updated = repos.filter(r => r.id !== id);
+    persistRepos(updated);
+    setRepos(updated);
+    message.success("Repository deleted");
   };
 
+  const urlRules = typeWatch === 'SSH'
+    ? [required("URL is required")]
+    : [required("URL is required"), url("Enter a valid HTTPS URL")];
+
   const columns: ColumnsType<GitRepo> = [
+    { title: "ID", dataIndex: "id", key: "id", width: 140 },
+    { title: "Name", dataIndex: "name", key: "name", width: 200 },
     {
-      title: "ID",
-      dataIndex: "id",
-      key: "id",
-      width: 140,
+      title: "Type", dataIndex: "type", key: "type", width: 90,
+      render: (t: string) => <Tag color={t === 'SSH' ? 'purple' : 'blue'}>{t}</Tag>,
     },
     {
-      title: "Name",
-      dataIndex: "name",
-      key: "name",
-      width: 160,
+      title: "Repository URL", dataIndex: "url", key: "url",
+      render: (text: string) => <Text ellipsis={{ tooltip: text }} style={{ maxWidth: 400 }}>{text}</Text>,
     },
     {
-      title: "Type",
-      dataIndex: "type",
-      key: "type",
-      width: 80,
-      render: (type: string) => <Tag>{type}</Tag>,
+      title: "Description", dataIndex: "description", key: "description",
+      render: (t?: string) => t || <Text type="secondary">–</Text>,
     },
     {
-      title: "Repository URL",
-      dataIndex: "url",
-      key: "url",
-      render: (text: string) => (
-        <span
-          style={{
-            maxWidth: 400,
-            display: "inline-block",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={text}
-        >
-          {text}
-        </span>
-      ),
-    },
-    {
-      title: "Description",
-      dataIndex: "description",
-      key: "description",
-      render: (text: string | undefined) => text || <span style={{ color: "#999" }}>–</span>,
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      fixed: "right",
-      width: 100,
-      render: (_: any, r) => (
+      title: "Actions", key: "actions", fixed: "right", width: 90,
+      render: (_: any, r: GitRepo) => (
         <Space>
-          <Tooltip title="Edit">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => {
-                form.setFieldsValue({
-                  id: r.id,
-                  name: r.name,
-                  url: r.url,
-                  type: r.type,
-                  description: r.description,
-                  // Note: secret is not populated for security reasons
-                });
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Confirm deletion?"
-            onConfirm={() => handleDelete(r.id)}
-          >
+          <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} /></Tooltip>
+          <Popconfirm title="Delete this repository?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -193,118 +149,106 @@ export default function GitRepositoriesPage() {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 16 }}>Git Repositories</h1>
-      <p style={{ color: '#666', marginBottom: 24 }}>
-        Manage Git repositories for Flux GitOps deployments. Credentials are stored securely in the credential store.
-      </p>
+    <div>
+      <div className="page-header">
+        <div>
+          <Title level={2} style={{ marginBottom: 2 }}>Git Repositories</Title>
+          <Text type="secondary">Git repositories used as sources for Flux GitOps deployments.</Text>
+        </div>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={fetchRepos}>Refresh</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>Add repository</Button>
+        </Space>
+      </div>
 
-      <Form
-        id="gitRepoForm"
-        name="gitRepoForm"
-        layout="vertical"
-        form={form}
-        initialValues={{ type: "HTTPS" }}
-        onFinish={onFinish}
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={repos}
+        loading={loading}
+        pagination={false}
+        size="small"
+        style={{ marginTop: 8 }}
+        locale={{ emptyText: <Empty description="No Git repositories yet. Click «Add repository» to get started." /> }}
+      />
+
+      {/* ── Add / Edit modal ── */}
+      <Modal
+        title={editingRepo ? `Edit — ${editingRepo.id}` : 'Add Git repository'}
+        open={modalOpen}
+        onCancel={closeModal}
+        onOk={() => form.submit()}
+        okText={editingRepo ? 'Update' : 'Add'}
+        confirmLoading={saving}
+        width={480}
+        destroyOnClose={false}
       >
-        <Row gutter={[16, 8]}>
-          <Col xs={24} md={4}>
-            <Form.Item
-              name="id"
-              label="ID"
-              rules={[required("id is required")]}
-            >
-              <Input placeholder="my-git-repo" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} md={4}>
-            <Form.Item
-              name="name"
-              label="Name"
-              rules={[required("name is required")]}
-            >
-              <Input placeholder="My Git Repo" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} md={3}>
-            <Form.Item
-              name="type"
-              label="Type"
-              rules={[required("type is required")]}
-            >
-              <Select
-                style={{ width: "100%" }}
-                options={[
-                  { value: "HTTPS", label: "HTTPS" },
-                  { value: "SSH", label: "SSH" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-          <Col xs={24} md={7}>
-            <Form.Item
-              name="url"
-              label="Repository URL"
-              rules={[required("url is required"), url("Enter a valid Git repository URL")]}
-            >
-              <Input placeholder="https://git.example.com/org/repo.git or git@git.example.com:org/repo.git" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} md={6}>
-            <Form.Item name="description" label="Description">
-              <Input placeholder="Optional description" />
-            </Form.Item>
-          </Col>
-        </Row>
+        <Form
+          layout="vertical"
+          form={form}
+          onFinish={onFinish}
+          style={{ marginTop: 8 }}
+        >
+          {/* ── Identity ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c', marginTop: 0 }}>
+            Identity
+          </Divider>
+          <Row gutter={12}>
+            <Col span={10}>
+              <Form.Item name="id" label="ID" rules={[required("required")]}
+                tooltip="Unique identifier for this repository. Cannot be changed after creation.">
+                <Input placeholder="my-gitlab" disabled={!!editingRepo} />
+              </Form.Item>
+            </Col>
+            <Col span={14}>
+              <Form.Item name="name" label="Display name" rules={[required("required")]}>
+                <Input placeholder="My GitLab instance" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="description" label="Description">
+            <Input placeholder="Optional — e.g. production GitLab for GitOps" />
+          </Form.Item>
 
-        <Row gutter={[16, 8]} align="bottom">
-          <Col xs={24} md={8}>
-            <Form.Item name="secret" label="Auth Token / SSH Key">
-              <Input.Password placeholder="Token (HTTPS) or SSH private key (SSH)" />
-            </Form.Item>
-          </Col>
-          <Col xs={24} md={16}>
-            <Form.Item label=" ">
-              <div style={{ textAlign: "left" }}>
-                <Button
-                  form="gitRepoForm"
-                  type="primary"
-                  htmlType="submit"
-                  loading={saving}
-                >
-                  Save
-                </Button>
-              </div>
-            </Form.Item>
-          </Col>
-        </Row>
-      </Form>
+          {/* ── Connection ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            Connection
+          </Divider>
+          <Form.Item name="type" label="Protocol" rules={[required("required")]}>
+            <Select options={[
+              { value: "HTTPS", label: "HTTPS — username & token" },
+              { value: "SSH", label: "SSH — private key" },
+            ]} />
+          </Form.Item>
+          <Form.Item name="url" label="Repository URL" rules={urlRules}>
+            <Input placeholder={
+              typeWatch === 'SSH'
+                ? 'git@gitlab.example.com:org/repo.git'
+                : 'https://gitlab.example.com/org/repo.git'
+            } />
+          </Form.Item>
 
-      <Spin spinning={loading} tip="Loading...">
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={repos}
-          pagination={false}
-          size="small"
-          style={{ marginTop: 16 }}
-        />
-      </Spin>
-
-      <Button type="link" icon={<ReloadOutlined />} onClick={fetchRepos} style={{ marginTop: 16 }}>
-        Refresh
-      </Button>
+          {/* ── Authentication ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            Authentication
+          </Divider>
+          <Form.Item
+            name="secret"
+            label={typeWatch === 'SSH' ? 'SSH private key' : 'Access token'}
+            tooltip={typeWatch === 'SSH'
+              ? 'PEM-encoded SSH private key (-----BEGIN ... KEY-----).'
+              : 'Personal access token or password. Leave blank when editing to keep the existing credential.'}
+          >
+            <Input.Password placeholder={editingRepo ? "unchanged" : (typeWatch === 'SSH' ? '-----BEGIN ... KEY-----' : 'glpat-xxxx')} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
 
-// Export function to get repos for use in other components
-export const getGitRepos = (): GitRepo[] => {
-  return loadRepos();
-};
+export const getGitRepos = (): GitRepo[] => loadRepos();
 
-// Initialize global reference for form components
 if (typeof window !== 'undefined') {
   (window as any).__gitRepos = loadRepos();
 }
-

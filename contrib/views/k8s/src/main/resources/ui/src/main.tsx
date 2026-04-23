@@ -31,7 +31,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       theme={{
         token: {
           fontSize: 12,
-          borderRadius: 4,
+          borderRadius: 8,
+          colorSuccess: '#52c41a',
+          colorWarning: '#faad14',
+          colorError: '#ff4d4f',
         },
       }}
     >

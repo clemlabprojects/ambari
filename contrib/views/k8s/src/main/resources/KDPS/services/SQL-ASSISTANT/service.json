@@ -2,9 +2,9 @@
   "label": "SQL Assistant",
   "chart": "clemlabprojects/ollama",
   "pattern": "sql-assistant-.*",
+  "defaultRepo": "clemlabprojects",
   "secretName": "registry-credentials",
   "version": "0.1.0",
-
   "endpoints": [
     {
       "id": "sql-assistant-api",
@@ -43,32 +43,102 @@
       }
     }
   ],
-
   "variables": [
-    { "name": "ollamaModel",       "from": { "type": "form", "field": "ollama.model" } },
-    { "name": "polarisUrl",        "from": { "type": "form", "field": "catalog.polarisUrl" } },
-    { "name": "trinoHost",         "from": { "type": "form", "field": "sql.trinoHost" } },
-    { "name": "trinoPort",         "from": { "type": "form", "field": "sql.trinoPort" } },
-    { "name": "hiveHost",          "from": { "type": "form", "field": "sql.hiveHost" } },
-    { "name": "hivePort",          "from": { "type": "form", "field": "sql.hivePort" } },
-    { "name": "gpuEnabled",        "from": { "type": "form", "field": "gpu.enabled" } },
-    { "name": "persistenceSize",   "from": { "type": "form", "field": "persistence.size" } },
-    { "name": "ingressEnabled",    "from": { "type": "form", "field": "ingress.enabled" } },
-    { "name": "ingressHost",       "from": { "type": "form", "field": "ingress.host" } },
-    { "name": "ingressClassName",  "from": { "type": "form", "field": "ingress.className" } }
+    {
+      "name": "ollamaModel",
+      "from": {
+        "type": "form",
+        "field": "ollama.model"
+      }
+    },
+    {
+      "name": "polarisUrl",
+      "from": {
+        "type": "form",
+        "field": "catalog.polarisUrl"
+      }
+    },
+    {
+      "name": "trinoHost",
+      "from": {
+        "type": "form",
+        "field": "sql.trinoHost"
+      }
+    },
+    {
+      "name": "trinoPort",
+      "from": {
+        "type": "form",
+        "field": "sql.trinoPort"
+      }
+    },
+    {
+      "name": "hiveHost",
+      "from": {
+        "type": "form",
+        "field": "sql.hiveHost"
+      }
+    },
+    {
+      "name": "hivePort",
+      "from": {
+        "type": "form",
+        "field": "sql.hivePort"
+      }
+    },
+    {
+      "name": "gpuEnabled",
+      "from": {
+        "type": "form",
+        "field": "gpu.enabled"
+      }
+    },
+    {
+      "name": "persistenceSize",
+      "from": {
+        "type": "form",
+        "field": "persistence.size"
+      }
+    },
+    {
+      "name": "ingressEnabled",
+      "from": {
+        "type": "form",
+        "field": "ingress.enabled"
+      }
+    },
+    {
+      "name": "ingressHost",
+      "from": {
+        "type": "form",
+        "field": "ingress.host"
+      }
+    },
+    {
+      "name": "ingressClassName",
+      "from": {
+        "type": "form",
+        "field": "ingress.className"
+      }
+    }
   ],
-
   "bindings": [
     {
       "name": "ollama-model-pull",
       "targets": [
         {
           "path": "models.pull[0]",
-          "from": { "type": "var", "name": "ollamaModel" }
+          "from": {
+            "type": "var",
+            "name": "ollamaModel"
+          }
         },
         {
           "path": "sqlAssistant.env.OLLAMA_MODEL",
-          "from": { "type": "var", "name": "ollamaModel" }
+          "from": {
+            "type": "var",
+            "name": "ollamaModel"
+          }
         }
       ]
     },
@@ -78,7 +148,10 @@
       "targets": [
         {
           "path": "sqlAssistant.env.POLARIS_MCP_URL",
-          "from": { "type": "var", "name": "polarisUrl" }
+          "from": {
+            "type": "var",
+            "name": "polarisUrl"
+          }
         }
       ]
     },
@@ -88,11 +161,17 @@
       "targets": [
         {
           "path": "sqlAssistant.env.TRINO_HOST",
-          "from": { "type": "var", "name": "trinoHost" }
+          "from": {
+            "type": "var",
+            "name": "trinoHost"
+          }
         },
         {
           "path": "sqlAssistant.env.TRINO_PORT",
-          "from": { "type": "var", "name": "trinoPort" }
+          "from": {
+            "type": "var",
+            "name": "trinoPort"
+          }
         }
       ]
     },
@@ -102,11 +181,17 @@
       "targets": [
         {
           "path": "sqlAssistant.env.HIVE_HOST",
-          "from": { "type": "var", "name": "hiveHost" }
+          "from": {
+            "type": "var",
+            "name": "hiveHost"
+          }
         },
         {
           "path": "sqlAssistant.env.HIVE_PORT",
-          "from": { "type": "var", "name": "hivePort" }
+          "from": {
+            "type": "var",
+            "name": "hivePort"
+          }
         }
       ]
     },
@@ -115,7 +200,10 @@
       "targets": [
         {
           "path": "gpu.enabled",
-          "from": { "type": "var", "name": "gpuEnabled" }
+          "from": {
+            "type": "var",
+            "name": "gpuEnabled"
+          }
         }
       ]
     },
@@ -125,7 +213,10 @@
       "targets": [
         {
           "path": "persistence.size",
-          "from": { "type": "var", "name": "persistenceSize" }
+          "from": {
+            "type": "var",
+            "name": "persistenceSize"
+          }
         }
       ]
     },
@@ -135,15 +226,24 @@
       "targets": [
         {
           "path": "ingress.enabled",
-          "from": { "type": "var", "name": "ingressEnabled" }
+          "from": {
+            "type": "var",
+            "name": "ingressEnabled"
+          }
         },
         {
           "path": "ingress.className",
-          "from": { "type": "var", "name": "ingressClassName" }
+          "from": {
+            "type": "var",
+            "name": "ingressClassName"
+          }
         },
         {
           "path": "ingress.hosts[0].host",
-          "from": { "type": "var", "name": "ingressHost" }
+          "from": {
+            "type": "var",
+            "name": "ingressHost"
+          }
         },
         {
           "path": "ingress.hosts[0].paths[0].path",
@@ -177,7 +277,6 @@
       ]
     }
   ],
-
   "postDeploy": {
     "ambariViewInstance": {
       "viewName": "SQL-ASSISTANT-VIEW",
@@ -186,7 +285,6 @@
       "serviceUrlTemplate": "http://{{releaseName}}-ollama.{{namespace}}.svc.cluster.local:8095"
     }
   },
-
   "form": [
     {
       "name": "releaseName",
@@ -216,10 +314,22 @@
           "required": true,
           "defaultValue": "sqlcoder:7b",
           "options": [
-            { "value": "sqlcoder:7b",   "label": "SQLCoder 7B (recommended — SQL specialist)" },
-            { "value": "llama3.1:8b",   "label": "Llama 3.1 8B (general purpose)" },
-            { "value": "mistral:7b",    "label": "Mistral 7B (fast, lightweight)" },
-            { "value": "llama3.1:70b",  "label": "Llama 3.1 70B (high quality, needs GPU)" }
+            {
+              "value": "sqlcoder:7b",
+              "label": "SQLCoder 7B (recommended \u2014 SQL specialist)"
+            },
+            {
+              "value": "llama3.1:8b",
+              "label": "Llama 3.1 8B (general purpose)"
+            },
+            {
+              "value": "mistral:7b",
+              "label": "Mistral 7B (fast, lightweight)"
+            },
+            {
+              "value": "llama3.1:70b",
+              "label": "Llama 3.1 70B (high quality, needs GPU)"
+            }
           ],
           "help": "Model to pull and use for SQL generation. SQLCoder is fine-tuned specifically for text-to-SQL."
         }
@@ -318,7 +428,10 @@
           "label": "Ingress class",
           "type": "string",
           "help": "Ingress controller class (e.g. nginx).",
-          "condition": { "field": "ingress.enabled", "value": true }
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
         },
         {
           "name": "ingress.host",
@@ -326,9 +439,13 @@
           "type": "string",
           "excludeFromValues": true,
           "help": "DNS hostname to expose the SQL Assistant API (e.g. sql-assistant.example.com).",
-          "condition": { "field": "ingress.enabled", "value": true }
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
         }
       ]
     }
-  ]
+  ],
+  "description": "Natural-language SQL workbench for ODP clusters. Ask questions in plain English and get SQL queries back."
 }

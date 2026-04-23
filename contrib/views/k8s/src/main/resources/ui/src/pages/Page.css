@@ -24,3 +24,46 @@
   justify-content: space-between;
   align-items: center;
 }
+
+/* Switch Form.Item: label left, switch right, single line */
+.form-switch-row.ant-form-item {
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.form-switch-row .ant-form-item-label {
+  flex: 1;
+  padding: 0;
+  text-align: left;
+}
+.form-switch-row .ant-form-item-label > label {
+  height: auto;
+  font-weight: normal;
+}
+.form-switch-row .ant-form-item-control {
+  flex: none;
+}
+
+/* Compact text/select Form.Item rows */
+.form-compact-row.ant-form-item {
+  margin-bottom: 8px;
+}
+
+/* Service catalog card */
+.catalog-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+.catalog-card:hover,
+.catalog-card:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.12);
+}

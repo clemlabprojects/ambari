@@ -18,7 +18,7 @@
 
 // ui/src/pages/DashboardPage.tsx
 import React from 'react';
-import { Row, Col, Typography, Card, List, Tag, Spin, Statistic, Timeline, Result, Space, Alert, Button, message } from 'antd';
+import { Row, Col, Typography, Card, List, Tag, Skeleton, Empty, Statistic, Timeline, Result, Space, Alert, Button, message } from 'antd';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -29,8 +29,7 @@ const { Title, Text, Paragraph } = Typography;
 
 const DashboardPage: React.FC = () => {
     const { status, stats, components, events, monitoringState, refresh } = useClusterStatus();
-    console.log('DEBUG: DashboardPage - Cluster status:', status);
-    
+
     // If the connection failed, display a message instead of content.
     if (status === 'error') {
         return (
@@ -41,10 +40,6 @@ const DashboardPage: React.FC = () => {
             />
         );
     }
-
-    console.log('DEBUG: DashboardPage - Cluster stats:', stats);
-    console.log('DEBUG: DashboardPage - Cluster components:', components);
-    console.log('DEBUG: DashboardPage - Cluster events:', events);
 
     const safeComponents = Array.isArray(components) ? components : [];
     const safeEvents = Array.isArray(events) ? events : [];
@@ -80,15 +75,15 @@ const DashboardPage: React.FC = () => {
                   </Paragraph>
                 </div>
             </div>
-            {monitoringState?.state && (
+            {(monitoringState?.state === 'RUNNING' || monitoringState?.state === 'FAILED') && (
               <Alert
                 banner
                 style={{ marginTop: 0 }}
                 message={
                   <Space>
                     <span>Monitoring bootstrap</span>
-                    <Tag color={monitoringState.state === 'COMPLETED' ? 'green' : monitoringState.state === 'FAILED' ? 'red' : 'blue'}>
-                      {monitoringState.state}
+                    <Tag color={monitoringState.state === 'FAILED' ? 'red' : 'blue'}>
+                      {monitoringState.state === 'RUNNING' ? 'Installing…' : 'Not found'}
                     </Tag>
                   </Space>
                 }
@@ -97,21 +92,23 @@ const DashboardPage: React.FC = () => {
                 showIcon
                 action={
                   <Space>
-                    <Button
-                      size="small"
-                      onClick={async () => {
-                        try {
-                          await installMonitoring();
-                          message.success('Monitoring bootstrap requested');
-                          await getMonitoringDiscovery().catch(() => {});
-                          await refresh();
-                        } catch (e:any) {
-                          message.error(e?.message || 'Bootstrap failed');
-                        }
-                      }}
-                    >
-                      Retry bootstrap
-                    </Button>
+                    {monitoringState.state === 'FAILED' && (
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          try {
+                            await installMonitoring();
+                            message.success('Monitoring bootstrap requested');
+                            await getMonitoringDiscovery().catch(() => {});
+                            await refresh();
+                          } catch (e:any) {
+                            message.error(e?.message || 'Bootstrap failed');
+                          }
+                        }}
+                      >
+                        Retry bootstrap
+                      </Button>
+                    )}
                     <Button size="small" onClick={() => refresh(true)}>Refresh status</Button>
                   </Space>
                 }
@@ -121,7 +118,9 @@ const DashboardPage: React.FC = () => {
                 <Col xs={24} lg={8}>
                     <Card title="Helm Deployment Health" style={{ height: '100%' }} bodyStyle={{ minHeight: 420 }}>
                         {(!stats) ? (
-                          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                          status === 'loading'
+                            ? <Skeleton active paragraph={{ rows: 5 }} />
+                            : <Empty description="No Helm data available" />
                         ) : (
                         <>
                         <div style={{ height: 300, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
@@ -178,7 +177,9 @@ const DashboardPage: React.FC = () => {
                 <Col xs={24} lg={8}>
                      <Card title="Control Plane Component Status" style={{ height: '100%' }}>
                         {safeComponents.length === 0 ? (
-                          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                          status === 'loading'
+                            ? <Skeleton active paragraph={{ rows: 4 }} />
+                            : <Empty description="No component data" />
                         ) : (
                           <>
                             <div style={{textAlign: 'center', marginBottom: '5px'}}>
@@ -209,7 +210,9 @@ const DashboardPage: React.FC = () => {
                 <Col xs={24} lg={8}>
                      <Card title="Recent Event Stream" style={{ height: '100%' }}>
                          {safeEvents.length === 0 ? (
-                           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                           status === 'loading'
+                             ? <Skeleton active paragraph={{ rows: 4 }} />
+                             : <Empty description="No recent events" />
                          ) : (
                            <Timeline
                               mode="left"

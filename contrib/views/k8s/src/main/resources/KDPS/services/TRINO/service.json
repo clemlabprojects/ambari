@@ -1295,11 +1295,11 @@
       "label": "Nom logique (nameOverride)",
       "type": "string",
       "defaultValue": "clemlab-trino",
-      "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
+      "help": "Sera concat\u00e9n\u00e9 au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
     },
     {
       "name": "acls",
-      "label": "Contrôle d'accès (Service Trino)",
+      "label": "Contr\u00f4le d'acc\u00e8s (Service Trino)",
       "type": "group",
       "fields": [
         {
@@ -1317,11 +1317,11 @@
             }
           ],
           "defaultValue": "ranger",
-          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
+          "help": "Activer l'int\u00e9gration avec Apache Ranger pour le contr\u00f4le d'acc\u00e8s."
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Port du N\u0153ud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1353,7 +1353,7 @@
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
-          "help": "Utilisé pour construire l'URL du Prometheus interne."
+          "help": "Utilis\u00e9 pour construire l'URL du Prometheus interne."
         },
         {
           "name": "serviceMonitor.enabled",
@@ -1377,24 +1377,24 @@
     },
     {
       "name": "networkAccess",
-      "label": "Accès Réseau (Service Trino)",
+      "label": "Acc\u00e8s R\u00e9seau (Service Trino)",
       "type": "group",
       "fields": [
         {
           "name": "service.enabled",
-          "label": "Activer l'accès interne (ClusterIP)",
+          "label": "Activer l'acc\u00e8s interne (ClusterIP)",
           "type": "boolean",
           "defaultValue": true
         },
         {
           "name": "nodePort.enabled",
-          "label": "Activer l'accès externe (NodePort)",
+          "label": "Activer l'acc\u00e8s externe (NodePort)",
           "type": "boolean",
           "defaultValue": false
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Port du N\u0153ud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1405,14 +1405,14 @@
     },
     {
       "name": "security",
-      "label": "Sécurité interne",
+      "label": "S\u00e9curit\u00e9 interne",
       "type": "group",
       "fields": [
         {
           "name": "internalSharedSecret",
           "label": "Shared secret interne",
           "type": "password",
-          "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
+          "help": "Valeur utilis\u00e9e pour internal-communication.shared-secret afin de s\u00e9curiser les communications internes Trino."
         }
       ]
     },
@@ -1426,7 +1426,7 @@
           "label": "Activer l'interface Web",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par défaut)."
+          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par d\u00e9faut)."
         }
       ]
     },
@@ -1440,14 +1440,14 @@
           "label": "Activer l'Ingress",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Active la création d'un objet Ingress pour exposer Trino via un hostname."
+          "help": "Active la cr\u00e9ation d'un objet Ingress pour exposer Trino via un hostname."
         },
         {
           "name": "ingress.className",
           "label": "Classe d'Ingress",
           "required": true,
           "type": "string",
-          "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contrôleur par défaut."
+          "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contr\u00f4leur par d\u00e9faut."
         },
         {
           "name": "ingress.host",
@@ -1487,7 +1487,7 @@
           "name": "ingress.tlsHost",
           "label": "Host TLS",
           "type": "string",
-          "help": "Host associé à ce certificat TLS (en général le même que l'host Ingress).",
+          "help": "Host associ\u00e9 \u00e0 ce certificat TLS (en g\u00e9n\u00e9ral le m\u00eame que l'host Ingress).",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -1497,7 +1497,7 @@
           "name": "ingress.tlsUpload.cert",
           "label": "Certificat TLS (PEM)",
           "type": "content",
-          "help": "Collez le cert PEM pour l'Ingress (signé par la CA interne/entreprise).",
+          "help": "Collez le cert PEM pour l'Ingress (sign\u00e9 par la CA interne/entreprise).",
           "language": "plaintext",
           "excludeFromValues": true,
           "condition": {
@@ -1507,9 +1507,9 @@
         },
         {
           "name": "ingress.tlsUpload.key",
-          "label": "Clé privée TLS (PEM)",
+          "label": "Cl\u00e9 priv\u00e9e TLS (PEM)",
           "type": "content",
-          "help": "Collez la clé privée PEM associée.",
+          "help": "Collez la cl\u00e9 priv\u00e9e PEM associ\u00e9e.",
           "language": "plaintext",
           "excludeFromValues": true,
           "condition": {
@@ -1522,7 +1522,7 @@
           "label": "Nom du Secret TLS",
           "type": "string",
           "defaultValue": "trino-ingress-tls",
-          "help": "Nom du Secret Kubernetes à créer/mettre à jour avec ce cert/clé.",
+          "help": "Nom du Secret Kubernetes \u00e0 cr\u00e9er/mettre \u00e0 jour avec ce cert/cl\u00e9.",
           "excludeFromValues": true,
           "condition": {
             "field": "ingress.enabled",
@@ -1542,11 +1542,11 @@
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
-          "help": "Active le serveur HTTPS de Trino. Génère un keystore signé par l'autorité interne si demandé."
+          "help": "Active le serveur HTTPS de Trino. G\u00e9n\u00e8re un keystore sign\u00e9 par l'autorit\u00e9 interne si demand\u00e9."
         },
         {
           "name": "tls.https.autoGenerate",
-          "label": "Auto-générer le keystore",
+          "label": "Auto-g\u00e9n\u00e9rer le keystore",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
@@ -1554,7 +1554,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
+          "help": "Si activ\u00e9, Ambari g\u00e9n\u00e8re un certificat sign\u00e9 par la CA interne et un Secret Kubernetes."
         },
         {
           "name": "tls.https.port",
@@ -1571,7 +1571,7 @@
           "name": "tls.https.secretName",
           "label": "Secret keystore (optionnel)",
           "type": "string",
-          "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
+          "help": "Nom du Secret qui contiendra le keystore. Vide \u2192 <release>-https.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -1580,7 +1580,7 @@
         },
         {
           "name": "tls.https.keystoreKey",
-          "label": "Clé du keystore dans le Secret",
+          "label": "Cl\u00e9 du keystore dans le Secret",
           "type": "string",
           "defaultValue": "truststore.jks",
           "excludeFromValues": true,
@@ -1594,7 +1594,7 @@
           "label": "Mot de passe keystore",
           "type": "password",
           "defaultValue": "",
-          "help": "Laisser vide pour génération aléatoire.",
+          "help": "Laisser vide pour g\u00e9n\u00e9ration al\u00e9atoire.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -1603,7 +1603,7 @@
         },
         {
           "name": "tls.https.mountPath",
-          "label": "Chemin monté du keystore",
+          "label": "Chemin mont\u00e9 du keystore",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -1614,7 +1614,7 @@
         },
         {
           "name": "tls.https.keystorePath",
-          "label": "Chemin utilisé par Trino",
+          "label": "Chemin utilis\u00e9 par Trino",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -1622,7 +1622,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Valeur injectée dans server.config.https.keystore.path."
+          "help": "Valeur inject\u00e9e dans server.config.https.keystore.path."
         },
         {
           "name": "tls.https.keystoreType",
@@ -1648,7 +1648,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
+          "help": "Choisissez le format de stockage du certificat serveur. PEM cr\u00e9e tls.crt/tls.key/ca.crt."
         }
       ]
     },
@@ -1659,13 +1659,13 @@
       "fields": [
         {
           "name": "coordinator.resources.requests.cpu",
-          "label": "CPU Demandé",
+          "label": "CPU Demand\u00e9",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "coordinator.resources.requests.memory",
-          "label": "Mémoire Demandée",
+          "label": "M\u00e9moire Demand\u00e9e",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1677,13 +1677,13 @@
         },
         {
           "name": "coordinator.resources.limits.memory",
-          "label": "Mémoire Limite",
+          "label": "M\u00e9moire Limite",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Coordinateur)",
+          "label": "R\u00e9pertoire de donn\u00e9es (Coordinateur)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1702,13 +1702,13 @@
         },
         {
           "name": "worker.resources.requests.cpu",
-          "label": "CPU Demandé / Worker",
+          "label": "CPU Demand\u00e9 / Worker",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "worker.resources.requests.memory",
-          "label": "Mémoire Demandée / Worker",
+          "label": "M\u00e9moire Demand\u00e9e / Worker",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1720,13 +1720,13 @@
         },
         {
           "name": "worker.resources.limits.memory",
-          "label": "Mémoire Limite / Worker",
+          "label": "M\u00e9moire Limite / Worker",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "worker.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Worker)",
+          "label": "R\u00e9pertoire de donn\u00e9es (Worker)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1739,7 +1739,7 @@
       "fields": [
         {
           "name": "requiredWorkers.window",
-          "label": "Fenêtre (required workers)",
+          "label": "Fen\u00eatre (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
@@ -1814,7 +1814,7 @@
     },
     {
       "name": "hadoopIntegration",
-      "label": "Intégration Hadoop",
+      "label": "Int\u00e9gration Hadoop",
       "type": "group",
       "fields": [
         {
@@ -1823,16 +1823,17 @@
           "type": "service-select",
           "serviceType": "HIVE_METASTORE",
           "excludeFromValues": true,
-          "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
+          "help": "S\u00e9lectionnez un service Hive Metastore existant pour cr\u00e9er un catalogue."
         },
         {
           "name": "ui_hive_metastore_uri_override",
-          "label": "URI Hive Metastore personnalisé",
+          "label": "URI Hive Metastore personnalis\u00e9",
           "type": "string",
           "defaultValue": "",
-          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseigné, remplace la valeur découverte."
+          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseign\u00e9, remplace la valeur d\u00e9couverte."
         }
       ]
     }
-  ]
+  ],
+  "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale."
 }

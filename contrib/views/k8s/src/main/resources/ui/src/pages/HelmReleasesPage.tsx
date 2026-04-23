@@ -18,7 +18,7 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Spin, Result, Tag, Tooltip, List, Switch, Descriptions, Badge } from 'antd';
+import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
@@ -29,6 +29,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
+import { SERVICE_ICONS } from '../assets/services';
 
 import './Page.css';
 
@@ -328,7 +329,7 @@ const HelmReleasesPage: React.FC = () => {
     }
 
     if (isLoading && helmReleases.length === 0) {
-      return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
+      return <Skeleton active paragraph={{ rows: 6 }} style={{ padding: 16 }} />;
     }
 
     const buildMenuItems = (record: HelmRelease): MenuProps['items'] => {
@@ -526,6 +527,23 @@ const HelmReleasesPage: React.FC = () => {
                 ].filter(Boolean).join('\n')
               : undefined;
 
+            const extraTags: React.ReactNode[] = [];
+            if (combined.staleGeneration) extraTags.push(<Tag key="reconciling" color="blue">Reconciling</Tag>);
+            if (combined.restartRequired && combined.serviceKey) extraTags.push(<Tag key="restart" color="orange">Restart required</Tag>);
+            if (combined.securityProfileStale) extraTags.push(<Tag key="security" color="orange">Security refresh</Tag>);
+            if (combined.deploymentMode === 'FLUX_GITOPS') extraTags.push(<Tooltip key="gitops" title={fluxTip || 'Flux GitOps'}><Tag color="blue">GitOps</Tag></Tooltip>);
+            if (combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus) {
+              const isReady = combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready';
+              extraTags.push(<Tooltip key="repo" title={combined.sourceMessage || 'HelmRepository status'}><Tag color={isReady ? 'green' : 'orange'}>Repo {combined.sourceStatus}</Tag></Tooltip>);
+            }
+            if (combined.gitPrUrl) {
+              const prColor = combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple';
+              extraTags.push(<Tooltip key="pr" title={combined.gitPrUrl}><Tag color={prColor}><a href={combined.gitPrUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>PR {combined.gitPrNumber || ''}{combined.gitPrState ? ` (${combined.gitPrState})` : ''}</a></Tag></Tooltip>);
+            } else if (combined.gitPrState) {
+              const prColor = combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple';
+              extraTags.push(<Tag key="prstate" color={prColor}>PR {combined.gitPrState}</Tag>);
+            }
+
             return (
               <Space size={4} direction="vertical" align="start">
                 <Space size={4}>
@@ -548,34 +566,16 @@ const HelmReleasesPage: React.FC = () => {
                     </Tooltip>
                   ) : null}
                 </Space>
-                {combined.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
-                {combined.restartRequired && combined.serviceKey ? <Tag color="orange">Restart required</Tag> : null}
-                {combined.securityProfileStale ? <Tag color="orange">Security refresh</Tag> : null}
-                {combined.deploymentMode === 'FLUX_GITOPS' ? (
-                  <Tooltip title={fluxTip || 'Flux GitOps'}>
-                    <Tag color="blue">GitOps</Tag>
-                  </Tooltip>
-                ) : null}
-                {combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus ? (
-                  <Tooltip title={combined.sourceMessage || 'HelmRepository status'}>
-                    <Tag color={combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready' ? 'green' : 'orange'}>
-                      Repo {combined.sourceStatus}
-                    </Tag>
-                  </Tooltip>
-                ) : null}
-                {combined.gitPrUrl ? (
-                  <Tooltip title={combined.gitPrUrl}>
-                    <Tag color={combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple'}>
-                      <a href={combined.gitPrUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
-                        PR {combined.gitPrNumber || ''}{combined.gitPrState ? ` (${combined.gitPrState})` : ''}
-                      </a>
-                    </Tag>
-                  </Tooltip>
-                ) : combined.gitPrState ? (
-                  <Tag color={combined.gitPrState === 'merged' ? 'green' : combined.gitPrState === 'closed' ? 'red' : 'purple'}>
-                    PR {combined.gitPrState}
-                  </Tag>
-                ) : null}
+                {extraTags.length > 0 && (
+                  <Space size={2} wrap>
+                    {extraTags[0]}
+                    {extraTags.length > 1 && (
+                      <Tooltip title={<Space direction="vertical" size={2}>{extraTags.slice(1)}</Space>}>
+                        <Tag style={{ cursor: 'pointer' }}>+{extraTags.length - 1} more</Tag>
+                      </Tooltip>
+                    )}
+                  </Space>
+                )}
               </Space>
             );
           } },
@@ -704,30 +704,52 @@ const HelmReleasesPage: React.FC = () => {
             </Modal>
 
             <Modal
-              title="Select a service to install"
+              title="Service catalog"
               open={isInstallPickerOpen}
               onCancel={() => setIsInstallPickerOpen(false)}
               footer={null}
-              width={520}
+              width={700}
             >
-              <List
-                dataSource={Object.keys(serviceDefinitions)}
-                locale={{ emptyText: 'No services available' }}
-                renderItem={(key) => (
-                  <List.Item>
-                    <Button
-                      block
-                      type="default"
-                      onClick={() => {
-                        setIsInstallPickerOpen(false);
-                        navigate(`/services/${key}`);
-                      }}
-                    >
-                      {serviceDefinitions[key]?.label || key}
-                    </Button>
-                  </List.Item>
+              <Row gutter={[12, 12]} style={{ marginTop: 8 }}>
+                {Object.keys(serviceDefinitions).length === 0 && (
+                  <Col span={24}>
+                    <Typography.Text type="secondary">No services available.</Typography.Text>
+                  </Col>
                 )}
-              />
+                {Object.keys(serviceDefinitions).map((key) => {
+                  const svc = serviceDefinitions[key];
+                  const icon = SERVICE_ICONS[key.toUpperCase()];
+                  return (
+                    <Col key={key} xs={24} sm={12}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="catalog-card"
+                        onClick={() => { setIsInstallPickerOpen(false); navigate(`/services/${key}`); }}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setIsInstallPickerOpen(false); navigate(`/services/${key}`); } }}
+                      >
+                        <div style={{ width: 44, height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa', borderRadius: 8 }}>
+                          {icon
+                            ? <img src={icon} alt="" aria-hidden="true" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+                            : <span style={{ fontSize: 20, fontWeight: 700, color: '#1677ff' }}>{(svc?.label || key).charAt(0)}</span>
+                          }
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
+                            <span style={{ fontWeight: 600, fontSize: 14, color: '#1a1a1a' }}>{svc?.label || key}</span>
+                            {svc?.version && <span style={{ fontSize: 11, color: '#8c8c8c' }}>v{svc.version}</span>}
+                          </div>
+                          {svc?.description && (
+                            <span style={{ fontSize: 12, color: '#595959', lineHeight: '1.5', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {svc.description}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </Col>
+                  );
+                })}
+              </Row>
             </Modal>
 
             <BackgroundOperationsModal

@@ -17,20 +17,30 @@
  */
 
 /* ui/src/components/layout/AppLayout.css */
-:global(html.k8s-view-no-scroll) { overflow: hidden !important; }
-:global(body.k8s-view-no-scroll) { overflow: hidden !important; }
-:global(html) { height: 100%; }
-:global(body) { height: 100%; }
-:global(#root) { height: 100%; }
+
+:root {
+  --surface-muted: #f5f7fa;
+  --border: #e8e8e8;
+}
+
+/* Fill the iframe body height — contribview pins the container to viewport height */
+:global(html),
+:global(body),
+:global(#root) {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
 
 .app-layout {
   --header-height: 64px;
-  height: 100vh;
+  height: 100%;           /* fill whatever height Ambari gives the iframe */
   background-color: #f0f2f5;
   display: flex;
   flex-direction: column;
-  overflow: hidden;   /* prevent window scroll; inner containers handle scrolling */
-  min-width: 1024px; /* prevent collapse but allow wider screens to breathe */
+  overflow: hidden;
+  min-width: 1024px;
 }
 
 .app-loading {
@@ -46,11 +56,11 @@
   align-items: center;
   background: #fff !important;
   border-bottom: 1px solid #f0f0f0;
-  padding: 0 5px !important;
+  padding: 0 16px !important;
   position: sticky;
   top: 0;
   z-index: 20;
-  border-radius: 14px;
+  border-radius: 8px;
   flex-shrink: 0;
 }
 
@@ -90,12 +100,12 @@
   /* Ensure stats bar doesn't overlap menu */
   position: relative;
   z-index: 10;
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .content-shell {
   display: flex;
-  height: calc(100vh - var(--header-height) - var(--stats-bar-height, 28px));
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -143,7 +153,6 @@
 .page-content {
   background: #fff;
   padding: 16px;
-  padding-top: 4px;
   border-radius: 8px;
   min-height: 100%;
   width: 100%;

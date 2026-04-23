@@ -40,16 +40,16 @@ const StatusTag: React.FC<StatusTagProps> = React.memo(({ status }) => {
   switch (status) {
     case 'deployed':
     case 'Ready':
-      return <Tag icon={<CheckCircleTwoTone twoToneColor="#52c41a" />} color="success">Déployé</Tag>;
+      return <Tag icon={<CheckCircleTwoTone twoToneColor="#52c41a" />} color="success">Deployed</Tag>;
     case 'pending_upgrade':
-      return <Tag icon={<WarningTwoTone twoToneColor="#faad14" />} color="warning">En attente</Tag>;
+      return <Tag icon={<WarningTwoTone twoToneColor="#faad14" />} color="warning">Pending upgrade</Tag>;
     case 'failed':
     case 'NotReady':
-      return <Tag icon={<CloseCircleTwoTone twoToneColor="#ff4d4f" />} color="error">Échoué</Tag>;
+      return <Tag icon={<CloseCircleTwoTone twoToneColor="#ff4d4f" />} color="error">Failed</Tag>;
     case 'uninstalling':
-      return <Tag icon={<SyncOutlined spin />} color="processing">Suppression...</Tag>;
+      return <Tag icon={<SyncOutlined spin />} color="processing">Uninstalling…</Tag>;
     case 'SchedulingDisabled':
-       return <Tag color="default">Désactivé</Tag>;
+       return <Tag color="default">Disabled</Tag>;
     default:
       return <Tag>{status}</Tag>;
   }

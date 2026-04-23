@@ -18,42 +18,52 @@
 
 import React, { useEffect, useState } from "react";
 import type { ColumnsType } from "antd/es/table";
-import { Col, Form,  Input, Select, Button, Table, Space, Popconfirm, Row, Tooltip, Spin, message, Alert, Tag } from "antd";
-import { CheckCircleTwoTone, DeleteOutlined, ReloadOutlined, EditOutlined } from "@ant-design/icons";
-import { getHelmRepos, saveHelmRepo, deleteHelmRepo, loginHelmRepo, checkHelmRepo, installMonitoring, getMonitoringDiscovery} from '../api/client';
+import {
+  Form, Input, Select, Button, Table, Space, Popconfirm,
+  Tooltip, message, Alert, Tag, Modal, Typography, Empty, Divider, Row, Col,
+} from "antd";
+import {
+  CheckCircleTwoTone, DeleteOutlined, ReloadOutlined,
+  EditOutlined, PlusOutlined,
+} from "@ant-design/icons";
+import {
+  getHelmRepos, saveHelmRepo, deleteHelmRepo, loginHelmRepo,
+  installMonitoring, getMonitoringDiscovery,
+} from '../api/client';
 import type HelmRepo from '../types';
-import { required, url, slug, trim } from "../utils/formRules"; 
+import { required, url, slug, trim } from "../utils/formRules";
+import './Page.css';
+
+const { Title, Text } = Typography;
 
 export default function RepositoriesPage() {
-  /** ---------------- state --------------- */
   const [repos, setRepos] = useState<HelmRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingRepo, setEditingRepo] = useState<HelmRepo | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<string>();
   const [monitoringState, setMonitoringState] = useState<{ state?: string; message?: string; namespace?: string; release?: string }>({});
   const [form] = Form.useForm();
-  // Watch repo type so URL validation stays in sync when editing existing entries.
   const repoTypeWatch = Form.useWatch("type", form);
-  /** -------------- effects --------------- */
+
   const fetchRepos = async () => {
     setLoading(true);
     try {
       const data = await getHelmRepos();
       setRepos(data);
       if (!selectedRepo && data.length > 0) setSelectedRepo(data[0].id);
-
-      // Fetch monitoring discovery to display bootstrap state
       try {
         const disc = await getMonitoringDiscovery();
         setMonitoringState({
           state: (disc as any)?.state,
           message: (disc as any)?.message,
           namespace: disc?.namespace,
-          release: disc?.release
+          release: disc?.release,
         });
-      } catch (e:any) {
-        setMonitoringState({ state: 'UNKNOWN', message: e?.message });
+      } catch {
+        setMonitoringState({});
       }
     } catch (err: any) {
       message.error(`Repository loading error: ${err}`);
@@ -62,32 +72,45 @@ export default function RepositoriesPage() {
     }
   };
 
-  useEffect(() => {
-    fetchRepos();
-  }, []);
+  useEffect(() => { fetchRepos(); }, []);
 
+  const openAdd = () => {
+    setEditingRepo(null);
+    form.resetFields();
+    form.setFieldsValue({ type: "HTTP", authMode: "anonymous" });
+    setModalOpen(true);
+  };
 
-  const monitoringCta = repos.length === 0 ? (
-    <div style={{ marginBottom: 12 }}>
-      <Row justify="space-between" align="middle">
-        <Col>
-          <strong>Monitoring bootstrap requires at least one Helm repository.</strong>
-        </Col>
-        <Col>
-          <Button size="small" onClick={() => message.info('Add a repository then use "Check monitoring installation".')}>Help</Button>
-        </Col>
-      </Row>
-    </div>) : null;
+  const openEdit = (r: HelmRepo) => {
+    setEditingRepo(r);
+    form.resetFields();
+    form.setFieldsValue({
+      id: r.id, name: r.name, type: r.type, url: r.url,
+      imageProject: r.imageProject,
+      imageRegistryHostOverride: r.imageRegistryHostOverride,
+      authMode: r.authMode, username: r.username, secret: '',
+    });
+    setModalOpen(true);
+  };
 
-  /** ---------------- form submit --------------- */
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingRepo(null);
+    form.resetFields();
+  };
+
+  const handleOk = () => {
+    form.submit();
+  };
+
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
       const { secret, ...entity } = values;
       await saveHelmRepo(entity, secret || undefined);
-      message.success("Repository saved");
+      message.success(editingRepo ? "Repository updated" : "Repository added");
+      closeModal();
       fetchRepos();
-      form.resetFields();
       setSelectedRepo(entity.id);
     } catch (err: any) {
       message.error(`Save error: ${err}`);
@@ -96,7 +119,6 @@ export default function RepositoriesPage() {
     }
   };
 
-  /** ---------------- actions table --------------- */
   const handleDelete = async (id: string) => {
     try {
       await deleteHelmRepo(id);
@@ -104,140 +126,78 @@ export default function RepositoriesPage() {
     } catch (err: any) {
       message.error(`Delete error: ${err}`);
     } finally {
-      fetchRepos(); // always refresh, even if something is slightly off
+      fetchRepos();
     }
   };
 
   const handleLogin = async (id: string) => {
+    setSyncing(s => ({ ...s, [id]: true }));
     try {
-      setSyncing(s => ({ ...s, [id]: true }));
       await loginHelmRepo(id);
       message.success("Login / sync OK");
     } catch (err: any) {
       message.error(`Login error: ${err}`);
     } finally {
-      setSyncing(s => {
-        const c = { ...s };
-        delete c[id];
-        return c;
-      });
+      setSyncing(s => { const c = { ...s }; delete c[id]; return c; });
       fetchRepos();
     }
   };
 
-  /** ---------------- table columns --------------- */
+  const urlRules = () => {
+    if (repoTypeWatch === "OCI") {
+      return [
+        required("URL is required"),
+        {
+          validator: (_: any, value: string) => {
+            if (!value) return Promise.resolve();
+            const ok = /^[a-zA-Z0-9.-]+(:\d+)?(\/[a-zA-Z0-9._\-\/]+)?$/.test(value.trim());
+            return ok
+              ? Promise.resolve()
+              : Promise.reject("Enter a registry host, e.g. registry.clemlab.com");
+          },
+        },
+      ];
+    }
+    return [required("URL is required"), url("Enter a valid HTTP(S) URL")];
+  };
+
   const columns: ColumnsType<HelmRepo> = [
+    { title: "ID", dataIndex: "id", key: "id", width: 140 },
+    { title: "Name", dataIndex: "name", key: "name", width: 160 },
     {
-      title: "ID",
-      dataIndex: "id",
-      key: "id",
-      width: 140,
+      title: "Type", dataIndex: "type", key: "type", width: 80,
+      render: (t: string) => <Tag color={t === 'OCI' ? 'blue' : 'default'}>{t}</Tag>,
     },
     {
-      title: "Name",
-      dataIndex: "name",
-      key: "name",
-      width: 160,
+      title: "URL", dataIndex: "url", key: "url",
+      render: (text: string) => <Text ellipsis={{ tooltip: text }} style={{ maxWidth: 260 }}>{text}</Text>,
     },
     {
-      title: "Type",
-      dataIndex: "type",
-      key: "type",
-      width: 80,
+      title: "Image project", dataIndex: "imageProject", key: "imageProject", width: 140,
+      render: (t?: string) => t || <Text type="secondary">–</Text>,
     },
     {
-      title: "Chart Repo URL",
-      dataIndex: "url",
-      key: "url",
-      render: (text: string) => (
-        <span
-          style={{
-            maxWidth: 260,
-            display: "inline-block",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={text}
-        >
-          {text}
-        </span>
+      title: "Auth", dataIndex: "authMode", key: "authMode", width: 140,
+      render: (_: any, r: HelmRepo) => (
+        <Space size={4}>
+          <Tag>{r.authMode}</Tag>
+          {r.username && r.authMode !== "anonymous" && <Text type="secondary">({r.username})</Text>}
+          {r.authInvalid && <Tag color="error">invalid</Tag>}
+        </Space>
       ),
     },
     {
-      title: "Image Project",
-      dataIndex: "imageProject",
-      key: "imageProject",
-      width: 140,
-      render: (text: string | undefined) => text || <span style={{ color: "#999" }}>–</span>,
+      title: "Last checked", dataIndex: "lastChecked", key: "lastChecked", width: 150,
+      render: (v?: string) => v
+        ? <Text type="secondary">{new Date(v).toLocaleString()}</Text>
+        : <Text type="secondary">–</Text>,
     },
     {
-      title: "Registry Host Override",
-      dataIndex: "imageRegistryHostOverride",
-      key: "imageRegistryHostOverride",
-      width: 180,
-      render: (text: string | undefined) =>
-        text ? (
-          <span title={text}>{text}</span>
-        ) : (
-          <span style={{ color: "#999" }}>derived from URL</span>
-        ),
-    },
-    {
-      title: "Auth",
-      dataIndex: "authMode",
-      key: "authMode",
-      width: 120,
-      render: (_: any, r) => (
-        <span>
-          {r.authMode}
-          {r.username && r.authMode !== "anonymous" && (
-            <span style={{ color: "#666", marginLeft: 4 }}>({r.username})</span>
-          )}
-          {r.authInvalid && (
-            <span style={{ color: "red", marginLeft: 4 }}>(invalid)</span>
-          )}
-        </span>
-      ),
-    },
-    {
-      title: "Last checked",
-      dataIndex: "lastChecked",
-      key: "lastChecked",
-      width: 160,
-      render: (value: string | undefined) =>
-        value ? new Date(value).toLocaleString() : <span style={{ color: "#999" }}>–</span>,
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      fixed: "right",
-      width: 130,
-      render: (_: any, r) => (
+      title: "Actions", key: "actions", fixed: "right", width: 120,
+      render: (_: any, r: HelmRepo) => (
         <Space>
           <Tooltip title="Edit">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => {
-                form.setFieldsValue({
-                  id: r.id,
-                  name: r.name,
-                  type: r.type,
-                  url: r.url,
-                  imageProject: r.imageProject,
-                  imageRegistryHostOverride: r.imageRegistryHostOverride,
-                  authMode: r.authMode,
-                  username: r.username,
-                  secret: '', // Clear secret field for security
-                  // Note: secret is not populated for security reasons
-                });
-                // Scroll to form
-                setTimeout(() => {
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }, 100);
-              }}
-            />
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           </Tooltip>
           <Tooltip title="Login / Sync">
             <Button
@@ -247,268 +207,202 @@ export default function RepositoriesPage() {
               onClick={() => handleLogin(r.id)}
             />
           </Tooltip>
-          <Popconfirm
-            title="Confirm deletion?"
-            onConfirm={() => handleDelete(r.id)}
-          >
+          <Popconfirm title="Delete this repository?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
     },
   ];
-  let returnDynamicRules = () => {
-    const type = repoTypeWatch;
 
-    if (type === "OCI") {
-      // OCI: host or host + optional path, no scheme
-      return [
-        required("url is required"),
-        {
-          validator: (_: any, value: string) => {
-            if (!value) return Promise.resolve();
-            const v = String(value).trim();
-
-            // allow: host, host:port, host/path, host:port/path
-            const regex = /^[a-zA-Z0-9.-]+(:\d+)?(\/[a-zA-Z0-9._\-\/]+)?$/;
-
-            if (regex.test(v)) {
-              return Promise.resolve();
-            }
-            return Promise.reject(
-              "Enter a valid OCI registry URL like 'registry.clemlab.com' or 'registry.clemlab.com/path'"
-            );
-          },
-        },
-      ];
-    }
-
-    // HTTP: use your existing `url()` rule, full http(s) URL with scheme
-    return [
-      required("url is required"),
-      url("Enter a valid HTTP(S) repo URL"),
-    ];
-  };
-
-  /** ---------------- render --------------- */
   return (
-    <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 16 }}>Helm Repositories</h1>
+    <div>
+      {/* ── Page header ── */}
+      <div className="page-header">
+        <div>
+          <Title level={2} style={{ marginBottom: 2 }}>Helm Repositories</Title>
+          <Text type="secondary">Chart repositories used to install and upgrade services.</Text>
+        </div>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={fetchRepos}>Refresh</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>Add repository</Button>
+        </Space>
+      </div>
 
-      {monitoringState.state && (
+      {/* ── Monitoring alert (only when actionable) ── */}
+      {(monitoringState.state === 'RUNNING' || monitoringState.state === 'FAILED') && (
         <Alert
           banner
-          style={{ marginBottom: 12 }}
+          style={{ marginBottom: 12, marginTop: 8 }}
           message={
             <Space>
               <span>Monitoring bootstrap</span>
-              <Tag color={monitoringState.state === 'COMPLETED' ? 'green' : monitoringState.state === 'FAILED' ? 'red' : 'blue'}>
-                {monitoringState.state}
+              <Tag color={monitoringState.state === 'FAILED' ? 'red' : 'blue'}>
+                {monitoringState.state === 'FAILED' ? 'Not found' : 'Installing…'}
               </Tag>
               {monitoringState.release && monitoringState.namespace && (
-                <span>{monitoringState.release} / {monitoringState.namespace}</span>
+                <Text type="secondary">{monitoringState.release} / {monitoringState.namespace}</Text>
               )}
             </Space>
           }
           description={monitoringState.message}
-          type={monitoringState.state === 'FAILED' ? 'error' : monitoringState.state === 'RUNNING' ? 'warning' : 'info'}
+          type={monitoringState.state === 'FAILED' ? 'error' : 'info'}
           showIcon
         />
       )}
 
-      {/* ---- form ---- */}
-      <Form
-        id="repoForm"
-        name="repoForm"
-        layout="vertical"
-        form={form}
-        initialValues={{ type: "HTTP", authMode: "anonymous" }}
-        onFinish={onFinish}
-        onFinishFailed={({ errorFields }) => console.warn("repoForm errors:", errorFields)}
-        onValuesChange={(_, all) => console.error("repoForm values:", all)}
-      >
-        {/* ---- Row 1: general repo info ---- */}
-        <Row gutter={[16, 8]}>
-          {/* ID */}
-          <Col xs={24} md={4}>
-            <Form.Item
-              name="id"
-              label="ID"
-              getValueFromEvent={trim}
-              rules={[required("id is required"), slug]}
-            >
-              <Input placeholder="bitnami" />
-            </Form.Item>
-          </Col>
-
-          {/* Name */}
-          <Col xs={24} md={4}>
-            <Form.Item
-              name="name"
-              label="Name"
-              rules={[required("name is required")]}
-            >
-              <Input placeholder="bitnami" />
-            </Form.Item>
-          </Col>
-
-          {/* Type */}
-          <Col xs={24} md={3}>
-            <Form.Item
-              name="type"
-              label="Type"
-              rules={[required("type is required")]}
-            >
-              <Select
-                style={{ width: "100%" }}
-                options={[
-                  { value: "HTTP", label: "HTTP" },
-                  { value: "OCI", label: "OCI" },
-                ]}
-                onChange={(value: string) => {
-                  form.setFieldsValue({ type: value });
-                  setSyncing(s => ({ ...s })); // force re-render for dynamic rules
-                }}
-              />
-            </Form.Item>
-          </Col>
-
-          {/* Chart Repo URL */}
-          <Col xs={24} md={7}>
-            <Form.Item
-              name="url"
-              label="Chart Repo URL"
-              rules={returnDynamicRules()}
-            >
-              <Input placeholder="https://registry.clemlab.com/charts" />
-            </Form.Item>
-          </Col>
-
-          {/* Image project / namespace */}
-          <Col xs={24} md={6}>
-            <Form.Item
-              name="imageProject"
-              label="Image Registry / Project"
-              tooltip="Project / namespace (e.g. 'clemlabprojects'). Host is derived from the Chart Repo URL."
-            >
-              <Input placeholder="clemlabprojects" />
-            </Form.Item>
-          </Col>
-          {/* 4 + 4 + 3 + 7 + 6 = 24 on md */}
-        </Row>
-
-        {/* ---- Row 2: auth & save ---- */}
-        <Row gutter={[16, 8]} align="bottom">
-          {/* Auth mode */}
-          <Col xs={24} md={4}>
-            <Form.Item
-              name="authMode"
-              label="Auth"
-              rules={[required("authMode is required")]}
-            >
-              <Select
-                style={{ width: "100%" }}
-                options={[
-                  { value: "anonymous", label: "anonymous" },
-                  { value: "basic", label: "basic" },
-                  { value: "token", label: "token" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-
-          {/* Username */}
-          <Col xs={24} md={4}>
-            <Form.Item name="username" label="Username">
-              <Input placeholder="user" />
-            </Form.Item>
-          </Col>
-
-          {/* Password / Token */}
-          <Col xs={24} md={6}>
-            <Form.Item name="secret" label="Password / Token">
-              <Input.Password placeholder="secret" />
-            </Form.Item>
-          </Col>
-
-          {/* Save button */}
-          <Col xs={24} md={10}>
-            <Form.Item label=" ">
-              <div style={{ textAlign: "left" }}>
-                <Button
-                  form="repoForm"
-                  type="primary"
-                  htmlType="submit"
-                  loading={saving}
-                >
-                  Save
-                </Button>
-              </div>
-            </Form.Item>
-          </Col>
-          {/* 4 + 4 + 6 + 10 = 24 on md */}
-        </Row>
-      </Form>
-
-      {/* Monitoring install helpers */}
-      <div style={{ marginTop: 12, marginBottom: 12 }}>
-        <Space>
-          <Select
-            value={selectedRepo}
-            placeholder="Select repo for monitoring"
-            style={{ minWidth: 220 }}
-            onChange={setSelectedRepo}
-            options={repos.map(r => ({ value: r.id, label: `${r.name || r.id} (${r.type})` }))}
-          />
-          <Button
-            type="primary"
-            disabled={!selectedRepo}
-            onClick={async () => {
-              if (!selectedRepo) { message.info("Select a repository first"); return; }
-              try {
-                await installMonitoring(selectedRepo);
-                message.success("Monitoring install requested");
-              } catch (e:any) {
-                message.error(e?.message || "Monitoring install failed");
-              }
-            }}
-          >
-            Install monitoring
-          </Button>
-          <Button
-            onClick={async () => {
-              try {
-                const res = await getMonitoringDiscovery();
-                if (res?.namespace && res?.release) {
-                  message.success(`Monitoring found: ${res.release} in ${res.namespace}`);
-                } else {
-                  message.info("Monitoring not found");
+      {/* ── Monitoring bootstrap actions ── */}
+      {repos.length > 0 && (
+        <div style={{ marginBottom: 12, marginTop: 8 }}>
+          <Space wrap>
+            <Text type="secondary">Monitoring bootstrap:</Text>
+            <Select
+              value={selectedRepo}
+              placeholder="Select repository"
+              style={{ minWidth: 200 }}
+              onChange={setSelectedRepo}
+              options={repos.map(r => ({ value: r.id, label: `${r.name || r.id} (${r.type})` }))}
+            />
+            <Button
+              type="primary"
+              disabled={!selectedRepo}
+              onClick={async () => {
+                if (!selectedRepo) return;
+                try {
+                  await installMonitoring(selectedRepo);
+                  message.success("Monitoring install requested");
+                } catch (e: any) {
+                  message.error(e?.message || "Monitoring install failed");
                 }
-              } catch (e:any) {
-                message.error(e?.message || "Discovery failed");
-              }
-            }}
+              }}
+            >
+              Install
+            </Button>
+            <Button
+              onClick={async () => {
+                try {
+                  const res = await getMonitoringDiscovery();
+                  if (res?.namespace && res?.release) {
+                    message.success(`Monitoring found: ${res.release} in ${res.namespace}`);
+                  } else {
+                    message.info("Monitoring not found");
+                  }
+                } catch (e: any) {
+                  message.error(e?.message || "Discovery failed");
+                }
+              }}
+            >
+              Check installation
+            </Button>
+          </Space>
+        </div>
+      )}
+
+      {/* ── Table ── */}
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={repos}
+        loading={loading}
+        pagination={false}
+        size="small"
+        locale={{ emptyText: <Empty description="No repositories yet. Click «Add repository» to get started." /> }}
+      />
+
+      {/* ── Add / Edit modal ── */}
+      <Modal
+        title={editingRepo ? `Edit — ${editingRepo.id}` : 'Add Helm repository'}
+        open={modalOpen}
+        onCancel={closeModal}
+        onOk={handleOk}
+        okText={editingRepo ? 'Update' : 'Add'}
+        confirmLoading={saving}
+        width={520}
+        destroyOnClose={false}
+      >
+        <Form
+          layout="vertical"
+          form={form}
+          onFinish={onFinish}
+          style={{ marginTop: 8 }}
+        >
+          {/* ── Identity ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c', marginTop: 0 }}>
+            Identity
+          </Divider>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="id" label="ID" getValueFromEvent={trim} rules={[required("required"), slug]}
+                tooltip="Unique identifier used internally (e.g. clemlabprojects). Cannot be changed after creation.">
+                <Input placeholder="clemlabprojects" disabled={!!editingRepo} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="name" label="Display name" rules={[required("required")]}>
+                <Input placeholder="Clemlab Harbor" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="type" label="Repository type" rules={[required("required")]}
+            tooltip="HTTP — traditional Helm repo index. OCI — registry like Harbor or ECR.">
+            <Select options={[{ value: "HTTP", label: "HTTP (charts index)" }, { value: "OCI", label: "OCI (registry)" }]} />
+          </Form.Item>
+
+          {/* ── Connection ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            Connection
+          </Divider>
+          <Form.Item
+            name="url"
+            label={repoTypeWatch === 'OCI' ? 'Registry host' : 'Chart index URL'}
+            rules={urlRules()}
+            tooltip={repoTypeWatch === 'OCI'
+              ? 'Hostname (and optional path prefix) of the OCI registry, e.g. registry.clemlab.com'
+              : 'Full URL of the Helm HTTP index, e.g. https://charts.helm.sh/stable'}
           >
-            Check monitoring installation
-          </Button>
-        </Space>
-      </div>
+            <Input placeholder={repoTypeWatch === 'OCI' ? 'registry.clemlab.com' : 'https://charts.example.com'} />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="imageProject" label="Image project"
+                tooltip="Harbor project used for Docker image pulls (e.g. clemlabprojects). Derived from the URL if left blank.">
+                <Input placeholder="clemlabprojects" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="imageRegistryHostOverride" label="Registry host override"
+                tooltip="Override the registry hostname used for image pulls. Leave blank to derive from the URL.">
+                <Input placeholder="registry.clemlab.com" />
+              </Form.Item>
+            </Col>
+          </Row>
 
-      {/* ---- table ---- */}
-      <Spin spinning={loading} tip="Loading...">
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={repos}
-          pagination={false}
-          size="small"
-          style={{ marginTop: 16 }}
-        />
-      </Spin>
-
-      <Button type="link" icon={<ReloadOutlined />} onClick={fetchRepos} style={{ marginTop: 16 }}>
-        Refresh
-      </Button>
+          {/* ── Authentication ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            Authentication
+          </Divider>
+          <Form.Item name="authMode" label="Auth mode" rules={[required("required")]}>
+            <Select options={[
+              { value: "anonymous", label: "Anonymous — no credentials" },
+              { value: "basic", label: "Basic — username & password" },
+              { value: "token", label: "Token — bearer token" },
+            ]} />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="username" label="Username">
+                <Input placeholder="robot$viewer" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="secret" label="Password / Token"
+                tooltip="Leave blank when editing to keep the existing credential.">
+                <Input.Password placeholder={editingRepo ? "unchanged" : "secret"} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
     </div>
   );
 }

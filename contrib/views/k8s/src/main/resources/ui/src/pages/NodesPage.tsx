@@ -18,7 +18,7 @@
 
 // ui/src/pages/NodesPage.tsx
 import React from 'react';
-import { Typography, Table, Progress, Tag, Spin, Result, message } from 'antd';
+import { Typography, Table, Progress, Tag, Skeleton, Result, message } from 'antd';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { getNodes } from '../api/client';
 import StatusTag from '../components/common/StatusTag';
@@ -60,7 +60,7 @@ const NodesPage: React.FC = () => {
     }
 
     if (loading && nodes.length === 0) {
-        return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
+        return <Skeleton active paragraph={{ rows: 8 }} style={{ padding: 16 }} />;
     }
 
     /**
@@ -74,12 +74,18 @@ const NodesPage: React.FC = () => {
         return Number(pct.toFixed(1));
     };
 
+    const getRoleColor = (role: string) => {
+        if (role === 'control-plane' || role === 'master') return 'blue';
+        if (role === 'worker') return 'cyan';
+        return 'default';
+    };
+
     const columns = [
         { title: 'Name', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
-        { title: 'Status', dataIndex: 'status', key: 'status', render: (status: any) => <StatusTag status={status} /> },
-        { title: 'Roles', dataIndex: 'roles', key: 'roles', render: (roles: string[]) => roles.map(role => <Tag key={role}>{role}</Tag>) },
+        { title: 'Status', dataIndex: 'status', key: 'status', render: (s: any) => <StatusTag status={s} /> },
+        { title: 'Roles', dataIndex: 'roles', key: 'roles', render: (roles: string[]) => roles?.length ? roles.map(role => <Tag key={role} color={getRoleColor(role)}>{role}</Tag>) : '—' },
         { title: 'CPU', dataIndex: 'cpuUsage', key: 'cpuUsage', render: (usage: number) => <Progress percent={clampPercent(usage)} /> },
-        { title: 'Memory', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={clampPercent(usage)} status="success" /> },
+        { title: 'Memory', dataIndex: 'memoryUsage', key: 'memoryUsage', render: (usage: number) => <Progress percent={clampPercent(usage)} /> },
     ];
     return (
         <div>

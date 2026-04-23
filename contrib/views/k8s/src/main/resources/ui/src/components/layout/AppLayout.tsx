@@ -17,7 +17,7 @@
  */
 
 // ui/src/components/layout/AppLayout.tsx
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Layout, Menu, Space, Spin, Tag, Alert, Button, Badge, Breadcrumb } from 'antd';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -70,38 +70,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return `N/A ${unit || ''}`.trim();
   };
 
-  useEffect(() => {
-    /**
-     * Normalize the parent document shell when running inside Ambari.
-     * Ambari injects a "contribview" class on the outer body that reduces
-     * available height and can create double scrollbars. We remove that class
-     * and add our own “no scroll” markers so the layout remains stable.
-     * Guard clauses protect against cross-origin parents (e.g., standalone use)
-     * and cleanup restores the original state when unmounting to avoid leaking
-     * styling changes to other views.
-     */
-    try {
-      const parentDocument = window?.parent?.document;
-      if (!parentDocument || parentDocument === document) return;
-      const parentBody = parentDocument.body;
-      const parentHtml = parentDocument.documentElement;
-      const hadContribClass = parentBody.classList.contains('contribview');
-      if (hadContribClass) {
-        parentBody.classList.remove('contribview');
-        parentBody.classList.add('k8s-view-stabilized');
-      }
-      parentHtml.classList.add('k8s-view-no-scroll');
-      parentBody.classList.add('k8s-view-no-scroll');
-      return () => {
-        parentHtml.classList.remove('k8s-view-no-scroll');
-        parentBody.classList.remove('k8s-view-no-scroll');
-        parentBody.classList.remove('k8s-view-stabilized');
-      };
-    } catch (error) {
-      // Ignore cross-origin restrictions; layout remains usable without these tweaks.
-      return;
-    }
-  }, []);
 
   React.useEffect(() => {
     /**
@@ -180,10 +148,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   if (isConfigPage) {
     return (
-      <div className="app-layout">
-        <div className="page-content">
-          {children}
-        </div>
+      <div className="app-layout" style={{ overflowY: 'auto' }}>
+        {children}
       </div>
     );
   }

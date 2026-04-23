@@ -30,7 +30,9 @@ export type FormField = StandardFormField | ServiceSelectFormField | K8sDiscover
 export interface ServiceDefinition {
   label: string;
   chart: string;
-  defaultRepo: string; // URL du dépôt par défaut
+  description?: string;
+  version?: string;
+  defaultRepo?: string;
   form: FormField[];
   // Optional backend-driven metadata for post-install actions (e.g., keytab/ranger replay).
   kerberos?: Array<Record<string, any>>;

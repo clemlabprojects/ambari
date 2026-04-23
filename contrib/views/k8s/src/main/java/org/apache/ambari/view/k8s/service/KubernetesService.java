@@ -932,6 +932,17 @@ public class KubernetesService {
             return;
         }
         BOOTSTRAP_POOL.submit(() -> {
+            // If no repos are configured and auto-creation is disabled, mark as PENDING rather
+            // than RUNNING→FAILED. The view hasn't had a chance to be configured yet.
+            Collection<HelmRepoEntity> existingRepos = repositoryService.list();
+            boolean hasRepos = existingRepos != null && !existingRepos.isEmpty();
+            boolean autoCreate = Boolean.parseBoolean(
+                    viewContext.getAmbariProperty(MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP));
+            if (!hasRepos && !autoCreate) {
+                updateMonitoringBootstrapState("PENDING",
+                        "No Helm repository configured — add one to enable monitoring bootstrap.");
+                return;
+            }
             updateMonitoringBootstrapState("RUNNING", "Starting monitoring bootstrap");
             try {
                 ensureMonitoringRepoPresent();
