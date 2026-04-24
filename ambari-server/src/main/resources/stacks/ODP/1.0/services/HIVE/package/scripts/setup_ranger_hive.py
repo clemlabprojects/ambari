@@ -27,6 +27,24 @@ from resource_management.libraries.functions.setup_ranger_plugin_xml import setu
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.constants import StackFeature
 
+def _resolve_ranger_hive_placeholders(properties, repo_name, cluster_name, credential_file, ranger_hive_ssl_config_file):
+  replacements = {
+    "{{repo_name}}": repo_name,
+    "{{cluster_name}}": cluster_name,
+    "{{credential_file}}": credential_file,
+    "{{ranger_hive_ssl_config_file}}": ranger_hive_ssl_config_file,
+  }
+
+  resolved = {}
+
+  for key, value in properties.items():
+    if isinstance(value, str):
+      for placeholder, actual in replacements.items():
+        value = value.replace(placeholder, actual)
+    resolved[key] = value
+
+  return resolved
+
 def setup_ranger_hive(upgrade_type = None):
   import params
 
@@ -73,6 +91,24 @@ def setup_ranger_hive(upgrade_type = None):
         Logger.exception("Audit directory creation in HDFS for HIVE Ranger plugin failed with error:\n{0}".format(err))
 
     api_version='v2'
+    plugin_audit_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-audit'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      params.ranger_hive_ssl_config_file)
+    plugin_security_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-security'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      params.ranger_hive_ssl_config_file)
+    plugin_policymgr_ssl_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-policymgr-ssl'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      params.ranger_hive_ssl_config_file)
 
     setup_ranger_plugin('hive-server2', 'hive', params.ranger_previous_jdbc_jar,
                         params.ranger_downloaded_custom_connector, params.ranger_driver_curl_source,
@@ -82,9 +118,9 @@ def setup_ranger_hive(upgrade_type = None):
                         params.policy_user, params.policymgr_mgr_url,
                         params.enable_ranger_hive, conf_dict=params.hive_server_conf_dir,
                         component_user=params.hive_user, component_group=params.user_group, cache_service_list=['hiveServer2'],
-                        plugin_audit_properties=params.config['configurations']['ranger-hive-audit'], plugin_audit_attributes=params.config['configurationAttributes']['ranger-hive-audit'],
-                        plugin_security_properties=params.config['configurations']['ranger-hive-security'], plugin_security_attributes=params.config['configurationAttributes']['ranger-hive-security'],
-                        plugin_policymgr_ssl_properties=params.config['configurations']['ranger-hive-policymgr-ssl'], plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-hive-policymgr-ssl'],
+                        plugin_audit_properties=plugin_audit_properties, plugin_audit_attributes=params.config['configurationAttributes']['ranger-hive-audit'],
+                        plugin_security_properties=plugin_security_properties, plugin_security_attributes=params.config['configurationAttributes']['ranger-hive-security'],
+                        plugin_policymgr_ssl_properties=plugin_policymgr_ssl_properties, plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-hive-policymgr-ssl'],
                         component_list=['hive-client', 'hive-metastore', 'hive-server2'], audit_db_is_enabled=params.xa_audit_db_is_enabled,
                         credential_file=params.credential_file, xa_audit_db_password=params.xa_audit_db_password,
                         ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password, policy_config_dict = params.ranger_policy_config if params.ranger_policy_config else None,
@@ -143,9 +179,28 @@ def setup_ranger_hive_metastore_plugin(upgrade_type = None):
 
     api_version='v2'
     hive_conf_dir = params.hive_server_conf_dir
-    if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.stack_version_formatted_major):
+    if check_stack_feature(StackFeature.HIVE_SEPARATED_CONF_DIR_HS2_AND_METASTORE, params.version_for_stack_feature_checks):
       hive_conf_dir = params.hive_metastore_conf_dir
       Logger.info("Hive Metastore conf dir is set to: {0}".format(hive_conf_dir))
+    ranger_hive_ssl_config_file = "{0}/ranger-policymgr-ssl.xml".format(hive_conf_dir)
+    plugin_audit_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-audit'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      ranger_hive_ssl_config_file)
+    plugin_security_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-security'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      ranger_hive_ssl_config_file)
+    plugin_policymgr_ssl_properties = _resolve_ranger_hive_placeholders(
+      params.config['configurations']['ranger-hive-policymgr-ssl'],
+      params.repo_name,
+      params.config['clusterName'],
+      params.credential_file,
+      ranger_hive_ssl_config_file)
     setup_ranger_plugin('hive-metastore', 'hive', params.ranger_previous_jdbc_jar,
                         params.ranger_downloaded_custom_connector, params.ranger_driver_curl_source,
                         params.ranger_driver_curl_target, params.java64_home,
@@ -153,18 +208,18 @@ def setup_ranger_hive_metastore_plugin(upgrade_type = None):
                         params.ranger_env, params.ranger_plugin_properties,
                         params.policy_user, params.policymgr_mgr_url,
                         params.enable_ranger_hive, conf_dict=hive_conf_dir,
-                        component_user=params.hive_user, component_group=params.user_group, cache_service_list=['hiveServer2'],
-                        plugin_audit_properties=params.config['configurations']['ranger-hive-audit'], plugin_audit_attributes=params.config['configurationAttributes']['ranger-hive-audit'],
-                        plugin_security_properties=params.config['configurations']['ranger-hive-security'], plugin_security_attributes=params.config['configurationAttributes']['ranger-hive-security'],
-                        plugin_policymgr_ssl_properties=params.config['configurations']['ranger-hive-policymgr-ssl'], plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-hive-policymgr-ssl'],
+                        component_user=params.hive_user, component_group=params.user_group, cache_service_list=['hiveMetastore'],
+                        plugin_audit_properties=plugin_audit_properties, plugin_audit_attributes=params.config['configurationAttributes']['ranger-hive-audit'],
+                        plugin_security_properties=plugin_security_properties, plugin_security_attributes=params.config['configurationAttributes']['ranger-hive-security'],
+                        plugin_policymgr_ssl_properties=plugin_policymgr_ssl_properties, plugin_policymgr_ssl_attributes=params.config['configurationAttributes']['ranger-hive-policymgr-ssl'],
                         component_list=['hive-client', 'hive-metastore', 'hive-server2'], audit_db_is_enabled=params.xa_audit_db_is_enabled,
                         credential_file=params.credential_file, xa_audit_db_password=params.xa_audit_db_password,
                         ssl_truststore_password=params.ssl_truststore_password, ssl_keystore_password=params.ssl_keystore_password, policy_config_dict = params.ranger_policy_config if params.ranger_policy_config else None,
                         stack_version_override = stack_version, skip_if_rangeradmin_down= not params.retryAble, api_version=api_version,
                         is_security_enabled = params.security_enabled,
                         is_stack_supports_ranger_kerberos = params.stack_supports_ranger_kerberos,
-                        component_user_principal=params.hive_principal if params.security_enabled else None,
-                        component_user_keytab=params.hive_server2_keytab if params.security_enabled else None)
+                        component_user_principal=params.hive_metastore_principal_with_host if params.security_enabled else None,
+                        component_user_keytab=params.hive_metastore_keytab_path if params.security_enabled else None)
   else:
     Logger.info('Ranger Hive Metastore plugin is not enabled')
 

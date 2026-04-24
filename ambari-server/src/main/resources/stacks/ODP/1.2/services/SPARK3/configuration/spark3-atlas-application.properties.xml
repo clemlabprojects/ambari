@@ -51,4 +51,13 @@
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
+  <property>
+    <name>atlas.kafka.enable.idempotence</name>
+    <value>false</value>
+    <description>Disable Kafka idempotence for Spark Atlas hook producers unless the Kafka Ranger cluster ACL grants idempotent_write.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>
