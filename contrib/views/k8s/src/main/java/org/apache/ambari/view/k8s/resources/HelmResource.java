@@ -118,9 +118,10 @@ public class HelmResource {
    */
   @POST
   @Path("/monitoring/install")
-  public Response installMonitoring(@QueryParam("repoId") String repoId) {
+  public Response installMonitoring(@QueryParam("repoId") String repoId,
+                                    @QueryParam("force") @DefaultValue("false") boolean force) {
     try {
-      var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId);
+      var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId, force);
       if (info == null) {
         return Response.serverError().entity(Map.of("error", "Monitoring install failed or not configured")).build();
       }

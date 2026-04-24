@@ -343,10 +343,11 @@
         {
           "name": "catalog.polarisUrl",
           "label": "Polaris REST Catalog URL",
-          "type": "string",
-          "required": true,
-          "defaultValue": "http://master03.dev01.hadoop.clemlab.com:8181",
-          "help": "Base URL of the Apache Polaris server (Iceberg REST catalog). Used for schema discovery."
+          "type": "service-select",
+          "serviceType": "POLARIS",
+          "required": false,
+          "freeform": true,
+          "help": "Apache Polaris server (Iceberg REST catalog). Auto-discovered from the cluster when the POLARIS service is installed; leave blank to skip."
         }
       ]
     },
@@ -355,7 +356,18 @@
       "label": "Connect to Trino",
       "type": "k8s-discovery",
       "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
-      "help": "Select a running Trino coordinator to auto-fill host/port."
+      "targetHost": "sql.trinoHost",
+      "targetPort": "sql.trinoPort",
+      "help": "Select a running Trino coordinator to auto-fill host/port. Multiple KDPS instances appear as separate options."
+    },
+    {
+      "name": "hiveDiscovery",
+      "label": "Connect to HiveServer2",
+      "type": "service-select",
+      "serviceType": "HIVE_SERVER",
+      "targetHost": "sql.hiveHost",
+      "targetPort": "sql.hivePort",
+      "help": "Auto-discovered from Ambari. Select a HiveServer2 to auto-fill host/port, or leave blank to disable Hive support."
     },
     {
       "name": "sqlConfig",
@@ -366,7 +378,7 @@
           "name": "sql.trinoHost",
           "label": "Trino host",
           "type": "string",
-          "help": "Trino coordinator hostname or service name."
+          "help": "Trino coordinator hostname or service name. Auto-filled by the Trino discovery above."
         },
         {
           "name": "sql.trinoPort",
@@ -379,7 +391,7 @@
           "name": "sql.hiveHost",
           "label": "HiveServer2 host",
           "type": "string",
-          "help": "HiveServer2 hostname. Leave empty to disable Hive support."
+          "help": "HiveServer2 hostname. Auto-filled by the HiveServer2 discovery above, or enter manually."
         },
         {
           "name": "sql.hivePort",

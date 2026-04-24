@@ -253,9 +253,12 @@ export async function checkHelmRepo(id: string) {
   return handleApiResponse(response);
 }
 
-export async function installMonitoring(repoId?: string) {
-  const params = repoId ? `?repoId=${encodeURIComponent(repoId)}` : '';
-  const response = await fetch(`${API_BASE_URL}/helm/monitoring/install${params}`, {
+export async function installMonitoring(repoId?: string, force?: boolean) {
+  const qs = new URLSearchParams();
+  if (repoId) qs.set('repoId', repoId);
+  if (force) qs.set('force', 'true');
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
     method: 'POST',
     credentials: 'include'
   });

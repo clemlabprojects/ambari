@@ -5,7 +5,20 @@
   "secretName": "registry-credentials",
   "version": "1.42.0",
   "dynamicValues": [
-    "AMBARI_KERBEROS_REALM:global.security.kerberos.realm"
+    "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
+    "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
+    "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl"
+  ],
+  "oidc": [
+    {
+      "key": "trino",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
   ],
   "requiredConfigMaps": [
     {

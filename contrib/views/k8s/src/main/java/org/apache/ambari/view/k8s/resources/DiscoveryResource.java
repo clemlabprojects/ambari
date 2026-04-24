@@ -58,7 +58,68 @@ public class DiscoveryResource {
         LOG.info("Discovering Ambari services for type: {}", serviceType);
         List<Map<String, String>> results = new ArrayList<>();
 
-        if ("HIVE_METASTORE".equals(serviceType)) {
+        if ("POLARIS".equals(serviceType)) {
+            try {
+                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String clusterName = resolveClusterName(ambariBase, headers);
+                AmbariActionClient client = new AmbariActionClient(
+                        viewContext, ambariBase, clusterName,
+                        AmbariActionClient.toAuthHeaders(headers.getRequestHeaders())
+                );
+
+                List<String> hosts = client.getComponentHosts(clusterName, "POLARIS", "POLARIS_SERVER");
+
+                // Port: read from polaris-application-properties, fall back to 8181
+                String portStr = null;
+                try {
+                    portStr = client.getDesiredConfigProperty(clusterName, "polaris-application-properties", "quarkus.http.port");
+                } catch (Exception ignored) {}
+                String port = (portStr != null && !portStr.isBlank()) ? portStr.trim() : "8181";
+
+                for (String host : hosts) {
+                    String url = "http://" + host + ":" + port;
+                    Map<String, String> item = new HashMap<>();
+                    item.put("label", "Polaris (" + host + ":" + port + ")");
+                    item.put("value", url);
+                    results.add(item);
+                }
+                if (hosts.isEmpty()) {
+                    LOG.warn("No POLARIS_SERVER hosts found in cluster {}", clusterName);
+                }
+            } catch (Exception e) {
+                LOG.error("Failed to discover Polaris", e);
+            }
+        } else if ("HIVE_SERVER".equals(serviceType)) {
+            try {
+                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String clusterName = resolveClusterName(ambariBase, headers);
+                AmbariActionClient client = new AmbariActionClient(
+                        viewContext, ambariBase, clusterName,
+                        AmbariActionClient.toAuthHeaders(headers.getRequestHeaders())
+                );
+
+                List<String> hosts = client.getComponentHosts(clusterName, "HIVE", "HIVE_SERVER");
+
+                String portStr = null;
+                try {
+                    portStr = client.getDesiredConfigProperty(clusterName, "hive-site", "hive.server2.thrift.port");
+                } catch (Exception ignored) {}
+                String port = (portStr != null && !portStr.isBlank()) ? portStr.trim() : "10000";
+
+                for (String host : hosts) {
+                    Map<String, String> item = new HashMap<>();
+                    item.put("label", "HiveServer2 (" + host + ":" + port + ")");
+                    item.put("value", host);
+                    item.put("port", port);
+                    results.add(item);
+                }
+                if (hosts.isEmpty()) {
+                    LOG.warn("No HIVE_SERVER hosts found in cluster {}", clusterName);
+                }
+            } catch (Exception e) {
+                LOG.error("Failed to discover HiveServer2", e);
+            }
+        } else if ("HIVE_METASTORE".equals(serviceType)) {
             try {
                 // 1. Resolve correct Ambari Base URL
                 String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());

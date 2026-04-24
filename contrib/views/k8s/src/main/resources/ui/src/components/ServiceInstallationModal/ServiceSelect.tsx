@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Form, Select, Button, Divider, Space, Typography } from 'antd';
+import { Form, Select, AutoComplete, Button, Divider, Space, Typography } from 'antd';
 import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getMonitoringDiscovery } from '../../api/client';
@@ -88,6 +88,20 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
 
   const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
 
+  // freeform: true → AutoComplete (discovered options as suggestions + free text input)
+  if (field.freeform) {
+    return (
+      <Form.Item name={nameParts} label={field.label} help={field.help}>
+        <AutoComplete
+          options={services.map(s => ({ label: s.label, value: s.value }))}
+          allowClear
+          placeholder={isLoading ? 'Discovering...' : 'http://host:8181'}
+          onChange={(val) => { if (onValueSelect) onValueSelect(val); }}
+        />
+      </Form.Item>
+    );
+  }
+
   return (
       <Form.Item name={nameParts} label={field.label} help={field.help}>
         <Select
@@ -95,7 +109,10 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
             allowClear
             placeholder={isLoading ? 'Loading...' : 'Select...'}
             onChange={(val) => {
-              if (onValueSelect) onValueSelect(val);
+              if (onValueSelect) {
+                const svc = services.find(s => s.value === val);
+                onValueSelect(svc ?? val);
+              }
             }}
             dropdownRender={(menu) => (
                 <>

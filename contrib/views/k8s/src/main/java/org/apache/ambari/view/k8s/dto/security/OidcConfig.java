@@ -22,6 +22,8 @@ package org.apache.ambari.view.k8s.dto.security;
  * OIDC configuration.
  */
 public class OidcConfig {
+    /** "internal" = Ambari auto-registers in Keycloak per service; "external" = admin-supplied credentials. */
+    public String source = "internal";
     public String issuerUrl;
     public String clientId;
     public String clientSecret;

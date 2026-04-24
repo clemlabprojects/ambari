@@ -286,7 +286,10 @@ public class HelmService {
 
         boolean releaseExists = false;
         try {
-            releaseExists = helmClient.list(namespace, kubeconfig, true).stream()
+            // Use all=true to detect releases in any state (deployed, failed, pending-*).
+            // Using deployedOnly=true would miss failed/pending releases, causing install
+            // to fail with "cannot re-use a name that is still in use".
+            releaseExists = helmClient.list(namespace, kubeconfig, false).stream()
                     .anyMatch(r -> releaseName.equals(r.getName()));
         } catch (Exception e) {
             LOG.warn("Could not list releases to detect existence, will try install then upgrade fallback: {}", e.toString());
@@ -368,8 +371,9 @@ public class HelmService {
                 );
             } catch (IllegalStateException alreadyExists) {
                 final String msg = alreadyExists.getMessage();
-                if (msg != null && msg.toLowerCase(Locale.ROOT).contains("already exists")) {
-                    LOG.warn("Install reported 'already exists', switching to upgrade.");
+                final String msgLower = msg != null ? msg.toLowerCase(Locale.ROOT) : "";
+                if (msgLower.contains("already exists") || msgLower.contains("cannot re-use a name that is still in use")) {
+                    LOG.warn("Install reported '{}', switching to upgrade.", msg);
                     return helmClient.upgrade(
                             chartRef,
                             versionOpt,
@@ -403,6 +407,21 @@ public class HelmService {
                         /*atomic*/ atomic,
                         /*dryRun*/ dryRun
             );
+        }
+    }
+
+    /**
+     * Returns true if the named release exists in the given namespace with status "deployed".
+     * Used to recover from helm-java response-parse failures where the chart was actually installed.
+     */
+    public Optional<Release> findDeployedRelease(String releaseName, String namespace, String kubeconfig) {
+        try {
+            return helmClient.list(namespace, kubeconfig, true).stream()
+                    .filter(r -> releaseName.equals(r.getName()))
+                    .findFirst();
+        } catch (Exception e) {
+            LOG.warn("Could not list releases while checking post-install state: {}", e.toString());
+            return Optional.empty();
         }
     }
 

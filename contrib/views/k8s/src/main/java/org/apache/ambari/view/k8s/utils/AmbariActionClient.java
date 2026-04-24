@@ -727,6 +727,33 @@ public class AmbariActionClient {
         return null;
     }
 
+    /**
+     * Returns the hostnames running a given Ambari service component.
+     * Uses: GET /api/v1/clusters/{cluster}/services/{service}/components/{component}
+     *             ?fields=host_components/HostRoles/host_name
+     */
+    public List<String> getComponentHosts(String cluster, String service, String component) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(cluster)
+                + "/services/" + encode(service)
+                + "/components/" + encode(component)
+                + "?fields=host_components/HostRoles/host_name";
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            List<String> hosts = new ArrayList<>();
+            JsonArray hostComponents = root.getAsJsonArray("host_components");
+            if (hostComponents != null) {
+                for (JsonElement el : hostComponents) {
+                    JsonObject hostRoles = el.getAsJsonObject().getAsJsonObject("HostRoles");
+                    if (hostRoles != null && hostRoles.has("host_name")) {
+                        hosts.add(hostRoles.get("host_name").getAsString());
+                    }
+                }
+            }
+            return hosts;
+        }
+    }
+
     public String getDesiredConfigProperty(String cluster, String type, String key) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");

@@ -18,8 +18,8 @@
 
 // ui/src/pages/ConfigurationPage.tsx
 import React from 'react';
-import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps } from 'antd';
-import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps, Dropdown } from 'antd';
+import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, DownOutlined } from '@ant-design/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
@@ -342,8 +342,8 @@ const ConfigurationPage: React.FC = () => {
                                 } catch (e: any) { message.error(e?.message || 'Save failed'); }
                             }}
                         >Save</Button>
-                        <Button
-                            icon={<PlayCircleOutlined />}
+                        <Dropdown.Button
+                            icon={<DownOutlined />}
                             loading={monitoringBootstrapLoading}
                             onClick={async () => {
                                 setMonitoringBootstrapLoading(true);
@@ -355,7 +355,39 @@ const ConfigurationPage: React.FC = () => {
                                 } catch (e: any) { message.error(e?.message || 'Bootstrap failed'); }
                                 finally { setMonitoringBootstrapLoading(false); }
                             }}
-                        >Install now</Button>
+                            menu={{
+                                items: [
+                                    {
+                                        key: 'force',
+                                        label: 'Force reinstall',
+                                        icon: <ExclamationCircleOutlined />,
+                                        danger: true,
+                                    }
+                                ],
+                                onClick: ({ key }) => {
+                                    if (key === 'force') {
+                                        Modal.confirm({
+                                            title: 'Force reinstall monitoring?',
+                                            content: 'This will uninstall the existing kube-prometheus-stack release and reinstall it from scratch. All monitoring data will be lost.',
+                                            okText: 'Force reinstall',
+                                            okButtonProps: { danger: true },
+                                            onOk: async () => {
+                                                setMonitoringBootstrapLoading(true);
+                                                try {
+                                                    const repoId = form.getFieldValue(['monitoring','repoId']);
+                                                    await installMonitoring(repoId, true);
+                                                    message.success('Force reinstall requested');
+                                                    await fetchData(true);
+                                                } catch (e: any) { message.error(e?.message || 'Force reinstall failed'); }
+                                                finally { setMonitoringBootstrapLoading(false); }
+                                            }
+                                        });
+                                    }
+                                }
+                            }}
+                        >
+                            <PlayCircleOutlined /> Install now
+                        </Dropdown.Button>
                         <Button
                             icon={<DisconnectOutlined />}
                             onClick={async () => {

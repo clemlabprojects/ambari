@@ -21,6 +21,10 @@ package org.apache.ambari.view.k8s.service;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.dto.security.OidcConfig;
+import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
+import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
+import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -133,6 +137,81 @@ public class ConfigurationBootstrapService {
 
         } catch (Exception e) {
             LOG.error("Failed to process bootstrap entry " + entry.name, e);
+        }
+    }
+
+    /**
+     * Auto-creates a default OIDC security profile when Keycloak is configured in Ambari
+     * and no OIDC profile exists yet for this view instance.
+     * Called lazily on first GET /security so no Ambari credentials are needed at deploy time.
+     *
+     * @param ambariClient pre-authenticated Ambari client
+     * @param cluster      Ambari cluster name
+     */
+    public void ensureDefaultOidcProfile(AmbariActionClient ambariClient, String cluster) {
+        if (ambariClient == null || cluster == null || cluster.isBlank()) return;
+        try {
+            SecurityProfileService profileService = new SecurityProfileService(context);
+            SecurityProfilesDTO existing = profileService.loadProfiles();
+
+            // Skip if any OIDC profile already exists
+            if (existing.profiles != null) {
+                boolean hasOidc = existing.profiles.values().stream()
+                        .anyMatch(cfg -> "oidc".equalsIgnoreCase(cfg.mode));
+                if (hasOidc) return;
+            }
+
+            // Read OIDC realm config from Ambari
+            String issuerUrl = null;
+            String realm = null;
+            try {
+                issuerUrl = ambariClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_issuer_url");
+            } catch (Exception ignored) {}
+            try {
+                realm = ambariClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
+            } catch (Exception ignored) {}
+
+            if ((issuerUrl == null || issuerUrl.isBlank()) && (realm == null || realm.isBlank())) {
+                LOG.debug("No OIDC realm configured in Ambari cluster {} — skipping default OIDC profile creation", cluster);
+                return;
+            }
+
+            // Compute issuer URL from admin URL + realm if not set directly
+            if (issuerUrl == null || issuerUrl.isBlank()) {
+                try {
+                    String adminUrl = ambariClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+                    if (adminUrl != null && !adminUrl.isBlank() && realm != null && !realm.isBlank()) {
+                        issuerUrl = adminUrl.replaceAll("/$", "") + "/realms/" + realm;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (issuerUrl == null || issuerUrl.isBlank()) return;
+
+            // Build the default internal OIDC profile
+            SecurityConfigDTO profileCfg = new SecurityConfigDTO();
+            profileCfg.mode = "oidc";
+            OidcConfig oidcCfg = new OidcConfig();
+            oidcCfg.source = "internal";
+            oidcCfg.issuerUrl = issuerUrl;
+            oidcCfg.scopes = "openid email profile";
+            oidcCfg.userClaim = "preferred_username";
+            oidcCfg.groupsClaim = "groups";
+            profileCfg.oidc = oidcCfg;
+
+            String profileKey = "keycloak";
+            SecurityProfilesDTO updated = existing != null ? existing : new SecurityProfilesDTO();
+            if (updated.profiles == null) updated.profiles = new HashMap<>();
+            updated.profiles.put(profileKey, profileCfg);
+            if (updated.defaultProfile == null || updated.defaultProfile.isBlank()) {
+                updated.defaultProfile = profileKey;
+            }
+
+            profileService.saveProfiles(updated);
+            LOG.info("Auto-created default OIDC security profile '{}' with issuerUrl={}", profileKey, issuerUrl);
+
+        } catch (Exception ex) {
+            LOG.warn("Failed to auto-create default OIDC security profile: {}", ex.toString());
         }
     }
 

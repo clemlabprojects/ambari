@@ -56,35 +56,43 @@ public class KeycloakAdminClient {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
-    private final String adminUrl;       // e.g. https://keycloak.example.com
-    private final String adminRealm;     // realm used to obtain admin token (usually "master")
-    private final String realm;          // target realm for client operations
-    private final String clientId;       // admin client id (e.g. "admin-cli")
-    private final String clientSecret;   // admin client secret (empty for public clients)
+    private final String adminUrl;        // e.g. https://keycloak.example.com
+    private final String adminRealm;      // realm used to obtain admin token (usually "master")
+    private final String realm;           // target realm for client operations
+    private final String clientId;        // admin client id (e.g. "admin-cli")
+    private final String clientSecret;    // admin client secret — blank for public clients
+    private final String adminUsername;   // admin username for password grant (public clients)
+    private final String adminPassword;   // admin password for password grant (public clients)
     private final boolean verifyTls;
     private final HttpClient http;
 
     /**
-     * @param adminUrl      base URL of Keycloak (no trailing slash)
-     * @param adminRealm    realm used to obtain the admin access token (usually "master")
-     * @param realm         realm where service clients are registered
-     * @param clientId      admin client_id
-     * @param clientSecret  admin client_secret (may be blank for password-grant)
-     * @param verifyTls     whether to verify the Keycloak TLS certificate
+     * @param adminUrl       base URL of Keycloak (no trailing slash)
+     * @param adminRealm     realm used to obtain the admin access token (usually "master")
+     * @param realm          realm where service clients are registered
+     * @param clientId       admin client_id (e.g. "admin-cli")
+     * @param clientSecret   admin client_secret — blank for public clients (admin-cli)
+     * @param adminUsername  admin username for password grant — used when clientSecret is blank
+     * @param adminPassword  admin password for password grant — used when clientSecret is blank
+     * @param verifyTls      whether to verify the Keycloak TLS certificate
      */
     public KeycloakAdminClient(String adminUrl,
                                String adminRealm,
                                String realm,
                                String clientId,
                                String clientSecret,
+                               String adminUsername,
+                               String adminPassword,
                                boolean verifyTls) {
-        this.adminUrl     = Objects.requireNonNull(adminUrl, "adminUrl").replaceAll("/$", "");
-        this.adminRealm   = Objects.requireNonNull(adminRealm, "adminRealm");
-        this.realm        = Objects.requireNonNull(realm, "realm");
-        this.clientId     = Objects.requireNonNull(clientId, "clientId");
-        this.clientSecret = clientSecret == null ? "" : clientSecret;
-        this.verifyTls    = verifyTls;
-        this.http         = buildHttpClient(verifyTls);
+        this.adminUrl      = Objects.requireNonNull(adminUrl, "adminUrl").replaceAll("/$", "");
+        this.adminRealm    = Objects.requireNonNull(adminRealm, "adminRealm");
+        this.realm         = Objects.requireNonNull(realm, "realm");
+        this.clientId      = Objects.requireNonNull(clientId, "clientId");
+        this.clientSecret  = clientSecret == null ? "" : clientSecret;
+        this.adminUsername = adminUsername == null ? "" : adminUsername;
+        this.adminPassword = adminPassword == null ? "" : adminPassword;
+        this.verifyTls     = verifyTls;
+        this.http          = buildHttpClient(verifyTls);
     }
 
     // -------------------------------------------------------------------------
@@ -148,21 +156,33 @@ public class KeycloakAdminClient {
     // -------------------------------------------------------------------------
 
     /**
-     * Obtain a short-lived admin access token using client_credentials (or password) grant.
+     * Obtain a short-lived admin access token.
+     *
+     * Two strategies depending on how the admin client is configured:
+     *   - Confidential client (clientSecret non-blank): client_credentials grant
+     *   - Public client (admin-cli, blank secret):      password grant with adminUsername/adminPassword
      */
     private String obtainAdminToken() throws Exception {
         String tokenUrl = adminUrl + "/realms/" + enc(adminRealm)
                 + "/protocol/openid-connect/token";
 
         String body;
-        if (clientSecret.isBlank()) {
-            // password grant fallback — clientId is assumed to be "admin-cli" with empty secret
-            body = "grant_type=client_credentials"
-                    + "&client_id=" + enc(clientId);
-        } else {
+        if (!clientSecret.isBlank()) {
+            // Confidential client — client_credentials grant
             body = "grant_type=client_credentials"
                     + "&client_id=" + enc(clientId)
                     + "&client_secret=" + enc(clientSecret);
+        } else if (!adminUsername.isBlank()) {
+            // Public client (e.g. admin-cli) — password grant
+            body = "grant_type=password"
+                    + "&client_id=" + enc(clientId)
+                    + "&username=" + enc(adminUsername)
+                    + "&password=" + enc(adminPassword);
+        } else {
+            throw new IllegalStateException(
+                    "KeycloakAdminClient: neither clientSecret nor adminUsername is configured. "
+                    + "Set oidc_admin_client_secret (confidential client) or "
+                    + "oidc_admin_username + oidc_admin_password (public client / admin-cli).");
         }
 
         HttpRequest req = HttpRequest.newBuilder()

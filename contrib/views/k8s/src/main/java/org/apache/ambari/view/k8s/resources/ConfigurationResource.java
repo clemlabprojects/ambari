@@ -24,12 +24,14 @@ import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
+import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
 import javax.ws.rs.Consumes;
+import javax.ws.rs.core.Context;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
@@ -37,8 +39,10 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -189,8 +193,21 @@ public class ConfigurationResource {
 
     @GET
     @Path("/security")
-    public Response getSecurityConfig() {
+    public Response getSecurityConfig(@Context HttpHeaders headers, @Context UriInfo ui) {
         try {
+            // Lazily auto-create a default OIDC profile when Keycloak is configured in Ambari
+            try {
+                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String cluster = resolveClusterName(ambariBase, headers);
+                AmbariActionClient ambariClient = new AmbariActionClient(
+                        viewContext, ambariBase, cluster,
+                        AmbariActionClient.toAuthHeaders(headers.getRequestHeaders()));
+                new ConfigurationBootstrapService(viewContext, kubernetesService)
+                        .ensureDefaultOidcProfile(ambariClient, cluster);
+            } catch (Exception ignored) {
+                // Best-effort — never block the GET if Ambari is unreachable
+            }
+
             SecurityProfilesDTO cfg = loadProfilesFromStore();
             return Response.ok(cfg).build();
         } catch (Exception e) {
@@ -287,5 +304,33 @@ public class ConfigurationResource {
 
     private SecurityProfilesDTO loadProfilesFromStore() throws Exception {
         return new SecurityProfileService(viewContext).loadProfiles();
+    }
+
+    private String resolveAmbariBaseUrl(java.net.URI requestBase) {
+        String base = requestBase.toString();
+        // Strip everything after /api/v1 to get the Ambari root
+        int i = base.indexOf("/api/v1");
+        if (i > 0) {
+            return base.substring(0, i + "/api/v1".length());
+        }
+        return base;
+    }
+
+    private String resolveClusterName(String ambariApiBase, HttpHeaders headers) throws Exception {
+        if (viewContext.getCluster() != null) {
+            return viewContext.getCluster().getName();
+        }
+        AmbariActionClient client = new AmbariActionClient(
+                viewContext, ambariApiBase,
+                AmbariActionClient.toAuthHeaders(headers.getRequestHeaders()));
+        List<String> clusters = client.listClusters();
+        if (clusters.isEmpty()) throw new IllegalStateException("No clusters found");
+        String preferred = viewContext.getProperties().get("ambari.cluster.preferred");
+        if (preferred != null && !preferred.isBlank()) {
+            for (String c : clusters) {
+                if (c.equalsIgnoreCase(preferred)) return c;
+            }
+        }
+        return clusters.get(0);
     }
 }

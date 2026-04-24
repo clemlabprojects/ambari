@@ -18,7 +18,7 @@
 
 // ui/src/components/layout/AppLayout.tsx
 import React from 'react';
-import { Layout, Menu, Space, Spin, Tag, Alert, Button, Badge, Breadcrumb } from 'antd';
+import { Layout, Menu, Space, Spin, Tag, Alert, Button, Breadcrumb } from 'antd';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   CodeSandboxOutlined,
@@ -198,10 +198,22 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         >
           <Space size={6} style={{ marginLeft: 'auto' }}>
             <Button size="small" onClick={() => setIsOperationsModalOpen(true)}>
-              <Space size={6}>
-                <span>Background Ops</span>
-                <Badge count={operationsCount} size="small" style={{ backgroundColor: '#1677ff' }} />
-              </Space>
+              Background Ops
+              {operationsCount > 0 && (
+                <span style={{
+                  marginLeft: 5,
+                  background: '#1677ff',
+                  color: '#fff',
+                  borderRadius: 10,
+                  padding: '0 5px',
+                  fontSize: 10,
+                  lineHeight: '16px',
+                  display: 'inline-block',
+                  verticalAlign: 'middle',
+                }}>
+                  {operationsCount}
+                </span>
+              )}
             </Button>
             {clusterStats?.nodes && (
               <Tag

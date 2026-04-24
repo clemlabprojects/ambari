@@ -1044,11 +1044,18 @@ public class KubernetesService {
      * @return discovered info after ensuring install.
      */
     public MonitoringInfo ensureMonitoringInstalled(String repoIdOverride) {
+        return ensureMonitoringInstalled(repoIdOverride, false);
+    }
+
+    public MonitoringInfo ensureMonitoringInstalled(String repoIdOverride, boolean force) {
         MonitoringSettings settings = loadMonitoringSettings();
         MonitoringInfo info = discoverMonitoringPrometheus();
-        if (info != null) {
+        if (info != null && !force) {
             LOG.info("Monitoring stack already present: release={}, namespace={}, url={}", info.release(), info.namespace(), info.url());
             return info;
+        }
+        if (info != null) {
+            LOG.info("Force reinstall requested: monitoring stack present but will reinstall. release={}, namespace={}", info.release(), info.namespace());
         }
 
         String enabledProp = viewContext.getAmbariProperty("monitoring.enabled");
@@ -1119,6 +1126,19 @@ public class KubernetesService {
                 LOG.warn("Cannot bootstrap monitoring: monitoring.repoId is not set and no repos are configured.");
                 return null;
             }
+        }
+
+        if (force) {
+            LOG.info("Force reinstall: uninstalling monitoring release={} in namespace={} before reinstall", release, ns);
+            try {
+                helmService.uninstall(ns, release, configurationService.getKubeconfigContents());
+            } catch (Exception uninstEx) {
+                LOG.warn("Pre-uninstall for force monitoring reinstall failed (ignored): {}", uninstEx.toString());
+            }
+            try {
+                viewContext.removeInstanceData("monitoring.prometheus.url");
+                viewContext.removeInstanceData("monitoring.repoId");
+            } catch (Exception ignored) { /* best-effort */ }
         }
 
         MonitoringExposure promExposure = null;
@@ -3306,12 +3326,9 @@ public class KubernetesService {
 
                 // Format for UI
                 Map<String, String> item = new HashMap<>();
-                item.put("label", String.format("%s (%s)", name, ns)); // Text shown in dropdown
-                item.put("value", internalDns); // Value put into values.yaml
-
-                // Optional: You could pass port separately if needed,
-                // but usually connection strings take "host:port" or just host.
-                // item.put("port", String.valueOf(port));
+                item.put("label", String.format("%s (%s)", name, ns));
+                item.put("value", internalDns);
+                item.put("port", String.valueOf(port));
 
                 results.add(item);
             }

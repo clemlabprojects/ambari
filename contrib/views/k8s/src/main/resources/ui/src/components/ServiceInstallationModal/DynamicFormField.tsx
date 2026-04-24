@@ -46,8 +46,23 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Card>
       );
     case 'service-select':
-    case 'hadoop-discovery':
-      return <ServiceSelect field={field as any} />;
+    case 'hadoop-discovery': {
+      const f = field as any;
+      if (f.targetHost || f.targetPort) {
+        return (
+          <ServiceSelect
+            field={f}
+            onValueSelect={(svcOrVal) => {
+              const host = typeof svcOrVal === 'object' ? svcOrVal?.value : svcOrVal;
+              const port = typeof svcOrVal === 'object' ? svcOrVal?.port : undefined;
+              if (f.targetHost && host != null) form.setFieldValue(f.targetHost.split('.'), host);
+              if (f.targetPort && port != null) form.setFieldValue(f.targetPort.split('.'), Number(port));
+            }}
+          />
+        );
+      }
+      return <ServiceSelect field={f} />;
+    }
     case 'monitoring-discovery':
       return (
         <ServiceSelect
@@ -69,8 +84,23 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           }}
         />
       );
-    case 'k8s-discovery': // Add this case
-      return <ServiceSelect field={field as any} />;
+    case 'k8s-discovery': {
+      const f = field as any;
+      if (f.targetHost || f.targetPort) {
+        return (
+          <ServiceSelect
+            field={f}
+            onValueSelect={(svcOrVal) => {
+              const host = typeof svcOrVal === 'object' ? svcOrVal?.value : svcOrVal;
+              const port = typeof svcOrVal === 'object' ? svcOrVal?.port : undefined;
+              if (f.targetHost && host != null) form.setFieldValue(f.targetHost.split('.'), host);
+              if (f.targetPort && port != null) form.setFieldValue(f.targetPort.split('.'), Number(port));
+            }}
+          />
+        );
+      }
+      return <ServiceSelect field={f} />;
+    }
     case 'select':
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>

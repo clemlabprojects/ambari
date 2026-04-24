@@ -4,7 +4,25 @@
   "chart": "gitlab",
   "version": "8.11.2",
   "defaultRepo": "clemlabprojects",
+  "secretName": "registry-credentials",
   "pattern": "gitlab-.*",
+
+  "dynamicValues": [
+    "AMBARI_OIDC_ISSUER_URL:gitlab.global.appConfig.omniauth.issuerUrl"
+  ],
+
+  "oidc": [
+    {
+      "key": "gitlab",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "gitlabOmniauth": true,
+      "enabled": true
+    }
+  ],
 
   "form": [
     {
@@ -24,7 +42,7 @@
       "help": "Kubernetes namespace to deploy GitLab into. Created automatically if it does not exist."
     },
     {
-      "name": "global.hosts.domain",
+      "name": "gitlab.global.hosts.domain",
       "label": "Ingress Domain",
       "type": "string",
       "required": true,
@@ -32,63 +50,63 @@
       "help": "Base domain for GitLab ingress. GitLab will be reachable at gitlab.<domain>. All sub-services (registry, pages) derive their hostnames from this value."
     },
     {
-      "name": "global.hosts.https",
+      "name": "gitlab.global.hosts.https",
       "label": "Enable HTTPS",
       "type": "boolean",
       "defaultValue": false,
       "help": "Disable for dev clusters without cert-manager. When false, GitLab is served over plain HTTP."
     },
     {
-      "name": "global.ingress.class",
+      "name": "gitlab.global.ingress.class",
       "label": "Ingress Class",
       "type": "string",
       "defaultValue": "nginx",
       "help": "IngressClass to use for GitLab web and SSH ingress (e.g. nginx, traefik)."
     },
     {
-      "name": "global.ingress.configureCertmanager",
+      "name": "gitlab.global.ingress.configureCertmanager",
       "label": "Configure cert-manager",
       "type": "boolean",
       "defaultValue": false,
       "help": "Let the GitLab chart manage cert-manager TLS certificates. Disable if you do not have cert-manager installed."
     },
     {
-      "name": "certmanager.install",
+      "name": "gitlab.certmanager.install",
       "label": "Install bundled cert-manager",
       "type": "boolean",
       "defaultValue": false,
       "help": "GitLab can install its own cert-manager. Keep false if the cluster already has one."
     },
     {
-      "name": "nginx-ingress.enabled",
+      "name": "gitlab.nginx-ingress.enabled",
       "label": "Install bundled nginx-ingress",
       "type": "boolean",
       "defaultValue": false,
       "help": "GitLab bundles an nginx ingress controller. Keep false if the cluster already has an ingress controller."
     },
     {
-      "name": "prometheus.install",
+      "name": "gitlab.prometheus.install",
       "label": "Install bundled Prometheus",
       "type": "boolean",
       "defaultValue": false,
       "help": "GitLab bundles its own Prometheus instance. Disable if you already have cluster-wide monitoring (e.g. kube-prometheus-stack)."
     },
     {
-      "name": "gitlab-runner.install",
+      "name": "gitlab.gitlab-runner.install",
       "label": "Install GitLab Runner",
       "type": "boolean",
       "defaultValue": false,
       "help": "Deploy a GitLab Runner alongside GitLab. Can be enabled later via upgrade."
     },
     {
-      "name": "registry.enabled",
+      "name": "gitlab.registry.enabled",
       "label": "Enable Container Registry",
       "type": "boolean",
       "defaultValue": false,
       "help": "Enable the built-in container registry (registry.<domain>). Requires additional ingress and storage. Disable for minimal dev installs."
     },
     {
-      "name": "global.edition",
+      "name": "gitlab.global.edition",
       "label": "Edition",
       "type": "select",
       "defaultValue": "ce",
@@ -99,18 +117,39 @@
       "help": "CE is free and suitable for dev/GitOps use. EE requires a valid licence key."
     },
     {
-      "name": "gitlab.toolbox.backups.cron.enabled",
+      "name": "gitlab.gitlab.toolbox.backups.cron.enabled",
       "label": "Enable scheduled backups",
       "type": "boolean",
       "defaultValue": false,
       "help": "Enable the GitLab toolbox backup cron job. Keep false for dev installs."
     },
     {
-      "name": "global.appConfig.initialDefaults.signupEnabled",
+      "name": "gitlab.global.appConfig.initialDefaults.signupEnabled",
       "label": "Allow public sign-up",
       "type": "boolean",
       "defaultValue": false,
       "help": "Allow users to self-register. Disable for private dev instances."
+    },
+    {
+      "name": "ssoConfig",
+      "label": "Single Sign-On (OIDC)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "gitlab.global.appConfig.omniauth.syncProfileFromProvider[0]",
+          "label": "Sync profile from SSO",
+          "type": "string",
+          "defaultValue": "openid_connect",
+          "help": "Provider name to sync name/email from. Leave as 'openid_connect' for Keycloak SSO."
+        },
+        {
+          "name": "gitlab.global.appConfig.omniauth.syncProfileAttributes[0]",
+          "label": "Sync profile attributes",
+          "type": "string",
+          "defaultValue": "email",
+          "help": "Attributes to sync from the OIDC provider (e.g. email)."
+        }
+      ]
     }
   ],
 
@@ -124,7 +163,7 @@
         "domain": {
           "source": "helm",
           "type": "string",
-          "path": "global.hosts.domain"
+          "path": "gitlab.global.hosts.domain"
         }
       }
     },
@@ -137,7 +176,7 @@
         "domain": {
           "source": "helm",
           "type": "string",
-          "path": "global.hosts.domain"
+          "path": "gitlab.global.hosts.domain"
         }
       }
     },
@@ -150,7 +189,7 @@
         "domain": {
           "source": "helm",
           "type": "string",
-          "path": "global.hosts.domain"
+          "path": "gitlab.global.hosts.domain"
         }
       }
     }

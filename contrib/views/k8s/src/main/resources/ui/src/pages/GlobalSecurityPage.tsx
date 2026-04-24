@@ -56,6 +56,7 @@ const GlobalSecurityPage: React.FC = () => {
   }, [schema]);
 
   const mode = Form.useWatch('mode', form);
+  const oidcSource = Form.useWatch(['oidc', 'source'], form);
 
   const modeProperty = schemaProperties.find((prop: any) => prop.name === 'mode');
   const modeOptions = Array.isArray(modeProperty?.options)
@@ -395,7 +396,14 @@ const GlobalSecurityPage: React.FC = () => {
           {mode === 'oidc' && (
             <div style={{ marginBottom: 16 }}>
               <Title level={4} style={{ marginBottom: 8 }}>{modeLabel || 'OIDC'}</Title>
-              {modeFields('oidc', mode).map((prop: any) => renderSchemaField(prop, mode))}
+              {modeFields('oidc', mode)
+                .filter((prop: any) => {
+                  // Hide clientId/clientSecret for internal source (Ambari auto-registers)
+                  const isExternalOnly = prop.name === 'oidc.clientId' || prop.name === 'oidc.clientSecret';
+                  if (isExternalOnly) return (oidcSource ?? 'internal') === 'external';
+                  return true;
+                })
+                .map((prop: any) => renderSchemaField(prop, mode))}
             </div>
           )}
 

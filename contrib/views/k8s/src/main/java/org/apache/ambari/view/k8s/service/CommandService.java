@@ -714,7 +714,8 @@ public class CommandService {
                                              String redirectUri,
                                              String secretName,
                                              String oidcEntryKey,
-                                             String vaultPath) {
+                                             String vaultPath,
+                                             Map<String, Object> extraStepParams) {
         final String now = Instant.now().toString();
 
         // Step 1: register/update the OIDC client in Keycloak
@@ -726,6 +727,9 @@ public class CommandService {
         registerParams.put("oidcEntryKey", oidcEntryKey);
         if (vaultPath != null && !vaultPath.isBlank()) {
             registerParams.put("oidcVaultPath", vaultPath);
+        }
+        if (extraStepParams != null && !extraStepParams.isEmpty()) {
+            registerParams.putAll(extraStepParams);
         }
 
         CommandEntity registerCmd = new CommandEntity();
@@ -778,6 +782,61 @@ public class CommandService {
     }
 
     /**
+     * Append only the OIDC_CREATE_SECRET step for an external OIDC profile where the admin
+     * pre-supplied clientId/clientSecret in the security profile (no Keycloak registration needed).
+     */
+    private void appendOidcExternalSecretStep(CommandEntity rootCommand,
+                                              List<String> childCommandIds,
+                                              Map<String, Object> rootParams,
+                                              String externalClientId,
+                                              String externalClientSecret,
+                                              String externalIssuerUrl,
+                                              String secretName,
+                                              String oidcEntryKey,
+                                              String vaultPath,
+                                              Map<String, Object> extraStepParams) {
+        final String now = Instant.now().toString();
+        String createSecretCmdId = rootCommand.getId() + "-oidc-" + UUID.randomUUID();
+
+        Map<String, Object> createParams = new LinkedHashMap<>(rootParams);
+        createParams.put("oidcSecretName", secretName);
+        createParams.put("oidcEntryKey", oidcEntryKey);
+        createParams.put("oidcExternalClientId", externalClientId != null ? externalClientId : "");
+        createParams.put("oidcExternalClientSecret", externalClientSecret != null ? externalClientSecret : "");
+        if (externalIssuerUrl != null && !externalIssuerUrl.isBlank()) {
+            createParams.put("oidcExternalIssuerUrl", externalIssuerUrl);
+        }
+        if (vaultPath != null && !vaultPath.isBlank()) {
+            createParams.put("oidcVaultPath", vaultPath);
+        }
+        if (extraStepParams != null && !extraStepParams.isEmpty()) {
+            createParams.putAll(extraStepParams);
+        }
+
+        CommandEntity createSecretCmd = new CommandEntity();
+        createSecretCmd.setId(createSecretCmdId);
+        createSecretCmd.setViewInstance(ctx.getInstanceName());
+        createSecretCmd.setType(CommandType.OIDC_CREATE_SECRET.name());
+        createSecretCmd.setTitle("K8s: create/update OIDC secret " + secretName + " (external)");
+        createSecretCmd.setParamsJson(gson.toJson(createParams));
+
+        CommandStatusEntity createSecretStatus = new CommandStatusEntity();
+        createSecretStatus.setId(createSecretCmdId + "-status");
+        createSecretStatus.setAttempt(0);
+        createSecretStatus.setState(CommandState.PENDING.name());
+        createSecretStatus.setCreatedBy(ctx.getUsername());
+        createSecretStatus.setCreatedAt(now);
+        createSecretStatus.setUpdatedAt(now);
+        createSecretCmd.setCommandStatusId(createSecretStatus.getId());
+
+        store(createSecretStatus);
+        store(createSecretCmd);
+        childCommandIds.add(createSecretCmdId);
+
+        LOG.info("Added external OIDC secret step for entry {}: createSecretId={}", oidcEntryKey, createSecretCmdId);
+    }
+
+    /**
      * Resolve the OIDC issuer URL from Ambari cluster config.
      * Returns the oidc_issuer_url property if non-blank; otherwise computes it as
      * {oidc_admin_url}/realms/{oidc_realm}.
@@ -795,6 +854,35 @@ public class CommandService {
             LOG.warn("Could not resolve OIDC issuer URL from cluster {}: {}", cluster, ex.toString());
         }
         return null;
+    }
+
+    /**
+     * Build the GitLab OmniAuth provider YAML stored in the provider K8s secret.
+     * GitLab reads this YAML to configure the openid_connect strategy.
+     */
+    private String buildGitlabOmniauthProviderYaml(String clientId, String clientSecret, String issuerUrl, String callbackUrl) {
+        String safeClientId     = clientId     != null ? clientId     : "";
+        String safeClientSecret = clientSecret != null ? clientSecret : "";
+        String safeIssuerUrl    = issuerUrl    != null ? issuerUrl    : "";
+        String safeCallbackUrl  = callbackUrl  != null ? callbackUrl  : "";
+        return "name: openid_connect\n"
+             + "label: \"SSO\"\n"
+             + "args:\n"
+             + "  name: openid_connect\n"
+             + "  scope:\n"
+             + "    - openid\n"
+             + "    - profile\n"
+             + "    - email\n"
+             + "  response_type: code\n"
+             + "  issuer: " + safeIssuerUrl + "\n"
+             + "  discovery: true\n"
+             + "  client_auth_method: query\n"
+             + "  uid_field: preferred_username\n"
+             + "  pkce: true\n"
+             + "  client_options:\n"
+             + "    identifier: " + safeClientId + "\n"
+             + "    secret: " + safeClientSecret + "\n"
+             + "    redirect_uri: " + safeCallbackUrl + "\n";
     }
 
     /**
@@ -922,7 +1010,7 @@ public class CommandService {
             String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm);
 
             appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
-                    clientId, redirectUri, secretName, entryKey, vaultPath);
+                    clientId, redirectUri, secretName, entryKey, vaultPath, Collections.emptyMap());
             stepsAdded = true;
         }
 
@@ -3394,6 +3482,14 @@ public class CommandService {
                 }
                 params.put("oidcRealm", oidcRealm);
 
+                // Determine OIDC source: "external" = admin pre-supplied credentials; "internal" = Keycloak registration
+                boolean oidcIsExternal = securityCfg != null
+                        && securityCfg.oidc != null
+                        && "external".equalsIgnoreCase(securityCfg.oidc.source);
+                String externalClientId     = oidcIsExternal && securityCfg.oidc.clientId     != null ? securityCfg.oidc.clientId     : null;
+                String externalClientSecret = oidcIsExternal && securityCfg.oidc.clientSecret != null ? securityCfg.oidc.clientSecret : null;
+                String externalIssuerUrl    = oidcIsExternal && securityCfg.oidc.issuerUrl    != null ? securityCfg.oidc.issuerUrl    : null;
+
                 boolean oidcStepsAdded = false;
                 boolean oidcHelmOverridesApplied = false;
                 int oidcIdx = 0;
@@ -3404,32 +3500,70 @@ public class CommandService {
                         continue;
                     }
                     String entryKey  = resolveStringValue(entry.get("key"), "entry-" + oidcIdx);
-                    String clientIdT = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
                     String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
-                    String redirectT = resolveStringValue(entry.get("redirectUriTemplate"), "");
                     String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
+                    String secretName = renderOidcTemplate(secretT, request.getReleaseName(), request.getNamespace(), oidcRealm);
 
-                    String clientId    = renderOidcTemplate(clientIdT,  request.getReleaseName(), request.getNamespace(), oidcRealm);
-                    String secretName  = renderOidcTemplate(secretT,    request.getReleaseName(), request.getNamespace(), oidcRealm);
-                    String redirectUri = renderOidcTemplate(redirectT,  request.getReleaseName(), request.getNamespace(), oidcRealm);
+                    boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
+                            || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
 
-                    appendOidcRegistrationSteps(rootCommand, childCommands, params,
-                            clientId, redirectUri, secretName, entryKey, vaultPath);
+                    Map<String, Object> extraOidcParams = new LinkedHashMap<>();
+                    String providerSecretName = null;
+                    if (gitlabOmniauth) {
+                        providerSecretName = request.getReleaseName() + "-omniauth-provider";
+                        Object domainObj = getByPath(params, "gitlab.global.hosts.domain");
+                        if (domainObj == null) domainObj = params.get("gitlab.global.hosts.domain");
+                        Object httpsObj = getByPath(params, "gitlab.global.hosts.https");
+                        if (httpsObj == null) httpsObj = params.get("gitlab.global.hosts.https");
+                        String domain = domainObj != null ? String.valueOf(domainObj) : "";
+                        boolean https = Boolean.TRUE.equals(httpsObj) || "true".equalsIgnoreCase(String.valueOf(httpsObj));
+                        String callbackUrl = (https ? "https" : "http") + "://gitlab." + domain + "/users/auth/openid_connect/callback";
+                        extraOidcParams.put("oidcGitlabOmniauth", "true");
+                        extraOidcParams.put("oidcProviderSecretName", providerSecretName);
+                        extraOidcParams.put("oidcGitlabCallbackUrl", callbackUrl);
+                    }
+
+                    if (oidcIsExternal) {
+                        // External OIDC: no Keycloak registration — write the secret directly from profile credentials
+                        appendOidcExternalSecretStep(rootCommand, childCommands, params,
+                                externalClientId, externalClientSecret, externalIssuerUrl,
+                                secretName, entryKey, vaultPath, extraOidcParams);
+                    } else {
+                        // Internal OIDC: register client in Keycloak, then create secret
+                        String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
+                        String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
+                        String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
+                        String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm);
+                        appendOidcRegistrationSteps(rootCommand, childCommands, params,
+                                clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
+                    }
                     oidcStepsAdded = true;
 
                     if (!oidcHelmOverridesApplied) {
-                        // Wire first entry into global.security.auth.* Helm values
-                        this.commandUtils.addOverride(params, "global.security.auth.mode", "oidc");
-                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.name", secretName);
-                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientIdKey", "client_id");
-                        this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientSecretKey", "client_secret");
+                        if (gitlabOmniauth) {
+                            // GitLab uses OmniAuth provider secret rather than global.security.auth.*
+                            this.commandUtils.addOverride(params, "gitlab.global.appConfig.omniauth.enabled", "true");
+                            this.commandUtils.addOverride(params, "gitlab.global.appConfig.omniauth.allowSingleSignOn[0]", "openid_connect");
+                            this.commandUtils.addOverride(params, "gitlab.global.appConfig.omniauth.blockAutoCreatedUsers", "false");
+                            this.commandUtils.addOverride(params, "gitlab.global.appConfig.omniauth.providers[0].secret", providerSecretName);
+                        } else {
+                            // Standard global.security.auth.* wiring (Superset, Trino, etc.)
+                            this.commandUtils.addOverride(params, "global.security.auth.mode", "oidc");
+                            this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.name", secretName);
+                            this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientIdKey", "client_id");
+                            this.commandUtils.addOverride(params, "global.security.auth.oidc.secretRef.clientSecretKey", "client_secret");
+                        }
                         oidcHelmOverridesApplied = true;
                     }
                 }
 
                 if (oidcStepsAdded) {
-                    // Resolve issuer URL from Ambari and set as Helm override
-                    if (ambariActionClient != null && cluster != null) {
+                    // Resolve issuer URL: external profiles carry it in the profile DTO; internal from Ambari
+                    if (oidcIsExternal) {
+                        if (externalIssuerUrl != null && !externalIssuerUrl.isBlank()) {
+                            this.commandUtils.addOverride(params, "global.security.auth.oidc.issuerUrl", externalIssuerUrl);
+                        }
+                    } else if (ambariActionClient != null && cluster != null) {
                         String issuerUrl = resolveOidcIssuerUrl(ambariActionClient, cluster);
                         if (issuerUrl != null && !issuerUrl.isBlank()) {
                             this.commandUtils.addOverride(params, "global.security.auth.oidc.issuerUrl", issuerUrl);
@@ -4656,8 +4790,10 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        LOG.info("TODO//: remove global.imagePullSecrets hardcoded Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        overrideProperties.put("global.imagePullSecrets[0].name", (String) secretName);
+                        // Bitnami sub-charts (e.g. Redis inside GitLab) expect global.imagePullSecrets as a list of
+                        // plain secret names (strings), not {name: ...} maps. Using the [0] index without .name
+                        // produces the correct string-list format that renderPullSecrets handles.
+                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
                     }
 
                     HelmRepoEntity repository = repositoryDao.findById(repoId);
@@ -4731,8 +4867,7 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        LOG.info("TODO RUN//: remove global.imagePullSecrets hardcoded Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        overrideProperties.put("global.imagePullSecrets[0].name", (String) secretName);
+                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
                     }
 
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
@@ -5129,6 +5264,8 @@ public class CommandService {
                     String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
                     String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
                     String adminClientSec  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+                    String adminUsername   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_username");
+                    String adminPassword   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_password");
                     String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
                     boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
 
@@ -5137,6 +5274,7 @@ public class CommandService {
                     }
                     if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
                     if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+                    if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
 
                     String desiredClientId = (String) childParams.get("oidcClientId");
                     String redirectUri     = (String) childParams.get("oidcRedirectUri");
@@ -5148,7 +5286,10 @@ public class CommandService {
                     validateOidcClientId(desiredClientId);
 
                     var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
-                            oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTls);
+                            oidcAdminUrl, oidcAdminRealm, oidcRealm,
+                            adminClientId, adminClientSec,
+                            adminUsername, adminPassword,
+                            verifyTls);
 
                     appendCommandLog(child.getId(), "Registering OIDC client '" + desiredClientId
                             + "' in realm '" + oidcRealm + "'");
@@ -5180,36 +5321,49 @@ public class CommandService {
                     Objects.requireNonNull(namespace,  "namespace");
                     Objects.requireNonNull(secretName, "oidcSecretName");
 
-                    // Locate sibling OIDC_REGISTER_CLIENT result
-                    String registerId = (String) childParams.get("oidcRegisterId");
-                    if (registerId == null || registerId.isBlank()) {
-                        Type listType = new com.google.gson.reflect.TypeToken<ArrayList<String>>(){}.getType();
-                        List<String> siblings = gson.fromJson(root.getChildListJson(), listType);
-                        if (siblings != null) {
-                            registerId = siblings.stream()
-                                    .filter(cid -> {
-                                        CommandEntity c = findCommandById(cid);
-                                        return c != null && CommandType.OIDC_REGISTER_CLIENT.name().equals(c.getType());
-                                    })
-                                    .findFirst().orElse(null);
+                    // External OIDC: admin pre-supplied credentials in the security profile
+                    String clientId;
+                    String clientSecret;
+                    String issuerUrl;
+                    if (childParams.containsKey("oidcExternalClientId")) {
+                        clientId     = (String) childParams.get("oidcExternalClientId");
+                        clientSecret = (String) childParams.get("oidcExternalClientSecret");
+                        issuerUrl    = (String) childParams.get("oidcExternalIssuerUrl");
+                        if (clientId == null || clientId.isBlank()) {
+                            throw new IllegalStateException("External OIDC: oidcExternalClientId is empty");
                         }
-                    }
-                    if (registerId == null) {
-                        throw new IllegalStateException("Missing OIDC_REGISTER_CLIENT sibling before OIDC_CREATE_SECRET");
-                    }
+                    } else {
+                        // Internal OIDC: locate sibling OIDC_REGISTER_CLIENT result
+                        String registerId = (String) childParams.get("oidcRegisterId");
+                        if (registerId == null || registerId.isBlank()) {
+                            Type listType = new com.google.gson.reflect.TypeToken<ArrayList<String>>(){}.getType();
+                            List<String> siblings = gson.fromJson(root.getChildListJson(), listType);
+                            if (siblings != null) {
+                                registerId = siblings.stream()
+                                        .filter(cid -> {
+                                            CommandEntity c = findCommandById(cid);
+                                            return c != null && CommandType.OIDC_REGISTER_CLIENT.name().equals(c.getType());
+                                        })
+                                        .findFirst().orElse(null);
+                            }
+                        }
+                        if (registerId == null) {
+                            throw new IllegalStateException("Missing OIDC_REGISTER_CLIENT sibling before OIDC_CREATE_SECRET");
+                        }
 
-                    CommandEntity registerCmd = findCommandById(registerId);
-                    CommandStatusEntity registerSt = findCommandStatusById(registerCmd.getCommandStatusId());
-                    if (registerSt == null || registerSt.getResultJson() == null || registerSt.getResultJson().isBlank()) {
-                        throw new IllegalStateException("OIDC_REGISTER_CLIENT has no resultJson with credentials");
-                    }
+                        CommandEntity registerCmd = findCommandById(registerId);
+                        CommandStatusEntity registerSt = findCommandStatusById(registerCmd.getCommandStatusId());
+                        if (registerSt == null || registerSt.getResultJson() == null || registerSt.getResultJson().isBlank()) {
+                            throw new IllegalStateException("OIDC_REGISTER_CLIENT has no resultJson with credentials");
+                        }
 
-                    Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
-                    String clientId     = (String) regRes.get("clientId");
-                    String clientSecret = (String) regRes.get("clientSecret");
-                    String issuerUrl    = (String) regRes.get("issuerUrl");
-                    if (clientId == null || clientId.isBlank()) {
-                        throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
+                        Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
+                        clientId     = (String) regRes.get("clientId");
+                        clientSecret = (String) regRes.get("clientSecret");
+                        issuerUrl    = (String) regRes.get("issuerUrl");
+                        if (clientId == null || clientId.isBlank()) {
+                            throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
+                        }
                     }
 
                     // Build multi-key secret payload
@@ -5235,6 +5389,23 @@ public class CommandService {
                     appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + secretName + "' created/updated");
                     LOG.info("OIDC_CREATE_SECRET: Secret '{}/{}' written for client '{}'", namespace, secretName, clientId);
 
+                    Map<String, Object> res = new LinkedHashMap<>();
+
+                    // GitLab OmniAuth: create a provider secret with the full YAML provider config
+                    if ("true".equals(childParams.get("oidcGitlabOmniauth"))) {
+                        String providerSecretName = (String) childParams.get("oidcProviderSecretName");
+                        String callbackUrl = (String) childParams.get("oidcGitlabCallbackUrl");
+                        if (providerSecretName != null && !providerSecretName.isBlank()) {
+                            String providerYaml = buildGitlabOmniauthProviderYaml(clientId, clientSecret, issuerUrl, callbackUrl);
+                            Map<String, byte[]> providerData = new LinkedHashMap<>();
+                            providerData.put("provider", providerYaml.getBytes(StandardCharsets.UTF_8));
+                            this.kubernetesService.createOrUpdateOpaqueSecret(namespace, providerSecretName, providerData);
+                            appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + providerSecretName + "' (GitLab OmniAuth) created/updated");
+                            LOG.info("OIDC_CREATE_SECRET: GitLab OmniAuth secret '{}/{}' written", namespace, providerSecretName);
+                            res.put("gitlabProviderSecretName", providerSecretName);
+                        }
+                    }
+
                     // Optionally write to Vault when a vaultPath is configured
                     if (vaultPath != null && !vaultPath.isBlank()) {
                         try {
@@ -5256,7 +5427,6 @@ public class CommandService {
                         }
                     }
 
-                    Map<String, Object> res = new LinkedHashMap<>();
                     res.put("secretName",  secretName);
                     res.put("namespace",   namespace);
                     res.put("clientId",    clientId);
@@ -5305,14 +5475,74 @@ public class CommandService {
             }
 
         } catch (Exception ex) {
-            // Fail child and propagate to root
+            final String stepTitle = child.getTitle() != null ? child.getTitle() : child.getType();
+
+            // ── Abort / cancellation ──────────────────────────────────────────────────
+            // runWithCancellation throws "Canceled by user" after calling future.cancel().
+            // cancelRecursive() has already set the child status to CANCELED; don't
+            // overwrite it with FAILED.  Also ensure the root ends as CANCELED, not FAILED.
+            if ("Canceled by user".equals(ex.getMessage())) {
+                CommandStatusEntity freshChild = findCommandStatusById(child.getCommandStatusId());
+                if (freshChild != null && CommandState.CANCELED.name().equals(freshChild.getState())) {
+                    LOG.info("[{}] Step '{}' was canceled by user — preserving CANCELED state", id, stepTitle);
+                    try { commandLogService.append(id, "Step canceled: " + stepTitle); } catch (Exception ignored) {}
+                    // Ensure root is also CANCELED (not FAILED)
+                    CommandStatusEntity freshRoot = findCommandStatusById(root.getCommandStatusId());
+                    if (freshRoot != null && !CommandState.FAILED.name().equals(freshRoot.getState())) {
+                        freshRoot.setState(CommandState.CANCELED.name());
+                        freshRoot.setMessage("Canceled by user");
+                        freshRoot.setUpdatedAt(Instant.now().toString());
+                        store(freshRoot);
+                    }
+                    refreshCurrentStepSnapshot(root);
+                    return;
+                }
+            }
+
+            // ── YAML parse error recovery ─────────────────────────────────────────────
+            // helm-java can throw a YAML parse error when parsing the install/upgrade
+            // *response* even though the release was successfully deployed to the cluster.
+            // Before marking the step as failed, verify whether the release is actually up.
+            final String exMsg = ex.getMessage() != null ? ex.getMessage() : "";
+            if (exMsg.contains("YAML parse error") || exMsg.contains("error converting YAML to JSON")) {
+                Map<String, Object> childParams = null;
+                try {
+                    childParams = gson.fromJson(resolveParamsJson(child), mapType);
+                } catch (Exception ignored) {}
+
+                if (childParams != null) {
+                    final String releaseName = (String) childParams.get("releaseName");
+                    final String namespace    = (String) childParams.get("namespace");
+                    final String kubeconfig   = this.kubernetesService.getConfigurationService().getKubeconfigContents();
+                    if (releaseName != null && namespace != null) {
+                        Optional<Release> deployed = this.helmService.findDeployedRelease(releaseName, namespace, kubeconfig);
+                        if (deployed.isPresent()) {
+                            LOG.warn("[{}] Helm response parse error for '{}' but release is deployed — treating as success: {}",
+                                    id, releaseName, exMsg);
+                            try { commandLogService.append(id,
+                                    "Warning: Helm response parsing failed but release '" + releaseName + "' is deployed. Continuing."); }
+                            catch (Exception ignored) {}
+                            childSt.setState(CommandState.SUCCEEDED.name());
+                            childSt.setMessage("Deployed (response parse warning)");
+                            childSt.setUpdatedAt(Instant.now().toString());
+                            store(childSt);
+                            this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
+                            refreshCurrentStepSnapshot(root);
+                            scheduleNow(id);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // ── Regular failure ───────────────────────────────────────────────────────
             childSt.setState(CommandState.FAILED.name());
             childSt.setMessage("Failed: " + trim(ex.getMessage()));
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
             LOG.error("Step execution failed: {}", ex.toString(), ex);
             try { commandLogService.append(id, "Step failed: " + trim(ex.getMessage())); } catch (Exception ignored) {}
-            fail(rootSt, "Failed at step '" + (child.getTitle() != null ? child.getTitle() : child.getType()) + "': " + trim(ex.getMessage()));
+            fail(rootSt, "Failed at step '" + stepTitle + "': " + trim(ex.getMessage()));
             refreshCurrentStepSnapshot(root);
         }
     }

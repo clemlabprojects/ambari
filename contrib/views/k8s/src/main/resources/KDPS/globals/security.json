@@ -45,9 +45,21 @@
     { "name": "ldap.adUserSearchFilter", "displayName": "AD User Search Filter", "description": "e.g. (sAMAccountName={0})", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.userSearchFilter" },
     { "name": "ldap.adDomain", "displayName": "AD Domain", "type": "string", "modes": ["ad"], "helmPath": "global.security.auth.ad.domain" },
 
+    {
+      "name": "oidc.source",
+      "displayName": "OIDC Source",
+      "description": "Internal: Ambari auto-registers an OIDC client in Keycloak for each service. External: you supply client credentials manually (for IdPs not managed by Ambari).",
+      "type": "select",
+      "default": "internal",
+      "options": [
+        { "label": "Internal (Ambari-managed Keycloak)", "value": "internal" },
+        { "label": "External (pre-provisioned client)", "value": "external" }
+      ],
+      "modes": ["oidc"]
+    },
     { "name": "oidc.issuerUrl", "displayName": "Issuer URL", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.issuerUrl" },
-    { "name": "oidc.clientId", "displayName": "Client ID", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientId" },
-    { "name": "oidc.clientSecret", "displayName": "Client Secret", "type": "password", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientSecret" },
+    { "name": "oidc.clientId", "displayName": "Client ID", "description": "Required for External source — the pre-registered client identifier.", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientId" },
+    { "name": "oidc.clientSecret", "displayName": "Client Secret", "description": "Required for External source — the pre-registered client secret.", "type": "password", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientSecret" },
     { "name": "oidc.scopes", "displayName": "Scopes", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.scopes" },
     { "name": "oidc.redirectUri", "displayName": "Redirect URI", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.redirectUri" },
     { "name": "oidc.userClaim", "displayName": "User Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.userClaim" },

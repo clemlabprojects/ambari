@@ -45,4 +45,10 @@ export interface AvailableServices {
 export interface ClusterService {
     label: string;
     value: string; // The connection URL, e.g., thrift://...
+    port?: string; // Optional port for k8s-discovery auto-fill
+}
+
+export interface K8sDiscoveryFormFieldExtended extends K8sDiscoveryFormField {
+    targetHost?: string; // form field name to auto-fill with discovered host
+    targetPort?: string; // form field name to auto-fill with discovered port
 }
