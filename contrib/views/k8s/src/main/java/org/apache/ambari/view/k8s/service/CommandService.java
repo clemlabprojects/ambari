@@ -5263,9 +5263,7 @@ public class CommandService {
                     String oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
                     String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
                     String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
-                    String adminClientSec  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
-                    String adminUsername   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_username");
-                    String adminPassword   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_password");
+                    String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
                     String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
                     boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
 
@@ -5275,6 +5273,20 @@ public class CommandService {
                     if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
                     if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
                     if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
+
+                    // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
+                    AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
+                    char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
+                    String adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
+
+                    // Admin username/password come from the Ambari credential store (same alias used
+                    // by ConfigureOidcServerAction), never from plain-text config properties.
+                    // Stored by Ansible enable_oidc.yml as a PrincipalKeyCredential at oidc.admin.credential.
+                    org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
+                            oidcAliasResolver.getOidcAdminCredential(clstr);
+                    String adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
+                    String adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
+                            ? new String(oidcAdminCred.getKey()) : "";
 
                     String desiredClientId = (String) childParams.get("oidcClientId");
                     String redirectUri     = (String) childParams.get("oidcRedirectUri");

@@ -94,6 +94,33 @@ public final class AmbariAliasResolver {
             ? ((GenericKeyCredential) credential).getKey()
             : null;
     }
+
+    /**
+     * Reads the OIDC admin credential from the Ambari credential store.
+     * The credential is stored at alias "oidc.admin.credential" (canonicalized by cluster name)
+     * as a PrincipalKeyCredential containing the admin username (principal) and password (key).
+     * This is the same alias used by ConfigureOidcServerAction on the server side.
+     *
+     * @param clusterName the cluster name used to canonicalize the alias
+     * @return the PrincipalKeyCredential, or null if not found or wrong type
+     */
+    public PrincipalKeyCredential getOidcAdminCredential(String clusterName) {
+        try {
+            String alias = canonicalizeAlias(clusterName, "oidc.admin.credential");
+            LOG.info("Reading OIDC admin credential from store, alias='{}'", alias);
+            Credential credential = persistedCredentialStore.getCredential(alias);
+            if (credential instanceof PrincipalKeyCredential pkc) {
+                LOG.info("Resolved OIDC admin credential: principal='{}'", pkc.getPrincipal());
+                return pkc;
+            }
+            LOG.warn("OIDC admin credential alias '{}' not found or not a PrincipalKeyCredential (got {})",
+                alias, credential == null ? "null" : credential.getClass().getSimpleName());
+            return null;
+        } catch (Exception e) {
+            LOG.warn("Failed to read OIDC admin credential from store: {}", e.toString());
+            return null;
+        }
+    }
     public void addAliasToCredentialStore(String alias, String password) throws AmbariException {
         this.credentialProvider.addAliasToCredentialStore(alias, password);
     }
