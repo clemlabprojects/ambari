@@ -124,12 +124,7 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
         }
       }
     }).done(function() {
-      App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
-        if (initValue) {
-          App.router.get('backgroundOperationsController').showPopup();
-        }
-      });
-      App.showAlertPopup(Em.I18n.t('common.success'), Em.I18n.t('admin.oidc.provisioning.request.accepted'));
+      App.router.get('backgroundOperationsController').showPopup();
       self.loadStep();
     });
   }
