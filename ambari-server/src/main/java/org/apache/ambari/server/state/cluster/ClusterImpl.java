@@ -924,6 +924,11 @@ public class ClusterImpl implements Cluster {
 
   @Override
   public void setDesiredStackVersion(StackId stackId) throws AmbariException {
+    // Fetch the stack entity before acquiring the write lock so that JPA/EclipseLink
+    // operations do not run while holding the cluster lock (avoids deadlock with
+    // concurrent readers that are also inside EclipseLink's identity-map lock).
+    StackEntity stackEntity = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
+
     clusterGlobalLock.writeLock().lock();
     try {
       if (LOG.isDebugEnabled()) {
@@ -932,7 +937,6 @@ public class ClusterImpl implements Cluster {
       }
 
       desiredStackVersion = stackId;
-      StackEntity stackEntity = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
 
       ClusterEntity clusterEntity = getClusterEntity();
 
@@ -1523,16 +1527,27 @@ public class ClusterImpl implements Cluster {
    * @return a map of type-to-configuration information.
    */
   private Map<String, Set<DesiredConfig>> getDesiredConfigs(boolean allVersions, boolean cachedConfigEntities) {
+    // Fetch JPA entities before acquiring the cluster lock. Holding the cluster
+    // ReadLock while EclipseLink resolves lazy associations triggers a deadlock:
+    // EclipseLink's identity-map lock is held by a concurrent UnitOfWork thread,
+    // which causes the ReadLock holder to stall. Writers queued behind it then
+    // block all new readers via NonfairSync writer-priority, hanging every thread.
+    Collection<ClusterConfigEntity> entities;
+    if (cachedConfigEntities) {
+      entities = getClusterEntity().getClusterConfigEntities();
+    } else {
+      entities = clusterDAO.getEnabledConfigs(clusterId);
+    }
+
+    Map<String, Set<DesiredConfig>> map;
+    Collection<String> types;
+
+    // Hold the lock only while consulting the in-memory allConfigs map.
     clusterGlobalLock.readLock().lock();
     try {
-      Map<String, Set<DesiredConfig>> map = new HashMap<>();
-      Collection<String> types = new HashSet<>();
-      Collection<ClusterConfigEntity> entities;
-      if (cachedConfigEntities) {
-        entities = getClusterEntity().getClusterConfigEntities();
-      } else {
-        entities = clusterDAO.getEnabledConfigs(clusterId);
-      }
+      map = new HashMap<>();
+      types = new HashSet<>();
+
       for (ClusterConfigEntity configEntity : entities) {
         if (allVersions || configEntity.isSelected()) {
           DesiredConfig desiredConfig = new DesiredConfig();
@@ -1566,37 +1581,40 @@ public class ClusterImpl implements Cluster {
           types.add(configEntity.getType());
         }
       }
-
-      // TODO AMBARI-10679, need efficient caching from hostId to hostName...
-      Map<Long, String> hostIdToName = new HashMap<>();
-
-      if (!map.isEmpty()) {
-        Map<String, List<HostConfigMapping>> hostMappingsByType =
-          hostConfigMappingDAO.findSelectedHostsByTypes(clusterId, types);
-
-        for (Entry<String, Set<DesiredConfig>> entry : map.entrySet()) {
-          List<DesiredConfig.HostOverride> hostOverrides = new ArrayList<>();
-          for (HostConfigMapping mappingEntity : hostMappingsByType.get(entry.getKey())) {
-
-            if (!hostIdToName.containsKey(mappingEntity.getHostId())) {
-              HostEntity hostEntity = hostDAO.findById(mappingEntity.getHostId());
-              hostIdToName.put(mappingEntity.getHostId(), hostEntity.getHostName());
-            }
-
-            hostOverrides.add(new DesiredConfig.HostOverride(
-                hostIdToName.get(mappingEntity.getHostId()), mappingEntity.getVersion()));
-          }
-
-          for (DesiredConfig c: entry.getValue()) {
-            c.setHostOverrides(hostOverrides);
-          }
-        }
-      }
-
-      return map;
     } finally {
       clusterGlobalLock.readLock().unlock();
     }
+
+    // Resolve host overrides outside the cluster lock. These DAO calls can
+    // trigger EclipseLink UnitOfWork object registration (buildBackupClone etc.)
+    // which acquires EclipseLink's identity-map lock — incompatible with holding
+    // the cluster lock at the same time.
+    // TODO AMBARI-10679, need efficient caching from hostId to hostName...
+    if (!map.isEmpty()) {
+      Map<Long, String> hostIdToName = new HashMap<>();
+      Map<String, List<HostConfigMapping>> hostMappingsByType =
+        hostConfigMappingDAO.findSelectedHostsByTypes(clusterId, types);
+
+      for (Entry<String, Set<DesiredConfig>> entry : map.entrySet()) {
+        List<DesiredConfig.HostOverride> hostOverrides = new ArrayList<>();
+        for (HostConfigMapping mappingEntity : hostMappingsByType.get(entry.getKey())) {
+
+          if (!hostIdToName.containsKey(mappingEntity.getHostId())) {
+            HostEntity hostEntity = hostDAO.findById(mappingEntity.getHostId());
+            hostIdToName.put(mappingEntity.getHostId(), hostEntity.getHostName());
+          }
+
+          hostOverrides.add(new DesiredConfig.HostOverride(
+              hostIdToName.get(mappingEntity.getHostId()), mappingEntity.getVersion()));
+        }
+
+        for (DesiredConfig c: entry.getValue()) {
+          c.setHostOverrides(hostOverrides);
+        }
+      }
+    }
+
+    return map;
   }
 
 
