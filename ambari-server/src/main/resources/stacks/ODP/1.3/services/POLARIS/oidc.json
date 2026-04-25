@@ -12,6 +12,50 @@
           "direct_access_grants_enabled": true,
           "standard_flow_enabled": false,
           "secret_alias": "polaris.oidc.client.secret",
+          "protocol_mappers": [
+            {
+              "name": "polaris-principal-name",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "username",
+                "claim.name": "polaris/principal_name",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            },
+            {
+              "name": "polaris-principal-id",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-attribute-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "polaris_principal_id",
+                "claim.name": "polaris/principal_id",
+                "jsonType.label": "long",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            },
+            {
+              "name": "polaris-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "polaris/roles",
+                "jsonType.label": "String",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            }
+          ],
           "configurations": [
             {
               "polaris-application-properties": {

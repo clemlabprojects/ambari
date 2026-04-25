@@ -26,6 +26,7 @@ import java.io.File;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -184,6 +185,10 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
+
+    List<Map<String, Object>> protocolMappers = resolvedClient.getProtocolMappers();
+    Assert.assertNotNull(protocolMappers);
+    Assert.assertEquals(3, protocolMappers.size());
   }
 
   @Test

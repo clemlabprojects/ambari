@@ -283,7 +283,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             clientDescriptor.getRedirectUris(),
             clientDescriptor.getAttributes(),
             clientDescriptor.getConfigurations(),
-            clientDescriptor.getSecretAlias());
+            clientDescriptor.getSecretAlias(), clientDescriptor.getProtocolMappers());
           if (isDeleteOperation(operation)) {
             LOG.debug("Deleting OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
             handler.deleteClient(resolvedDescriptor, resolvedRealm);
@@ -355,6 +355,13 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
       LOG.info("OIDC provisioning completed for cluster {} with no configuration updates required", clusterName);
     }
 
+    if (!configTypes.isEmpty()) {
+      String restartNote = "The following Ambari config types were updated and their services should be restarted: "
+        + String.join(", ", configTypes)
+        + ". Use Ambari UI 'Restart Required' indicator or the /api/v1/clusters/<name>/requests endpoint.";
+      LOG.info("OIDC provisioning for cluster {}: {}", clusterName, restartNote);
+      actionLog.writeStdOut(restartNote);
+    }
     LOG.info("OIDC provisioning completed successfully for cluster {}", clusterName);
     return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
   }

@@ -17,8 +17,11 @@
  */
 package org.apache.ambari.server.state.oidc;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 
 import org.junit.Test;
 
@@ -107,6 +110,82 @@ public class OidcDescriptorTest {
     Assert.assertEquals(1, clientConfigs.size());
     Assert.assertEquals("${client_id}", clientConfigs.get(0)
       .get("polaris-application-properties").get("quarkus.oidc.client-id"));
+  }
+
+  @Test
+  public void testCreateFromJsonWithProtocolMappers() throws Exception {
+    String json =
+      "{\"services\":[{\"name\":\"MYSVC\",\"clients\":[{" +
+        "\"name\":\"myclient\"," +
+        "\"client_id\":\"my-client\"," +
+        "\"protocol_mappers\":[" +
+          "{\"name\":\"my-mapper\",\"protocol\":\"openid-connect\"," +
+           "\"protocolMapper\":\"oidc-usermodel-property-mapper\"," +
+           "\"consentRequired\":false," +
+           "\"config\":{\"claim.name\":\"my/claim\",\"jsonType.label\":\"String\"}}," +
+          "{\"name\":\"my-roles\",\"protocol\":\"openid-connect\"," +
+           "\"protocolMapper\":\"oidc-usermodel-realm-role-mapper\"," +
+           "\"config\":{\"multivalued\":\"true\"}}" +
+        "]" +
+      "}]}]}";
+
+    OidcDescriptor descriptor = OIDC_DESCRIPTOR_FACTORY.createInstance(json);
+    OidcClientDescriptor client = descriptor.getServices().get("MYSVC").getClients().get(0);
+
+    List<Map<String, Object>> mappers = client.getProtocolMappers();
+    Assert.assertNotNull(mappers);
+    Assert.assertEquals(2, mappers.size());
+
+    Map<String, Object> first = mappers.get(0);
+    Assert.assertEquals("my-mapper", first.get("name"));
+    Assert.assertEquals("openid-connect", first.get("protocol"));
+    Assert.assertEquals("oidc-usermodel-property-mapper", first.get("protocolMapper"));
+
+    @SuppressWarnings("unchecked")
+    Map<String, String> config = (Map<String, String>) first.get("config");
+    Assert.assertNotNull(config);
+    Assert.assertEquals("my/claim", config.get("claim.name"));
+    Assert.assertEquals("String", config.get("jsonType.label"));
+
+    Map<String, Object> second = mappers.get(1);
+    Assert.assertEquals("my-roles", second.get("name"));
+    @SuppressWarnings("unchecked")
+    Map<String, String> rolesConfig = (Map<String, String>) second.get("config");
+    Assert.assertEquals("true", rolesConfig.get("multivalued"));
+  }
+
+  @Test
+  public void testClientWithNoProtocolMappersReturnsNull() throws Exception {
+    OidcDescriptor descriptor = OIDC_DESCRIPTOR_FACTORY.createInstance(JSON_VALUE);
+    OidcClientDescriptor client = descriptor.getServices().get("POLARIS").getClients().get(0);
+    Assert.assertNull(client.getProtocolMappers());
+  }
+
+  @Test
+  public void testPolarisOidcJsonHasThreeProtocolMappers() throws Exception {
+    OidcDescriptor descriptor = OIDC_DESCRIPTOR_FACTORY.createInstance(
+      new File("src/main/resources/stacks/ODP/1.3/services/POLARIS/oidc.json"));
+
+    OidcClientDescriptor client = descriptor.getServices().get("POLARIS").getClients().get(0);
+    List<Map<String, Object>> mappers = client.getProtocolMappers();
+
+    Assert.assertNotNull(mappers);
+    Assert.assertEquals(3, mappers.size());
+
+    Set<String> names = new HashSet<>();
+    for (Map<String, Object> m : mappers) {
+      names.add((String) m.get("name"));
+    }
+    Assert.assertTrue(names.contains("polaris-principal-name"));
+    Assert.assertTrue(names.contains("polaris-principal-id"));
+    Assert.assertTrue(names.contains("polaris-roles"));
+
+    // Verify config sub-map is preserved as Map<String, String>
+    for (Map<String, Object> m : mappers) {
+      Object cfg = m.get("config");
+      Assert.assertNotNull("mapper '" + m.get("name") + "' must have a config map", cfg);
+      Assert.assertTrue(cfg instanceof Map);
+    }
   }
 
   @Test

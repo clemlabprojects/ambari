@@ -19,6 +19,7 @@
 package org.apache.ambari.server.state.oidc;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -35,6 +36,7 @@ public class OidcClientDescriptor {
   static final String KEY_ATTRIBUTES = "attributes";
   static final String KEY_CONFIGURATIONS = "configurations";
   static final String KEY_SECRET_ALIAS = "secret_alias";
+  static final String KEY_PROTOCOL_MAPPERS = "protocol_mappers";
 
   private String name;
   private String clientId;
@@ -47,12 +49,21 @@ public class OidcClientDescriptor {
   private Map<String, String> attributes;
   private List<Map<String, Map<String, String>>> configurations;
   private String secretAlias;
+  /**
+   * Optional list of Keycloak protocol mapper definitions to create on the client.
+   * Each entry is a free-form map matching the Keycloak protocol-mapper API body
+   * (keys: {@code name}, {@code protocol}, {@code protocolMapper}, {@code config}).
+   * Mappers are applied idempotently: existing mappers with the same {@code name}
+   * are left untouched.
+   */
+  private List<Map<String, Object>> protocolMappers;
 
   public OidcClientDescriptor(String name, String clientId, String realm, Boolean publicClient,
                               Boolean serviceAccountsEnabled, Boolean directAccessGrantsEnabled,
                               Boolean standardFlowEnabled, List<String> redirectUris,
                               Map<String, String> attributes,
-                              List<Map<String, Map<String, String>>> configurations, String secretAlias) {
+                              List<Map<String, Map<String, String>>> configurations, String secretAlias,
+                              List<Map<String, Object>> protocolMappers) {
     this.name = name;
     this.clientId = clientId;
     this.realm = realm;
@@ -64,6 +75,7 @@ public class OidcClientDescriptor {
     this.attributes = attributes;
     this.configurations = configurations;
     this.secretAlias = secretAlias;
+    this.protocolMappers = protocolMappers;
   }
 
   OidcClientDescriptor(Map<?, ?> data) {
@@ -79,6 +91,7 @@ public class OidcClientDescriptor {
       attributes = OidcDescriptorUtils.getStringMap(data.get(KEY_ATTRIBUTES));
       configurations = OidcDescriptorUtils.getConfigurations(data.get(KEY_CONFIGURATIONS));
       secretAlias = OidcDescriptorUtils.getStringValue(data, KEY_SECRET_ALIAS);
+      protocolMappers = OidcDescriptorUtils.getProtocolMapperList(data.get(KEY_PROTOCOL_MAPPERS));
     }
   }
 
@@ -126,6 +139,14 @@ public class OidcClientDescriptor {
     return secretAlias;
   }
 
+  /**
+   * Returns optional Keycloak protocol mapper definitions for this client, or {@code null}
+   * if none were declared in the descriptor.
+   */
+  public List<Map<String, Object>> getProtocolMappers() {
+    return protocolMappers;
+  }
+
   Map<String, Object> toMap() {
     Map<String, Object> data = new TreeMap<>();
     if (name != null) {
@@ -160,6 +181,9 @@ public class OidcClientDescriptor {
     }
     if (secretAlias != null) {
       data.put(KEY_SECRET_ALIAS, secretAlias);
+    }
+    if (protocolMappers != null) {
+      data.put(KEY_PROTOCOL_MAPPERS, new ArrayList<>(protocolMappers));
     }
     return data;
   }

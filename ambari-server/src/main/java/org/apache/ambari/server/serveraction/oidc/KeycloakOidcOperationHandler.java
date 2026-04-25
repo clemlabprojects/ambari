@@ -23,7 +23,10 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
@@ -80,6 +83,7 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
       clientInternalId = getClientInternalId(token, targetRealm, descriptor.getClientId());
     }
 
+    ensureProtocolMappers(token, targetRealm, clientInternalId, descriptor.getProtocolMappers());
     String secret = getClientSecret(token, targetRealm, clientInternalId);
     return new OidcClientResult(descriptor.getClientId(), clientInternalId, secret);
   }
@@ -248,6 +252,108 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
     JsonObject json = new JsonParser().parse(payload).getAsJsonObject();
     JsonElement value = json.get("value");
     return (value == null) ? null : value.getAsString();
+  }
+
+  /**
+   * Idempotently ensures that all declared protocol mappers exist on the Keycloak client.
+   * <p>
+   * Existing mappers whose {@code name} matches a declared mapper are left untouched so that
+   * manual Keycloak overrides survive re-provisioning. Only mappers absent by name are created.
+   * </p>
+   *
+   * @param token            admin access token
+   * @param realm            target Keycloak realm
+   * @param clientInternalId Keycloak internal UUID of the client
+   * @param protocolMappers  mapper definitions from the OIDC descriptor (may be {@code null})
+   * @throws OidcOperationException if any HTTP call to Keycloak fails
+   */
+  void ensureProtocolMappers(String token, String realm, String clientInternalId,
+                                     List<Map<String, Object>> protocolMappers)
+    throws OidcOperationException {
+    if (protocolMappers == null || protocolMappers.isEmpty() || clientInternalId == null) {
+      return;
+    }
+
+    String baseUrl = normalizeBaseUrl(configuration.getBaseUrl());
+    String mappersEndpoint = String.format("%s/admin/realms/%s/clients/%s/protocol-mappers/models",
+      baseUrl, realm, clientInternalId);
+
+    // Fetch names of mappers that already exist to make the operation idempotent.
+    Response listResp = client.target(mappersEndpoint)
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header("Authorization", "Bearer " + token)
+      .get();
+
+    String listPayload = listResp.readEntity(String.class);
+    if (listResp.getStatus() / 100 != 2) {
+      throw new OidcOperationException(String.format(
+        "Failed to list protocol mappers for client %s (status %s): %s",
+        clientInternalId, listResp.getStatus(), listPayload));
+    }
+
+    Set<String> existingNames = new HashSet<>();
+    JsonArray existing = new JsonParser().parse(listPayload).getAsJsonArray();
+    for (JsonElement el : existing) {
+      JsonElement nameEl = el.getAsJsonObject().get("name");
+      if (nameEl != null) {
+        existingNames.add(nameEl.getAsString());
+      }
+    }
+
+    for (Map<String, Object> mapperDef : protocolMappers) {
+      Object nameObj = mapperDef.get("name");
+      if (nameObj == null) {
+        continue;
+      }
+      String mapperName = nameObj.toString();
+      if (existingNames.contains(mapperName)) {
+        continue;
+      }
+
+      JsonObject mapperJson = toMapperJson(mapperDef);
+      Response createResp = client.target(mappersEndpoint)
+        .request(MediaType.APPLICATION_JSON_TYPE)
+        .header("Authorization", "Bearer " + token)
+        .post(Entity.json(mapperJson.toString()));
+
+      if (createResp.getStatus() / 100 != 2 && createResp.getStatus() != 409) {
+        String msg = createResp.readEntity(String.class);
+        throw new OidcOperationException(String.format(
+          "Failed to create protocol mapper '%s' on client %s (status %s): %s",
+          mapperName, clientInternalId, createResp.getStatus(), msg));
+      }
+    }
+  }
+
+  /**
+   * Converts a protocol mapper definition map (as parsed from {@code oidc.json}) to a
+   * Gson {@link JsonObject} suitable for the Keycloak protocol-mapper API body.
+   * <p>
+   * The nested {@code config} entry is serialised as a JSON object with string values
+   * as required by the Keycloak REST API.
+   * </p>
+   *
+   * @param mapperDef raw mapper definition
+   * @return JSON representation
+   */
+  @SuppressWarnings("unchecked")
+  private JsonObject toMapperJson(Map<String, Object> mapperDef) {
+    JsonObject json = new JsonObject();
+    for (Map.Entry<String, Object> entry : mapperDef.entrySet()) {
+      String key = entry.getKey();
+      Object val = entry.getValue();
+      if ("config".equals(key) && val instanceof Map) {
+        JsonObject config = new JsonObject();
+        for (Map.Entry<?, ?> ce : ((Map<?, ?>) val).entrySet()) {
+          config.addProperty(ce.getKey().toString(),
+            ce.getValue() == null ? "" : ce.getValue().toString());
+        }
+        json.add("config", config);
+      } else if (val != null) {
+        json.addProperty(key, val.toString());
+      }
+    }
+    return json;
   }
 
   private Client createClient(boolean verifyTls) throws OidcOperationException {

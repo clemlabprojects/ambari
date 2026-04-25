@@ -97,4 +97,48 @@ final class OidcDescriptorUtils {
 
     return configurations.isEmpty() ? null : configurations;
   }
+
+  /**
+   * Parses a list of protocol mapper definition maps from a descriptor value.
+   * <p>
+   * Each element is returned as-is as a {@code Map<String, Object>} so the caller
+   * can serialise it directly to the Keycloak protocol-mapper API body format.
+   * The {@code config} sub-map is preserved as a {@code Map<String, String>}.
+   * </p>
+   *
+   * @param value raw value from the OIDC descriptor map
+   * @return list of mapper definition maps, or {@code null} if none / invalid input
+   */
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> getProtocolMapperList(Object value) {
+    if (!(value instanceof Collection)) {
+      return null;
+    }
+
+    List<Map<String, Object>> mappers = new ArrayList<>();
+    for (Object item : (Collection<?>) value) {
+      if (!(item instanceof Map)) {
+        continue;
+      }
+      Map<String, Object> mapper = new LinkedHashMap<>();
+      for (Map.Entry<?, ?> entry : ((Map<?, ?>) item).entrySet()) {
+        if (entry.getKey() == null) {
+          continue;
+        }
+        String key = entry.getKey().toString();
+        Object val = entry.getValue();
+        // Preserve nested config map as Map<String, String>
+        if ("config".equals(key) && val instanceof Map) {
+          mapper.put(key, getStringMap(val));
+        } else {
+          mapper.put(key, val);
+        }
+      }
+      if (!mapper.isEmpty()) {
+        mappers.add(mapper);
+      }
+    }
+
+    return mappers.isEmpty() ? null : mappers;
+  }
 }
