@@ -49,6 +49,19 @@
   </property>
 
   <property>
+    <name>quarkus.management.port</name>
+    <display-name>Management Port</display-name>
+    <value>8182</value>
+    <description>Port for the Quarkus management interface (health, metrics, info). Separate from the main HTTP port so health checks do not go through the Polaris realm filter.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>65535</maximum>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
     <name>quarkus.http.insecure-requests</name>
     <display-name>HTTP Insecure Requests</display-name>
     <value>redirect</value>
