@@ -167,22 +167,28 @@ public class KeycloakAdminClient {
                 + "/protocol/openid-connect/token";
 
         String body;
-        if (!clientSecret.isBlank()) {
-            // Confidential client — client_credentials grant
-            body = "grant_type=client_credentials"
-                    + "&client_id=" + enc(clientId)
-                    + "&client_secret=" + enc(clientSecret);
-        } else if (!adminUsername.isBlank()) {
-            // Public client (e.g. admin-cli) — password grant
+        if (!adminUsername.isBlank()) {
+            // Password grant — preferred when user credentials are available (credential store).
+            // Works for both public clients (no secret) and confidential clients (secret included).
+            // Requires directAccessGrantsEnabled=true on the client.
             body = "grant_type=password"
                     + "&client_id=" + enc(clientId)
                     + "&username=" + enc(adminUsername)
                     + "&password=" + enc(adminPassword);
+            if (!clientSecret.isBlank()) {
+                body += "&client_secret=" + enc(clientSecret);
+            }
+        } else if (!clientSecret.isBlank()) {
+            // Client-credentials grant — fallback when no user credential is available.
+            // Requires serviceAccountsEnabled=true on the client.
+            body = "grant_type=client_credentials"
+                    + "&client_id=" + enc(clientId)
+                    + "&client_secret=" + enc(clientSecret);
         } else {
             throw new IllegalStateException(
-                    "KeycloakAdminClient: neither clientSecret nor adminUsername is configured. "
-                    + "Set oidc_admin_client_secret (confidential client) or "
-                    + "oidc_admin_username + oidc_admin_password (public client / admin-cli).");
+                    "KeycloakAdminClient: no admin credential available. "
+                    + "Store a PrincipalKeyCredential at oidc.admin.credential in the Ambari "
+                    + "credential store, or set oidc_admin_client_secret for client-credentials flow.");
         }
 
         HttpRequest req = HttpRequest.newBuilder()
