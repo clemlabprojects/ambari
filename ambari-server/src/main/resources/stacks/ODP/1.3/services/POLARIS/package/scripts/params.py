@@ -338,6 +338,8 @@ else:
 polaris_http_port = _to_int(default("/configurations/polaris-application-properties/quarkus.http.port", 8181), 8181)
 polaris_https_port = _to_int(default("/configurations/polaris-application-properties/quarkus.http.ssl-port", 8443), 8443)
 polaris_port = polaris_https_port if polaris_protocol == "https" else polaris_http_port
+# Quarkus management interface (health, metrics) is on a separate port when quarkus.management.enabled=true
+polaris_management_port = _to_int(default("/configurations/polaris-application-properties/quarkus.management.port", 8182), 8182)
 
 polaris_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
 polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevelParams']['hostname']

@@ -33,7 +33,7 @@ class PolarisServiceCheck(Script):
 
     failures = 0
     for host in params.polaris_hosts:
-      ready_url = format("{polaris_protocol}://{host}:{polaris_port}/q/health/ready")
+      ready_url = format("{polaris_protocol}://{host}:{polaris_management_port}/q/health/ready")
       cmd = format(
         "curl -k -sS --connect-timeout 3 --max-time 5 -o /dev/null "
         "-w \"%{{http_code}}\" {ready_url} | grep -E '^(200|204)$'"
