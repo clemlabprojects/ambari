@@ -194,6 +194,18 @@ public class KubernetesService {
         return t;
     });
 
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            shutdownStaticExecutors();
+            CommandService.shutdownAll();
+        }, "k8s-view-shutdown"));
+    }
+
+    // Cached per-instance Prometheus HTTP clients keyed by promUrl.
+    // Cleared whenever the underlying k8s client is reloaded (new TLS material).
+    private final java.util.concurrent.ConcurrentHashMap<String, HttpClient> prometheusClientCache
+            = new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * Returns (or creates) the singleton {@code KubernetesService} for the given view instance,
      * and schedules a one-time async monitoring bootstrap if the service is configured.
@@ -1943,9 +1955,16 @@ public class KubernetesService {
     }
 
     /**
-     * Construct an HTTP client that can optionally trust the Kubernetes cluster CA for HTTPS endpoints.
+     * Return a cached {@link HttpClient} for the given Prometheus URL, building one on first use.
+     * The cache is keyed by promUrl so that clients configured for different endpoints (e.g. direct
+     * vs. k8s API proxy) are kept separate. The cache is invalidated whenever the underlying
+     * Kubernetes client is reloaded (which may bring new TLS material).
      */
     private HttpClient buildPrometheusHttpClient(String promUrl) throws Exception {
+        HttpClient cached = prometheusClientCache.get(promUrl);
+        if (cached != null) {
+            return cached;
+        }
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5));
         // Kubernetes API proxy is known to close HTTP/2 streams (GOAWAY); force HTTP/1.1 for stability.
@@ -1965,7 +1984,10 @@ public class KubernetesService {
                 LOG.warn("Prometheus HTTPS client setup fell back to CA-only trust: {}", sslException.getMessage());
             }
         }
-        return builder.build();
+        HttpClient built = builder.build();
+        // putIfAbsent is atomic: if another thread raced us, we discard our copy and use theirs.
+        prometheusClientCache.putIfAbsent(promUrl, built);
+        return prometheusClientCache.get(promUrl);
     }
 
     /**
@@ -2112,6 +2134,7 @@ public class KubernetesService {
             loadK8sPropsAsSystemProperties(viewContext);
             this.client = new DefaultKubernetesClient(finalConfiguration);
             this.isConfigured = true;
+            this.prometheusClientCache.clear();
             LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
             return true;
         } catch (Exception e) {

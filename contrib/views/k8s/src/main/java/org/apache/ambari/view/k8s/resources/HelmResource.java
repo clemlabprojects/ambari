@@ -94,7 +94,7 @@ public class HelmResource {
         this.configService = new ViewConfigurationService(viewContext);
         this.kubernetesService = KubernetesService.get(viewContext);
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
-        this.commandService = new CommandService(viewContext);
+        this.commandService = CommandService.get(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
         this.authHelper = new AuthHelper(viewContext);
     }
@@ -328,8 +328,11 @@ public class HelmResource {
         } finally {
             workerPool.shutdown();
             try {
-                workerPool.awaitTermination(5, TimeUnit.SECONDS);
+                if (!workerPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    workerPool.shutdownNow();
+                }
             } catch (InterruptedException ie) {
+                workerPool.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
