@@ -146,6 +146,16 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
   // ── AmbariAuthenticationFilter ────────────────────────────────────────────
 
   /**
+   * Returns {@code false}: OIDC is a remote authentication source so a failed
+   * token exchange or state validation should not count towards the consecutive
+   * local-login failure counter.
+   */
+  @Override
+  public boolean shouldIncrementFailureCount() {
+    return false;
+  }
+
+  /**
    * Decides whether this filter should claim the current request.
    *
    * <p>Returns {@code true} when all of the following are satisfied:
