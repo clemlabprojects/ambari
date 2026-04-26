@@ -24,8 +24,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
 import org.apache.ambari.server.controller.spi.NoSuchResourceException;
@@ -36,6 +38,8 @@ import org.apache.ambari.server.controller.spi.Resource.Type;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.orm.dao.ArtifactDAO;
+import org.apache.ambari.server.orm.entities.ArtifactEntity;
 import org.apache.ambari.server.security.authorization.AuthorizationHelper;
 import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.security.authorization.RoleAuthorization;
@@ -43,8 +47,12 @@ import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.oidc.OidcDescriptor;
+import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
 import org.apache.commons.lang.StringUtils;
 
+import com.google.inject.Inject;
+
+@StaticallyInject
 public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvider {
 
   public static final String CLUSTER_OIDC_DESCRIPTOR_CLUSTER_NAME_PROPERTY_ID =
@@ -53,6 +61,8 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
     PropertyHelper.getPropertyId("OidcDescriptor", "type");
   public static final String CLUSTER_OIDC_DESCRIPTOR_DESCRIPTOR_PROPERTY_ID =
     PropertyHelper.getPropertyId("OidcDescriptor", "oidc_descriptor");
+
+  static final String OIDC_DESCRIPTOR_ARTIFACT_NAME = "oidc_descriptor";
 
   private static final Set<String> PK_PROPERTY_IDS;
   private static final Set<String> PROPERTY_IDS;
@@ -63,6 +73,12 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
     RoleAuthorization.CLUSTER_VIEW_CONFIGS,
     RoleAuthorization.HOST_VIEW_CONFIGS,
     RoleAuthorization.SERVICE_VIEW_CONFIGS);
+
+  @Inject
+  private static ArtifactDAO artifactDAO;
+
+  @Inject
+  private static OidcDescriptorFactory oidcDescriptorFactory;
 
   static {
     Set<String> set = new HashSet<>();
@@ -155,9 +171,7 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
 
     if (cluster != null) {
       try {
-        StackId stackId = cluster.getDesiredStackVersion();
-        OidcDescriptor descriptor = getManagementController().getAmbariMetaInfo()
-          .getOidcDescriptor(stackId.getStackName(), stackId.getStackVersion());
+        OidcDescriptor descriptor = buildDescriptor(type, cluster);
         if (descriptor != null) {
           setResourceProperty(resource, CLUSTER_OIDC_DESCRIPTOR_DESCRIPTOR_PROPERTY_ID, descriptor.toMap(), requestedIds);
         }
@@ -169,8 +183,47 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
     return resource;
   }
 
+  private OidcDescriptor buildDescriptor(OidcDescriptorType type, Cluster cluster) throws Exception {
+    switch (type) {
+      case STACK:
+        return getStackDescriptor(cluster);
+      case USER:
+        return getUserDescriptor(cluster);
+      case COMPOSITE: {
+        OidcDescriptor stack = getStackDescriptor(cluster);
+        OidcDescriptor user = getUserDescriptor(cluster);
+        if (stack == null) {
+          return user;
+        }
+        if (user != null) {
+          stack.update(user);
+        }
+        return stack;
+      }
+      default:
+        return null;
+    }
+  }
+
+  private OidcDescriptor getStackDescriptor(Cluster cluster) throws Exception {
+    StackId stackId = cluster.getDesiredStackVersion();
+    return getManagementController().getAmbariMetaInfo()
+      .getOidcDescriptor(stackId.getStackName(), stackId.getStackVersion());
+  }
+
+  private OidcDescriptor getUserDescriptor(Cluster cluster) {
+    TreeMap<String, String> foreignKeys = new TreeMap<>();
+    foreignKeys.put("cluster", String.valueOf(cluster.getClusterId()));
+    ArtifactEntity entity = artifactDAO.findByNameAndForeignKeys(OIDC_DESCRIPTOR_ARTIFACT_NAME, foreignKeys);
+    if (entity == null) {
+      return null;
+    }
+    return oidcDescriptorFactory.createInstance(entity.getArtifactData());
+  }
+
   private enum OidcDescriptorType {
     STACK,
+    USER,
     COMPOSITE;
 
     static OidcDescriptorType fromString(String value) {

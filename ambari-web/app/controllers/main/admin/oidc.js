@@ -30,6 +30,12 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   oidcCredentialAlias: credentialsUtils.ALIAS.OIDC_CREDENTIALS,
 
   /**
+   * Flat list of OIDC client descriptors from the COMPOSITE descriptor.
+   * Each item: { serviceName, name, clientId, realm, enabled, protocolMappers }
+   */
+  oidcClientsContent: [],
+
+  /**
    * Keep OIDC flow on the OIDC admin page.
    */
   startKerberosWizard: function () {
@@ -47,7 +53,7 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   loadStep: function() {
     var self = this;
     this.clearStep();
-    this.getDescriptor().then(function (properties) {
+    return this.getDescriptor().then(function (properties) {
       var oidcProperties = (properties || []).filter(function(property) {
         return getFilename(property) === 'oidc-env.xml';
       });
@@ -55,6 +61,64 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
     }).always(function() {
       self.set('isRecommendedLoaded', true);
     });
+  },
+
+  /**
+   * Load the COMPOSITE OIDC descriptor and populate oidcClientsContent.
+   */
+  loadOidcClientsTable: function() {
+    var self = this;
+    App.ajax.send({
+      name: 'admin.oidc.descriptor.composite',
+      sender: this,
+      data: {
+        clusterName: App.get('clusterName')
+      },
+      success: '_onLoadOidcClientsSuccess',
+      error: '_onLoadOidcClientsError'
+    });
+  },
+
+  _onLoadOidcClientsSuccess: function(data) {
+    var clients = [];
+    var descriptor = data && data.OidcDescriptor && data.OidcDescriptor.oidc_descriptor;
+    var services = descriptor && descriptor.services;
+    if (Array.isArray(services)) {
+      services.forEach(function(service) {
+        var serviceName = service.name || '';
+        var serviceClients = Array.isArray(service.clients) ? service.clients : [];
+        serviceClients.forEach(function(client) {
+          var rawMappers = Array.isArray(client.protocol_mappers) ? client.protocol_mappers : [];
+          var protocolMappers = rawMappers.map(function(mapper) {
+            var configEntries = [];
+            if (mapper.config && typeof mapper.config === 'object') {
+              Object.keys(mapper.config).forEach(function(k) {
+                configEntries.push({ key: k, value: mapper.config[k] });
+              });
+            }
+            return {
+              name: mapper.name || '',
+              protocol: mapper.protocol || '',
+              protocolMapper: mapper.protocolMapper || '',
+              configEntries: configEntries
+            };
+          });
+          clients.push({
+            serviceName: serviceName,
+            name: client.name || '',
+            clientId: client.client_id || '',
+            realm: client.realm || '',
+            enabled: service.enabled !== false,
+            protocolMappers: protocolMappers
+          });
+        });
+      });
+    }
+    this.set('oidcClientsContent', clients);
+  },
+
+  _onLoadOidcClientsError: function() {
+    this.set('oidcClientsContent', []);
   },
 
   createServiceConfig: function(configs) {
@@ -126,6 +190,23 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
     }).done(function() {
       App.router.get('backgroundOperationsController').showPopup();
       self.loadStep();
+    });
+  },
+
+  /**
+   * Show protocol mapper detail popup for the given client.
+   */
+  showProtocolMappersPopup: function(client) {
+    var mappers = (client && client.protocolMappers) || [];
+    var clientName = (client && client.name) || '';
+    App.ModalPopup.show({
+      header: Em.I18n.t('admin.oidc.clients.mappers.title').format(clientName),
+      bodyClass: Em.View.extend({
+        templateName: require('templates/main/admin/oidc_protocol_mappers_popup')
+      }),
+      mappers: mappers,
+      primary: false,
+      secondary: Em.I18n.t('common.close')
     });
   }
 });

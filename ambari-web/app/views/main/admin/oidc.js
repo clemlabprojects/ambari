@@ -24,5 +24,6 @@ App.MainAdminOidcView = Em.View.extend({
     var controller = this.get('controller');
     controller.set('dataIsLoaded', false);
     controller.loadSecurityStatusFromServer();
+    controller.loadOidcClientsTable();
   }
 });

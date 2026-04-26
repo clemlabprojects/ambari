@@ -1,0 +1,41 @@
+{{!
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+}}
+{{#if view.parentView.mappers.length}}
+  {{#each mapper in view.parentView.mappers}}
+    <div class="oidc-mapper-entry panel panel-default" style="margin-bottom:8px;">
+      <div class="panel-heading" style="padding:6px 10px;"><strong>{{mapper.name}}</strong></div>
+      <div class="panel-body" style="padding:8px 10px;">
+        <table class="table table-condensed table-bordered" style="margin-bottom:0;">
+          <tbody>
+            {{#if mapper.protocol}}
+              <tr><td style="width:160px;">{{t admin.oidc.clients.mappers.protocol}}</td><td>{{mapper.protocol}}</td></tr>
+            {{/if}}
+            {{#if mapper.protocolMapper}}
+              <tr><td>{{t admin.oidc.clients.mappers.type}}</td><td>{{mapper.protocolMapper}}</td></tr>
+            {{/if}}
+            {{#each entry in mapper.configEntries}}
+              <tr><td>{{entry.key}}</td><td>{{entry.value}}</td></tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {{/each}}
+{{else}}
+  <p class="muted">{{t admin.oidc.clients.noClients}}</p>
+{{/if}}

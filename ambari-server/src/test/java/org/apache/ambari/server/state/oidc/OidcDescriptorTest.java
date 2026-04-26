@@ -18,10 +18,10 @@
 package org.apache.ambari.server.state.oidc;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
 
 import org.junit.Test;
 

@@ -1666,6 +1666,10 @@ var urls = {
     'real': '/clusters/{clusterName}/kerberos_descriptors/STACK',
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
   },
+  'admin.oidc.descriptor.composite': {
+    'real': '/clusters/{clusterName}/oidc_descriptors/COMPOSITE',
+    'mock': '/data/wizard/kerberos/stack_descriptors.json'
+  },
   'admin.kerberos.cluster.artifact.create': {
     'type': 'POST',
     'real': '/clusters/{clusterName}/artifacts/{artifactName}',

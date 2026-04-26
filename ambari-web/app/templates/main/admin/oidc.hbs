@@ -60,6 +60,52 @@
       </p>
     </div>
   {{/if}}
+
+  <div class="oidc-clients-section" style="margin-top:24px;">
+    <h4>{{t admin.oidc.clients.title}}</h4>
+    {{#if controller.oidcClientsContent.length}}
+      <table class="table table-striped table-bordered table-hover" id="oidc-clients-table">
+        <thead>
+          <tr>
+            <th>{{t admin.oidc.clients.table.service}}</th>
+            <th>{{t admin.oidc.clients.table.clientName}}</th>
+            <th>{{t admin.oidc.clients.table.clientId}}</th>
+            <th>{{t admin.oidc.clients.table.realm}}</th>
+            <th>{{t admin.oidc.clients.table.enabled}}</th>
+            <th>{{t admin.oidc.clients.table.mappers}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each client in controller.oidcClientsContent}}
+            <tr>
+              <td>{{client.serviceName}}</td>
+              <td>{{client.name}}</td>
+              <td><code>{{client.clientId}}</code></td>
+              <td>{{client.realm}}</td>
+              <td>
+                {{#if client.enabled}}
+                  <span class="label label-success">{{t common.yes}}</span>
+                {{else}}
+                  <span class="label label-default">{{t common.no}}</span>
+                {{/if}}
+              </td>
+              <td>
+                {{#if client.protocolMappers.length}}
+                  <a href="#" {{action showProtocolMappersPopup client target="controller"}}>
+                    {{t admin.oidc.clients.table.viewMappers}} ({{client.protocolMappers.length}})
+                  </a>
+                {{else}}
+                  <span class="muted">—</span>
+                {{/if}}
+              </td>
+            </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    {{else}}
+      <p class="muted">{{t admin.oidc.clients.noClients}}</p>
+    {{/if}}
+  </div>
 {{else}}
   {{view App.SpinnerView}}
 {{/if}}
