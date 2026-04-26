@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from auth_context import user_token
 from .base import (
     CatalogAdapter,
     CatalogEntry,
@@ -66,17 +67,14 @@ class PolarisMCPAdapter(CatalogAdapter):
         cache_ttl_seconds: int = 300,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._token = token
+        self._static_token = token
         self._client_id = client_id
         self._client_secret = client_secret
         self._cache_ttl = cache_ttl_seconds
         self._cache: dict[str, tuple[Any, float]] = {}
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
-            headers=headers,
+            headers={"Content-Type": "application/json"},
             timeout=httpx.Timeout(30),
         )
 
@@ -96,13 +94,17 @@ class PolarisMCPAdapter(CatalogAdapter):
 
     # ── HTTP helpers ─────────────────────────────────────────────────────────
 
+    def _auth_header(self) -> dict[str, str]:
+        tok = user_token.get(None) or self._static_token
+        return {"Authorization": f"Bearer {tok}"} if tok else {}
+
     async def _get(self, path: str, params: dict | None = None) -> Any:
-        resp = await self._http.get(path, params=params)
+        resp = await self._http.get(path, params=params, headers=self._auth_header())
         resp.raise_for_status()
         return resp.json()
 
     async def _post(self, path: str, body: dict) -> Any:
-        resp = await self._http.post(path, json=body)
+        resp = await self._http.post(path, json=body, headers=self._auth_header())
         resp.raise_for_status()
         return resp.json()
 
@@ -230,7 +232,7 @@ class PolarisMCPAdapter(CatalogAdapter):
     async def health_check(self) -> dict:
         try:
             resp = await self._http.get(
-                "/api/catalog/v1/config", timeout=5
+                "/api/catalog/v1/config", timeout=5, headers=self._auth_header()
             )
             if resp.status_code == 200:
                 return {

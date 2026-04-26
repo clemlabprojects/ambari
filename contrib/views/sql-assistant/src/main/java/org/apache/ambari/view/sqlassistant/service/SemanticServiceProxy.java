@@ -26,6 +26,7 @@ import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -43,30 +44,53 @@ public class SemanticServiceProxy {
     private static final MediaType JSON_MEDIA_TYPE =
             MediaType.parse("application/json; charset=utf-8");
 
+    /**
+     * Shared OkHttpClient instances keyed by "connectTimeout:readTimeout".
+     * OkHttpClient and its ConnectionPool are expensive to construct and are
+     * designed to be shared across requests.  Auth headers are injected per-request
+     * via addUserContext(), so sharing the base client is safe.
+     */
+    private static final ConcurrentHashMap<String, OkHttpClient> HTTP_CLIENT_CACHE =
+            new ConcurrentHashMap<>();
+
     private final String serviceBaseUrl;
     private final OkHttpClient httpClient;
+    private final String bearerToken;
+    private final String ambariUser;
 
     /**
      * Constructs a proxy configured to communicate with the semantic service at the
      * given base URL using the specified HTTP timeouts.
      *
-     * @param serviceBaseUrl        the base URL of the semantic service (trailing slash
-     *                              is stripped automatically)
+     * <p>If {@code bearerToken} is non-null it is forwarded as an
+     * {@code Authorization: Bearer} header on every outbound request, allowing the
+     * Python service (and downstream systems such as Polaris and Trino) to honour
+     * the authenticated user's identity instead of falling back to a shared service
+     * account.  {@code ambariUser} is forwarded as {@code X-Ambari-User} for audit
+     * logging in the Python layer.
+     *
+     * @param serviceBaseUrl        the base URL of the semantic service
      * @param connectTimeoutSeconds maximum time in seconds to establish a TCP connection
      * @param readTimeoutSeconds    maximum time in seconds to wait for a response body
+     * @param bearerToken           user JWT to forward; {@code null} disables forwarding
+     * @param ambariUser            Ambari-authenticated username; {@code null} if unknown
      */
     public SemanticServiceProxy(String serviceBaseUrl, int connectTimeoutSeconds,
-                                int readTimeoutSeconds) {
+                                int readTimeoutSeconds, String bearerToken, String ambariUser) {
         this.serviceBaseUrl = serviceBaseUrl.endsWith("/")
                 ? serviceBaseUrl.substring(0, serviceBaseUrl.length() - 1)
                 : serviceBaseUrl;
+        this.bearerToken = bearerToken;
+        this.ambariUser  = ambariUser;
 
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
-                .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                .connectionPool(new ConnectionPool(10, 5, TimeUnit.MINUTES))
-                .build();
+        String cacheKey = connectTimeoutSeconds + ":" + readTimeoutSeconds;
+        this.httpClient = HTTP_CLIENT_CACHE.computeIfAbsent(cacheKey, k ->
+                new OkHttpClient.Builder()
+                        .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
+                        .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+                        .writeTimeout(30, TimeUnit.SECONDS)
+                        .connectionPool(new ConnectionPool(10, 5, TimeUnit.MINUTES))
+                        .build());
     }
 
     // ── GET ──────────────────────────────────────────────────────────────────
@@ -89,9 +113,9 @@ public class SemanticServiceProxy {
         if (queryParams != null) {
             queryParams.forEach(urlBuilder::addQueryParameter);
         }
-        Request request = new Request.Builder()
+        Request request = addUserContext(new Request.Builder()
                 .url(urlBuilder.build())
-                .header("X-Request-ID", requestId != null ? requestId : "")
+                .header("X-Request-ID", requestId != null ? requestId : ""))
                 .get()
                 .build();
         return execute(request);
@@ -116,9 +140,9 @@ public class SemanticServiceProxy {
         RequestBody body = RequestBody.create(
                 jsonBody != null ? jsonBody : "{}", JSON_MEDIA_TYPE
         );
-        Request request = new Request.Builder()
+        Request request = addUserContext(new Request.Builder()
                 .url(serviceBaseUrl + path)
-                .header("X-Request-ID", requestId != null ? requestId : "")
+                .header("X-Request-ID", requestId != null ? requestId : ""))
                 .post(body)
                 .build();
         return execute(request);
@@ -138,15 +162,26 @@ public class SemanticServiceProxy {
      *         or is unreachable
      */
     public String delete(String path, String requestId) {
-        Request request = new Request.Builder()
+        Request request = addUserContext(new Request.Builder()
                 .url(serviceBaseUrl + path)
-                .header("X-Request-ID", requestId != null ? requestId : "")
+                .header("X-Request-ID", requestId != null ? requestId : ""))
                 .delete()
                 .build();
         return execute(request);
     }
 
     // ── internal ─────────────────────────────────────────────────────────────
+
+    /** Adds user-identity headers to a request builder when credentials are available. */
+    private Request.Builder addUserContext(Request.Builder builder) {
+        if (bearerToken != null && !bearerToken.isEmpty()) {
+            builder.header("Authorization", "Bearer " + bearerToken);
+        }
+        if (ambariUser != null && !ambariUser.isEmpty()) {
+            builder.header("X-Ambari-User", ambariUser);
+        }
+        return builder;
+    }
 
     private String execute(Request request) {
         try (okhttp3.Response resp = httpClient.newCall(request).execute()) {

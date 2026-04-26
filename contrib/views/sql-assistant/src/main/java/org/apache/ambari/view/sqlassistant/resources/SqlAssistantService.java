@@ -25,6 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.*;
 import javax.ws.rs.core.*;
 import java.util.HashMap;
@@ -69,10 +71,11 @@ public class SqlAssistantService {
     @Path("nl-to-sql")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response nlToSql(String body, @Context HttpHeaders headers) {
+    public Response nlToSql(String body, @Context HttpHeaders headers,
+                            @Context HttpServletRequest request) {
         String requestId = requestId(headers);
         LOG.debug("nl-to-sql requestId={}", requestId);
-        String result = proxy().post("/api/v1/nl-to-sql", body, requestId);
+        String result = proxy(request).post("/api/v1/nl-to-sql", body, requestId);
         return ok(result);
     }
 
@@ -91,9 +94,10 @@ public class SqlAssistantService {
     @Path("execute")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response execute(String body, @Context HttpHeaders headers) {
+    public Response execute(String body, @Context HttpHeaders headers,
+                            @Context HttpServletRequest request) {
         String requestId = requestId(headers);
-        String result = proxy().post("/api/v1/execute", body, requestId);
+        String result = proxy(request).post("/api/v1/execute", body, requestId);
         return ok(result);
     }
 
@@ -110,8 +114,9 @@ public class SqlAssistantService {
     @GET
     @Path("schema/catalogs")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response listCatalogs(@Context HttpHeaders headers) {
-        String result = proxy().get("/api/v1/schema/catalogs", null, requestId(headers));
+    public Response listCatalogs(@Context HttpHeaders headers,
+                                 @Context HttpServletRequest request) {
+        String result = proxy(request).get("/api/v1/schema/catalogs", null, requestId(headers));
         return ok(result);
     }
 
@@ -128,8 +133,9 @@ public class SqlAssistantService {
     @Path("schema/catalogs/{catalog}/namespaces")
     @Produces(MediaType.APPLICATION_JSON)
     public Response listNamespaces(@PathParam("catalog") String catalog,
-                                   @Context HttpHeaders headers) {
-        String result = proxy().get(
+                                   @Context HttpHeaders headers,
+                                   @Context HttpServletRequest request) {
+        String result = proxy(request).get(
                 "/api/v1/schema/catalogs/" + catalog + "/namespaces",
                 null, requestId(headers));
         return ok(result);
@@ -150,8 +156,9 @@ public class SqlAssistantService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response listTables(@PathParam("catalog") String catalog,
                                @PathParam("namespace") String namespace,
-                               @Context HttpHeaders headers) {
-        String result = proxy().get(
+                               @Context HttpHeaders headers,
+                               @Context HttpServletRequest request) {
+        String result = proxy(request).get(
                 "/api/v1/schema/catalogs/" + catalog + "/namespaces/" + namespace + "/tables",
                 null, requestId(headers));
         return ok(result);
@@ -174,8 +181,9 @@ public class SqlAssistantService {
     public Response getTableSchema(@PathParam("catalog") String catalog,
                                    @PathParam("namespace") String namespace,
                                    @PathParam("table") String table,
-                                   @Context HttpHeaders headers) {
-        String result = proxy().get(
+                                   @Context HttpHeaders headers,
+                                   @Context HttpServletRequest request) {
+        String result = proxy(request).get(
                 "/api/v1/schema/catalogs/" + catalog + "/namespaces/" + namespace + "/tables/" + table,
                 null, requestId(headers));
         return ok(result);
@@ -192,8 +200,9 @@ public class SqlAssistantService {
     @POST
     @Path("schema/refresh")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response refreshSchema(@Context HttpHeaders headers) {
-        String result = proxy().post("/api/v1/schema/refresh", "{}", requestId(headers));
+    public Response refreshSchema(@Context HttpHeaders headers,
+                                  @Context HttpServletRequest request) {
+        String result = proxy(request).post("/api/v1/schema/refresh", "{}", requestId(headers));
         return ok(result);
     }
 
@@ -220,13 +229,14 @@ public class SqlAssistantService {
                                 @QueryParam("offset") Integer offset,
                                 @QueryParam("search") String search,
                                 @QueryParam("dialect") String dialect,
-                                @Context HttpHeaders headers) {
+                                @Context HttpHeaders headers,
+                                @Context HttpServletRequest request) {
         Map<String, String> params = new HashMap<>();
         if (limit != null)  params.put("limit", String.valueOf(limit));
         if (offset != null) params.put("offset", String.valueOf(offset));
         if (search != null) params.put("search", search);
         if (dialect != null) params.put("dialect", dialect);
-        String result = proxy().get("/api/v1/history", params, requestId(headers));
+        String result = proxy(request).get("/api/v1/history", params, requestId(headers));
         return ok(result);
     }
 
@@ -243,8 +253,9 @@ public class SqlAssistantService {
     @Path("history/{id}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response deleteHistoryEntry(@PathParam("id") String id,
-                                       @Context HttpHeaders headers) {
-        String result = proxy().delete("/api/v1/history/" + id, requestId(headers));
+                                       @Context HttpHeaders headers,
+                                       @Context HttpServletRequest request) {
+        String result = proxy(request).delete("/api/v1/history/" + id, requestId(headers));
         return ok(result);
     }
 
@@ -259,8 +270,9 @@ public class SqlAssistantService {
     @DELETE
     @Path("history")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response clearHistory(@Context HttpHeaders headers) {
-        String result = proxy().delete("/api/v1/history", requestId(headers));
+    public Response clearHistory(@Context HttpHeaders headers,
+                                 @Context HttpServletRequest request) {
+        String result = proxy(request).delete("/api/v1/history", requestId(headers));
         return ok(result);
     }
 
@@ -278,8 +290,9 @@ public class SqlAssistantService {
     @GET
     @Path("health")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response health(@Context HttpHeaders headers) {
-        String result = proxy().get("/health", null, requestId(headers));
+    public Response health(@Context HttpHeaders headers,
+                           @Context HttpServletRequest request) {
+        String result = proxy(request).get("/health", null, requestId(headers));
         return ok(result);
     }
 
@@ -295,8 +308,9 @@ public class SqlAssistantService {
     @GET
     @Path("config")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getConfig(@Context HttpHeaders headers) {
-        String result = proxy().get("/api/v1/config", null, requestId(headers));
+    public Response getConfig(@Context HttpHeaders headers,
+                              @Context HttpServletRequest request) {
+        String result = proxy(request).get("/api/v1/config", null, requestId(headers));
         return ok(result);
     }
 
@@ -326,12 +340,37 @@ public class SqlAssistantService {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private SemanticServiceProxy proxy() {
+    /**
+     * Builds a {@link SemanticServiceProxy} for the current request, extracting the Ambari
+     * JWT cookie and the authenticated username so they can be forwarded to the Python service.
+     *
+     * <p>The JWT value (if present) is sent as {@code Authorization: Bearer <token>}, enabling
+     * the Python service to pass it on to Polaris and Trino for per-user identity enforcement.
+     * When no cookie is present — e.g. during a non-SSO session — both token and user are
+     * {@code null} and the Python service falls back to its configured service credentials.
+     *
+     * @param request the current servlet request, used to locate the JWT cookie and username
+     * @return a configured proxy instance for this request
+     */
+    private SemanticServiceProxy proxy(HttpServletRequest request) {
         ViewConfigurationService cfg = new ViewConfigurationService(viewContext);
+        String jwtCookieName = cfg.getJwtCookieName();
+        String bearerToken = null;
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if (jwtCookieName.equals(cookie.getName())) {
+                    bearerToken = cookie.getValue();
+                    break;
+                }
+            }
+        }
+        String ambariUser = request.getRemoteUser();
         return new SemanticServiceProxy(
                 cfg.getSemanticServiceUrl(),
                 cfg.getConnectTimeout(),
-                cfg.getReadTimeout()
+                cfg.getReadTimeout(),
+                bearerToken,
+                ambariUser
         );
     }
 

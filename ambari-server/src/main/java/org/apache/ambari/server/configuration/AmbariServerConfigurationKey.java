@@ -91,6 +91,9 @@ public enum AmbariServerConfigurationKey {
   SSO_JWT_AUDIENCES(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.jwt.audiences", PLAINTEXT, null, "A list of the JWT audiences expected. Leaving this blank will allow for any audience.", false),
   SSO_JWT_COOKIE_NAME(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.jwt.cookieName", PLAINTEXT, "hadoop-jwt", "The name of the cookie which will be used to extract the JWT token from the request.", false),
   SSO_AUTHENTICATION_ENABLED(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.authentication.enabled", PLAINTEXT, "false", "Determines whether to use JWT authentication when logging into Ambari.", false),
+  SSO_OIDC_CLIENT_ID(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.clientId", PLAINTEXT, "", "The OIDC client ID registered in Keycloak for the Ambari server-side authorization-code callback flow.  Required for HttpOnly cookie issuance.", false),
+  SSO_OIDC_CLIENT_SECRET(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.clientSecret", PASSWORD, "", "The OIDC client secret corresponding to ambari.sso.oidc.clientId.  Used in the server-side token exchange POST; never exposed to the browser.", false),
+  SSO_OIDC_CALLBACK_URL(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.callbackUrl", PLAINTEXT, "", "The absolute redirect_uri registered in Keycloak for the OIDC callback endpoint (e.g. https://ambari.corp.example.com:8442/oidc/callback).  Must match the load-balancer public URL when Ambari is behind a reverse proxy.", false),
 
   /* ********************************************************
    * Trusted Proxy Configuration Keys

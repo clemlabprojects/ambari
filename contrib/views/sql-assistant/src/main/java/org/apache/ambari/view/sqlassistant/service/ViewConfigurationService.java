@@ -33,12 +33,14 @@ public class ViewConfigurationService {
     public static final String PARAM_CONNECT_TIMEOUT       = "sql.assistant.connect.timeout.seconds";
     public static final String PARAM_READ_TIMEOUT          = "sql.assistant.read.timeout.seconds";
     public static final String PARAM_WORKING_DIR           = "sql.assistant.working.dir";
+    public static final String PARAM_JWT_COOKIE_NAME       = "sql.assistant.jwt.cookie.name";
 
     // ── Defaults ─────────────────────────────────────────────────────────────
 
     private static final String DEFAULT_SERVICE_URL        = "http://localhost:8090";
     private static final int    DEFAULT_CONNECT_TIMEOUT    = 10;
     private static final int    DEFAULT_READ_TIMEOUT       = 180;
+    private static final String DEFAULT_JWT_COOKIE_NAME    = "hadoop-jwt";
 
     private final ViewContext viewContext;
 
@@ -62,6 +64,18 @@ public class ViewConfigurationService {
 
     public int getReadTimeout() {
         return getIntParam(PARAM_READ_TIMEOUT, DEFAULT_READ_TIMEOUT);
+    }
+
+    /**
+     * Returns the name of the HTTP cookie that carries the Ambari JWT token.
+     * Defaults to {@value #DEFAULT_JWT_COOKIE_NAME}, matching the standard Ambari SSO cookie.
+     * Override via the {@value #PARAM_JWT_COOKIE_NAME} view parameter when a custom cookie
+     * name has been configured in {@code ambari.sso.jwt.cookieName}.
+     *
+     * @return the JWT cookie name; never {@code null}
+     */
+    public String getJwtCookieName() {
+        return getParam(PARAM_JWT_COOKIE_NAME, DEFAULT_JWT_COOKIE_NAME);
     }
 
     public String getWorkingDir() {

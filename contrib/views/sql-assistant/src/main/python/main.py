@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from auth_context import user_token, user_name
 from config import settings
 from adapters.llm.base import LLMAdapter, SchemaContext, TableContext, ColumnContext
 from adapters.sql.base import SQLExecutor
@@ -147,6 +148,19 @@ async def add_request_id(request: Request, call_next):
     response: Response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+@app.middleware("http")
+async def propagate_user_context(request: Request, call_next):
+    auth = request.headers.get("Authorization", "")
+    tok = auth[len("Bearer "):] if auth.startswith("Bearer ") else None
+    tok_reset = user_token.set(tok)
+    name_reset = user_name.set(request.headers.get("X-Ambari-User"))
+    try:
+        return await call_next(request)
+    finally:
+        user_token.reset(tok_reset)
+        user_name.reset(name_reset)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────

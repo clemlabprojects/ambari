@@ -20,6 +20,9 @@ package org.apache.ambari.server.security.authentication.jwt;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_AUTHENTICATION_ENABLED;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_AUDIENCES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_COOKIE_NAME;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CALLBACK_URL;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_SECRET;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_URL;
@@ -54,6 +57,19 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   private String originalUrlQueryParam = null;
   private boolean enabledForAmbari;
 
+  /** OIDC client ID used by the server-side callback flow — empty string means callback flow is disabled. */
+  private String oidcClientId = "";
+
+  /** OIDC client secret for the server-side token exchange POST — never sent to the browser. */
+  private String oidcClientSecret = "";
+
+  /**
+   * Absolute callback URL registered in Keycloak as the {@code redirect_uri} for the Ambari
+   * OIDC client.  Must match the load-balancer public URL when Ambari is behind a reverse proxy
+   * (e.g. {@code https://ambari.corp.example.com:8442/oidc/callback}).
+   */
+  private String oidcCallbackUrl = "";
+
   JwtAuthenticationProperties(Map<String, String> configurationMap) {
     setEnabledForAmbari(Boolean.valueOf(getValue(SSO_AUTHENTICATION_ENABLED, configurationMap)));
     setAudiencesString(getValue(SSO_JWT_AUDIENCES, configurationMap));
@@ -61,6 +77,9 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setCookieName(getValue(SSO_JWT_COOKIE_NAME, configurationMap));
     setOriginalUrlQueryParam(getValue(SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME, configurationMap));
     setPublicKey(getValue(SSO_PROVIDER_CERTIFICATE, configurationMap));
+    setOidcClientId(getValue(SSO_OIDC_CLIENT_ID, configurationMap));
+    setOidcClientSecret(getValue(SSO_OIDC_CLIENT_SECRET, configurationMap));
+    setOidcCallbackUrl(getValue(SSO_OIDC_CALLBACK_URL, configurationMap));
   }
 
   public String getAuthenticationProviderUrl() {
@@ -124,6 +143,63 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
 
   public void setEnabledForAmbari(boolean enabledForAmbari) {
     this.enabledForAmbari = enabledForAmbari;
+  }
+
+  public String getOidcClientId() {
+    return oidcClientId;
+  }
+
+  public void setOidcClientId(String oidcClientId) {
+    this.oidcClientId = (oidcClientId == null) ? "" : oidcClientId.trim();
+  }
+
+  public String getOidcClientSecret() {
+    return oidcClientSecret;
+  }
+
+  public void setOidcClientSecret(String oidcClientSecret) {
+    this.oidcClientSecret = (oidcClientSecret == null) ? "" : oidcClientSecret;
+  }
+
+  public String getOidcCallbackUrl() {
+    return oidcCallbackUrl;
+  }
+
+  public void setOidcCallbackUrl(String oidcCallbackUrl) {
+    this.oidcCallbackUrl = (oidcCallbackUrl == null) ? "" : oidcCallbackUrl.trim();
+  }
+
+  /**
+   * Returns {@code true} when both {@link #oidcClientId} and {@link #oidcClientSecret} are
+   * non-empty, indicating that the server-side OIDC callback flow is fully configured.
+   *
+   * @return {@code true} if the callback flow should be activated
+   */
+  public boolean isOidcClientConfigured() {
+    return !oidcClientId.isEmpty() && !oidcClientSecret.isEmpty();
+  }
+
+  /**
+   * Derives the Keycloak token endpoint from the configured authorization provider URL by
+   * replacing the trailing {@code /auth} path segment with {@code /token}.  This matches the
+   * standard Keycloak OIDC URL layout:
+   * <pre>
+   *   authorization: .../realms/{realm}/protocol/openid-connect/auth
+   *   token:         .../realms/{realm}/protocol/openid-connect/token
+   * </pre>
+   * If the authorization provider URL does not end with {@code /auth}, {@code /token} is appended
+   * directly so that the method never returns {@code null}.
+   *
+   * @return the Keycloak token endpoint URL; never {@code null}
+   */
+  public String getOidcTokenEndpoint() {
+    if (authenticationProviderUrl == null) {
+      return "";
+    }
+    if (authenticationProviderUrl.endsWith("/auth")) {
+      return authenticationProviderUrl.substring(0, authenticationProviderUrl.length() - 5) + "/token";
+    }
+    return authenticationProviderUrl + "/token";
   }
 
   /**

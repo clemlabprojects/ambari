@@ -18,6 +18,7 @@ import trino
 from trino.dbapi import connect as trino_connect
 from trino.exceptions import TrinoQueryError
 
+from auth_context import user_token, user_name
 from .base import SQLExecutor, QueryResult, TableInfo, ColumnInfo
 
 logger = logging.getLogger(__name__)
@@ -51,13 +52,17 @@ class TrinoExecutor(SQLExecutor):
     def _get_connection(
         self, catalog: str | None = None, schema: str | None = None
     ) -> trino.dbapi.Connection:
+        tok = user_token.get(None)
+        effective_user = user_name.get(None) or self._user
         kwargs: dict = {
             "host": self._host,
             "port": self._port,
-            "user": self._user,
+            "user": effective_user,
             "http_scheme": self._http_scheme,
         }
-        if self._password:
+        if tok:
+            kwargs["auth"] = trino.auth.JWTAuthentication(tok)
+        elif self._password:
             kwargs["auth"] = trino.auth.BasicAuthentication(
                 self._user, self._password
             )
