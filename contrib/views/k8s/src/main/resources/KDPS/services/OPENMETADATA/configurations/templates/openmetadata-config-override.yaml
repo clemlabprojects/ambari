@@ -1,0 +1,22 @@
+# OpenMetadata advanced configuration overrides.
+# This YAML fragment is merged on top of chart-generated defaults.
+# Uncomment and adjust any section you need to tune.
+#
+# Reference: https://docs.open-metadata.org/latest/deployment/configuration
+
+# --- Search index tuning ---
+# elasticsearch:
+#   searchIndexMappingLanguage: "EN"
+#   batchSize: 1000
+#   connectionTimeoutSecs: 5
+#   socketTimeoutSecs: 60
+
+# --- Entity limits ---
+# limits:
+#   maxAggregateSize: 10000
+#   maxResultHits: 10000
+
+# --- Feature flags ---
+# featureFlags:
+#   profilerConfiguration: true
+#   customMetrics: true

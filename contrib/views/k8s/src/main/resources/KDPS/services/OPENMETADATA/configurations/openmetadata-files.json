@@ -1,0 +1,14 @@
+{
+  "name": "openmetadata-files",
+  "description": "Optional YAML configuration overrides applied on top of chart defaults",
+  "properties": [
+    {
+      "name": "openmetadata-config-override.yaml",
+      "displayName": "openmetadata-config-override.yaml",
+      "description": "YAML fragment merged into the main openmetadata-config ConfigMap at deploy time. Use this to tune advanced server settings (e.g. limits, cache sizes, feature flags) without forking the Helm chart.",
+      "type": "content",
+      "language": "yaml",
+      "valueSourceFile": "openmetadata-config-override.yaml"
+    }
+  ]
+}

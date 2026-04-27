@@ -1,0 +1,35 @@
+{
+  "name": "openmetadata-env",
+  "description": "Core credentials and runtime settings for the OpenMetadata server",
+  "properties": [
+    {
+      "name": "OPENMETADATA_ADMIN_USERNAME",
+      "displayName": "Admin Username",
+      "value": "admin",
+      "description": "Username for the initial admin account created on first boot",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "OPENMETADATA_ADMIN_PASSWORD",
+      "displayName": "Admin Password",
+      "description": "Password for the initial admin account",
+      "type": "password",
+      "required": true
+    },
+    {
+      "name": "OPENMETADATA_DB_PASSWORD",
+      "displayName": "MySQL Password",
+      "description": "Password for the openmetadata_user MySQL account. Must match mysql.auth.password in Helm values.",
+      "type": "password",
+      "required": true
+    },
+    {
+      "name": "OPENMETADATA_JWT_TOKEN_EXPIRY_TIME",
+      "displayName": "JWT Token Expiry (seconds)",
+      "value": 604800,
+      "description": "Validity window for issued JWT tokens. Default: 604800 (7 days).",
+      "type": "int"
+    }
+  ]
+}

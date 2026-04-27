@@ -1,0 +1,1155 @@
+{
+  "label": "OpenMetadata",
+  "chart": "clemlabprojects/openmetadata",
+  "pattern": "openmetadata-.*",
+  "secretName": "registry-credentials",
+  "version": "1.12.6",
+  "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
+  "dynamicValues": [
+    "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
+    "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
+    "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl"
+  ],
+  "oidc": [
+    {
+      "key": "openmetadata",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
+  ],
+  "kerberos": [
+    {
+      "key": "ingestion",
+      "serviceName": "openmetadata-ingestion",
+      "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+      "secretNameTemplate": "{{releaseName}}-ingestion-keytab",
+      "keyNameInSecret": "service.keytab",
+      "mountPath": "/etc/security/keytabs"
+    }
+  ],
+  "tls": [
+    {
+      "key": "https",
+      "secretNameTemplate": "{{releaseName}}-https",
+      "keystoreKey": "keystore.p12",
+      "passwordKey": "truststore.password",
+      "keystoreType": "PKCS12",
+      "mountPath": "/etc/security/tls/https-keystore.p12",
+      "keystorePath": "/etc/security/tls/https-keystore.p12",
+      "defaultPort": 8443,
+      "autoGenerate": true,
+      "validityDays": 365,
+      "dnsTemplates": [
+        "{{releaseName}}-openmetadata.{{namespace}}.svc",
+        "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local",
+        "{{ingress.host}}"
+      ],
+      "defaults": {
+        "enabled": false,
+        "autoGenerate": true,
+        "port": 8443,
+        "keystoreKey": "keystore.p12",
+        "passwordKey": "truststore.password",
+        "passwordSecretName": "",
+        "keystoreType": "PKCS12",
+        "mountPath": "/etc/security/tls/https-keystore.p12",
+        "keystorePath": "/etc/security/tls/https-keystore.p12"
+      }
+    }
+  ],
+  "dependencies": {
+    "kube-prometheus-stack": {
+      "secretName": "regcred",
+      "chart": "kube-prometheus-stack",
+      "chartVersion": "78.3.2",
+      "skipIfReleaseExists": true,
+      "crds": [
+        "servicemonitors.monitoring.coreos.com"
+      ],
+      "imageGlobalRegistryProperty": "global.imageRegistry",
+      "imageRepository": "registry.clemlab.com/clemlabprojects",
+      "namespace": "monitoring"
+    }
+  },
+  "endpoints": [
+    {
+      "id": "openmetadata-ui",
+      "label": "OpenMetadata UI",
+      "description": "Data discovery, lineage and governance portal",
+      "urlTemplate": "{{scheme}}://{{host}}:{{port}}",
+      "properties": {
+        "host": {
+          "source": "template",
+          "type": "string",
+          "template": "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local"
+        },
+        "port": {
+          "source": "helm",
+          "type": "integer",
+          "path": "{% if openmetadata.config.tls.enabled %}openmetadata.config.tls.port{% else %}openmetadata.config.port{% endif %}"
+        },
+        "scheme": {
+          "source": "helmCondition",
+          "type": "string",
+          "path": "{% if openmetadata.config.tls.enabled %}https{% else %}http{% endif %}"
+        }
+      }
+    }
+  ],
+  "mounts": [],
+  "variables": [
+    {
+      "name": "namespace",
+      "from": { "type": "form", "field": "namespace" }
+    },
+    {
+      "name": "releaseName",
+      "from": { "type": "form", "field": "releaseName" }
+    },
+    {
+      "name": "ingressEnabled",
+      "from": { "type": "form", "field": "ingress.enabled" }
+    },
+    {
+      "name": "ingressClassName",
+      "from": { "type": "form", "field": "ingress.className" }
+    },
+    {
+      "name": "ingressHost",
+      "from": { "type": "form", "field": "ingress.host" }
+    },
+    {
+      "name": "ingressPath",
+      "from": { "type": "form", "field": "ingress.path" }
+    },
+    {
+      "name": "ingressTLSSecret",
+      "from": { "type": "form", "field": "ingress.tlsSecret" }
+    },
+    {
+      "name": "ingressTLSHost",
+      "from": { "type": "form", "field": "ingress.tlsHost" }
+    },
+    {
+      "name": "ingressTLSSecretUpload",
+      "from": { "type": "form", "field": "ingress.tlsUpload.secretName" }
+    },
+    {
+      "name": "tlsHttpsEnabled",
+      "from": { "type": "form", "field": "tls.https.enabled" }
+    },
+    {
+      "name": "tlsHttpsAutoGenerate",
+      "from": { "type": "form", "field": "tls.https.autoGenerate" }
+    },
+    {
+      "name": "tlsHttpsPort",
+      "from": { "type": "form", "field": "tls.https.port" }
+    },
+    {
+      "name": "tlsHttpsSecretName",
+      "from": { "type": "form", "field": "tls.https.secretName" }
+    },
+    {
+      "name": "tlsHttpsPasswordSecretName",
+      "template": "${tlsHttpsSecretName}-pass"
+    },
+    {
+      "name": "tlsHttpsKeystoreKey",
+      "from": { "type": "form", "field": "tls.https.keystoreKey" }
+    },
+    {
+      "name": "adminUsers",
+      "from": { "type": "form", "field": "security.adminUsers" }
+    },
+    {
+      "name": "adminGroups",
+      "from": { "type": "form", "field": "security.adminGroups" }
+    },
+    {
+      "name": "monitoring.namespace",
+      "from": { "type": "form", "field": "monitoring.namespace" }
+    },
+    {
+      "name": "monitoring.release",
+      "from": { "type": "form", "field": "monitoring.release" }
+    },
+    {
+      "name": "hiveMetastoreUri",
+      "from": { "type": "form", "field": "ui_hive_metastore_uri" }
+    },
+    {
+      "name": "trinoHost",
+      "from": { "type": "form", "field": "ui_trino_host" }
+    },
+    {
+      "name": "ingestionEnabled",
+      "from": { "type": "form", "field": "ingestion.enabled" }
+    },
+    {
+      "name": "ingestionAirflowUrl",
+      "from": { "type": "form", "field": "ingestion.airflowUrl" }
+    },
+    {
+      "name": "postgresqlStorageSize",
+      "from": { "type": "form", "field": "postgresql.storage.size" }
+    },
+    {
+      "name": "postgresqlStorageClass",
+      "from": { "type": "form", "field": "postgresql.storage.storageClass" }
+    },
+    {
+      "name": "opensearchStorageSize",
+      "from": { "type": "form", "field": "opensearch.storage.size" }
+    },
+    {
+      "name": "opensearchStorageClass",
+      "from": { "type": "form", "field": "opensearch.storage.storageClass" }
+    },
+    {
+      "name": "rangerTagSyncEnabled",
+      "from": { "type": "form", "field": "ranger.tagSync.enabled" }
+    },
+    {
+      "name": "rangerTagSyncToken",
+      "from": { "type": "form", "field": "ranger.tagSync.token" }
+    },
+    {
+      "name": "rangerTagSyncEndpoint",
+      "from": { "type": "form", "field": "ranger.tagSync.endpoint" }
+    },
+    {
+      "name": "rangerTagSyncTrinoServiceFqn",
+      "from": { "type": "form", "field": "ranger.tagSync.trinoIngestionServiceFqn" }
+    },
+    {
+      "name": "rangerTagSyncRangerTrinoService",
+      "from": { "type": "form", "field": "ranger.tagSync.rangerTrinoServiceName" }
+    },
+    {
+      "name": "rangerTagSyncDownloadInterval",
+      "from": { "type": "form", "field": "ranger.tagSync.downloadIntervalMillis" }
+    },
+    {
+      "name": "rangerTagSyncBatchSize",
+      "from": { "type": "form", "field": "ranger.tagSync.entitiesBatchSize" }
+    },
+    {
+      "name": "rangerTagSyncComponentType",
+      "from": { "type": "form", "field": "ranger.tagSync.componentTableType" }
+    },
+    {
+      "name": "rangerTagSyncTokenSecretName",
+      "template": "${releaseName}-ranger-tagsync-token"
+    }
+  ],
+  "bindings": [
+    {
+      "name": "oidc-redirect-uri",
+      "skipIfVarEmpty": "ingressHost",
+      "targets": [
+        {
+          "path": "global.security.auth.oidc.redirectUri",
+          "from": {
+            "type": "template",
+            "template": "https://${ingressHost}/callback"
+          }
+        },
+        {
+          "path": "openmetadata.config.authentication.callbackUrl",
+          "from": {
+            "type": "template",
+            "template": "https://${ingressHost}/callback"
+          }
+        },
+        {
+          "path": "openmetadata.config.authentication.serverUrl",
+          "from": {
+            "type": "template",
+            "template": "https://${ingressHost}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ingress-setup",
+      "targets": [
+        {
+          "path": "ingress.hosts[]",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "host": "${ingressHost}",
+              "paths": [
+                {
+                  "path": "${ingressPath}",
+                  "pathType": "ImplementationSpecific"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "path": "ingress.tls[]",
+          "skipIfVarEmpty": "ingressTLSSecretUpload",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecretUpload}",
+              "hosts": ["${ingressHost}"]
+            }
+          }
+        },
+        {
+          "path": "ingress.tls[]",
+          "skipIfVarEmpty": "ingressTLSSecret",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecret}",
+              "hosts": ["${ingressTLSHost}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "https-config",
+      "targets": [
+        {
+          "path": "openmetadata.config.tls.enabled",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+        },
+        {
+          "path": "openmetadata.config.tls.port",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsPort}" }
+        },
+        {
+          "path": "openmetadata.config.tls.keyStorePath",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsKeystorePath}" }
+        },
+        {
+          "path": "openmetadata.config.tls.keyStoreSecretName",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+        },
+        {
+          "path": "openmetadata.config.tls.keyStorePasswordSecretName",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsPasswordSecretName}" }
+        },
+        {
+          "path": "global.security.tls.enabled",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsEnabled}" }
+        },
+        {
+          "path": "global.security.tls.truststoreSecret",
+          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "from": { "type": "template", "template": "${tlsHttpsSecretName}" }
+        }
+      ]
+    },
+    {
+      "name": "admin-role-mapping",
+      "targets": [
+        {
+          "path": "global.security.adminUsers",
+          "skipIfVarEmpty": "adminUsers",
+          "from": { "type": "var", "name": "adminUsers" }
+        },
+        {
+          "path": "global.security.adminGroups",
+          "skipIfVarEmpty": "adminGroups",
+          "from": { "type": "var", "name": "adminGroups" }
+        },
+        {
+          "path": "openmetadata.config.authorization.adminPrincipals[]",
+          "skipIfVarEmpty": "adminUsers",
+          "from": { "type": "var", "name": "adminUsers" }
+        }
+      ]
+    },
+    {
+      "name": "kerberos-keytab-ingestion",
+      "targets": [
+        {
+          "path": "global.security.kerberos.keytab.secretName",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.ingestion.secretName}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.keytab.secretDataKey",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.ingestion.keyNameInSecret}"
+          }
+        },
+        {
+          "path": "global.security.kerberos.keytab.mountPath",
+          "from": {
+            "type": "template",
+            "template": "${kerberos.ingestion.mountPath}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "fsGroup",
+      "targets": [
+        {
+          "path": "podSecurityContext",
+          "op": "merge",
+          "value": {
+            "fsGroup": 1000,
+            "fsGroupChangePolicy": "OnRootMismatch"
+          }
+        }
+      ]
+    },
+    {
+      "name": "hive-connector",
+      "skipIfVarEmpty": "hiveMetastoreUri",
+      "targets": [
+        {
+          "path": "openmetadata.config.connectors.hive.metastoreHostPort",
+          "from": { "type": "var", "name": "hiveMetastoreUri" }
+        },
+        {
+          "path": "openmetadata.config.connectors.hive.enabled",
+          "from": { "type": "template", "template": "true" }
+        }
+      ]
+    },
+    {
+      "name": "trino-connector",
+      "skipIfVarEmpty": "trinoHost",
+      "targets": [
+        {
+          "path": "openmetadata.config.connectors.trino.hostPort",
+          "from": { "type": "var", "name": "trinoHost" }
+        },
+        {
+          "path": "openmetadata.config.connectors.trino.enabled",
+          "from": { "type": "template", "template": "true" }
+        }
+      ]
+    },
+    {
+      "name": "ingestion-airflow",
+      "skipIfVarEmpty": "ingestionAirflowUrl",
+      "targets": [
+        {
+          "path": "openmetadata.config.pipelineServiceClientConfig.enabled",
+          "from": { "type": "template", "template": "true" }
+        },
+        {
+          "path": "openmetadata.config.pipelineServiceClientConfig.apiEndpoint",
+          "from": { "type": "var", "name": "ingestionAirflowUrl" }
+        }
+      ]
+    },
+    {
+      "name": "postgresql-storage",
+      "skipIfVarEmpty": "postgresqlStorageSize",
+      "targets": [
+        {
+          "path": "postgresql.primary.persistence.size",
+          "from": { "type": "var", "name": "postgresqlStorageSize" }
+        },
+        {
+          "path": "postgresql.primary.persistence.storageClass",
+          "skipIfVarEmpty": "postgresqlStorageClass",
+          "from": { "type": "var", "name": "postgresqlStorageClass" }
+        }
+      ]
+    },
+    {
+      "name": "opensearch-storage",
+      "skipIfVarEmpty": "opensearchStorageSize",
+      "targets": [
+        {
+          "path": "opensearch.persistence.size",
+          "from": { "type": "var", "name": "opensearchStorageSize" }
+        },
+        {
+          "path": "opensearch.persistence.storageClass",
+          "skipIfVarEmpty": "opensearchStorageClass",
+          "from": { "type": "var", "name": "opensearchStorageClass" }
+        }
+      ]
+    },
+    {
+      "name": "service-monitor-enable",
+      "targets": [
+        {
+          "path": "serviceMonitor.enabled",
+          "op": "set",
+          "value": true
+        },
+        {
+          "path": "serviceMonitor.labels.release",
+          "op": "set",
+          "from": { "type": "var", "name": "monitoring.release" }
+        }
+      ]
+    },
+    {
+      "name": "ranger-tagsync-endpoint-from-ingress",
+      "skipIfVarEmpty": "ingressHost",
+      "targets": [
+        {
+          "path": "ranger.tagSync.endpoint",
+          "from": {
+            "type": "template",
+            "template": "https://${ingressHost}/api"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ranger-tagsync-config",
+      "skipIfVarEmpty": "rangerTagSyncEnabled",
+      "targets": [
+        {
+          "path": "ranger.tagSync.enabled",
+          "from": { "type": "var", "name": "rangerTagSyncEnabled" }
+        },
+        {
+          "path": "ranger.tagSync.trinoIngestionServiceFqn",
+          "from": { "type": "var", "name": "rangerTagSyncTrinoServiceFqn" }
+        },
+        {
+          "path": "ranger.tagSync.rangerTrinoServiceName",
+          "from": { "type": "var", "name": "rangerTagSyncRangerTrinoService" }
+        },
+        {
+          "path": "ranger.tagSync.downloadIntervalMillis",
+          "from": { "type": "var", "name": "rangerTagSyncDownloadInterval" }
+        },
+        {
+          "path": "ranger.tagSync.entitiesBatchSize",
+          "from": { "type": "var", "name": "rangerTagSyncBatchSize" }
+        },
+        {
+          "path": "ranger.tagSync.componentTableType",
+          "from": { "type": "var", "name": "rangerTagSyncComponentType" }
+        },
+        {
+          "path": "ranger.tagSync.tokenSecretName",
+          "from": { "type": "var", "name": "rangerTagSyncTokenSecretName" }
+        },
+        {
+          "path": "ranger.tagSync.tokenSecretKey",
+          "from": { "type": "template", "template": "tagsync-token" }
+        }
+      ]
+    }
+  ],
+  "form": [
+    {
+      "name": "releaseName",
+      "label": "Release Name",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "namespace",
+      "label": "Namespace Kubernetes",
+      "type": "string",
+      "required": true,
+      "defaultValue": "openmetadata"
+    },
+    {
+      "name": "adminConfig",
+      "label": "Administrators",
+      "type": "group",
+      "fields": [
+        {
+          "name": "security.adminUsers",
+          "label": "Admin users (comma-separated)",
+          "type": "string",
+          "defaultValue": "admin",
+          "help": "List of usernames granted the Admin role (e.g. admin, john.doe). These map to AUTHORIZER_ADMIN_PRINCIPALS."
+        },
+        {
+          "name": "security.adminGroups",
+          "label": "Admin groups (comma-separated)",
+          "type": "string",
+          "help": "IdP group names (OIDC/LDAP) to map to the Admin role."
+        }
+      ]
+    },
+    {
+      "name": "authenticationConfig",
+      "label": "Authentication",
+      "type": "group",
+      "help": "Choose how users authenticate to OpenMetadata. 'oidc' requires a Keycloak realm to be configured in Ambari. 'ldap' requires an accessible LDAP/AD directory.",
+      "fields": [
+        {
+          "name": "global.security.auth.mode",
+          "label": "Authentication mode",
+          "type": "select",
+          "defaultValue": "no-auth",
+          "options": [
+            { "label": "No authentication (dev/internal)",        "value": "no-auth" },
+            { "label": "OpenID Connect (Keycloak / SSO)",        "value": "oidc"    },
+            { "label": "LDAP / Active Directory",                "value": "ldap"    }
+          ],
+          "help": "Sets AUTHENTICATION_PROVIDER in the OpenMetadata server. Select 'oidc' to register a Keycloak client automatically."
+        },
+        {
+          "name": "global.security.auth.oidc.providerName",
+          "label": "OIDC provider display name",
+          "type": "string",
+          "defaultValue": "SSO",
+          "help": "Label shown on the OpenMetadata login button (CUSTOM_OIDC_AUTHENTICATION_PROVIDER_NAME).",
+          "condition": { "field": "global.security.auth.mode", "value": "oidc" }
+        },
+        {
+          "name": "global.security.auth.oidc.jwksUri",
+          "label": "JWKS URI override",
+          "type": "string",
+          "help": "Override the public key URL used to verify tokens. Defaults to <issuerUrl>/protocol/openid-connect/certs (Keycloak). Set for non-Keycloak OIDC providers.",
+          "condition": { "field": "global.security.auth.mode", "value": "oidc" }
+        },
+        {
+          "name": "global.security.auth.oidc.userClaim",
+          "label": "JWT user claim",
+          "type": "string",
+          "defaultValue": "preferred_username",
+          "help": "JWT claim used as the OpenMetadata username.",
+          "condition": { "field": "global.security.auth.mode", "value": "oidc" }
+        },
+        {
+          "name": "global.security.auth.ldap.host",
+          "label": "LDAP host",
+          "type": "string",
+          "required": true,
+          "help": "Hostname of the LDAP/AD server (without ldap:// prefix).",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.port",
+          "label": "LDAP port",
+          "type": "number",
+          "defaultValue": 389,
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.userBaseDn",
+          "label": "User search base DN",
+          "type": "string",
+          "required": true,
+          "help": "Base DN for user lookup, e.g. ou=people,dc=example,dc=com.",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.userSearchFilter",
+          "label": "User search filter",
+          "type": "string",
+          "defaultValue": "(uid={0})",
+          "help": "LDAP filter to locate a user. Use {0} as the username placeholder.",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.bindDn",
+          "label": "Bind DN (read account)",
+          "type": "string",
+          "help": "Service account DN used to search the directory, e.g. cn=svc-om,ou=svc,dc=example,dc=com.",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.bindPassword",
+          "label": "Bind password",
+          "type": "password",
+          "help": "Password for the bind DN.",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.groupBaseDn",
+          "label": "Group search base DN",
+          "type": "string",
+          "help": "Base DN for group membership lookups (optional).",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.mailAttribute",
+          "label": "Email attribute",
+          "type": "string",
+          "defaultValue": "mail",
+          "help": "LDAP attribute containing the user e-mail address.",
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.startTls",
+          "label": "Use STARTTLS",
+          "type": "boolean",
+          "defaultValue": false,
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        },
+        {
+          "name": "global.security.auth.ldap.isSsl",
+          "label": "Use LDAPS (SSL)",
+          "type": "boolean",
+          "defaultValue": false,
+          "condition": { "field": "global.security.auth.mode", "value": "ldap" }
+        }
+      ]
+    },
+    {
+      "name": "hadoopIntegration",
+      "label": "Intégration Hadoop",
+      "type": "group",
+      "fields": [
+        {
+          "name": "ui_hive_metastore_uri",
+          "label": "Service Hive Metastore",
+          "type": "service-select",
+          "serviceType": "HIVE_METASTORE",
+          "excludeFromValues": true,
+          "help": "Select a running Hive Metastore to auto-configure the Hive connector."
+        },
+        {
+          "name": "ui_hive_metastore_uri_override",
+          "label": "URI Hive Metastore (override)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "e.g. thrift://hive-metastore.ns:9083 — overrides auto-discovered value."
+        },
+        {
+          "name": "ui_trino_host",
+          "label": "Trino Coordinator",
+          "type": "k8s-discovery",
+          "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
+          "excludeFromValues": true,
+          "help": "Select a running Trino coordinator to auto-configure the Trino connector."
+        },
+        {
+          "name": "ui_trino_host_override",
+          "label": "Trino host:port (override)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "e.g. trino-coordinator.ns:8080 — overrides auto-discovered value."
+        }
+      ]
+    },
+    {
+      "name": "ingestionConfig",
+      "label": "Ingestion / Airflow",
+      "type": "group",
+      "fields": [
+        {
+          "name": "ingestion.enabled",
+          "label": "Déployer Airflow (ingestion bundlée)",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Deploy the openmetadata/ingestion Airflow image alongside the server. Disable if you connect to an existing Airflow."
+        },
+        {
+          "name": "ingestion.airflowUrl",
+          "label": "URL Airflow externe",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Base URL of an existing Airflow instance (e.g. http://airflow-webserver.airflow:8080). Used when bundled Airflow is disabled.",
+          "condition": {
+            "field": "ingestion.enabled",
+            "value": false
+          }
+        },
+        {
+          "name": "ingestion.resources.requests.cpu",
+          "label": "CPU Demandé (ingestion)",
+          "type": "string",
+          "defaultValue": "500m",
+          "condition": {
+            "field": "ingestion.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingestion.resources.requests.memory",
+          "label": "Mémoire Demandée (ingestion)",
+          "type": "string",
+          "defaultValue": "2Gi",
+          "condition": {
+            "field": "ingestion.enabled",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "storageConfig",
+      "label": "Stockage",
+      "type": "group",
+      "fields": [
+        {
+          "name": "postgresql.storage.size",
+          "label": "PostgreSQL — Taille PVC",
+          "type": "string",
+          "defaultValue": "50Gi",
+          "help": "Persistent volume size for the PostgreSQL database. Increase for large metadata graphs."
+        },
+        {
+          "name": "postgresql.storage.storageClass",
+          "label": "PostgreSQL — StorageClass",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Leave empty to use the cluster default StorageClass."
+        },
+        {
+          "name": "opensearch.storage.size",
+          "label": "OpenSearch — Taille PVC",
+          "type": "string",
+          "defaultValue": "30Gi",
+          "help": "Persistent volume size for the OpenSearch index."
+        },
+        {
+          "name": "opensearch.storage.storageClass",
+          "label": "OpenSearch — StorageClass",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Leave empty to use the cluster default StorageClass."
+        }
+      ]
+    },
+    {
+      "name": "serverResources",
+      "label": "Ressources du serveur",
+      "type": "group",
+      "fields": [
+        {
+          "name": "resources.requests.cpu",
+          "label": "CPU Demandé",
+          "type": "string",
+          "defaultValue": "500m"
+        },
+        {
+          "name": "resources.requests.memory",
+          "label": "Mémoire Demandée",
+          "type": "string",
+          "defaultValue": "2Gi"
+        },
+        {
+          "name": "resources.limits.cpu",
+          "label": "CPU Limite",
+          "type": "string",
+          "defaultValue": "2"
+        },
+        {
+          "name": "resources.limits.memory",
+          "label": "Mémoire Limite",
+          "type": "string",
+          "defaultValue": "4Gi"
+        },
+        {
+          "name": "replicaCount",
+          "label": "Réplicas",
+          "type": "number",
+          "defaultValue": 1,
+          "help": "Scale to ≥ 2 with sticky sessions enabled on the Ingress for HA."
+        }
+      ]
+    },
+    {
+      "name": "monitoringGeneric",
+      "label": "Monitoring",
+      "type": "group",
+      "fields": [
+        {
+          "name": "monitoring.discovery",
+          "label": "Discover monitoring stack",
+          "type": "monitoring-discovery",
+          "excludeFromValues": true,
+          "help": "Auto-fill monitoring namespace and release from installed kube-prometheus-stack."
+        },
+        {
+          "name": "monitoring.namespace",
+          "label": "Monitoring namespace",
+          "type": "string",
+          "defaultValue": "monitoring"
+        },
+        {
+          "name": "monitoring.release",
+          "label": "Monitoring release (Helm)",
+          "type": "string",
+          "defaultValue": "kube-prometheus-stack"
+        },
+        {
+          "name": "serviceMonitor.enabled",
+          "label": "Expose ServiceMonitor",
+          "type": "boolean",
+          "defaultValue": true
+        }
+      ]
+    },
+    {
+      "name": "ingressConfig",
+      "label": "Exposition HTTP(S) / Ingress",
+      "type": "group",
+      "fields": [
+        {
+          "name": "ingress.enabled",
+          "label": "Activer l'Ingress",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Creates a Kubernetes Ingress to expose OpenMetadata via a hostname."
+        },
+        {
+          "name": "ingress.className",
+          "label": "Classe d'Ingress",
+          "type": "string",
+          "required": true,
+          "help": "Ingress class name (e.g. nginx, openshift-default).",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.host",
+          "label": "Host (DNS) externe",
+          "type": "string",
+          "required": true,
+          "excludeFromValues": true,
+          "help": "Public DNS name (e.g. openmetadata.example.com).",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.path",
+          "label": "Chemin HTTP",
+          "type": "string",
+          "defaultValue": "/",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsSecret",
+          "label": "Secret TLS (existant)",
+          "type": "string",
+          "help": "Name of an existing K8s Secret with tls.crt / tls.key.",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsHost",
+          "label": "Host TLS",
+          "type": "string",
+          "help": "Host covered by the TLS certificate (usually same as ingress.host).",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.cert",
+          "label": "Certificat TLS (PEM)",
+          "type": "content",
+          "language": "plaintext",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.key",
+          "label": "Clé privée TLS (PEM)",
+          "type": "content",
+          "language": "plaintext",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsUpload.secretName",
+          "label": "Nom du Secret TLS",
+          "type": "string",
+          "defaultValue": "openmetadata-ingress-tls",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "httpsInternal",
+      "label": "HTTPS interne (keystore auto)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "tls.https.enabled",
+          "label": "Activer HTTPS interne",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Enables server-side TLS on the OpenMetadata API port. Ambari auto-generates a PKCS12 keystore signed by the internal CA."
+        },
+        {
+          "name": "tls.https.autoGenerate",
+          "label": "Auto-générer le keystore",
+          "type": "boolean",
+          "defaultValue": true,
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.port",
+          "label": "Port HTTPS",
+          "type": "number",
+          "defaultValue": 8443,
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.secretName",
+          "label": "Secret keystore",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Leave empty → <release>-https.",
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.keystoreKey",
+          "label": "Clé du keystore dans le Secret",
+          "type": "string",
+          "defaultValue": "keystore.p12",
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        },
+        {
+          "name": "tls.https.keystoreType",
+          "label": "Format du keystore",
+          "type": "select",
+          "defaultValue": "PKCS12",
+          "options": [
+            { "label": "PKCS12", "value": "PKCS12" },
+            { "label": "JKS",    "value": "JKS" }
+          ],
+          "excludeFromValues": true,
+          "condition": { "field": "tls.https.enabled", "value": true }
+        }
+      ]
+    },
+    {
+      "name": "rangerTagSync",
+      "label": "Ranger TagSync",
+      "type": "group",
+      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries.",
+      "fields": [
+        {
+          "name": "rangerTagSyncEnabled",
+          "label": "Activer Ranger TagSync",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon."
+        },
+        {
+          "name": "rangerTagSyncToken",
+          "label": "OpenMetadata Bot JWT Token",
+          "type": "password",
+          "required": true,
+          "excludeFromValues": true,
+          "help": "JWT token for the OpenMetadata bot account used by Ranger TagSync to call the OM REST API.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncTokenSecretName",
+          "label": "Secret Kubernetes (token)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Name of the K8s Secret that holds the bot token under key 'tagsync-token'. Leave empty to auto-generate from release name.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncEndpoint",
+          "label": "OpenMetadata API endpoint (override)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "REST API base URL seen from the Ranger TagSync host, e.g. https://openmetadata.example.com/api. Defaults to https://<ingressHost>/api when Ingress is enabled.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncTrinoServiceFqn",
+          "label": "OpenMetadata Trino service FQN",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Fully-qualified name of the Trino ingestion service in OpenMetadata (e.g. 'trino_prod'). Used as the key to map OM entities to the Ranger Trino service.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncRangerTrinoService",
+          "label": "Nom du service Ranger Trino",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Name of the Ranger service of type 'trino' where tags will be applied (e.g. 'cl1_trino').",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncComponentType",
+          "label": "Component table type",
+          "type": "string",
+          "defaultValue": "trino",
+          "excludeFromValues": true,
+          "help": "Value of ranger.tagsync.source.openmetadatarest.component.tabletype. Defaults to 'trino'.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncDownloadInterval",
+          "label": "Download interval (ms)",
+          "type": "number",
+          "defaultValue": 230000,
+          "excludeFromValues": true,
+          "help": "How often (milliseconds) Ranger TagSync polls OpenMetadata for tag updates.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        },
+        {
+          "name": "rangerTagSyncBatchSize",
+          "label": "Batch size (entities)",
+          "type": "number",
+          "defaultValue": 10000,
+          "excludeFromValues": true,
+          "help": "Maximum number of entities fetched per TagSync page request.",
+          "condition": { "field": "rangerTagSyncEnabled", "value": true }
+        }
+      ]
+    }
+  ],
+  "ranger": {
+    "ranger-openmetadata-tagsync": {
+      "type": "ranger-tagsync-source",
+      "cm_name": "ranger-openmetadata-tagsync",
+      "cm_type": "config-map",
+      "helm_values_property": "ranger.tagSync.configMapName",
+      "source_class": "org.apache.ranger.tagsync.source.openmetadatarest.OpenmetadataRESTTagSource",
+      "token_secret_name_helm_prop": "ranger.tagSync.tokenSecretName",
+      "token_secret_key_helm_prop": "ranger.tagSync.tokenSecretKey"
+    }
+  }
+}
