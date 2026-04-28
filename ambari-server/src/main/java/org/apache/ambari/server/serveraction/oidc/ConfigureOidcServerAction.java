@@ -18,9 +18,11 @@
 
 package org.apache.ambari.server.serveraction.oidc;
 
+import java.sql.Timestamp;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -29,6 +31,8 @@ import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.orm.dao.OidcClientDAO;
+import org.apache.ambari.server.orm.entities.OidcClientEntity;
 import org.apache.ambari.server.security.credential.Credential;
 import org.apache.ambari.server.security.credential.GenericKeyCredential;
 import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
@@ -107,6 +111,9 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
 
   @Inject
   private VariableReplacementHelper variableReplacementHelper;
+
+  @Inject
+  private OidcClientDAO oidcClientDAO;
 
   /**
    * Executes OIDC provisioning for the target cluster.
@@ -303,6 +310,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
               "Deleting OIDC client: service=%s, descriptor=%s, clientId=%s, realm=%s",
               serviceDescriptor.getName(), clientDescriptor.getName(), resolvedClientId, resolvedRealm));
             handler.deleteClient(resolvedDescriptor, resolvedRealm);
+            oidcClientDAO.deleteByClusterAndClientId(cluster.getClusterId(), resolvedClientId);
             String secretAlias = resolvedDescriptor.getSecretAlias();
             if (!StringUtils.isEmpty(secretAlias)) {
               try {
@@ -363,6 +371,9 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
                 "OIDC client secret alias configured but provider returned no secret: alias=%s (credential store unchanged)",
                 secretAlias));
             }
+
+            persistOidcClient(cluster, serviceDescriptor.getName(),
+              clientDescriptor.getName(), result, resolvedRealm, resolvedDescriptor.getSecretAlias());
 
             // Apply client-level configuration overlays with replacement values such as:
             // ${client_id}, ${client_secret}, ${auth_server_url}, ${oidc_realm}.
@@ -461,6 +472,41 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
    */
   private String describeProviderInternalId(String internalId) {
     return StringUtils.isEmpty(internalId) ? "<not returned>" : internalId;
+  }
+
+  /**
+   * Persists or updates an {@link OidcClientEntity} after a successful ensureClient call so that
+   * Ambari has a record of every provisioned OIDC client independent of the external provider.
+   */
+  private void persistOidcClient(Cluster cluster, String serviceName, String clientName,
+                                  OidcClientResult result, String realm, String secretAlias) {
+    try {
+      Long clusterId = cluster.getClusterId();
+      List<OidcClientEntity> existing = oidcClientDAO.findByClusterAndClientId(clusterId, result.getClientId());
+      OidcClientEntity entity;
+      Timestamp now = new Timestamp(System.currentTimeMillis());
+      if (existing.isEmpty()) {
+        entity = new OidcClientEntity();
+        entity.setClusterId(clusterId);
+        entity.setServiceName(serviceName);
+        entity.setClientName(clientName);
+        entity.setClientId(result.getClientId());
+        entity.setCreatedAt(now);
+      } else {
+        entity = existing.get(0);
+      }
+      entity.setInternalId(result.getInternalId());
+      entity.setRealm(realm);
+      entity.setSecretAlias(secretAlias);
+      entity.setUpdatedAt(now);
+      if (entity.getId() == null) {
+        oidcClientDAO.create(entity);
+      } else {
+        oidcClientDAO.merge(entity);
+      }
+    } catch (Exception e) {
+      LOG.warn("Failed to persist OidcClientEntity for clientId={}: {}", result.getClientId(), e.getMessage(), e);
+    }
   }
 
   /**

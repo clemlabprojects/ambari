@@ -1631,6 +1631,16 @@ var urls = {
     }
   },
 
+  'admin.oidc.deprovision': {
+    'type': 'PUT',
+    'real': '/clusters/{clusterName}?configure_oidc_only=true&oidc_operation=DELETE',
+    'format': function (data) {
+      return {
+        data: JSON.stringify(data.data)
+      };
+    }
+  },
+
   'admin.unkerberize.cluster.skip': {
     'type': 'PUT',
     'real': '/clusters/{clusterName}?manage_kerberos_identities=false',
@@ -1680,6 +1690,16 @@ var urls = {
         data: JSON.stringify(data.data),
         dataType: 'json',
         contentType: 'application/json'
+      };
+    }
+  },
+
+  'admin.oidc.rotate.secrets': {
+    'type': 'PUT',
+    'real': '/clusters/{clusterName}?configure_oidc_only=true',
+    'format': function (data) {
+      return {
+        data: JSON.stringify(data.data)
       };
     }
   },

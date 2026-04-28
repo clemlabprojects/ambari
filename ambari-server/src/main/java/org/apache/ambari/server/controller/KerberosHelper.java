@@ -98,6 +98,10 @@ public interface KerberosHelper {
    */
   String DIRECTIVE_CONFIGURE_OIDC_ONLY = "configure_oidc_only";
   /**
+   * directive used to specify the OIDC provisioning operation (ENSURE or DELETE).
+   */
+  String DIRECTIVE_OIDC_OPERATION = "oidc_operation";
+  /**
    * config type which contains the property used to determine if Kerberos is enabled
    */
   String SECURITY_ENABLED_CONFIG_TYPE = "cluster-env";

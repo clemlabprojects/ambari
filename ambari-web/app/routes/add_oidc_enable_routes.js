@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 var App = require('app');
+require('views/main/admin/oidc/wizard_view');
 
 module.exports = App.WizardRoute.extend({
   route: '/enable',

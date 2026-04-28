@@ -29,6 +29,10 @@
             class="btn btn-success" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
             {{t admin.oidc.button.runProvisioning}}
           </button>
+          <button href="#" {{action rotateOidcSecrets target="controller"}}
+            class="btn btn-warning" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
+            {{t admin.oidc.button.rotateSecrets}}
+          </button>
           <br/>
           <button href="#" {{action makeConfigsEditable target="controller"}}
             {{bindAttr class="controller.isEditMode:hidden :btn :btn-default :pull-right"}}>
@@ -64,9 +68,15 @@
   {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
     {{#if App.supports.enableToggleKerberos}}
       <div style="margin-bottom: 8px;">
-        <button class="btn btn-primary" {{action enableOidc target="controller"}}>
-          {{t admin.oidc.button.enableOidc}}
-        </button>
+        {{#if controller.isOidcEnabled}}
+          <button class="btn btn-danger" {{action disableOidc target="controller"}}>
+            {{t admin.oidc.button.disableOidc}}
+          </button>
+        {{else}}
+          <button class="btn btn-primary" {{action enableOidc target="controller"}}>
+            {{t admin.oidc.button.enableOidc}}
+          </button>
+        {{/if}}
       </div>
     {{/if}}
   {{/isAuthorized}}

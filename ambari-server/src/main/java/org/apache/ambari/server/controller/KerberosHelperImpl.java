@@ -358,7 +358,8 @@ public class KerberosHelperImpl implements KerberosHelper {
                   value));
               }
 
-              requestStageContainer = addConfigureOidcOnlyStage(cluster, requestStageContainer);
+              String oidcOperation = requestProperties.get(KerberosHelper.DIRECTIVE_OIDC_OPERATION);
+              requestStageContainer = addConfigureOidcOnlyStage(cluster, requestStageContainer, oidcOperation);
               break;
 
             default: // No other operations are currently supported
@@ -374,8 +375,20 @@ public class KerberosHelperImpl implements KerberosHelper {
   private RequestStageContainer addConfigureOidcOnlyStage(Cluster cluster,
                                                            RequestStageContainer requestStageContainer)
     throws AmbariException {
-    return configureOidc(cluster, requestStageContainer, null,
-      ConfigureOidcServerAction.OPERATION_ENSURE, "Provision OIDC clients");
+    return addConfigureOidcOnlyStage(cluster, requestStageContainer, null);
+  }
+
+  private RequestStageContainer addConfigureOidcOnlyStage(Cluster cluster,
+                                                           RequestStageContainer requestStageContainer,
+                                                           String oidcOperation)
+    throws AmbariException {
+    String operation = (oidcOperation != null && !oidcOperation.isEmpty())
+      ? oidcOperation
+      : ConfigureOidcServerAction.OPERATION_ENSURE;
+    String note = ConfigureOidcServerAction.OPERATION_DELETE.equalsIgnoreCase(operation)
+      ? "Remove OIDC clients"
+      : "Provision OIDC clients";
+    return configureOidc(cluster, requestStageContainer, null, operation, note);
   }
 
   @Override
@@ -423,14 +436,13 @@ public class KerberosHelperImpl implements KerberosHelper {
       commandParameters.put(ConfigureOidcServerAction.OIDC_SERVICES, StringUtils.join(serviceNames, ","));
     }
 
-    new EnableKerberosHandler(true).addConfigureOidcStage(
-      cluster,
-      clusterHostInfoJson,
-      hostParamsJson,
-      event,
-      commandParameters,
-      roleCommandOrder,
-      requestStageContainer);
+    EnableKerberosHandler handler = new EnableKerberosHandler(true);
+    handler.addPrepareOidcStage(cluster, clusterHostInfoJson, hostParamsJson,
+      event, commandParameters, roleCommandOrder, requestStageContainer);
+    handler.addConfigureOidcStage(cluster, clusterHostInfoJson, hostParamsJson,
+      event, commandParameters, roleCommandOrder, requestStageContainer);
+    handler.addFinalizeOidcStage(cluster, clusterHostInfoJson, hostParamsJson,
+      event, commandParameters, roleCommandOrder, requestStageContainer);
 
     return requestStageContainer;
   }
@@ -3961,6 +3973,48 @@ public class KerberosHelperImpl implements KerberosHelper {
       RoleGraph roleGraph = roleGraphFactory.createNew(roleCommandOrder);
       roleGraph.build(stage);
 
+      requestStageContainer.addStages(roleGraph.getStages());
+    }
+
+    public void addPrepareOidcStage(Cluster cluster, String clusterHostInfoJson,
+                                    String hostParamsJson, ServiceComponentHostServerActionEvent event,
+                                    Map<String, String> commandParameters,
+                                    RoleCommandOrder roleCommandOrder, RequestStageContainer requestStageContainer)
+      throws AmbariException {
+      Stage stage = createServerActionStage(requestStageContainer.getLastStageId(),
+        cluster,
+        requestStageContainer.getId(),
+        "Validate OIDC Configuration",
+        "{}",
+        hostParamsJson,
+        org.apache.ambari.server.serveraction.oidc.PrepareOidcServerAction.class,
+        event,
+        commandParameters,
+        "Validate OIDC Configuration",
+        configuration.getDefaultServerTaskTimeout());
+      RoleGraph roleGraph = roleGraphFactory.createNew(roleCommandOrder);
+      roleGraph.build(stage);
+      requestStageContainer.addStages(roleGraph.getStages());
+    }
+
+    public void addFinalizeOidcStage(Cluster cluster, String clusterHostInfoJson,
+                                     String hostParamsJson, ServiceComponentHostServerActionEvent event,
+                                     Map<String, String> commandParameters,
+                                     RoleCommandOrder roleCommandOrder, RequestStageContainer requestStageContainer)
+      throws AmbariException {
+      Stage stage = createServerActionStage(requestStageContainer.getLastStageId(),
+        cluster,
+        requestStageContainer.getId(),
+        "Finalize OIDC Provisioning",
+        "{}",
+        hostParamsJson,
+        org.apache.ambari.server.serveraction.oidc.FinalizeOidcServerAction.class,
+        event,
+        commandParameters,
+        "Finalize OIDC Provisioning",
+        configuration.getDefaultServerTaskTimeout());
+      RoleGraph roleGraph = roleGraphFactory.createNew(roleCommandOrder);
+      roleGraph.build(stage);
       requestStageContainer.addStages(roleGraph.getStages());
     }
 

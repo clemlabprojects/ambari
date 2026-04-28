@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -16,24 +16,27 @@
  * limitations under the License.
  */
 
-package org.apache.ambari.server.serveraction.oidc;
+var App = require('app');
+require('views/main/admin/kerberos/progress_view');
 
-import com.google.inject.Singleton;
+App.OidcDisableView = App.KerberosProgressPageView.extend({
 
-@Singleton
-public class OidcOperationHandlerFactory {
+  didInsertElement: function() {
+    this._super();
+    this.get('controller').loadStep();
+  },
 
-  public OidcOperationHandler getHandler(String provider) throws OidcOperationException {
-    if ((provider == null) || provider.isEmpty() || "keycloak".equalsIgnoreCase(provider)) {
-      return new KeycloakOidcOperationHandler();
-    }
-    if ("okta".equalsIgnoreCase(provider)) {
-      return new OktaOidcOperationHandler();
-    }
-    if ("auth0".equalsIgnoreCase(provider)) {
-      return new Auth0OidcOperationHandler();
-    }
+  headerTitle: '',
 
-    throw new OidcOperationException(String.format("Unsupported OIDC provider: %s", provider));
-  }
-}
+  noticeCompleted: Em.I18n.t('admin.oidc.disable.notice.completed'),
+
+  notice: Em.I18n.t('admin.oidc.disable.inProgress'),
+
+  templateName: require('templates/main/admin/oidc/disable'),
+
+  msgColor: 'alert-info',
+
+  isSimpleModal: true,
+
+  disableOidc: true
+});

@@ -30,6 +30,12 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   oidcCredentialAlias: credentialsUtils.ALIAS.OIDC_CREDENTIALS,
 
   /**
+   * True when oidc-env is present in the cluster config and has a non-empty oidc_admin_url.
+   * Drives the Enable vs Disable button visibility in oidc.hbs.
+   */
+  isOidcEnabled: false,
+
+  /**
    * Flat list of OIDC client descriptors from the COMPOSITE descriptor.
    * Each item: { serviceName, name, clientId, realm, enabled, protocolMappers }
    */
@@ -40,6 +46,60 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
    */
   enableOidc: function () {
     App.router.transitionTo('main.admin.adminOidc.adminOidcEnable');
+  },
+
+  /**
+   * Show confirmation popup before entering the Disable OIDC flow.
+   */
+  disableOidc: function() {
+    var self = this;
+    return App.showConfirmationPopup(function() {
+      App.router.get('oidcDisableController').setDBProperty('onClosePath', 'main.admin.adminOidc.index');
+      App.router.get('oidcDisableController').set('content', Em.Object.create({
+        controllerName: 'oidcDisableController'
+      }));
+      App.router.transitionTo('main.admin.adminOidc.adminOidcDisable');
+    }, Em.I18n.t('admin.oidc.disable.confirmation.body'), null,
+       Em.I18n.t('admin.oidc.disable.confirmation.header'));
+  },
+
+  /**
+   * Show popup to confirm secret rotation, then fire the provisioning request with rotation flag.
+   */
+  rotateOidcSecrets: function() {
+    var self = this;
+    return App.ModalPopup.show({
+      header: Em.I18n.t('admin.oidc.rotate.popup.header'),
+      bodyClass: Em.View.extend({
+        templateName: require('templates/main/admin/oidc_rotate_popup')
+      }),
+      onPrimary: function() {
+        this._super();
+        self._runRotateRequest();
+      }
+    });
+  },
+
+  _runRotateRequest: function() {
+    var self = this;
+    return App.ajax.send({
+      name: 'admin.oidc.rotate.secrets',
+      sender: this,
+      data: {
+        clusterName: App.get('clusterName'),
+        data: {
+          Clusters: {
+            security_type: this.get('securityEnabled') ? 'KERBEROS' : 'NONE'
+          }
+        }
+      }
+    }).done(function() {
+      App.router.get('userSettingsController').dataLoading('show_bg').done(function(initValue) {
+        if (initValue) {
+          App.router.get('backgroundOperationsController').showPopup();
+        }
+      });
+    });
   },
 
   /**
@@ -64,6 +124,10 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
       var oidcProperties = (properties || []).filter(function(property) {
         return getFilename(property) === 'oidc-env.xml';
       });
+      var adminUrlProp = oidcProperties.find(function(p) {
+        return Em.get(p, 'name') === 'oidc_admin_url';
+      });
+      self.set('isOidcEnabled', !!(adminUrlProp && Em.get(adminUrlProp, 'value')));
       self.setStepConfigs(oidcProperties);
     }).always(function() {
       self.set('isRecommendedLoaded', true);
