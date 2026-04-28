@@ -186,10 +186,6 @@ def _ensure_polaris_admin_root_policy(ranger_admin_v2_obj):
   existing_policy = _ranger_get_policy_by_name(
     ranger_admin_v2_obj, service_name, desired_policy_name, ranger_admin_user, ranger_admin_password
   )
-  if not existing_policy:
-    existing_policy = _ranger_get_policy_by_name(
-      ranger_admin_v2_obj, service_name, "all - root", ranger_admin_user, ranger_admin_password
-    )
 
   if existing_policy:
     updated_policy, changed = _merge_admin_policy_item(existing_policy, required_item, admin_principal)

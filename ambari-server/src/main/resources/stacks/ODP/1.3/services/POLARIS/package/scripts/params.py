@@ -603,7 +603,7 @@ if enable_ranger_polaris:
     "service": repo_name,
     "name": "[AMBARI] - Polaris Admin Access",
     "resources": {
-      "root": {
+      "realm-identifier": {
         "values": ["*"],
         "isExcludes": "false",
         "isRecursive": "false"
