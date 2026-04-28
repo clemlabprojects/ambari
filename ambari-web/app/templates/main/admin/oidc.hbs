@@ -61,6 +61,16 @@
     </div>
   {{/if}}
 
+  {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
+    {{#if App.supports.enableToggleKerberos}}
+      <div style="margin-bottom: 8px;">
+        <button class="btn btn-primary" {{action enableOidc target="controller"}}>
+          {{t admin.oidc.button.enableOidc}}
+        </button>
+      </div>
+    {{/if}}
+  {{/isAuthorized}}
+
   <div class="oidc-clients-section" style="margin-top:24px;">
     <h4>{{t admin.oidc.clients.title}}</h4>
     {{#if controller.oidcClientsContent.length}}

@@ -34,6 +34,10 @@ module.exports = [
     route: 'main.admin.adminKerberos.adminAddKerberos'
   },
   {
+    wizardControllerName: App.router.get('oidcEnableWizardController.name'),
+    route: 'main.admin.adminOidc.adminOidcEnable'
+  },
+  {
     wizardControllerName: App.router.get('addServiceController.name'),
     route: 'main.serviceAdd'
   },

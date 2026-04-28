@@ -1670,6 +1670,19 @@ var urls = {
     'real': '/clusters/{clusterName}/oidc_descriptors/COMPOSITE',
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
   },
+
+  'admin.oidc.test': {
+    'type': 'POST',
+    'real': '/clusters/{clusterName}/oidc_test',
+    'mock': '',
+    'format': function (data) {
+      return {
+        data: JSON.stringify(data.data),
+        dataType: 'json',
+        contentType: 'application/json'
+      };
+    }
+  },
   'admin.kerberos.cluster.artifact.create': {
     'type': 'POST',
     'real': '/clusters/{clusterName}/artifacts/{artifactName}',

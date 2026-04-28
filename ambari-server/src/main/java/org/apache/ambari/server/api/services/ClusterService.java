@@ -844,6 +844,29 @@ public class ClusterService extends BaseService {
    * @param clusterName the cluster name.
    * @return composite OIDC descriptor resource representation
    */
+  /**
+   * Handles: POST /clusters/{clusterID}/oidc_test
+   * Synchronously tests connectivity to the configured Keycloak server.
+   *
+   * @param request     the request.
+   * @param clusterName the cluster name.
+   * @return JSON with status and message.
+   */
+  @Path("{clusterName}/oidc_test")
+  public ClusterOidcTestService testOidcConnectivity(
+      @Context javax.ws.rs.core.Request request,
+      @PathParam("clusterName") String clusterName) {
+    return new ClusterOidcTestService(clusterName);
+  }
+
+  /**
+   * Handles: GET /clusters/{clusterID}/oidc_descriptors
+   * Gets the composite OIDC descriptor associated with the cluster.
+   *
+   * @param request     the request.
+   * @param clusterName the cluster name.
+   * @return composite OIDC descriptor resource representation
+   */
   @Path("{clusterName}/oidc_descriptors")
   public ClusterOidcDescriptorService getCompositeOidcDescriptor(
       @Context javax.ws.rs.core.Request request,

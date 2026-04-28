@@ -1,0 +1,113 @@
+{{!
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+}}
+
+<div class="wizard-content col-md-9">
+  <h4 class="step-title">{{t admin.oidc.wizard.step2.header}}</h4>
+  <p class="step-description">{{t admin.oidc.wizard.step2.description}}</p>
+
+  <form class="form-horizontal">
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminUrl}} <span class="text-danger">*</span></label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.adminUrl" class="form-control"
+          placeholder="https://keycloak.example.com"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminRealm}}</label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.adminRealm" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminClientId}}</label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.adminClientId" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminClientSecret}}</label>
+      <div class="col-sm-7">
+        {{view Em.TextField type="password" valueBinding="controller.adminClientSecret" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.realm}} <span class="text-danger">*</span></label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.realm" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.issuerUrl}}</label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.issuerUrl" class="form-control"
+          placeholder="https://keycloak.example.com/realms/myrealm"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminUsername}} <span class="text-danger">*</span></label>
+      <div class="col-sm-7">
+        {{view Em.TextField valueBinding="controller.adminUsername" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminPassword}} <span class="text-danger">*</span></label>
+      <div class="col-sm-7">
+        {{view Em.TextField type="password" valueBinding="controller.adminPassword" class="form-control"}}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.verifyTls}}</label>
+      <div class="col-sm-7">
+        {{view App.CheckboxView checkedBinding="controller.verifyTls"}}
+      </div>
+    </div>
+  </form>
+
+  <div class="form-group" style="margin-top: 12px;">
+    <div class="col-sm-offset-4 col-sm-7">
+      <button class="btn btn-default" {{action testConnection target="controller"}}
+        {{bindAttr disabled="controller.isTesting"}}>
+        {{#if controller.isTesting}}
+          <span class="spinner spinner-sm"></span>
+        {{/if}}
+        {{t admin.oidc.wizard.step2.testConnectionBtn}}
+      </button>
+      {{#if controller.isTestSuccess}}
+        <span class="text-success" style="margin-left: 8px;">
+          <span class="glyphicon glyphicon-ok"></span> {{controller.testMessage}}
+        </span>
+      {{/if}}
+      {{#if controller.isTestError}}
+        <span class="text-danger" style="margin-left: 8px;">
+          <span class="glyphicon glyphicon-remove"></span> {{controller.testMessage}}
+        </span>
+      {{/if}}
+    </div>
+  </div>
+
+  <div class="wizard-footer">
+    <button class="btn btn-default pull-left" {{action back target="controller"}}>
+      &larr; {{t common.back}}
+    </button>
+    <button class="btn btn-success pull-right" {{action next target="controller"}}
+      {{bindAttr disabled="controller.isSubmitDisabled"}}>
+      {{t common.next}} &rarr;
+    </button>
+  </div>
+</div>

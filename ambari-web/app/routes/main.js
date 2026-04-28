@@ -592,7 +592,9 @@ module.exports = Em.Route.extend(App.RouterRedirections, {
           router.set('mainAdminController.categoryLabel', Em.I18n.t('common.oidc'));
           router.get('mainAdminController').connectOutlet('mainAdminOidc');
         }
-      })
+      }),
+
+      adminOidcEnable: require('routes/add_oidc_enable_routes')
     }),
 
     stackAndUpgrade: Em.Route.extend({

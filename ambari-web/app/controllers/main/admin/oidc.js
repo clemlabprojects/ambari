@@ -36,6 +36,13 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   oidcClientsContent: [],
 
   /**
+   * Launch the Enable OIDC wizard.
+   */
+  enableOidc: function () {
+    App.router.transitionTo('main.admin.adminOidc.adminOidcEnable');
+  },
+
+  /**
    * Keep OIDC flow on the OIDC admin page.
    */
   startKerberosWizard: function () {
@@ -187,9 +194,23 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   },
 
   runOidcProvisioning: function() {
+    var self = this;
+    return App.ModalPopup.show({
+      restartServices: false,
+      header: Em.I18n.t('admin.oidc.button.runProvisioning'),
+      bodyClass: Em.View.extend({
+        templateName: require('templates/main/admin/oidc_provisioning_restart_popup')
+      }),
+      onPrimary: function() {
+        this._super();
+        self._runOidcProvisioningRequest(this.get('restartServices'));
+      }
+    });
+  },
+
+  _runOidcProvisioningRequest: function(restartAfter) {
     var securityType = this.get('securityEnabled') ? 'KERBEROS' : 'NONE';
     var self = this;
-
     return App.ajax.send({
       name: 'admin.configure.oidc.only',
       sender: this,
@@ -202,10 +223,24 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
         }
       }
     }).done(function() {
-      App.router.get('backgroundOperationsController').showPopup();
+      App.router.get('userSettingsController').dataLoading('show_bg').done(function(initValue) {
+        if (initValue) {
+          App.router.get('backgroundOperationsController').showPopup();
+        }
+      });
+      self.set('needsRestartAfterProvisioning', restartAfter);
       self.loadStep();
     });
   },
+
+  restartAfterOidcProvisioning: function() {
+    if (!App.router.get('backgroundOperationsController.runningOperationsCount')) {
+      if (this.get('needsRestartAfterProvisioning')) {
+        this.set('needsRestartAfterProvisioning', false);
+        App.router.get('mainServiceController').restartAllServices();
+      }
+    }
+  }.observes('controllers.backgroundOperationsController.runningOperationsCount'),
 
   /**
    * Show protocol mapper detail popup for the given client.
