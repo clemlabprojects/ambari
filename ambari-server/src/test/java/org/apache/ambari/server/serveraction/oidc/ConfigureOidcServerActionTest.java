@@ -33,6 +33,7 @@ import java.util.Set;
 import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.orm.dao.OidcClientDAO;
 import org.apache.ambari.server.security.credential.Credential;
 import org.apache.ambari.server.security.credential.GenericKeyCredential;
 import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
@@ -64,6 +65,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
   private CredentialStoreService credentialStoreService;
   private OidcOperationHandlerFactory oidcOperationHandlerFactory;
   private OidcOperationHandler handler;
+  private OidcClientDAO oidcClientDAO;
   private Clusters clusters;
   private Cluster cluster;
   private AmbariMetaInfo metaInfo;
@@ -75,6 +77,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     credentialStoreService = createMock(CredentialStoreService.class);
     oidcOperationHandlerFactory = createMock(OidcOperationHandlerFactory.class);
     handler = createMock(OidcOperationHandler.class);
+    oidcClientDAO = createNiceMock(OidcClientDAO.class);
     clusters = createNiceMock(Clusters.class);
     cluster = createNiceMock(Cluster.class);
     metaInfo = createNiceMock(AmbariMetaInfo.class);
@@ -84,6 +87,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     setField(action, "configHelper", configHelper);
     setField(action, "credentialStoreService", credentialStoreService);
     setField(action, "oidcOperationHandlerFactory", oidcOperationHandlerFactory);
+    setField(action, "oidcClientDAO", oidcClientDAO);
     setField(action, "variableReplacementHelper", new VariableReplacementHelper());
   }
 
