@@ -185,6 +185,7 @@ import org.apache.ambari.server.security.ldap.LdapBatchDto;
 import org.apache.ambari.server.security.ldap.LdapSyncDto;
 import org.apache.ambari.server.serveraction.kerberos.KerberosInvalidConfigurationException;
 import org.apache.ambari.server.serveraction.kerberos.KerberosOperationException;
+import org.apache.ambari.server.serveraction.oidc.ConfigureOidcServerAction;
 import org.apache.ambari.server.stack.ExtensionHelper;
 import org.apache.ambari.server.stack.RepoUtil;
 import org.apache.ambari.server.stageplanner.RoleGraph;
@@ -2811,6 +2812,7 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
 
       Collection<ServiceComponentHost> componentsToEnableKerberos = new ArrayList<>();
       Set<String> hostsToForceKerberosOperations = new HashSet<>();
+      Set<String> servicesToProvisionOidc = getServicesToProvisionOidcOnInstall(cluster, changedScHosts);
 
       /* *******************************************************************************************
        * If Kerberos is enabled, pre-process the changed components to update any configurations and
@@ -3207,11 +3209,21 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
         }
 
         try {
-          kerberosHelper.ensureIdentities(cluster, serviceFilter, hostFilter, null, hostsToForceKerberosOperations, requestStages,
-              kerberosHelper.getManageIdentitiesDirective(requestProperties));
+          requestStages = kerberosHelper.ensureIdentities(cluster, serviceFilter, hostFilter, null,
+            hostsToForceKerberosOperations, requestStages,
+            kerberosHelper.getManageIdentitiesDirective(requestProperties));
         } catch (KerberosOperationException e) {
           throw new IllegalArgumentException(e.getMessage(), e);
         }
+      }
+
+      if (!servicesToProvisionOidc.isEmpty()) {
+        requestStages = kerberosHelper.configureOidc(
+          cluster,
+          requestStages,
+          servicesToProvisionOidc,
+          ConfigureOidcServerAction.OPERATION_ENSURE,
+          "Provision OIDC clients for installed services");
       }
 
       List<Stage> stages = requestStages.getStages();
@@ -3222,6 +3234,45 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
     }
 
     return requestStages;
+  }
+
+  private Set<String> getServicesToProvisionOidcOnInstall(Cluster cluster,
+      Map<String, Map<State, List<ServiceComponentHost>>> changedScHosts) throws AmbariException {
+    Set<String> servicesToProvision = new HashSet<>();
+
+    if (cluster == null
+        || cluster.getDesiredConfigByType(ConfigureOidcServerAction.OIDC_ENV) == null
+        || MapUtils.isEmpty(changedScHosts)) {
+      return servicesToProvision;
+    }
+
+    for (Map<State, List<ServiceComponentHost>> changedScHostStates : changedScHosts.values()) {
+      if (changedScHostStates == null) {
+        continue;
+      }
+
+      List<ServiceComponentHost> scHosts = changedScHostStates.get(State.INSTALLED);
+      if (CollectionUtils.isEmpty(scHosts)) {
+        continue;
+      }
+
+      for (ServiceComponentHost scHost : scHosts) {
+        State oldSchState = scHost.getState();
+        if (oldSchState != State.INIT && oldSchState != State.INSTALL_FAILED) {
+          continue;
+        }
+
+        StackId stackId = scHost.getDesiredStackId();
+        ServiceInfo serviceInfo = ambariMetaInfo.getService(stackId.getStackName(),
+          stackId.getStackVersion(), scHost.getServiceName());
+
+        if (serviceInfo != null && serviceInfo.getOidcDescriptorFile() != null) {
+          servicesToProvision.add(scHost.getServiceName());
+        }
+      }
+    }
+
+    return servicesToProvision;
   }
 
   private boolean hostComponentAlreadyExists(Cluster cluster, ServiceComponentHost sch) throws AmbariException {

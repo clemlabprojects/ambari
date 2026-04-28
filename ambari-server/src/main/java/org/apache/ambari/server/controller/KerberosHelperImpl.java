@@ -375,7 +375,7 @@ public class KerberosHelperImpl implements KerberosHelper {
                                                            RequestStageContainer requestStageContainer)
     throws AmbariException {
     return configureOidc(cluster, requestStageContainer, null,
-      ConfigureOidcServerAction.OPERATION_ENSURE, "Configure OIDC");
+      ConfigureOidcServerAction.OPERATION_ENSURE, "Provision OIDC clients");
   }
 
   @Override
@@ -3942,16 +3942,20 @@ public class KerberosHelperImpl implements KerberosHelper {
                                       Map<String, String> commandParameters,
                                       RoleCommandOrder roleCommandOrder, RequestStageContainer requestStageContainer)
       throws AmbariException {
+      String operation = commandParameters == null ? null : commandParameters.get(ConfigureOidcServerAction.OIDC_OPERATION);
+      String stageName = ConfigureOidcServerAction.OPERATION_DELETE.equalsIgnoreCase(operation)
+        ? "Remove OIDC Clients"
+        : "Provision OIDC Clients";
       Stage stage = createServerActionStage(requestStageContainer.getLastStageId(),
         cluster,
         requestStageContainer.getId(),
-        "Configure OIDC",
+        stageName,
         "{}",
         hostParamsJson,
         ConfigureOidcServerAction.class,
         event,
         commandParameters,
-        "Configure OIDC",
+        stageName,
         configuration.getDefaultServerTaskTimeout());
 
       RoleGraph roleGraph = roleGraphFactory.createNew(roleCommandOrder);

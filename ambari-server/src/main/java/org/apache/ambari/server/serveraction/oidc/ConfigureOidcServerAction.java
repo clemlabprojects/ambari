@@ -150,6 +150,9 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
       return createCommandReport(1, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
     }
     LOG.info("Using OIDC provider '{}' for cluster {} and target realm '{}'", provider, clusterName, realm);
+    actionLog.writeStdOut(String.format(
+      "Starting OIDC client provisioning: operation=%s, provider=%s, realm=%s, services=%s",
+      operation, provider, realm, describeServiceFilter(requestedServices)));
 
     // Administrator credential is mandatory to call provider admin APIs.
     PrincipalKeyCredential adminCredential = getAdminCredential(clusterName);
@@ -242,17 +245,25 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
         if (!isServiceOidcEnabled(serviceDescriptor)) {
           LOG.info("Skipping OIDC descriptor service '{}' because descriptor marks it disabled",
             serviceDescriptor.getName());
+          actionLog.writeStdOut(String.format("Skipping OIDC service %s: descriptor disabled",
+            serviceDescriptor.getName()));
           continue;
         }
+
+        actionLog.writeStdOut(String.format("Processing OIDC service %s", serviceDescriptor.getName()));
 
         if (!isDeleteOperation(operation) && serviceDescriptor.getConfigurations() != null) {
           LOG.debug("Applying service-level OIDC config overlays for '{}'", serviceDescriptor.getName());
           applyConfigurations(serviceDescriptor.getConfigurations(), propertiesToSet, configTypes,
             buildReplacementMap(cluster, existingConfigurations, providerConfiguration, null, null));
+          actionLog.writeStdOut(String.format("Queued service-level OIDC configuration updates for service %s",
+            serviceDescriptor.getName()));
         }
 
         if (serviceDescriptor.getClients() == null) {
           LOG.debug("OIDC descriptor service '{}' has no client declarations", serviceDescriptor.getName());
+          actionLog.writeStdOut(String.format("Service %s has no OIDC client declarations",
+            serviceDescriptor.getName()));
           continue;
         }
 
@@ -283,9 +294,14 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             clientDescriptor.getRedirectUris(),
             clientDescriptor.getAttributes(),
             clientDescriptor.getConfigurations(),
+            // Preserve provider-specific mapper payloads after resolving the
+            // client id and realm; the selected OIDC handler applies them.
             clientDescriptor.getSecretAlias(), clientDescriptor.getProtocolMappers());
           if (isDeleteOperation(operation)) {
             LOG.debug("Deleting OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
+            actionLog.writeStdOut(String.format(
+              "Deleting OIDC client: service=%s, descriptor=%s, clientId=%s, realm=%s",
+              serviceDescriptor.getName(), clientDescriptor.getName(), resolvedClientId, resolvedRealm));
             handler.deleteClient(resolvedDescriptor, resolvedRealm);
             String secretAlias = resolvedDescriptor.getSecretAlias();
             if (!StringUtils.isEmpty(secretAlias)) {
@@ -293,23 +309,41 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
                 LOG.debug("Removing OIDC client secret for alias '{}' in cluster '{}'",
                   secretAlias, clusterName);
                 credentialStoreService.removeCredential(clusterName, secretAlias);
+                actionLog.writeStdOut(String.format(
+                  "Removed OIDC client secret alias from Ambari credential store: alias=%s",
+                  secretAlias));
               } catch (AmbariException e) {
                 throw new OidcOperationException("Failed to remove OIDC client secret from credential store", e);
               }
             }
             LOG.info("OIDC client '{}' deleted in realm '{}' for service '{}'",
               resolvedClientId, resolvedRealm, serviceDescriptor.getName());
+            actionLog.writeStdOut(String.format("Deleted OIDC client: service=%s, clientId=%s, realm=%s",
+              serviceDescriptor.getName(), resolvedClientId, resolvedRealm));
           } else {
             LOG.debug("Ensuring OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
+            actionLog.writeStdOut(String.format(
+              "Ensuring OIDC client: service=%s, descriptor=%s, clientId=%s, realm=%s, " +
+                "publicClient=%s, serviceAccounts=%s, secretAlias=%s",
+              serviceDescriptor.getName(), clientDescriptor.getName(), resolvedClientId, resolvedRealm,
+              resolvedDescriptor.isPublicClient(), resolvedDescriptor.isServiceAccountsEnabled(),
+              describeSecretAlias(resolvedDescriptor.getSecretAlias())));
 
             OidcClientResult result = handler.ensureClient(resolvedDescriptor, resolvedRealm);
             if (result == null) {
               LOG.warn("OIDC provider returned null result for client '{}' in realm '{}'; skipping config updates",
                 resolvedClientId, resolvedRealm);
+              actionLog.writeStdErr(String.format(
+                "OIDC provider returned no result for service=%s, clientId=%s, realm=%s; skipping client-level config updates",
+                serviceDescriptor.getName(), resolvedClientId, resolvedRealm));
               continue;
             }
             LOG.info("OIDC client '{}' ensured in realm '{}' for service '{}'",
               resolvedClientId, resolvedRealm, serviceDescriptor.getName());
+            actionLog.writeStdOut(String.format(
+              "Ensured OIDC client: service=%s, clientId=%s, realm=%s, providerInternalId=%s",
+              serviceDescriptor.getName(), result.getClientId(), resolvedRealm,
+              describeProviderInternalId(result.getInternalId())));
 
             String secretAlias = resolvedDescriptor.getSecretAlias();
             if (!StringUtils.isEmpty(secretAlias) && result.getSecret() != null) {
@@ -318,9 +352,16 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
                   secretAlias, clusterName);
                 credentialStoreService.setCredential(clusterName, secretAlias,
                   new GenericKeyCredential(result.getSecret().toCharArray()), CredentialStoreType.PERSISTED);
+                actionLog.writeStdOut(String.format(
+                  "Registered OIDC client secret in Ambari credential store: alias=%s (secret value hidden)",
+                  secretAlias));
               } catch (AmbariException e) {
                 throw new OidcOperationException("Failed to store OIDC client secret in credential store", e);
               }
+            } else if (!StringUtils.isEmpty(secretAlias)) {
+              actionLog.writeStdOut(String.format(
+                "OIDC client secret alias configured but provider returned no secret: alias=%s (credential store unchanged)",
+                secretAlias));
             }
 
             // Apply client-level configuration overlays with replacement values such as:
@@ -329,6 +370,9 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
               cluster, existingConfigurations, providerConfiguration, result, resolvedRealm);
             if (clientDescriptor.getConfigurations() != null) {
               applyConfigurations(clientDescriptor.getConfigurations(), propertiesToSet, configTypes, replacements);
+              actionLog.writeStdOut(String.format(
+                "Queued client-level OIDC configuration updates for service=%s, clientId=%s",
+                serviceDescriptor.getName(), resolvedClientId));
             }
           }
         }
@@ -343,16 +387,19 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
     if (!configTypes.isEmpty()) {
       String configNote = getCommandParameterValue(getCommandParameters(), UPDATE_CONFIGURATION_NOTE);
       if (StringUtils.isEmpty(configNote)) {
-        configNote = "Configuring OIDC";
+        configNote = "Provisioning OIDC clients";
       }
       LOG.info("Applying OIDC config updates for cluster {} ({} config type(s), note='{}')",
         clusterName, configTypes.size(), configNote);
+      actionLog.writeStdOut(String.format("Applying OIDC configuration updates to config types: %s",
+        StringUtils.join(configTypes, ", ")));
 
       configHelper.updateBulkConfigType(cluster, cluster.getDesiredStackVersion(), controller,
         configTypes, propertiesToSet, propertiesToRemove,
         authenticatedUserName, configNote);
     } else {
       LOG.info("OIDC provisioning completed for cluster {} with no configuration updates required", clusterName);
+      actionLog.writeStdOut("No OIDC configuration updates were required.");
     }
 
     if (!configTypes.isEmpty()) {
@@ -363,6 +410,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
       actionLog.writeStdOut(restartNote);
     }
     LOG.info("OIDC provisioning completed successfully for cluster {}", clusterName);
+    actionLog.writeStdOut("OIDC client provisioning completed successfully.");
     return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
   }
 
@@ -380,6 +428,39 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
       return (PrincipalKeyCredential) credential;
     }
     return null;
+  }
+
+  /**
+   * Renders the requested service filter for operator-facing logs.
+   *
+   * @param requestedServices descriptor service names explicitly requested by the stage
+   * @return a safe display value for stdout
+   */
+  private String describeServiceFilter(Set<String> requestedServices) {
+    return requestedServices == null || requestedServices.isEmpty()
+      ? "all descriptor-enabled installed services"
+      : StringUtils.join(requestedServices, ",");
+  }
+
+  /**
+   * Renders a credential alias without exposing credential material.
+   *
+   * @param secretAlias Ambari credential alias
+   * @return alias or a no-secret marker
+   */
+  private String describeSecretAlias(String secretAlias) {
+    return StringUtils.isEmpty(secretAlias) ? "<none>" : secretAlias;
+  }
+
+  /**
+   * Renders provider-internal client ids for logs. Some providers do not return
+   * a stable internal id, and this avoids a confusing null in task stdout.
+   *
+   * @param internalId provider-internal client id returned by the handler
+   * @return internal id or a no-id marker
+   */
+  private String describeProviderInternalId(String internalId) {
+    return StringUtils.isEmpty(internalId) ? "<not returned>" : internalId;
   }
 
   /**

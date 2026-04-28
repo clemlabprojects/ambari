@@ -240,7 +240,7 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
     RequestStatusResponse response = createResources(new Command<RequestStatusResponse>() {
       @Override
       public RequestStatusResponse invoke() throws AmbariException, AuthorizationException {
-        return createServicesAndConfigureOidc(requests);
+        return createServicesInternal(requests);
       }
     });
     notifyCreate(Resource.Type.Service, request);
@@ -455,10 +455,10 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
   // Create services from the given request.
   public void createServices(Set<ServiceRequest> requests)
       throws AmbariException, AuthorizationException {
-    createServicesAndConfigureOidc(requests);
+    createServicesInternal(requests);
   }
 
-  protected RequestStatusResponse createServicesAndConfigureOidc(Set<ServiceRequest> requests)
+  protected RequestStatusResponse createServicesInternal(Set<ServiceRequest> requests)
       throws AmbariException, AuthorizationException {
     if (requests.isEmpty()) {
       LOG.warn("Received an empty requests set");
@@ -468,7 +468,6 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
     Clusters clusters = getManagementController().getClusters();
     // do all validation checks
     validateCreateRequests(requests, clusters);
-    Map<Cluster, Set<String>> oidcServiceNamesByCluster = new HashMap<>();
 
     for (ServiceRequest request : requests) {
       Cluster cluster = clusters.getCluster(request.getClusterName());
@@ -525,19 +524,9 @@ public class ServiceResourceProvider extends AbstractControllerResourceProvider 
 
       // Initialize service widgets
       getManagementController().initializeWidgetsAndLayouts(cluster, s);
-
-      if (shouldManageOidcLifecycle(cluster, serviceInfo)) {
-        oidcServiceNamesByCluster.computeIfAbsent(cluster, key -> new HashSet<>()).add(request.getServiceName());
-      }
     }
 
-    RequestStageContainer requestStages = appendOidcLifecycleStages(
-      oidcServiceNamesByCluster,
-      ConfigureOidcServerAction.OPERATION_ENSURE,
-      "Configure OIDC for added services",
-      null);
-
-    return persistRequestStages(requestStages);
+    return null;
   }
 
   // Get services from the given set of requests.
