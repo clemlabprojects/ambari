@@ -425,7 +425,15 @@ public class OrmTestHelper {
    */
   public void addHost(Clusters clusters, Cluster cluster, String hostName)
       throws Exception {
-    clusters.addHost(hostName);
+    try {
+      clusters.addHost(hostName);
+    } catch (AmbariException e) {
+      // Host already registered (stale DB state from a previous test); swallow and continue
+      // so that mapAndPublishHostsToCluster still runs and hostClustersMap is populated.
+      if (!e.getMessage().contains("Duplicate entry")) {
+        throw e;
+      }
+    }
 
     Host host = clusters.getHost(hostName);
     Map<String, String> hostAttributes = new HashMap<>();
