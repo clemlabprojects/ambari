@@ -80,41 +80,55 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   },
 
   _onLoadOidcClientsSuccess: function(data) {
+    var self = this;
     var clients = [];
     var descriptor = data && data.OidcDescriptor && data.OidcDescriptor.oidc_descriptor;
     var services = descriptor && descriptor.services;
+    var installedServiceNames = App.Service.find().mapProperty('serviceName');
     if (Array.isArray(services)) {
-      services.forEach(function(service) {
-        var serviceName = service.name || '';
-        var serviceClients = Array.isArray(service.clients) ? service.clients : [];
-        serviceClients.forEach(function(client) {
-          var rawMappers = Array.isArray(client.protocol_mappers) ? client.protocol_mappers : [];
-          var protocolMappers = rawMappers.map(function(mapper) {
-            var configEntries = [];
-            if (mapper.config && typeof mapper.config === 'object') {
-              Object.keys(mapper.config).forEach(function(k) {
-                configEntries.push({ key: k, value: mapper.config[k] });
-              });
-            }
-            return {
-              name: mapper.name || '',
-              protocol: mapper.protocol || '',
-              protocolMapper: mapper.protocolMapper || '',
-              configEntries: configEntries
-            };
-          });
-          clients.push({
-            serviceName: serviceName,
-            name: client.name || '',
-            clientId: client.client_id || '',
-            realm: client.realm || '',
-            enabled: service.enabled !== false,
-            protocolMappers: protocolMappers
+      services
+        .filter(function(service) {
+          return installedServiceNames.contains(service.name);
+        })
+        .forEach(function(service) {
+          var serviceName = service.name || '';
+          var serviceClients = Array.isArray(service.clients) ? service.clients : [];
+          serviceClients.forEach(function(client) {
+            var rawMappers = Array.isArray(client.protocol_mappers) ? client.protocol_mappers : [];
+            var protocolMappers = rawMappers.map(function(mapper) {
+              var configEntries = [];
+              if (mapper.config && typeof mapper.config === 'object') {
+                Object.keys(mapper.config).forEach(function(k) {
+                  configEntries.push({ key: k, value: mapper.config[k] });
+                });
+              }
+              return {
+                name: mapper.name || '',
+                protocol: mapper.protocol || '',
+                protocolMapper: mapper.protocolMapper || '',
+                configEntries: configEntries
+              };
+            });
+            clients.push({
+              serviceName: serviceName,
+              name: client.name || '',
+              clientId: self._resolveDescriptorVars(client.client_id || ''),
+              realm: self._resolveDescriptorVars(client.realm || ''),
+              enabled: service.enabled !== false,
+              protocolMappers: protocolMappers
+            });
           });
         });
-      });
     }
     this.set('oidcClientsContent', clients);
+  },
+
+  /**
+   * Resolves known descriptor template variables against live cluster state.
+   * ${cluster_name} is always available; other unrecognised variables are left as-is.
+   */
+  _resolveDescriptorVars: function(value) {
+    return value.replace(/\$\{cluster_name\}/g, App.get('clusterName') || '');
   },
 
   _onLoadOidcClientsError: function() {

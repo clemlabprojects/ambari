@@ -203,6 +203,8 @@ Em.I18n.translations = {
   'common.versions':'Versions',
   'common.upgrade.history':'Upgrade History',
   'common.serviceAccounts': 'Service Accounts',
+  'common.yes': 'Yes',
+  'common.no': 'No',
   'common.add': 'Add',
   'common.edit': 'Edit',
   'common.delete': 'Delete',
