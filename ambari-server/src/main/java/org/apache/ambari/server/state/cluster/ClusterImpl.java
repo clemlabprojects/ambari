@@ -924,29 +924,29 @@ public class ClusterImpl implements Cluster {
 
   @Override
   public void setDesiredStackVersion(StackId stackId) throws AmbariException {
-    // Fetch the stack entity before acquiring the write lock so that JPA/EclipseLink
-    // operations do not run while holding the cluster lock (avoids deadlock with
-    // concurrent readers that are also inside EclipseLink's identity-map lock).
+    // All JPA/EclipseLink operations happen outside the cluster lock. Holding the
+    // WriteLock while EclipseLink's merge acquires internal identity-map cache-key
+    // locks creates a deadlock with concurrent threads (e.g. setRestartRequired)
+    // that acquire those same cache keys in a different order.
     StackEntity stackEntity = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
 
+    // Under the lock: update only in-memory state.
     clusterGlobalLock.writeLock().lock();
     try {
       if (LOG.isDebugEnabled()) {
         LOG.debug("Changing DesiredStackVersion of Cluster, clusterName={}, clusterId={}, currentDesiredStackVersion={}, newDesiredStackVersion={}",
           getClusterName(), getClusterId(), desiredStackVersion, stackId);
       }
-
       desiredStackVersion = stackId;
-
-      ClusterEntity clusterEntity = getClusterEntity();
-
-      clusterEntity.setDesiredStack(stackEntity);
-      clusterDAO.merge(clusterEntity);
-
       loadServiceConfigTypes();
     } finally {
       clusterGlobalLock.writeLock().unlock();
     }
+
+    // Persist the stack change outside the cluster lock.
+    ClusterEntity clusterEntity = getClusterEntity();
+    clusterEntity.setDesiredStack(stackEntity);
+    clusterDAO.merge(clusterEntity);
   }
 
   @Override
