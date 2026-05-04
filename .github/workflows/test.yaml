@@ -24,7 +24,7 @@ jobs:
       - name: Install test deps (Java 17, Maven, Python)
         run: |
           dnf -y update
-          dnf -y install git which tar gzip findutils hostname \
+          dnf -y install --nobest git which tar gzip findutils hostname \
                          java-17-openjdk-devel java-1.8.0-openjdk-devel \
                          maven ant python3 python3-pip python3-devel python3-distro gcc make
           java -version

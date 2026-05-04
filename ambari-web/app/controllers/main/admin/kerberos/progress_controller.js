@@ -16,6 +16,9 @@
  * limitations under the License.
  */
 
+var App = require('app');
+require('controllers/main/admin/kerberos/wizard_controller');
+
 App.KerberosProgressPageController = App.KerberosWizardController.extend(App.wizardProgressPageControllerMixin, {
 
   name: 'kerberosProgressPageController',
