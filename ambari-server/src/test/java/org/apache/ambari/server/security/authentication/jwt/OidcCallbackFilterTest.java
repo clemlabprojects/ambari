@@ -366,6 +366,7 @@ public class OidcCallbackFilterTest extends EasyMockSupport {
     expect(request.getHeader("X-Requested-With")).andReturn(null).anyTimes();
     expect(request.getHeader("Accept")).andReturn("text/html").anyTimes();
     expect(request.getCookies()).andReturn(null).anyTimes();
+    expect(request.getParameter("returnUrl")).andReturn(null).anyTimes();
     expect(request.getQueryString()).andReturn(null).anyTimes();
     // For resolveCallbackUrl when no oidcCallbackUrl is configured
     expect(request.getScheme()).andReturn("https").anyTimes();
@@ -383,6 +384,80 @@ public class OidcCallbackFilterTest extends EasyMockSupport {
 
     newFilter().doFilter(request, response, chain);
     verifyAll();
+  }
+
+  @Test
+  public void doFilter_redirectsToKeycloak_andEmbedsDerivedPathFromReturnUrl() throws Exception {
+    // When Angular sends /oidc/begin?returnUrl=https://ambari:8442/#/dashboard the state
+    // should embed "/" (path extracted from the absolute URL) rather than the raw query string,
+    // preventing a redirect loop back to /oidc/begin.
+    expect(propertiesProvider.get()).andReturn(oidcEnabledProps()).anyTimes();
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    expect(request.getServletPath()).andReturn("/oidc/begin").anyTimes();
+    expect(request.getMethod()).andReturn("GET").anyTimes();
+    expect(request.getHeader("X-Requested-With")).andReturn(null).anyTimes();
+    expect(request.getHeader("Accept")).andReturn("text/html").anyTimes();
+    expect(request.getCookies()).andReturn(null).anyTimes();
+    expect(request.getParameter("returnUrl"))
+        .andReturn("https://ambari.corp.example.com:8442/#/dashboard").anyTimes();
+    expect(request.getQueryString())
+        .andReturn("returnUrl=https%3A%2F%2Fambari.corp.example.com%3A8442%2F%23%2Fdashboard").anyTimes();
+    expect(request.getScheme()).andReturn("https").anyTimes();
+    expect(request.getServerName()).andReturn("ambari.corp.example.com").anyTimes();
+    expect(request.getServerPort()).andReturn(8442).anyTimes();
+
+    org.easymock.Capture<String> urlCapture = org.easymock.EasyMock.newCapture();
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    response.sendRedirect(org.easymock.EasyMock.capture(urlCapture));
+    expectLastCall().once();
+
+    FilterChain chain = createMock(FilterChain.class);
+    replayAll();
+
+    newFilter().doFilter(request, response, chain);
+    verifyAll();
+
+    // Decode the state parameter from the captured redirect URL and verify url="/"
+    String encodedState = urlCapture.getValue().replaceAll(".*[?&]state=([^&]+).*", "$1");
+    String statePayload = new String(java.util.Base64.getUrlDecoder().decode(
+        encodedState.substring(0, encodedState.lastIndexOf('.'))), java.nio.charset.StandardCharsets.UTF_8);
+    assertTrue("State should embed '/' not /oidc/begin", statePayload.contains("\"url\":\"/\""));
+  }
+
+  @Test
+  public void doFilter_redirectsToKeycloak_usesSlash_whenOidcBeginHasNoReturnUrl() throws Exception {
+    // /oidc/begin with no returnUrl parameter should still embed "/" (not /oidc/begin) to
+    // prevent a redirect loop.
+    expect(propertiesProvider.get()).andReturn(oidcEnabledProps()).anyTimes();
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    expect(request.getServletPath()).andReturn("/oidc/begin").anyTimes();
+    expect(request.getMethod()).andReturn("GET").anyTimes();
+    expect(request.getHeader("X-Requested-With")).andReturn(null).anyTimes();
+    expect(request.getHeader("Accept")).andReturn("text/html").anyTimes();
+    expect(request.getCookies()).andReturn(null).anyTimes();
+    expect(request.getParameter("returnUrl")).andReturn(null).anyTimes();
+    expect(request.getQueryString()).andReturn(null).anyTimes();
+    expect(request.getScheme()).andReturn("https").anyTimes();
+    expect(request.getServerName()).andReturn("ambari.corp.example.com").anyTimes();
+    expect(request.getServerPort()).andReturn(8442).anyTimes();
+
+    org.easymock.Capture<String> urlCapture = org.easymock.EasyMock.newCapture();
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    response.sendRedirect(org.easymock.EasyMock.capture(urlCapture));
+    expectLastCall().once();
+
+    FilterChain chain = createMock(FilterChain.class);
+    replayAll();
+
+    newFilter().doFilter(request, response, chain);
+    verifyAll();
+
+    String encodedState = urlCapture.getValue().replaceAll(".*[?&]state=([^&]+).*", "$1");
+    String statePayload = new String(java.util.Base64.getUrlDecoder().decode(
+        encodedState.substring(0, encodedState.lastIndexOf('.'))), java.nio.charset.StandardCharsets.UTF_8);
+    assertTrue("State should embed '/' not /oidc/begin", statePayload.contains("\"url\":\"/\""));
   }
 
   // ── doFilter callback leg — missing parameters ────────────────────────────
