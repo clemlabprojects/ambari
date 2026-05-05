@@ -49,13 +49,13 @@ from ambari_server.setupActions import BACKUP_ACTION, LDAP_SETUP_ACTION, LDAP_SY
   SETUP_ACTION, SETUP_SECURITY_ACTION, RESTART_ACTION, START_ACTION, STATUS_ACTION, STOP_ACTION, UPGRADE_ACTION, \
   SETUP_JCE_ACTION, SET_CURRENT_ACTION, ENABLE_STACK_ACTION, SETUP_SSO_ACTION, \
   DB_PURGE_ACTION, INSTALL_MPACK_ACTION, UNINSTALL_MPACK_ACTION, UPGRADE_MPACK_ACTION, PAM_SETUP_ACTION, \
-  MIGRATE_LDAP_PAM_ACTION, KERBEROS_SETUP_ACTION, SETUP_TPROXY_ACTION
+  MIGRATE_LDAP_PAM_ACTION, KERBEROS_SETUP_ACTION, SETUP_TPROXY_ACTION, SETUP_SSO_OIDC_ACTION
 from ambari_server.setupHttps import setup_https, setup_truststore
 from ambari_server.setupMpacks import install_mpack, uninstall_mpack, upgrade_mpack, STACK_DEFINITIONS_RESOURCE_NAME, \
   SERVICE_DEFINITIONS_RESOURCE_NAME, MPACKS_RESOURCE_NAME
 from ambari_server.setupSecurity import setup_ldap, sync_ldap, setup_master_key, setup_ambari_krb5_jaas, setup_pam, \
   migrate_ldap_pam, LDAP_TYPES
-from ambari_server.setupSso import setup_sso
+from ambari_server.setupSso import setup_sso, setup_sso_oidc
 from ambari_server.setupTrustedProxy import setup_trusted_proxy
 from ambari_server.userInput import get_validated_string_input
 from ambari_server_main import server_process_main
@@ -597,6 +597,31 @@ def init_setup_sso_options(parser):
 
 
 @OsFamilyFuncImpl(OsFamilyImpl.DEFAULT)
+def init_setup_sso_oidc_options(parser):
+  parser.add_option('--sso-oidc-enabled', default=None,
+                    help="Indicates whether to enable/disable the OIDC browser-based SSO flow ('true'|'false')",
+                    dest="sso_oidc_enabled")
+  parser.add_option('--sso-oidc-client-id', default=None,
+                    help="The OIDC client ID registered in Keycloak for Ambari",
+                    dest="sso_oidc_client_id")
+  parser.add_option('--sso-oidc-client-secret', default=None,
+                    help="The OIDC client secret for the Ambari OIDC client",
+                    dest="sso_oidc_client_secret")
+  parser.add_option('--sso-oidc-callback-url', default=None,
+                    help="The absolute callback URL registered in Keycloak (e.g. https://ambari-host:8442/oidc/callback)",
+                    dest="sso_oidc_callback_url")
+  parser.add_option('--sso-jwt-username-claim', default=None,
+                    help="JWT claim used as the Ambari username (empty = preferred_username then sub; 'sub' = Knox SSO legacy)",
+                    dest="sso_jwt_username_claim")
+  parser.add_option('--ambari-admin-username', default=None,
+                    help="Ambari administrator username for accessing Ambari's REST API",
+                    dest="ambari_admin_username")
+  parser.add_option('--ambari-admin-password', default=None,
+                    help="Ambari administrator password for accessing Ambari's REST API",
+                    dest="ambari_admin_password")
+
+
+@OsFamilyFuncImpl(OsFamilyImpl.DEFAULT)
 def init_pam_setup_parser_options(parser):
   parser.add_option('--pam-config-file', default=None, help="Path to the PAM configuration file", dest="pam_config_file")
   parser.add_option('--pam-auto-create-groups', default=None, help="Automatically create groups for authenticated users [true/false]", dest="pam_auto_create_groups")
@@ -825,6 +850,7 @@ def create_user_action_map(args, options):
     SETUP_SECURITY_ACTION: UserActionRestart(setup_security, options),
     REFRESH_STACK_HASH_ACTION: UserAction(refresh_stack_hash_action),
     SETUP_SSO_ACTION: UserActionRestart(setup_sso, options),
+    SETUP_SSO_OIDC_ACTION: UserAction(setup_sso_oidc, options),
     INSTALL_MPACK_ACTION: UserAction(install_mpack, options),
     UNINSTALL_MPACK_ACTION: UserAction(uninstall_mpack, options),
     UPGRADE_MPACK_ACTION: UserAction(upgrade_mpack, options),
@@ -854,6 +880,7 @@ def create_user_action_map(args, options):
         CHECK_DATABASE_ACTION: UserAction(check_database, options),
         ENABLE_STACK_ACTION: UserAction(enable_stack, options, args),
         SETUP_SSO_ACTION: UserActionRestart(setup_sso, options),
+        SETUP_SSO_OIDC_ACTION: UserAction(setup_sso_oidc, options),
         DB_PURGE_ACTION: UserAction(database_purge, options),
         INSTALL_MPACK_ACTION: UserAction(install_mpack, options),
         UNINSTALL_MPACK_ACTION: UserAction(uninstall_mpack, options),
@@ -887,6 +914,7 @@ def init_action_parser(action, parser):
     CHECK_DATABASE_ACTION: init_empty_parser_options,
     ENABLE_STACK_ACTION: init_enable_stack_parser_options,
     SETUP_SSO_ACTION: init_setup_sso_options,
+    SETUP_SSO_OIDC_ACTION: init_setup_sso_oidc_options,
     DB_PURGE_ACTION: init_db_purge_parser_options,
     INSTALL_MPACK_ACTION: init_install_mpack_parser_options,
     UNINSTALL_MPACK_ACTION: init_uninstall_mpack_parser_options,

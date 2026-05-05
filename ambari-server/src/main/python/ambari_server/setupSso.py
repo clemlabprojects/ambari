@@ -40,6 +40,12 @@ SSO_PROVIDER_ORIGINAL_URL_QUERY_PARAM = "ambari.sso.provider.originalUrlParamNam
 JWT_AUDIENCES = "ambari.sso.jwt.audiences"
 JWT_COOKIE_NAME = "ambari.sso.jwt.cookieName"
 
+# OIDC browser-flow properties (set by setup-sso-oidc, orthogonal to Knox SSO)
+SSO_OIDC_CLIENT_ID = "ambari.sso.oidc.clientId"
+SSO_OIDC_CLIENT_SECRET = "ambari.sso.oidc.clientSecret"
+SSO_OIDC_CALLBACK_URL = "ambari.sso.oidc.callbackUrl"
+SSO_JWT_USERNAME_CLAIM = "ambari.sso.jwt.usernameClaim"
+
 SSO_PROVIDER_ORIGINAL_URL_QUERY_PARAM_DEFAULT = "originalUrl"
 SSO_PROVIDER_URL_DEFAULT = "https://knox.example.com:8443/gateway/knoxsso/api/v1/websso"
 JWT_COOKIE_NAME_DEFAULT = "hadoop-jwt"
@@ -305,6 +311,90 @@ def setup_sso(options):
     warning = "setup-sso is not enabled in silent mode."
     raise NonFatalException(warning)
   pass
+
+
+def populate_oidc_client_id(options, properties):
+  if not options.sso_oidc_client_id:
+    client_id = get_value_from_dictionary(properties, SSO_OIDC_CLIENT_ID, "ambari")
+    client_id = get_validated_string_input(
+      "OIDC client ID ({0}): ".format(client_id), client_id, REGEX_ANYTHING,
+      "Invalid client ID", False)
+  else:
+    client_id = options.sso_oidc_client_id
+  properties[SSO_OIDC_CLIENT_ID] = client_id
+
+
+def populate_oidc_client_secret(options, properties):
+  if not options.sso_oidc_client_secret:
+    existing = get_value_from_dictionary(properties, SSO_OIDC_CLIENT_SECRET, "")
+    if existing:
+      if not get_YN_input("An OIDC client secret is already set. Do you want to change it [y/n] (n)? ", False):
+        return
+    secret = get_validated_string_input(
+      "OIDC client secret: ", "", REGEX_ANYTHING, "Invalid client secret", True)
+  else:
+    secret = options.sso_oidc_client_secret
+  properties[SSO_OIDC_CLIENT_SECRET] = secret
+
+
+def populate_oidc_callback_url(options, properties):
+  if not options.sso_oidc_callback_url:
+    callback_url = get_value_from_dictionary(properties, SSO_OIDC_CALLBACK_URL, "")
+    callback_url = get_validated_string_input(
+      "OIDC callback URL (e.g. https://ambari-host:8442/oidc/callback) ({0}): ".format(callback_url or ""),
+      callback_url, REGEX_URL, "Invalid callback URL", False)
+  else:
+    callback_url = options.sso_oidc_callback_url
+  properties[SSO_OIDC_CALLBACK_URL] = callback_url
+
+
+def populate_jwt_username_claim(options, properties):
+  if options.sso_jwt_username_claim is None:
+    claim = get_value_from_dictionary(properties, SSO_JWT_USERNAME_CLAIM, "")
+    claim = get_validated_string_input(
+      "JWT username claim (empty = Keycloak default: preferred_username then sub) ({0}): ".format(claim or "empty"),
+      claim, REGEX_ANYTHING, "Invalid claim name", False)
+  else:
+    claim = options.sso_jwt_username_claim
+  properties[SSO_JWT_USERNAME_CLAIM] = claim
+
+
+def setup_sso_oidc(options):
+  print_info_msg("Setup SSO OIDC.")
+
+  server_status, pid = is_server_runing()
+  if not server_status:
+    raise FatalException(1, 'Ambari Server is not running.')
+
+  if not get_silent():
+    ambari_properties = get_ambari_properties()
+    admin_login, admin_password = get_ambari_admin_username_password_pair(options)
+    # Fetch ALL existing sso-configuration so our PUT preserves Knox SSO settings
+    properties = get_sso_properties(ambari_properties, admin_login, admin_password)
+
+    if not options.sso_oidc_enabled:
+      current_client_id = get_value_from_dictionary(properties, SSO_OIDC_CLIENT_ID, "")
+      if current_client_id:
+        sys.stdout.write("\nOIDC browser-flow is currently configured (client ID: %s)\n" % current_client_id)
+        enable_oidc = not get_YN_input("Do you want to disable/clear OIDC browser-flow [y/n] (n)? ", False)
+      else:
+        sys.stdout.write("\nOIDC browser-flow is not configured\n")
+        enable_oidc = get_YN_input("Do you want to configure OIDC browser-based SSO flow [y/n] (y)? ", True)
+    else:
+      enable_oidc = options.sso_oidc_enabled == 'true'
+
+    if enable_oidc:
+      populate_oidc_client_id(options, properties)
+      populate_oidc_client_secret(options, properties)
+      populate_oidc_callback_url(options, properties)
+      populate_jwt_username_claim(options, properties)
+    else:
+      for key in [SSO_OIDC_CLIENT_ID, SSO_OIDC_CLIENT_SECRET, SSO_OIDC_CALLBACK_URL, SSO_JWT_USERNAME_CLAIM]:
+        properties.pop(key, None)
+
+    update_sso_conf(ambari_properties, properties, admin_login, admin_password)
+  else:
+    raise NonFatalException("setup-sso-oidc is not enabled in silent mode.")
 
 
 def ensure_complete_cert(cert_string):
