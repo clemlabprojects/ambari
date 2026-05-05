@@ -29,10 +29,10 @@ class ImpalaCatalog(ImpalaBase):
         # Install packages listed in metainfo.xml
         self.install_packages(env)
         self.installImpala(env)
-        self.configure(env)
+        self.configure(env, setup_ranger=False)
 
-    def configure(self, env, upgrade_type=None):
-        self.configureImpala(env, upgrade_type=upgrade_type)
+    def configure(self, env, upgrade_type=None, setup_ranger=True):
+        self.configureImpala(env, upgrade_type=upgrade_type, setup_ranger=setup_ranger)
 
     # Call start.sh to start the service
     def start(self, env, upgrade_type=None):

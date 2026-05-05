@@ -7,6 +7,7 @@
 --tserver_master_addrs={{tserver_master_addrs}}
 --log_dir={{kudu_log_dir}}
 {% if kudu_enable_tls and kudu_tls_cert_file and kudu_tls_private_key_file %}
+--unlock_experimental_flags
 --rpc_certificate_file={{kudu_tls_cert_file}}
 --rpc_private_key_file={{kudu_tls_private_key_file}}
 --webserver_certificate_file={{kudu_tls_cert_file}}

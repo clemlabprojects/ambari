@@ -100,7 +100,7 @@ class ImpalaBase(Script):
         else:
             print("JAVA_HOME could not be detected.")
 
-    def configureImpala(self, env, name=None, upgrade_type=None):
+    def configureImpala(self, env, name=None, upgrade_type=None, setup_ranger=True):
         import params
         env.set_params(params)
         # if params.security_enabled:
@@ -321,8 +321,10 @@ class ImpalaBase(Script):
                           owner=params.hdfs_user,
                           group=params.user_group
                           )
-            if name !="client":
+            if name !="client" and setup_ranger:
                 setup_ranger_impala(upgrade_type=None)
+            elif name !="client":
+                Logger.info("Skipping Impala Ranger setup during install; it will run during start/configure.")
         else:
             print("Ranger is Disabled")
 

@@ -28,10 +28,10 @@ class KuduTserver(Kudu):
 
     def configure(self, env):
         Kudu.configure(self, env)
-        setup_ranger_kudu('kudu-tserver')
 
     def start(self, env):
         self.configure(env)
+        setup_ranger_kudu('kudu-tserver')
         self.start_kudu('tserver')
 
     def stop(self, env):

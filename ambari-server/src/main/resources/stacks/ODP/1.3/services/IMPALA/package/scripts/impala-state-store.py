@@ -29,10 +29,10 @@ class StateStore(ImpalaBase):
         self.install_packages(env)
         self.installImpala(env)
         # Execute("yum -y install openssl-devel cyrus-sasl cyrus-sasl-gssapi cyrus-sasl-devel")
-        self.configure(env)
+        self.configure(env, setup_ranger=False)
 
-    def configure(self, env, upgrade_type=None):
-        self.configureImpala(env, upgrade_type=upgrade_type)
+    def configure(self, env, upgrade_type=None, setup_ranger=True):
+        self.configureImpala(env, upgrade_type=upgrade_type, setup_ranger=setup_ranger)
 
     # Call start.sh to start the service
     def start(self, env, upgrade_type=None):

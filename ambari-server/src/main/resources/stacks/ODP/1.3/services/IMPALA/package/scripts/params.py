@@ -285,14 +285,18 @@ for key, value in impala_env.items():
 
 impala_template = impala_defaults + impala_catalog_template + impala_state_store_template + impala_server_template
 
-security_enabled = config['configurations']['cluster-env']['security_enabled']
+security_enabled = _as_bool(default("/configurations/cluster-env/security_enabled", False))
 
-# Kerberos Principal for Impala daemons
-if security_enabled:
-    kerberos_reinit_interval = default("/configurations/impala-env/kerberos_reinit_interval", 24*3600)
-    impala_keytab = config['configurations']['impala-env']['impala_keytab']
-    impala_principal = config['configurations']['impala-env']['impala_principal_name'].replace('_HOST', hostname.lower())
-    realm_name = impala_principal.split('@')[1] if '@' in impala_principal else None
+# Kerberos-derived values are referenced while rendering templates even on
+# non-secure install paths; define safe defaults and only emit them in flags
+# when security is enabled.
+kerberos_reinit_interval = default("/configurations/impala-env/kerberos_reinit_interval", 24*3600)
+impala_keytab = default("/configurations/impala-env/impala_keytab", "/etc/security/keytabs/impala.service.keytab")
+kerberos_realm = default("/configurations/kerberos-env/realm", None)
+default_impala_principal_name = "{0}/_HOST@{1}".format(impala_user, kerberos_realm or "EXAMPLE.COM")
+impala_principal_name = default("/configurations/impala-env/impala_principal_name", default_impala_principal_name)
+impala_principal = impala_principal_name.replace('_HOST', current_host_name.lower())
+realm_name = impala_principal.split('@', 1)[1] if '@' in impala_principal else kerberos_realm
 # SSL and TLS settings
 client_services_ssl_enabled = _as_bool(impala_env['client_services_ssl_enabled'])
 if client_services_ssl_enabled:

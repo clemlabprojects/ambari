@@ -28,10 +28,10 @@ class KuduMaster(Kudu):
 
     def configure(self, env):
         Kudu.configure(self, env)
-        setup_ranger_kudu('kudu-master')
 
     def start(self, env):
         self.configure(env)
+        setup_ranger_kudu('kudu-master')
         self.start_kudu('master')
 
     def stop(self, env):
