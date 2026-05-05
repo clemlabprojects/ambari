@@ -572,13 +572,32 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
    * Only the path and query string are stored — the scheme, host, and port are deliberately
    * omitted to prevent open-redirect exploitation.
    *
+   * <p>When the request carries a {@code returnUrl} query parameter (set by the Angular frontend
+   * when it detects a 401 and navigates to {@code /oidc/begin}), only the <em>path</em> component
+   * of that URL is extracted so that the browser is sent back to a safe relative path after
+   * authentication. {@code /oidc/*} paths are excluded from {@code returnUrl} to prevent redirect
+   * loops.
+   *
    * @param request the original request
    * @return a relative URL starting with {@code /}
    */
   private String buildOriginalPath(HttpServletRequest request) {
+    String returnUrl = request.getParameter("returnUrl");
+    if (!StringUtils.isEmpty(returnUrl)) {
+      try {
+        java.net.URI uri = new java.net.URI(returnUrl);
+        String path = uri.getPath();
+        if (!StringUtils.isEmpty(path) && path.startsWith("/") && !path.startsWith("/oidc/")) {
+          return path;
+        }
+      } catch (java.net.URISyntaxException e) {
+        // fall through to use request path
+      }
+    }
+
     String path = request.getServletPath();
-    if (StringUtils.isEmpty(path)) {
-      path = "/";
+    if (StringUtils.isEmpty(path) || path.startsWith("/oidc/")) {
+      return "/";
     }
     String query = request.getQueryString();
     return StringUtils.isEmpty(query) ? path : (path + "?" + query);

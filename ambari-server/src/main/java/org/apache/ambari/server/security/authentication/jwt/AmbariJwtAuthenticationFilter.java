@@ -179,7 +179,7 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
           boolean valid = validateToken(jwtToken);
 
           if (valid) {
-            String userName = jwtToken.getJWTClaimsSet().getSubject();
+            String userName = resolveUsername(jwtToken, propertiesProvider.get());
 
             Authentication authentication = authenticationProvider.authenticate(new JwtAuthenticationToken(userName, serializedJWT, null));
             SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -219,6 +219,28 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
 
   @Override
   public void destroy() {
+  }
+
+  /**
+   * Extracts the Ambari username from the JWT claims according to the configured
+   * {@code ambari.sso.jwt.usernameClaim} property.
+   *
+   * <ul>
+   *   <li>If {@code ambari.sso.jwt.usernameClaim} is set to a non-empty value, that claim is used
+   *       directly (e.g. {@code sub} for Knox SSO legacy behavior).</li>
+   *   <li>If the property is empty (the default), {@code preferred_username} is tried first and
+   *       {@code sub} is used as fallback — the correct behavior for Keycloak-issued tokens.</li>
+   * </ul>
+   */
+  private String resolveUsername(SignedJWT jwtToken, JwtAuthenticationProperties props) throws ParseException {
+    String configuredClaim = (props == null) ? "" : props.getJwtUsernameClaim();
+    if (!StringUtils.isEmpty(configuredClaim)) {
+      return jwtToken.getJWTClaimsSet().getStringClaim(configuredClaim);
+    }
+    String preferredUsername = jwtToken.getJWTClaimsSet().getStringClaim("preferred_username");
+    return (preferredUsername != null && !preferredUsername.isEmpty())
+        ? preferredUsername
+        : jwtToken.getJWTClaimsSet().getSubject();
   }
 
   /**

@@ -427,6 +427,7 @@ public class AmbariServer {
       // register listener to capture request context
       root.addEventListener(new RequestContextListener());
       root.addFilter(new FilterHolder(springSecurityFilter), "/api/*", DISPATCHER_TYPES);
+      root.addFilter(new FilterHolder(springSecurityFilter), "/oidc/*", DISPATCHER_TYPES);
       root.addFilter(new FilterHolder(new UserNameOverrideFilter()), "/api/v1/users/*", DISPATCHER_TYPES);
 
       // session-per-request strategy for agents

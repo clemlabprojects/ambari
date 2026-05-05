@@ -20,6 +20,7 @@ package org.apache.ambari.server.security.authentication.jwt;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_AUTHENTICATION_ENABLED;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_AUDIENCES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_COOKIE_NAME;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_USERNAME_CLAIM;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CALLBACK_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_SECRET;
@@ -57,6 +58,12 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   private String originalUrlQueryParam = null;
   private boolean enabledForAmbari;
 
+  /**
+   * JWT claim used to derive the Ambari username.  Empty string means: try {@code preferred_username}
+   * first, fall back to {@code sub}.  Set to {@code sub} to force Knox SSO legacy behavior.
+   */
+  private String jwtUsernameClaim = "";
+
   /** OIDC client ID used by the server-side callback flow — empty string means callback flow is disabled. */
   private String oidcClientId = "";
 
@@ -77,6 +84,7 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setCookieName(getValue(SSO_JWT_COOKIE_NAME, configurationMap));
     setOriginalUrlQueryParam(getValue(SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME, configurationMap));
     setPublicKey(getValue(SSO_PROVIDER_CERTIFICATE, configurationMap));
+    setJwtUsernameClaim(getValue(SSO_JWT_USERNAME_CLAIM, configurationMap));
     setOidcClientId(getValue(SSO_OIDC_CLIENT_ID, configurationMap));
     setOidcClientSecret(getValue(SSO_OIDC_CLIENT_SECRET, configurationMap));
     setOidcCallbackUrl(getValue(SSO_OIDC_CALLBACK_URL, configurationMap));
@@ -143,6 +151,14 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
 
   public void setEnabledForAmbari(boolean enabledForAmbari) {
     this.enabledForAmbari = enabledForAmbari;
+  }
+
+  public String getJwtUsernameClaim() {
+    return jwtUsernameClaim;
+  }
+
+  public void setJwtUsernameClaim(String jwtUsernameClaim) {
+    this.jwtUsernameClaim = (jwtUsernameClaim == null) ? "" : jwtUsernameClaim.trim();
   }
 
   public String getOidcClientId() {
@@ -220,10 +236,10 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     if (!StringUtils.isEmpty(certificate)) {
       // Ensure the PEM data is properly formatted
       if (!certificate.startsWith(PEM_CERTIFICATE_HEADER)) {
-        certificate = PEM_CERTIFICATE_HEADER + "/n" + certificate;
+        certificate = PEM_CERTIFICATE_HEADER + "\n" + certificate;
       }
       if (!certificate.endsWith(PEM_CERTIFICATE_FOOTER)) {
-        certificate = certificate + "/n" + PEM_CERTIFICATE_FOOTER;
+        certificate = certificate + "\n" + PEM_CERTIFICATE_FOOTER;
       }
 
       try {

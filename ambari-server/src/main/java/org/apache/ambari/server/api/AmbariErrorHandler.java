@@ -77,15 +77,27 @@ public class AmbariErrorHandler extends ErrorHandler {
       //if SSO is configured we should provide info about it in case of access error
       JwtAuthenticationProperties jwtProperties = jwtAuthenticationPropertiesProvider.get();
       if ((jwtProperties != null) && jwtProperties.isEnabledForAmbari()) {
-        String providerUrl = jwtProperties.getAuthenticationProviderUrl();
-        String originalUrl = jwtProperties.getOriginalUrlQueryParam();
-
-        if (StringUtils.isEmpty(providerUrl)) {
-          LOG.warn("The SSO provider URL is not available, forwarding to the SSO provider is not possible");
-        } else if (StringUtils.isEmpty(originalUrl)) {
-          LOG.warn("The original URL parameter name is not available, forwarding to the SSO provider is not possible");
+        if (jwtProperties.isOidcClientConfigured()) {
+          // Server-side OIDC flow: direct the Angular frontend to Ambari's own OIDC initiation
+          // endpoint so that the state HMAC is generated server-side.  Angular appends the current
+          // page URL as the returnUrl query parameter.
+          String scheme = request.getScheme();
+          String host = request.getServerName();
+          int port = request.getServerPort();
+          boolean defaultPort = ("https".equalsIgnoreCase(scheme) && port == 443)
+              || ("http".equalsIgnoreCase(scheme) && port == 80);
+          String baseUrl = scheme + "://" + host + (defaultPort ? "" : ":" + port);
+          errorMap.put("jwtProviderUrl", baseUrl + "/oidc/begin?returnUrl=");
         } else {
-          errorMap.put("jwtProviderUrl", String.format("%s?%s=", providerUrl, originalUrl));
+          String providerUrl = jwtProperties.getAuthenticationProviderUrl();
+          String originalUrl = jwtProperties.getOriginalUrlQueryParam();
+          if (StringUtils.isEmpty(providerUrl)) {
+            LOG.warn("The SSO provider URL is not available, forwarding to the SSO provider is not possible");
+          } else if (StringUtils.isEmpty(originalUrl)) {
+            LOG.warn("The original URL parameter name is not available, forwarding to the SSO provider is not possible");
+          } else {
+            errorMap.put("jwtProviderUrl", String.format("%s?%s=", providerUrl, originalUrl));
+          }
         }
       }
     }
