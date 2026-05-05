@@ -31,7 +31,7 @@ App.OidcEnableWizardStep1Controller = Em.Controller.extend({
 
   isSubmitDisabled: false,
 
-  submit: function () {
+  next: function () {
     App.router.send('next');
   }
 });

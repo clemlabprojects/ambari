@@ -68,5 +68,10 @@ App.OidcEnableWizardController = App.WizardController.extend({
     '1': [],
     '2': [],
     '3': []
+  },
+
+  finish: function () {
+    this.setCurrentStep('1', false, true);
+    this.resetDbNamespace();
   }
 });

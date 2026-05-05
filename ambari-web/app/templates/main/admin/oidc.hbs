@@ -17,7 +17,7 @@
 }}
 {{#if dataIsLoaded}}
   {{#if securityEnabled}}
-    <div>
+    <div class="clearfix">
       <span class="text-success">{{t admin.security.enabled}}</span>
       {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
         {{#if App.supports.enableToggleKerberos}}
