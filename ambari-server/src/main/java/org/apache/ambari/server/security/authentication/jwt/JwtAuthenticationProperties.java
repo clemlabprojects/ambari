@@ -21,9 +21,14 @@ import static org.apache.ambari.server.configuration.AmbariServerConfigurationKe
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_AUDIENCES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_COOKIE_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_USERNAME_CLAIM;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_AUTHENTICATION_ENABLED;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CALLBACK_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_SECRET;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ENABLED_SERVICES;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_MANAGE_SERVICES;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_CERTIFICATE;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_URL;
@@ -77,6 +82,33 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
    */
   private String oidcCallbackUrl = "";
 
+  /**
+   * Dedicated Keycloak authorization endpoint URL for the OIDC browser flow.  When non-empty,
+   * takes precedence over {@link #authenticationProviderUrl} for OIDC redirect and token-exchange,
+   * allowing Knox SSO ({@code provider.url}) and OIDC SSO ({@code oidc.providerUrl}) to coexist.
+   */
+  private String oidcProviderUrl = "";
+
+  /**
+   * Public key from the Keycloak realm signing certificate, used to verify OIDC-issued JWT
+   * signatures.  When set, tokens signed by either this key or {@link #publicKey} (Knox cert) are
+   * accepted, enabling mixed Knox-SSO / OIDC-SSO deployments.
+   */
+  private RSAPublicKey oidcPublicKey = null;
+
+  /**
+   * Explicit on/off flag for the OIDC browser-flow authentication.  Empty string means: derive
+   * from {@link #isOidcClientConfigured()} for backward compatibility with deployments that set
+   * only {@code clientId}/{@code clientSecret} without the explicit flag.
+   */
+  private String oidcAuthenticationEnabledFlag = "";
+
+  /** Whether Ambari should push OIDC-based SSO configuration to cluster services. */
+  private boolean oidcManageServices = false;
+
+  /** Services to configure with OIDC SSO; comma-delimited, {@code *} = all.  {@code null} means none. */
+  private String oidcEnabledServices = null;
+
   JwtAuthenticationProperties(Map<String, String> configurationMap) {
     setEnabledForAmbari(Boolean.valueOf(getValue(SSO_AUTHENTICATION_ENABLED, configurationMap)));
     setAudiencesString(getValue(SSO_JWT_AUDIENCES, configurationMap));
@@ -88,6 +120,11 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setOidcClientId(getValue(SSO_OIDC_CLIENT_ID, configurationMap));
     setOidcClientSecret(getValue(SSO_OIDC_CLIENT_SECRET, configurationMap));
     setOidcCallbackUrl(getValue(SSO_OIDC_CALLBACK_URL, configurationMap));
+    setOidcProviderUrl(getValue(SSO_OIDC_PROVIDER_URL, configurationMap));
+    setOidcPublicKey(getValue(SSO_OIDC_PROVIDER_CERTIFICATE, configurationMap));
+    setOidcAuthenticationEnabledFlag(getValue(SSO_OIDC_AUTHENTICATION_ENABLED, configurationMap));
+    setOidcManageServices(Boolean.parseBoolean(getValue(SSO_OIDC_MANAGE_SERVICES, configurationMap)));
+    setOidcEnabledServices(getValue(SSO_OIDC_ENABLED_SERVICES, configurationMap));
   }
 
   public String getAuthenticationProviderUrl() {
@@ -196,26 +233,98 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   }
 
   /**
-   * Derives the Keycloak token endpoint from the configured authorization provider URL by
-   * replacing the trailing {@code /auth} path segment with {@code /token}.  This matches the
-   * standard Keycloak OIDC URL layout:
+   * Returns whether the OIDC browser-flow authentication is active for Ambari login.
+   *
+   * <p>Resolution order:
+   * <ol>
+   *   <li>If {@code ambari.sso.oidc.authentication.enabled} is explicitly {@code "true"} or
+   *       {@code "false"}, that value is returned.</li>
+   *   <li>Otherwise, falls back to {@link #isOidcClientConfigured()} for backward compatibility
+   *       with deployments that only set {@code clientId}/{@code clientSecret}.</li>
+   * </ol>
+   */
+  public boolean isOidcEnabledForAmbari() {
+    if (!oidcAuthenticationEnabledFlag.isEmpty()) {
+      return Boolean.parseBoolean(oidcAuthenticationEnabledFlag);
+    }
+    return isOidcClientConfigured();
+  }
+
+  public String getOidcProviderUrl() {
+    return oidcProviderUrl;
+  }
+
+  public void setOidcProviderUrl(String oidcProviderUrl) {
+    this.oidcProviderUrl = (oidcProviderUrl == null) ? "" : oidcProviderUrl.trim();
+  }
+
+  /**
+   * Returns the effective OIDC authorization endpoint URL.  When {@link #oidcProviderUrl} is set,
+   * it is returned so that the OIDC flow uses its own dedicated Keycloak URL independently of the
+   * Knox SSO {@code provider.url}.  Falls back to {@link #authenticationProviderUrl} for
+   * backward compatibility with single-path deployments.
+   */
+  public String getEffectiveOidcProviderUrl() {
+    return StringUtils.isNotEmpty(oidcProviderUrl) ? oidcProviderUrl : authenticationProviderUrl;
+  }
+
+  public RSAPublicKey getOidcPublicKey() {
+    return oidcPublicKey;
+  }
+
+  public void setOidcPublicKey(String certificate) {
+    this.oidcPublicKey = createPublicKey(certificate);
+  }
+
+  public void setOidcPublicKey(RSAPublicKey oidcPublicKey) {
+    this.oidcPublicKey = oidcPublicKey;
+  }
+
+  public String getOidcAuthenticationEnabledFlag() {
+    return oidcAuthenticationEnabledFlag;
+  }
+
+  public void setOidcAuthenticationEnabledFlag(String flag) {
+    this.oidcAuthenticationEnabledFlag = (flag == null) ? "" : flag.trim();
+  }
+
+  public boolean isOidcManageServices() {
+    return oidcManageServices;
+  }
+
+  public void setOidcManageServices(boolean oidcManageServices) {
+    this.oidcManageServices = oidcManageServices;
+  }
+
+  public String getOidcEnabledServices() {
+    return oidcEnabledServices;
+  }
+
+  public void setOidcEnabledServices(String oidcEnabledServices) {
+    this.oidcEnabledServices = (oidcEnabledServices == null || oidcEnabledServices.trim().isEmpty())
+        ? null : oidcEnabledServices.trim();
+  }
+
+  /**
+   * Derives the Keycloak token endpoint from the effective OIDC provider URL by replacing the
+   * trailing {@code /auth} path segment with {@code /token}.  Uses {@link #getEffectiveOidcProviderUrl()}
+   * so that a dedicated {@code oidc.providerUrl} takes precedence over the Knox {@code provider.url}.
    * <pre>
    *   authorization: .../realms/{realm}/protocol/openid-connect/auth
    *   token:         .../realms/{realm}/protocol/openid-connect/token
    * </pre>
-   * If the authorization provider URL does not end with {@code /auth}, {@code /token} is appended
-   * directly so that the method never returns {@code null}.
    *
    * @return the Keycloak token endpoint URL; never {@code null}
    */
   public String getOidcTokenEndpoint() {
-    if (authenticationProviderUrl == null) {
+    String baseUrl = getEffectiveOidcProviderUrl();
+    if (baseUrl == null || baseUrl.isEmpty()) {
       return "";
     }
-    if (authenticationProviderUrl.endsWith("/auth")) {
-      return authenticationProviderUrl.substring(0, authenticationProviderUrl.length() - 5) + "/token";
+    if (baseUrl.endsWith("/auth")) {
+      return baseUrl.substring(0, baseUrl.length() - 5) + "/token";
     }
-    return authenticationProviderUrl + "/token";
+    return baseUrl + "/token";
   }
 
   /**

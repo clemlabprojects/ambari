@@ -45,6 +45,12 @@ SSO_OIDC_CLIENT_ID = "ambari.sso.oidc.clientId"
 SSO_OIDC_CLIENT_SECRET = "ambari.sso.oidc.clientSecret"
 SSO_OIDC_CALLBACK_URL = "ambari.sso.oidc.callbackUrl"
 SSO_JWT_USERNAME_CLAIM = "ambari.sso.jwt.usernameClaim"
+# Dedicated OIDC provider and service-dispatch properties (allow Knox SSO and OIDC SSO to coexist)
+SSO_OIDC_PROVIDER_URL = "ambari.sso.oidc.providerUrl"
+SSO_OIDC_PROVIDER_CERTIFICATE = "ambari.sso.oidc.providerCertificate"
+SSO_OIDC_AUTHENTICATION_ENABLED = "ambari.sso.oidc.authentication.enabled"
+SSO_OIDC_MANAGE_SERVICES = "ambari.sso.oidc.manage_services"
+SSO_OIDC_ENABLED_SERVICES = "ambari.sso.oidc.enabled_services"
 
 SSO_PROVIDER_ORIGINAL_URL_QUERY_PARAM_DEFAULT = "originalUrl"
 SSO_PROVIDER_URL_DEFAULT = "https://knox.example.com:8443/gateway/knoxsso/api/v1/websso"
@@ -359,6 +365,105 @@ def populate_jwt_username_claim(options, properties):
   properties[SSO_JWT_USERNAME_CLAIM] = claim
 
 
+def populate_oidc_provider_url(options, properties):
+  """Set ambari.sso.oidc.providerUrl — the Keycloak auth endpoint for the OIDC flow.
+
+  When set this takes precedence over ambari.sso.provider.url so that Knox SSO and OIDC
+  SSO can use different providers simultaneously.  Leaving it blank retains backward
+  compatibility (the Knox provider.url is used as fallback).
+  """
+  if not options.sso_oidc_provider_url:
+    current = get_value_from_dictionary(properties, SSO_OIDC_PROVIDER_URL, "")
+    provider_url = get_validated_string_input(
+      "OIDC provider URL (Keycloak auth endpoint, empty = use ambari.sso.provider.url) ({0}): ".format(current or "empty"),
+      current, REGEX_ANYTHING, "Invalid URL", False)
+  else:
+    provider_url = options.sso_oidc_provider_url
+  if provider_url:
+    properties[SSO_OIDC_PROVIDER_URL] = provider_url
+  else:
+    properties.pop(SSO_OIDC_PROVIDER_URL, None)
+
+
+def populate_oidc_provider_certificate(options, properties):
+  """Set ambari.sso.oidc.providerCertificate — the Keycloak realm signing cert.
+
+  When set, Ambari accepts JWTs signed by either this cert (OIDC) or the Knox cert
+  (ambari.sso.provider.certificate), enabling mixed Knox-SSO / OIDC-SSO deployments.
+  When no cert file is provided and no cert is already stored, the key is left unchanged so
+  that the Knox provider.certificate continues to serve as the JWT validation cert (backward compat).
+  """
+  if not options.sso_oidc_public_cert_file:
+    cert = get_value_from_dictionary(properties, SSO_OIDC_PROVIDER_CERTIFICATE)
+    if not cert:
+      # No cert file provided and no existing OIDC cert — skip; JWT validation will
+      # fall back to ambari.sso.provider.certificate (backward compatibility).
+      return
+    get_cert = get_YN_input(
+      "An OIDC provider certificate is already set. Do you want to change it [y/n] (n)? ", False)
+    if get_cert:
+      cert_string = get_multi_line_input("OIDC Provider Certificate PEM")
+      properties[SSO_OIDC_PROVIDER_CERTIFICATE] = ensure_complete_cert(cert_string) if cert_string else ""
+  else:
+    with open(options.sso_oidc_public_cert_file) as cert_file:
+      cert_string = cert_file.read()
+    properties[SSO_OIDC_PROVIDER_CERTIFICATE] = ensure_complete_cert(cert_string) if cert_string else ""
+
+
+def populate_oidc_authentication_enabled(options, properties):
+  """Set ambari.sso.oidc.authentication.enabled.
+
+  Controls whether the OIDC browser-flow is active for Ambari login independently of the
+  Knox SSO authentication.enabled flag.  Defaults to true when clientId/clientSecret are set
+  (backward compatibility) but can be set explicitly to 'false' to disable the OIDC browser
+  flow while keeping the OIDC credentials for service dispatch.
+  """
+  if options.sso_oidc_enabled_ambari is None:
+    current = get_boolean_from_dictionary(properties, SSO_OIDC_AUTHENTICATION_ENABLED, True)
+    enabled = get_YN_input(
+      "Enable OIDC browser-flow authentication for Ambari login [y/n] ({0})? ".format('y' if current else 'n'),
+      current)
+  else:
+    enabled = options.sso_oidc_enabled_ambari == 'true'
+  properties[SSO_OIDC_AUTHENTICATION_ENABLED] = 'true' if enabled else 'false'
+
+
+def populate_oidc_service_management(options, properties):
+  """Set ambari.sso.oidc.manage_services and ambari.sso.oidc.enabled_services.
+
+  Services listed in enabled_services will receive Keycloak OIDC SSO config instead of Knox
+  SSO config, enabling per-service dispatch (e.g. Ranger on OIDC, Hive on Knox).
+
+  Uses an ``is None`` check (not a falsy check) so that ``--sso-oidc-enabled-services=''``
+  (explicitly provided as empty) is treated as a non-interactive CLI invocation that clears
+  the service list rather than falling through to the interactive prompt.
+  """
+  if options.sso_oidc_enabled_services is None:
+    # Not provided on the CLI — interactive or default path.
+    if options.sso_oidc_manage_services is None:
+      manage = get_boolean_from_dictionary(properties, SSO_OIDC_MANAGE_SERVICES, False)
+      manage = get_YN_input(
+        "Manage OIDC SSO configuration for cluster services [y/n] ({0})? ".format('y' if manage else 'n'),
+        manage)
+    else:
+      manage = options.sso_oidc_manage_services == 'true'
+
+    if manage:
+      current_services = get_value_from_dictionary(properties, SSO_OIDC_ENABLED_SERVICES, "")
+      services = get_validated_string_input(
+        "OIDC SSO enabled services (comma-separated or * for all) ({0}): ".format(current_services or "empty"),
+        current_services, REGEX_ANYTHING, "Invalid value", False)
+    else:
+      services = ""
+  else:
+    # Explicitly provided on the CLI (even if empty string).
+    manage = True if not options.sso_oidc_manage_services else options.sso_oidc_manage_services == 'true'
+    services = options.sso_oidc_enabled_services.upper() if options.sso_oidc_enabled_services else ""
+
+  properties[SSO_OIDC_MANAGE_SERVICES] = 'true' if manage else 'false'
+  properties[SSO_OIDC_ENABLED_SERVICES] = services
+
+
 def setup_sso_oidc(options):
   print_info_msg("Setup SSO OIDC.")
 
@@ -384,12 +489,18 @@ def setup_sso_oidc(options):
       enable_oidc = options.sso_oidc_enabled == 'true'
 
     if enable_oidc:
+      populate_oidc_provider_url(options, properties)
+      populate_oidc_provider_certificate(options, properties)
       populate_oidc_client_id(options, properties)
       populate_oidc_client_secret(options, properties)
       populate_oidc_callback_url(options, properties)
+      populate_oidc_authentication_enabled(options, properties)
+      populate_oidc_service_management(options, properties)
       populate_jwt_username_claim(options, properties)
     else:
-      for key in [SSO_OIDC_CLIENT_ID, SSO_OIDC_CLIENT_SECRET, SSO_OIDC_CALLBACK_URL, SSO_JWT_USERNAME_CLAIM]:
+      for key in [SSO_OIDC_CLIENT_ID, SSO_OIDC_CLIENT_SECRET, SSO_OIDC_CALLBACK_URL,
+                  SSO_JWT_USERNAME_CLAIM, SSO_OIDC_PROVIDER_URL, SSO_OIDC_PROVIDER_CERTIFICATE,
+                  SSO_OIDC_AUTHENTICATION_ENABLED, SSO_OIDC_MANAGE_SERVICES, SSO_OIDC_ENABLED_SERVICES]:
         properties.pop(key, None)
 
     update_sso_conf(ambari_properties, properties, admin_login, admin_password)

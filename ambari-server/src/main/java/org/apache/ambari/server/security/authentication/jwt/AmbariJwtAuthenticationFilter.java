@@ -128,7 +128,7 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
     boolean shouldApply = false;
 
     JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
-    if (jwtProperties != null && jwtProperties.isEnabledForAmbari()) {
+    if (jwtProperties != null && (jwtProperties.isEnabledForAmbari() || jwtProperties.isOidcEnabledForAmbari())) {
       String serializedJWT = getJWTFromCookie(httpServletRequest);
       shouldApply = (serializedJWT != null && isAuthenticationRequired(serializedJWT));
     }
@@ -161,7 +161,7 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
     eventHandler.beforeAttemptAuthentication(this, servletRequest, servletResponse);
 
     JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
-    if (jwtProperties == null || !jwtProperties.isEnabledForAmbari()) {
+    if (jwtProperties == null || (!jwtProperties.isEnabledForAmbari() && !jwtProperties.isOidcEnabledForAmbari())) {
       //disable filter if not configured
       chain.doFilter(servletRequest, servletResponse);
       return;
@@ -320,41 +320,64 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
   }
 
   /**
-   * Verify the signature of the JWT token in this method. This method depends
-   * on the public key that was established during init based upon the
-   * provisioned public key. Override this method in subclasses in order to
-   * customize the signature verification behavior.
+   * Verifies the JWT signature against all configured public keys.
+   *
+   * <p>Two certificate slots are supported:
+   * <ul>
+   *   <li><b>Knox SSO</b> — {@code ambari.sso.provider.certificate}: the Knox realm signing cert,
+   *       used for JWTs issued by Knox SSO.</li>
+   *   <li><b>OIDC</b> — {@code ambari.sso.oidc.providerCertificate}: the Keycloak realm signing
+   *       cert, used for JWTs issued by the OIDC browser flow.</li>
+   * </ul>
+   * A token is accepted if it verifies against <em>either</em> key, enabling mixed
+   * Knox-SSO / OIDC-SSO deployments where different services use different identity providers.
    *
    * @param jwtToken the token that contains the signature to be validated
-   * @return valid true if signature verifies successfully; false otherwise
+   * @return {@code true} if the signature verifies against at least one configured public key
    */
   boolean validateSignature(SignedJWT jwtToken) {
-    boolean valid = false;
-    if (JWSObject.State.SIGNED == jwtToken.getState()) {
-      LOG.debug("JWT token is in a SIGNED state");
-      if (jwtToken.getSignature() != null) {
-        LOG.debug("JWT token signature is not null");
-
-        JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
-        RSAPublicKey publicKey = (jwtProperties == null) ? null : jwtProperties.getPublicKey();
-        if (publicKey == null) {
-          LOG.warn("SSO server public key has not be set, validation of the JWT token cannot be performed.");
-        } else {
-          try {
-            JWSVerifier verifier = new RSASSAVerifier(publicKey);
-            if (jwtToken.verify(verifier)) {
-              valid = true;
-              LOG.debug("JWT token has been successfully verified");
-            } else {
-              LOG.warn("JWT signature verification failed.");
-            }
-          } catch (JOSEException je) {
-            LOG.warn("Error while validating signature", je);
-          }
-        }
-      }
+    if (JWSObject.State.SIGNED != jwtToken.getState() || jwtToken.getSignature() == null) {
+      return false;
     }
-    return valid;
+    LOG.debug("JWT token is in a SIGNED state");
+    JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
+    if (jwtProperties == null) {
+      LOG.warn("JWT properties not available; signature validation cannot be performed.");
+      return false;
+    }
+    if (tryVerifyWithKey(jwtToken, jwtProperties.getPublicKey(), "Knox SSO")) {
+      return true;
+    }
+    if (tryVerifyWithKey(jwtToken, jwtProperties.getOidcPublicKey(), "OIDC")) {
+      return true;
+    }
+    LOG.warn("JWT signature verification failed against all configured public keys (Knox SSO + OIDC).");
+    return false;
+  }
+
+  /**
+   * Attempts to verify {@code jwtToken} against {@code publicKey}.
+   *
+   * @param jwtToken  the token to verify
+   * @param publicKey the RSA public key; {@code null} means this slot is not configured
+   * @param keySource label used in log messages (e.g. "Knox SSO", "OIDC")
+   * @return {@code true} if verification succeeded
+   */
+  private boolean tryVerifyWithKey(SignedJWT jwtToken, RSAPublicKey publicKey, String keySource) {
+    if (publicKey == null) {
+      return false;
+    }
+    try {
+      JWSVerifier verifier = new RSASSAVerifier(publicKey);
+      if (jwtToken.verify(verifier)) {
+        LOG.debug("JWT token verified successfully using {} public key", keySource);
+        return true;
+      }
+      LOG.debug("JWT signature did not match {} public key", keySource);
+    } catch (JOSEException je) {
+      LOG.debug("JWT signature verification error using {} public key: {}", keySource, je.getMessage());
+    }
+    return false;
   }
 
   /**

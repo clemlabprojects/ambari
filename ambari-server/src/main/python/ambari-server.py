@@ -613,6 +613,25 @@ def init_setup_sso_oidc_options(parser):
   parser.add_option('--sso-jwt-username-claim', default=None,
                     help="JWT claim used as the Ambari username (empty = preferred_username then sub; 'sub' = Knox SSO legacy)",
                     dest="sso_jwt_username_claim")
+  parser.add_option('--sso-oidc-provider-url', default=None,
+                    help="Keycloak authorization endpoint for the OIDC flow (e.g. https://keycloak:8444/realms/myrealm/protocol/openid-connect/auth). "
+                         "When set, takes precedence over ambari.sso.provider.url so Knox SSO and OIDC SSO can coexist.",
+                    dest="sso_oidc_provider_url")
+  parser.add_option('--sso-oidc-public-cert-file', default=None,
+                    help="Path to the PEM file containing the Keycloak realm signing certificate. "
+                         "When set, Ambari accepts JWTs signed by either this cert or the Knox SSO cert.",
+                    dest="sso_oidc_public_cert_file")
+  parser.add_option('--sso-oidc-enabled-ambari', default=None,
+                    help="Enable the OIDC browser-flow authentication for Ambari login ('true'|'false'). "
+                         "Defaults to 'true' when clientId/clientSecret are set (backward compat).",
+                    dest="sso_oidc_enabled_ambari")
+  parser.add_option('--sso-oidc-manage-services', default=None,
+                    help="Whether Ambari should push OIDC SSO config to cluster services ('true'|'false')",
+                    dest="sso_oidc_manage_services")
+  parser.add_option('--sso-oidc-enabled-services', default=None,
+                    help="Comma-delimited list of cluster services to configure with OIDC SSO (e.g. RANGER,ATLAS or * for all). "
+                         "Services not listed continue to use Knox SSO.",
+                    dest="sso_oidc_enabled_services")
   parser.add_option('--ambari-admin-username', default=None,
                     help="Ambari administrator username for accessing Ambari's REST API",
                     dest="ambari_admin_username")

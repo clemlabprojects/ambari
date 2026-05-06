@@ -76,8 +76,8 @@ public class AmbariErrorHandler extends ErrorHandler {
     if ((code == HttpServletResponse.SC_FORBIDDEN) || (code == HttpServletResponse.SC_UNAUTHORIZED)) {
       //if SSO is configured we should provide info about it in case of access error
       JwtAuthenticationProperties jwtProperties = jwtAuthenticationPropertiesProvider.get();
-      if ((jwtProperties != null) && jwtProperties.isEnabledForAmbari()) {
-        if (jwtProperties.isOidcClientConfigured()) {
+      if (jwtProperties != null && (jwtProperties.isEnabledForAmbari() || jwtProperties.isOidcEnabledForAmbari())) {
+        if (jwtProperties.isOidcEnabledForAmbari() && jwtProperties.isOidcClientConfigured()) {
           // Server-side OIDC flow: direct the Angular frontend to Ambari's own OIDC initiation
           // endpoint so that the state HMAC is generated server-side.  Angular appends the current
           // page URL as the returnUrl query parameter.
@@ -88,7 +88,8 @@ public class AmbariErrorHandler extends ErrorHandler {
               || ("http".equalsIgnoreCase(scheme) && port == 80);
           String baseUrl = scheme + "://" + host + (defaultPort ? "" : ":" + port);
           errorMap.put("jwtProviderUrl", baseUrl + "/oidc/begin?returnUrl=");
-        } else {
+        } else if (jwtProperties.isEnabledForAmbari()) {
+          // Knox SSO flow: redirect the browser directly to the Knox provider URL.
           String providerUrl = jwtProperties.getAuthenticationProviderUrl();
           String originalUrl = jwtProperties.getOriginalUrlQueryParam();
           if (StringUtils.isEmpty(providerUrl)) {

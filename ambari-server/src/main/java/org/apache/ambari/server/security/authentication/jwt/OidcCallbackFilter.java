@@ -172,7 +172,7 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
   @Override
   public boolean shouldApply(HttpServletRequest httpServletRequest) {
     JwtAuthenticationProperties props = propertiesProvider.get();
-    if (props == null || !props.isEnabledForAmbari() || !props.isOidcClientConfigured()) {
+    if (props == null || !props.isOidcEnabledForAmbari() || !props.isOidcClientConfigured()) {
       return false;
     }
     if (CALLBACK_PATH.equals(httpServletRequest.getServletPath())) {
@@ -239,7 +239,7 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
     }
 
     String callbackUrl  = resolveCallbackUrl(request, props);
-    String authEndpoint = props.getAuthenticationProviderUrl();
+    String authEndpoint = props.getEffectiveOidcProviderUrl();
 
     String redirectUrl = authEndpoint
         + "?response_type=code"
