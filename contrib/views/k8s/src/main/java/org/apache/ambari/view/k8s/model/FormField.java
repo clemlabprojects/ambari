@@ -49,6 +49,10 @@ public class FormField {
     // For grouped fields
     public List<FormField> fields;
 
+    // Validation constraints
+    public Integer maxLength;
+    public String validationHint;
+
     // Simple condition support: { field, value }
     public Map<String, Object> condition;
 

@@ -24,7 +24,7 @@
   "kerberos": [
     {
       "key": "ingestion",
-      "serviceName": "openmetadata-ingestion",
+      "serviceName": "oma-ing",
       "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
       "secretNameTemplate": "{{releaseName}}-ingestion-keytab",
       "keyNameInSecret": "service.keytab",
@@ -570,7 +570,9 @@
       "label": "Namespace Kubernetes",
       "type": "string",
       "required": true,
-      "defaultValue": "openmetadata"
+      "defaultValue": "openmetadata",
+      "maxLength": 24,
+      "validationHint": "Namespace too long — the Kerberos principal (oma-ing-<namespace>) would exceed the 32-character IPA limit."
     },
     {
       "name": "adminConfig",
