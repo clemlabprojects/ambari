@@ -1681,6 +1681,11 @@ var urls = {
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
   },
 
+  'admin.oidc.cluster.env': {
+    'real': '/clusters/{clusterName}/oidc_descriptors/ENV',
+    'mock': '/data/wizard/kerberos/stack_descriptors.json'
+  },
+
   'admin.oidc.test': {
     'type': 'POST',
     'real': '/clusters/{clusterName}/oidc_test',

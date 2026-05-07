@@ -27,7 +27,7 @@ from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.script.script import Script
 
-from polaris import configure_polaris, bootstrap_ozone_catalog
+from polaris import configure_polaris, bootstrap_ozone_catalog, sync_managed_principals
 from setup_ranger_polaris import setup_ranger_polaris
 
 
@@ -151,6 +151,7 @@ class PolarisServer(Script):
             )
 
     bootstrap_ozone_catalog()
+    sync_managed_principals()
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -175,6 +176,14 @@ class PolarisServer(Script):
     env.set_params(params)
     Logger.info("Running manual Polaris custom command: BOOTSTRAP_OZONE_CATALOG")
     bootstrap_ozone_catalog()
+
+  def sync_principals(self, env):
+    """Manually-triggered SYNC_PRINCIPALS custom command. Same logic that runs at start —
+    re-reads polaris_managed_principals from the live config and creates any missing ones."""
+    import params
+    env.set_params(params)
+    Logger.info("Running manual Polaris custom command: SYNC_PRINCIPALS")
+    sync_managed_principals()
 
   def status(self, env):
     import status_params

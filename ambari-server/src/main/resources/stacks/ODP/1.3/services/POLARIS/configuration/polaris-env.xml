@@ -155,16 +155,6 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>polaris_ssl_auto_generate</name>
-    <display-name>Auto-generate Self-signed Certificate</display-name>
-    <value>true</value>
-    <description>Generate a self-signed server keystore automatically when TLS is enabled and keystore file is missing.</description>
-    <value-attributes>
-      <type>boolean</type>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>polaris_ssl_keystore_password</name>
     <display-name>Polaris TLS Keystore Password</display-name>
     <value>changeit</value>
@@ -187,6 +177,16 @@
       <type>password</type>
       <empty-value-valid>false</empty-value-valid>
       <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_managed_principals</name>
+    <display-name>Polaris Managed Principals</display-name>
+    <value></value>
+    <description>Comma-separated list of principal names Ambari should ensure exist in Polaris. Each name must match the value the IdP emits as the polaris.principal_name claim (typically the IdP username). Principals are created idempotently (existing names are skipped) on POLARIS_SERVER start and on the SYNC_PRINCIPALS custom command. Authentication uses the bootstrap admin (polaris_admin_username/polaris_admin_password) — the user listing itself is not pulled from the IdP, the operator declares it here.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -309,19 +309,9 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>polaris_mcp_tls_auto_generate</name>
-    <display-name>Auto-generate Polaris MCP TLS Certificate</display-name>
-    <value>true</value>
-    <description>Automatically generate self-signed PEM certificate/key for MCP when TLS is enabled and files are missing.</description>
-    <value-attributes>
-      <type>boolean</type>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>polaris_mcp_tls_cert_file</name>
     <display-name>Polaris MCP TLS Certificate File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-mcp-cert.pem</value>
+    <value>/etc/security/serverKeys/server.public.pem</value>
     <description>PEM certificate chain file used by POLARIS_MCP_SERVER HTTPS endpoint.</description>
     <value-attributes>
       <overridable>true</overridable>
@@ -331,7 +321,7 @@
   <property>
     <name>polaris_mcp_tls_key_file</name>
     <display-name>Polaris MCP TLS Key File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-mcp-key.pem</value>
+    <value>/etc/security/serverKeys/server.key.pem</value>
     <description>PEM private key file used by POLARIS_MCP_SERVER HTTPS endpoint.</description>
     <value-attributes>
       <overridable>true</overridable>
@@ -341,7 +331,7 @@
   <property>
     <name>polaris_mcp_tls_ca_file</name>
     <display-name>Polaris MCP TLS CA File</display-name>
-    <value></value>
+    <value>/etc/security/serverKeys/ca.cert.pem</value>
     <description>Optional PEM CA bundle for MCP TLS server configuration.</description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
@@ -438,19 +428,9 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>polaris_console_tls_auto_generate</name>
-    <display-name>Auto-generate Polaris Console TLS Certificate</display-name>
-    <value>true</value>
-    <description>Automatically generate self-signed PEM certificate/key for Console when TLS is enabled and files are missing.</description>
-    <value-attributes>
-      <type>boolean</type>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>polaris_console_tls_cert_file</name>
     <display-name>Polaris Console TLS Certificate File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-console-cert.pem</value>
+    <value>/etc/security/serverKeys/server.public.pem</value>
     <description>PEM certificate chain file used by POLARIS_CONSOLE HTTPS endpoint.</description>
     <value-attributes>
       <overridable>true</overridable>
@@ -460,7 +440,7 @@
   <property>
     <name>polaris_console_tls_key_file</name>
     <display-name>Polaris Console TLS Key File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-console-key.pem</value>
+    <value>/etc/security/serverKeys/server.key.pem</value>
     <description>PEM private key file used by POLARIS_CONSOLE HTTPS endpoint.</description>
     <value-attributes>
       <overridable>true</overridable>
@@ -682,7 +662,6 @@ export POLARIS_TOOLS_HOME={{polaris_tools_home}}
 
 # Polaris TLS secret material
 export POLARIS_SSL_ENABLED={{polaris_ssl_enabled}}
-export POLARIS_SSL_AUTO_GENERATE={{polaris_ssl_auto_generate}}
 export POLARIS_SSL_KEYSTORE_PASSWORD='{{polaris_ssl_keystore_password_escaped}}'
 export POLARIS_SSL_TRUSTSTORE_PASSWORD='{{polaris_ssl_truststore_password_escaped}}'
 

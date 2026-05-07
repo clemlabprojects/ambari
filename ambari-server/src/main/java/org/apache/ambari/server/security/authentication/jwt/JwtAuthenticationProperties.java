@@ -328,6 +328,28 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   }
 
   /**
+   * Returns the OIDC end-session (RP-initiated logout) endpoint URL by replacing the trailing
+   * {@code /auth} path segment with {@code /logout}.  Used by {@code LogoutService} to terminate
+   * the user's Keycloak session in addition to clearing the local Ambari session and JWT cookie.
+   * <pre>
+   *   authorization: .../realms/{realm}/protocol/openid-connect/auth
+   *   end-session:   .../realms/{realm}/protocol/openid-connect/logout
+   * </pre>
+   *
+   * @return the Keycloak end-session endpoint URL; never {@code null}
+   */
+  public String getOidcEndSessionEndpoint() {
+    String baseUrl = getEffectiveOidcProviderUrl();
+    if (baseUrl == null || baseUrl.isEmpty()) {
+      return "";
+    }
+    if (baseUrl.endsWith("/auth")) {
+      return baseUrl.substring(0, baseUrl.length() - 5) + "/logout";
+    }
+    return baseUrl + "/logout";
+  }
+
+  /**
    * Given a String containing PEM-encode x509 certificate, an {@link RSAPublicKey} is created and
    * returned.
    * <p>

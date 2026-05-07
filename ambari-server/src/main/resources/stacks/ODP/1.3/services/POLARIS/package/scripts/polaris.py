@@ -30,7 +30,7 @@ import urllib.request
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed, Fail
 from resource_management.core.resources.system import Directory, Execute, File
-from resource_management.core.source import DownloadSource, InlineTemplate
+from resource_management.core.source import DownloadSource, InlineTemplate, Template
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_user_call_output import get_user_call_output
 from resource_management.libraries.resources.properties_file import PropertiesFile
@@ -71,7 +71,8 @@ def configure_polaris(component_type='server'):
                  mode=0o640
                  )
 
-  configure_console()
+  if component_type == 'console':
+    configure_console()
 
   setup_tools_tls()
 
@@ -83,6 +84,10 @@ def configure_polaris(component_type='server'):
 
 
 def setup_server_tls():
+  """Verify that the JKS keystore/truststore referenced by polaris-application-properties
+  exist on disk. The keystore/truststore are managed externally (by the ambari-api ansible
+  role, in line with how every other ODP service consumes /etc/security/serverKeys/*) — we
+  do not generate or rebuild them here. This keeps key material under operator control."""
   import params
 
   if not params.polaris_ssl_enabled:
@@ -91,106 +96,28 @@ def setup_server_tls():
   if not params.polaris_ssl_keystore_file:
     raise Fail("TLS is enabled but quarkus.http.ssl.certificate.key-store-file is not configured.")
 
-  _ensure_parent_dir(params.polaris_ssl_keystore_file)
+  Execute("test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)),
+          user=params.polaris_user)
 
-  keytool_bin = os.path.join(params.java64_home, "bin", "keytool")
-  if not os.path.exists(keytool_bin):
-    keytool_bin = "keytool"
-
-  keystore_password = str(params.polaris_ssl_keystore_password or "changeit")
-  truststore_password = str(params.polaris_ssl_truststore_password or keystore_password)
-  key_alias = str(params.polaris_ssl_keystore_alias or "polaris")
-  keystore_type = str(params.polaris_ssl_keystore_file_type or "PKCS12")
-  hostname = str(getattr(params, "polaris_hostname", "") or "localhost")
-
-  if params.polaris_ssl_auto_generate:
-    dname = "CN={0}, OU=ODP, O=ODP, L=Unknown, ST=Unknown, C=US".format(hostname)
-    san = "SAN=dns:{0},dns:localhost,ip:127.0.0.1".format(hostname)
-    gen_cmd = " ".join([
-      shlex.quote(keytool_bin),
-      "-genkeypair",
-      "-alias", shlex.quote(key_alias),
-      "-keyalg", "RSA",
-      "-keysize", "2048",
-      "-validity", "3650",
-      "-storetype", shlex.quote(keystore_type),
-      "-keystore", shlex.quote(params.polaris_ssl_keystore_file),
-      "-storepass", shlex.quote(keystore_password),
-      "-keypass", shlex.quote(keystore_password),
-      "-dname", shlex.quote(dname),
-      "-ext", shlex.quote(san),
-    ])
-    Execute(gen_cmd,
-            user=params.polaris_user,
-            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)))
-  else:
-    Execute("test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)),
-            user=params.polaris_user)
-
-  File(params.polaris_ssl_keystore_file,
-       owner=params.polaris_user,
-       group=params.user_group,
-       mode=0o640,
-       only_if="test -f {0}".format(shlex.quote(params.polaris_ssl_keystore_file)))
-
-  if not params.polaris_ssl_truststore_file:
-    return
-
-  _ensure_parent_dir(params.polaris_ssl_truststore_file)
-  cert_export_file = format("{polaris_pid_dir}/polaris-server-cert.pem")
-
-  if params.polaris_ssl_auto_generate:
-    export_cmd = " ".join([
-      shlex.quote(keytool_bin),
-      "-exportcert",
-      "-rfc",
-      "-alias", shlex.quote(key_alias),
-      "-keystore", shlex.quote(params.polaris_ssl_keystore_file),
-      "-storepass", shlex.quote(keystore_password),
-      "-file", shlex.quote(cert_export_file),
-    ])
-    import_cmd = " ".join([
-      shlex.quote(keytool_bin),
-      "-importcert",
-      "-noprompt",
-      "-alias", shlex.quote(key_alias),
-      "-file", shlex.quote(cert_export_file),
-      "-keystore", shlex.quote(params.polaris_ssl_truststore_file),
-      "-storetype", shlex.quote(params.polaris_ssl_truststore_file_type),
-      "-storepass", shlex.quote(truststore_password),
-    ])
-
-    Execute(export_cmd,
-            user=params.polaris_user,
-            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
-    Execute(import_cmd,
-            user=params.polaris_user,
-            not_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
-    File(cert_export_file, action="delete")
-  else:
+  if params.polaris_ssl_truststore_file:
     Execute("test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)),
             user=params.polaris_user)
 
-  File(params.polaris_ssl_truststore_file,
-       owner=params.polaris_user,
-       group=params.user_group,
-       mode=0o640,
-       only_if="test -f {0}".format(shlex.quote(params.polaris_ssl_truststore_file)))
-
 
 def setup_tools_tls():
+  """Verify the PEM cert/key files used by the Python-based MCP server and the nginx-based
+  console exist on disk. These are PEM-format because nginx and uvicorn don't read JKS;
+  they're laid down by the ambari-api ansible role (typically /etc/security/serverKeys/server.{public,key}.pem)."""
   import params
 
   _setup_pem_tls(
     enabled=params.polaris_mcp_tls_enabled,
-    auto_generate=params.polaris_mcp_tls_auto_generate,
     cert_file=params.polaris_mcp_tls_cert_file,
     key_file=params.polaris_mcp_tls_key_file,
     label="Polaris MCP"
   )
   _setup_pem_tls(
     enabled=params.polaris_console_tls_enabled,
-    auto_generate=params.polaris_console_tls_auto_generate,
     cert_file=params.polaris_console_tls_cert_file,
     key_file=params.polaris_console_tls_key_file,
     label="Polaris Console"
@@ -240,12 +167,41 @@ def configure_console():
       "Polaris Access Control is read-only in this mode."
     )
 
+  oidc_auth_server_url = str(params.application_properties.get("quarkus.oidc.auth-server-url", "")).strip()
+  oidc_client_id = str(params.application_properties.get("quarkus.oidc.client-id", "")).strip()
+  oidc_tenant_enabled = str(params.application_properties.get("quarkus.oidc.tenant-enabled", "false")).strip().lower() == "true"
+  if oidc_tenant_enabled and oidc_auth_server_url and oidc_client_id:
+    console_origin = getattr(params, "console_origin", "")
+    # Use a dedicated public PKCE client for the console SPA, separate from the confidential API client.
+    # Defaults to "{api_client_id}-console" if not explicitly configured.
+    console_oidc_client_id = getattr(params, "polaris_console_oidc_client_id", "") or "{0}-console".format(oidc_client_id)
+    app_config["VITE_OIDC_ISSUER_URL"] = oidc_auth_server_url
+    app_config["VITE_OIDC_CLIENT_ID"] = console_oidc_client_id
+    app_config["VITE_OIDC_REDIRECT_URI"] = "{0}/auth/callback".format(console_origin) if console_origin else ""
+    app_config["VITE_OIDC_SCOPE"] = "openid profile email"
+
   config_js_path = os.path.join(console_dist_dir, "config.js")
   File(
     config_js_path,
     content="// Runtime configuration generated by Ambari.\nwindow.APP_CONFIG = {0};\n".format(
       json.dumps(app_config, sort_keys=True)
     ),
+    owner=params.polaris_user,
+    group=params.user_group,
+    mode=0o640
+  )
+
+  nginx_tmp_dir = os.path.join(params.polaris_pid_dir, "nginx-tmp")
+  Directory(nginx_tmp_dir,
+            mode=0o755,
+            owner=params.polaris_user,
+            group=params.user_group,
+            create_parents=True
+            )
+
+  File(
+    params.polaris_console_nginx_conf,
+    content=Template('nginx-console.conf.j2'),
     owner=params.polaris_user,
     group=params.user_group,
     mode=0o640
@@ -471,6 +427,157 @@ def run_admin_bootstrap():
       Logger.info("Polaris metastore is already bootstrapped; skipping.")
       return
     raise
+
+
+# ---------------------------------------------------------------------------
+# Managed principals (operator-declared list, synced to Polaris API)
+# ---------------------------------------------------------------------------
+
+def sync_managed_principals():
+  """Ensure each name in polaris_managed_principals exists as a Polaris principal.
+
+  Idempotent — already-existing principals are detected via HTTP 409 and skipped.
+  Authenticates against Polaris's own OAuth endpoint with the bootstrap admin
+  credentials (works regardless of whether OIDC is enabled, because
+  polaris.authentication.type=mixed accepts both internal and OIDC tokens).
+
+  Called automatically from PolarisServer.start() and from the SYNC_PRINCIPALS
+  custom Ambari command. Failures are logged but do not abort the calling
+  operation — the server stays up even if Polaris is briefly unreachable, and
+  the operator can retry via the custom command.
+  """
+  import params
+
+  names = list(getattr(params, "polaris_managed_principals", []))
+  if not names:
+    Logger.info("polaris_managed_principals is empty; skipping principal sync.")
+    return
+
+  base_url = _polaris_management_base_url()
+  realm = str(params.application_properties.get("polaris.realm-context.realms", "POLARIS")).split(",")[0].strip() or "POLARIS"
+  realm_header = str(params.application_properties.get("polaris.realm-context.header-name", "Polaris-Realm")).strip() or "Polaris-Realm"
+  admin_user = str(getattr(params, "polaris_admin_username", "")).strip()
+  admin_pass = str(getattr(params, "polaris_admin_password", ""))
+  if not admin_user or not admin_pass:
+    Logger.warning("Skipping principal sync: polaris_admin_username/polaris_admin_password are not set.")
+    return
+
+  # Wait briefly for the server to accept connections after start; the start command
+  # only verifies the process exists, not that Quarkus is serving requests.
+  if not _wait_for_polaris(base_url, realm, realm_header, attempts=20, sleep_s=2):
+    Logger.warning("Polaris API at {0} did not become ready; skipping principal sync (use SYNC_PRINCIPALS to retry).".format(base_url))
+    return
+
+  try:
+    token = _fetch_polaris_admin_token(base_url, realm, realm_header, admin_user, admin_pass)
+  except Exception as exc:
+    Logger.warning("Could not obtain Polaris admin token; skipping principal sync: {0}".format(exc))
+    return
+
+  created, existed, failed = 0, 0, 0
+  for name in names:
+    try:
+      status = _create_polaris_principal(base_url, realm_header, realm, token, name)
+      if status == "created":
+        created += 1
+      else:
+        existed += 1
+    except Exception as exc:
+      failed += 1
+      Logger.warning("Failed to ensure principal '{0}': {1}".format(name, exc))
+
+  Logger.info("Polaris principal sync: {0} created, {1} already existed, {2} failed (of {3} requested).".format(
+    created, existed, failed, len(names)))
+
+
+def _polaris_management_base_url():
+  import params
+  ssl_enabled = bool(getattr(params, "polaris_ssl_enabled", False))
+  scheme = "https" if ssl_enabled else "http"
+  port = "8443" if ssl_enabled else str(params.application_properties.get("quarkus.http.port", "8181")).strip() or "8181"
+  if ssl_enabled:
+    port = str(params.application_properties.get("quarkus.http.ssl-port", "8443")).strip() or "8443"
+  host = str(getattr(params, "polaris_hostname", "") or "localhost")
+  return "{0}://{1}:{2}".format(scheme, host, port)
+
+
+def _wait_for_polaris(base_url, realm, realm_header, attempts=20, sleep_s=2):
+  """Probe Quarkus's separate management interface (default :8182, plain HTTP, no realm
+  header required) instead of the application port — the latter rejects /q/health with
+  the realm-context filter when polaris.realm-context.require-header=true."""
+  import params
+  host = str(getattr(params, "polaris_hostname", "") or "localhost")
+  mgmt_port = str(params.application_properties.get("quarkus.management.port", "8182")).strip() or "8182"
+  url = "http://{0}:{1}/q/health/ready".format(host, mgmt_port)
+  for _ in range(attempts):
+    try:
+      req = urllib.request.Request(url, method="GET")
+      with urllib.request.urlopen(req, timeout=3) as resp:
+        if 200 <= resp.status < 300:
+          return True
+    except Exception:
+      pass
+    time.sleep(sleep_s)
+  return False
+
+
+def _fetch_polaris_admin_token(base_url, realm, realm_header, admin_user, admin_pass):
+  data = urllib.parse.urlencode({
+    "grant_type": "client_credentials",
+    "client_id": admin_user,
+    "client_secret": admin_pass,
+    "scope": "PRINCIPAL_ROLE:ALL",
+  }).encode("utf-8")
+  req = urllib.request.Request(
+    "{0}/api/catalog/v1/oauth/tokens".format(base_url),
+    data=data,
+    method="POST",
+    headers={
+      "Content-Type": "application/x-www-form-urlencoded",
+      realm_header: realm,
+    },
+  )
+  with urllib.request.urlopen(req, timeout=10, context=_unverified_ssl_ctx()) as resp:
+    body = json.loads(resp.read().decode("utf-8"))
+  token = body.get("access_token")
+  if not token:
+    raise Fail("Polaris token endpoint returned no access_token: {0}".format(body))
+  return token
+
+
+def _create_polaris_principal(base_url, realm_header, realm, token, name):
+  payload = json.dumps({"principal": {"name": name}}).encode("utf-8")
+  req = urllib.request.Request(
+    "{0}/api/management/v1/principals".format(base_url),
+    data=payload,
+    method="POST",
+    headers={
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+      realm_header: realm,
+    },
+  )
+  try:
+    with urllib.request.urlopen(req, timeout=10, context=_unverified_ssl_ctx()) as resp:
+      Logger.info("Created Polaris principal '{0}' (HTTP {1})".format(name, resp.status))
+      return "created"
+  except urllib.error.HTTPError as e:
+    if e.code == 409:
+      Logger.info("Polaris principal '{0}' already exists; skipping.".format(name))
+      return "exists"
+    body = ""
+    try:
+      body = e.read().decode("utf-8", "replace")[:500]
+    except Exception:
+      pass
+    raise Fail("HTTP {0} creating principal '{1}': {2}".format(e.code, name, body))
+
+
+def _unverified_ssl_ctx():
+  ctx = ssl.create_default_context()
+  ctx.check_hostname = False
+  ctx.verify_mode = ssl.CERT_NONE
+  return ctx
 
 
 # ---------------------------------------------------------------------------
@@ -1416,7 +1523,9 @@ def _ensure_parent_dir(path):
             )
 
 
-def _setup_pem_tls(enabled, auto_generate, cert_file, key_file, label):
+def _setup_pem_tls(enabled, cert_file, key_file, label):
+  """Verify cert/key PEMs exist; do not auto-generate. Operators are expected to lay down
+  cluster-CA-signed material via the ambari-api ansible role (or equivalent)."""
   import params
 
   if not enabled:
@@ -1427,38 +1536,7 @@ def _setup_pem_tls(enabled, auto_generate, cert_file, key_file, label):
   if not cert_file or not key_file:
     raise Fail("{0} TLS is enabled but certificate/key file is not configured.".format(label))
 
-  _ensure_parent_dir(cert_file)
-  _ensure_parent_dir(key_file)
-
-  if auto_generate:
-    hostname = str(getattr(params, "polaris_hostname", "") or "localhost")
-    subject = "/CN={0}/OU=ODP/O=ODP/L=Unknown/ST=Unknown/C=US".format(hostname)
-    generate_cmd = " ".join([
-      "openssl", "req",
-      "-x509",
-      "-newkey", "rsa:2048",
-      "-nodes",
-      "-keyout", shlex.quote(key_file),
-      "-out", shlex.quote(cert_file),
-      "-days", "3650",
-      "-subj", shlex.quote(subject),
-    ])
-    Execute(generate_cmd,
-            user=params.polaris_user,
-            not_if="test -f {0} -a -f {1}".format(shlex.quote(cert_file), shlex.quote(key_file)))
-  else:
-    Execute("test -f {0}".format(shlex.quote(cert_file)),
-            user=params.polaris_user)
-    Execute("test -f {0}".format(shlex.quote(key_file)),
-            user=params.polaris_user)
-
-  File(cert_file,
-       owner=params.polaris_user,
-       group=params.user_group,
-       mode=0o644,
-       only_if="test -f {0}".format(shlex.quote(cert_file)))
-  File(key_file,
-       owner=params.polaris_user,
-       group=params.user_group,
-       mode=0o600,
-       only_if="test -f {0}".format(shlex.quote(key_file)))
+  Execute("test -f {0}".format(shlex.quote(cert_file)),
+          user=params.polaris_user)
+  Execute("test -f {0}".format(shlex.quote(key_file)),
+          user=params.polaris_user)

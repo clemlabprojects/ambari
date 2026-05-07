@@ -26,8 +26,10 @@ import java.util.TreeMap;
 
 public class OidcDescriptor {
   private static final String KEY_SERVICES = "services";
+  private static final String KEY_PROPERTIES = "properties";
 
   private Map<String, OidcServiceDescriptor> services;
+  private Map<String, String> properties;
 
   public OidcDescriptor() {
   }
@@ -42,7 +44,31 @@ public class OidcDescriptor {
           }
         }
       }
+      Object props = data.get(KEY_PROPERTIES);
+      if (props instanceof Map) {
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) props).entrySet()) {
+          if (entry.getKey() != null && entry.getValue() != null) {
+            putProperty(entry.getKey().toString(), entry.getValue().toString());
+          }
+        }
+      }
     }
+  }
+
+  public Map<String, String> getProperties() {
+    return properties;
+  }
+
+  public String getProperty(String name) {
+    return ((name == null) || (properties == null)) ? null : properties.get(name);
+  }
+
+  public void putProperty(String name, String value) {
+    if (name == null) return;
+    if (properties == null) {
+      properties = new TreeMap<>();
+    }
+    properties.put(name, value);
   }
 
   public Map<String, OidcServiceDescriptor> getServices() {
@@ -76,12 +102,20 @@ public class OidcDescriptor {
   }
 
   public void update(OidcDescriptor updates) {
-    if (updates == null || updates.services == null) {
+    if (updates == null) {
       return;
     }
 
-    for (OidcServiceDescriptor service : updates.services.values()) {
-      putService(service);
+    if (updates.services != null) {
+      for (OidcServiceDescriptor service : updates.services.values()) {
+        putService(service);
+      }
+    }
+
+    if (updates.properties != null) {
+      for (Map.Entry<String, String> entry : updates.properties.entrySet()) {
+        putProperty(entry.getKey(), entry.getValue());
+      }
     }
   }
 
@@ -95,6 +129,9 @@ public class OidcDescriptor {
       data.put(KEY_SERVICES, serviceMaps);
     } else {
       data.put(KEY_SERVICES, Collections.emptyList());
+    }
+    if (properties != null && !properties.isEmpty()) {
+      data.put(KEY_PROPERTIES, new TreeMap<>(properties));
     }
     return data;
   }

@@ -38,7 +38,7 @@ class PolarisConsole(Script):
   def configure(self, env, upgrade_type=None, config_dir=None):
     import params
     env.set_params(params)
-    configure_polaris('client')
+    configure_polaris('console')
 
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
@@ -52,15 +52,20 @@ class PolarisConsole(Script):
     env.set_params(params)
     self.configure(env)
 
-    no_op_test = format('test -f {polaris_console_pid_file} && ps -p `cat {polaris_console_pid_file}` >/dev/null 2>&1')
-    start_cmd = format(
-      'source {polaris_conf_dir}/polaris-env.sh; '
-      'nohup {polaris_console_start_command} >> {polaris_log_dir}/polaris-console-bootstrap.log 2>&1 & '
-      'echo $! > {polaris_console_pid_file}; '
-      'sleep 2; '
-      'ps -p `cat {polaris_console_pid_file}` >/dev/null 2>&1'
-    )
-    Execute(start_cmd, user=params.polaris_user, not_if=no_op_test)
+    if params.polaris_console_start_command:
+      no_op_test = format('test -f {polaris_console_pid_file} && ps -p `cat {polaris_console_pid_file}` >/dev/null 2>&1')
+      Execute(
+        format('source {polaris_conf_dir}/polaris-env.sh; {polaris_console_start_command}'),
+        user=params.polaris_user,
+        not_if=no_op_test
+      )
+    else:
+      no_op_test = format('test -f {polaris_console_pid_file} && ps -p `cat {polaris_console_pid_file}` >/dev/null 2>&1')
+      Execute(
+        format('nginx -c {polaris_console_nginx_conf}'),
+        user=params.polaris_user,
+        not_if=no_op_test
+      )
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -71,12 +76,12 @@ class PolarisConsole(Script):
               user=params.polaris_user,
               ignore_failures=True
               )
-    else:
-      if os.path.isfile(params.polaris_console_pid_file):
-        Execute(format("kill `cat {polaris_console_pid_file}`"),
-                user=params.polaris_user,
-                ignore_failures=True
-                )
+    elif os.path.isfile(params.polaris_console_pid_file):
+      Execute(
+        format('nginx -c {polaris_console_nginx_conf} -s quit'),
+        user=params.polaris_user,
+        ignore_failures=True
+      )
 
     File(params.polaris_console_pid_file, action="delete")
 

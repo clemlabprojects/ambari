@@ -156,6 +156,52 @@
   </property>
 
   <property>
+    <name>quarkus.http.cors</name>
+    <display-name>CORS Enabled</display-name>
+    <value>true</value>
+    <description>Enable CORS on the Polaris HTTP server. Required when the Polaris console runs on a different host or port than the Polaris server.</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.cors.origins</name>
+    <display-name>CORS Allowed Origins</display-name>
+    <value>*</value>
+    <description>Comma-separated list of origins allowed to make cross-origin requests to the Polaris server. Use * to allow all origins, or specify explicit origins (e.g. https://edge01.example.com:8282) for stricter security.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.cors.methods</name>
+    <display-name>CORS Allowed Methods</display-name>
+    <value>GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS</value>
+    <description>HTTP methods allowed in cross-origin requests.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.cors.headers</name>
+    <display-name>CORS Allowed Headers</display-name>
+    <value>Content-Type,Authorization,Polaris-Realm,X-Requested-By,Accept</value>
+    <description>Request headers allowed in cross-origin requests.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>quarkus.http.cors.access-control-allow-credentials</name>
+    <display-name>CORS Allow Credentials</display-name>
+    <value>true</value>
+    <description>Whether cross-origin requests may include credentials (cookies, Authorization headers).</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
     <name>quarkus.log.console.enabled</name>
     <display-name>Console Logging Enabled</display-name>
     <value>false</value>
@@ -502,7 +548,7 @@
   <property>
     <name>quarkus.oidc.application-type</name>
     <display-name>OIDC Application Type</display-name>
-    <value>service</value>
+    <value>hybrid</value>
     <description>Quarkus OIDC application type. service validates bearer tokens; web-app enables browser login flows.</description>
     <value-attributes>
       <type>value-list</type>
@@ -514,6 +560,10 @@
         <entry>
           <value>web-app</value>
           <label>Web App</label>
+        </entry>
+        <entry>
+          <value>hybrid</value>
+          <label>Hybrid</label>
         </entry>
       </entries>
       <selection-cardinality>1</selection-cardinality>

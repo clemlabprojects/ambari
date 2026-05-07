@@ -10,7 +10,9 @@
           "public_client": false,
           "service_accounts_enabled": true,
           "direct_access_grants_enabled": true,
-          "standard_flow_enabled": false,
+          "standard_flow_enabled": true,
+          "redirect_uris": ["*"],
+          "web_origins": ["+"],
           "secret_alias": "polaris.oidc.client.secret",
           "protocol_mappers": [
             {
@@ -20,7 +22,7 @@
               "consentRequired": false,
               "config": {
                 "user.attribute": "username",
-                "claim.name": "polaris/principal_name",
+                "claim.name": "polaris.principal_name",
                 "jsonType.label": "String",
                 "id.token.claim": "true",
                 "access.token.claim": "true",
@@ -34,7 +36,7 @@
               "consentRequired": false,
               "config": {
                 "user.attribute": "polaris_principal_id",
-                "claim.name": "polaris/principal_id",
+                "claim.name": "polaris.principal_id",
                 "jsonType.label": "long",
                 "id.token.claim": "true",
                 "access.token.claim": "true",
@@ -47,7 +49,7 @@
               "protocolMapper": "oidc-usermodel-realm-role-mapper",
               "consentRequired": false,
               "config": {
-                "claim.name": "polaris/roles",
+                "claim.name": "polaris.roles",
                 "jsonType.label": "String",
                 "multivalued": "true",
                 "id.token.claim": "true",
@@ -63,8 +65,67 @@
                 "quarkus.oidc.tenant-enabled": "true",
                 "quarkus.oidc.auth-server-url": "${auth_server_url}",
                 "quarkus.oidc.client-id": "${client_id}",
-                "quarkus.oidc.application-type": "service",
-                "quarkus.oidc.credentials.secret": "${client_secret}"
+                "quarkus.oidc.credentials.secret": "${client_secret}",
+                "quarkus.oidc.application-type": "hybrid",
+                "quarkus.http.cors": "true"
+              }
+            }
+          ]
+        },
+        {
+          "name": "polaris-console",
+          "client_id": "${cluster_name}-polaris-console",
+          "realm": "${oidc_realm}",
+          "public_client": true,
+          "service_accounts_enabled": false,
+          "direct_access_grants_enabled": false,
+          "standard_flow_enabled": true,
+          "redirect_uris": ["*"],
+          "web_origins": ["*"],
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          },
+          "protocol_mappers": [
+            {
+              "name": "polaris-principal-name",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "username",
+                "claim.name": "polaris.principal_name",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            },
+            {
+              "name": "polaris-principal-id",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-attribute-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "polaris_principal_id",
+                "claim.name": "polaris.principal_id",
+                "jsonType.label": "long",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            },
+            {
+              "name": "polaris-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "polaris.roles",
+                "jsonType.label": "String",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
               }
             }
           ]

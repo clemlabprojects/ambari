@@ -45,6 +45,8 @@ import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.oidc.OidcDescriptor;
 import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
@@ -171,9 +173,14 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
 
     if (cluster != null) {
       try {
-        OidcDescriptor descriptor = buildDescriptor(type, cluster);
-        if (descriptor != null) {
-          setResourceProperty(resource, CLUSTER_OIDC_DESCRIPTOR_DESCRIPTOR_PROPERTY_ID, descriptor.toMap(), requestedIds);
+        if (type == OidcDescriptorType.ENV) {
+          Map<String, String> envProperties = getEnvProperties(cluster);
+          setResourceProperty(resource, CLUSTER_OIDC_DESCRIPTOR_DESCRIPTOR_PROPERTY_ID, envProperties, requestedIds);
+        } else {
+          OidcDescriptor descriptor = buildDescriptor(type, cluster);
+          if (descriptor != null) {
+            setResourceProperty(resource, CLUSTER_OIDC_DESCRIPTOR_DESCRIPTOR_PROPERTY_ID, descriptor.toMap(), requestedIds);
+          }
         }
       } catch (Exception e) {
         throw new SystemException("An error occurred building the cluster's OIDC descriptor", e);
@@ -221,10 +228,33 @@ public class ClusterOidcDescriptorResourceProvider extends ReadOnlyResourceProvi
     return oidcDescriptorFactory.createInstance(entity.getArtifactData());
   }
 
+  private Map<String, String> getEnvProperties(Cluster cluster) {
+    // Primary: read from oidc_descriptor artifact properties (Kerberos-style)
+    OidcDescriptor userDescriptor = getUserDescriptor(cluster);
+    if (userDescriptor != null) {
+      Map<String, String> artifactProps = userDescriptor.getProperties();
+      if (artifactProps != null && !artifactProps.isEmpty()) {
+        return Collections.unmodifiableMap(artifactProps);
+      }
+    }
+    // Fallback: read from oidc-env cluster configuration (backward compat)
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
+    DesiredConfig desiredConfig = desiredConfigs.get("oidc-env");
+    if (desiredConfig == null) {
+      return Collections.emptyMap();
+    }
+    Config config = cluster.getConfig("oidc-env", desiredConfig.getTag());
+    if (config == null) {
+      return Collections.emptyMap();
+    }
+    return Collections.unmodifiableMap(config.getProperties());
+  }
+
   private enum OidcDescriptorType {
     STACK,
     USER,
-    COMPOSITE;
+    COMPOSITE,
+    ENV;
 
     static OidcDescriptorType fromString(String value) {
       try {

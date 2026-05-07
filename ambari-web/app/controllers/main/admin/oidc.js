@@ -115,23 +115,41 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   },
 
   /**
-   * OIDC page only edits oidc-env properties.
+   * oidc-env lives in cluster configurations, not the kerberos descriptor.
+   * Uses the dedicated ENV descriptor type which reads the current desired oidc-env config
+   * server-side and returns it in the standard OidcDescriptor envelope.
    */
   loadStep: function() {
     var self = this;
+    var dfd = $.Deferred();
     this.clearStep();
-    return this.getDescriptor().then(function (properties) {
-      var oidcProperties = (properties || []).filter(function(property) {
-        return getFilename(property) === 'oidc-env.xml';
+    App.ajax.send({
+      name: 'admin.oidc.cluster.env',
+      sender: this,
+      data: { clusterName: App.get('clusterName') }
+    }).then(function(data) {
+      var rawProps = (data && data.OidcDescriptor && data.OidcDescriptor.oidc_descriptor) || {};
+      self.set('isOidcEnabled', !!rawProps['oidc_admin_url']);
+      var configs = Object.keys(rawProps).map(function(name) {
+        return App.ServiceConfigProperty.create({
+          name: name,
+          value: rawProps[name],
+          filename: 'oidc-env.xml',
+          displayName: name,
+          isEditable: true,
+          isRequired: false
+        });
       });
-      var adminUrlProp = oidcProperties.find(function(p) {
-        return Em.get(p, 'name') === 'oidc_admin_url';
-      });
-      self.set('isOidcEnabled', !!(adminUrlProp && Em.get(adminUrlProp, 'value')));
-      self.setStepConfigs(oidcProperties);
+      self.setStepConfigs(configs);
+      dfd.resolve();
+    }, function() {
+      self.set('isOidcEnabled', false);
+      self.setStepConfigs([]);
+      dfd.resolve();
     }).always(function() {
       self.set('isRecommendedLoaded', true);
     });
+    return dfd.promise();
   },
 
   /**

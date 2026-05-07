@@ -61,6 +61,14 @@
                 <timeout>900</timeout>
               </commandScript>
             </customCommand>
+            <customCommand>
+              <name>SYNC_PRINCIPALS</name>
+              <commandScript>
+                <script>scripts/polaris_server.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>300</timeout>
+              </commandScript>
+            </customCommand>
           </customCommands>
         </component>
 

@@ -195,8 +195,6 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     if "polaris_ssl_enabled" not in polaris_env:
       put_polaris_env("polaris_ssl_enabled", "false")
-    if "polaris_ssl_auto_generate" not in polaris_env:
-      put_polaris_env("polaris_ssl_auto_generate", "true")
     if not str(polaris_env.get("polaris_ssl_keystore_password", "")).strip():
       put_polaris_env("polaris_ssl_keystore_password", "changeit")
     if not str(polaris_env.get("polaris_ssl_truststore_password", "")).strip():
@@ -204,23 +202,22 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
 
+    # MCP and Console default to the cluster-CA-signed PEMs that the ambari-api ansible
+    # role lays down at /etc/security/serverKeys/. No auto-generation: operators are
+    # expected to provide all TLS material (same pattern as HDFS/YARN/etc.).
     if "polaris_mcp_tls_enabled" not in polaris_env:
       put_polaris_env("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
-    if "polaris_mcp_tls_auto_generate" not in polaris_env:
-      put_polaris_env("polaris_mcp_tls_auto_generate", "true")
     if not str(polaris_env.get("polaris_mcp_tls_cert_file", "")).strip():
-      put_polaris_env("polaris_mcp_tls_cert_file", "/etc/polaris/conf/tls/polaris-mcp-cert.pem")
+      put_polaris_env("polaris_mcp_tls_cert_file", "/etc/security/serverKeys/server.public.pem")
     if not str(polaris_env.get("polaris_mcp_tls_key_file", "")).strip():
-      put_polaris_env("polaris_mcp_tls_key_file", "/etc/polaris/conf/tls/polaris-mcp-key.pem")
+      put_polaris_env("polaris_mcp_tls_key_file", "/etc/security/serverKeys/server.key.pem")
 
     if "polaris_console_tls_enabled" not in polaris_env:
       put_polaris_env("polaris_console_tls_enabled", "true" if ssl_enabled else "false")
-    if "polaris_console_tls_auto_generate" not in polaris_env:
-      put_polaris_env("polaris_console_tls_auto_generate", "true")
     if not str(polaris_env.get("polaris_console_tls_cert_file", "")).strip():
-      put_polaris_env("polaris_console_tls_cert_file", "/etc/polaris/conf/tls/polaris-console-cert.pem")
+      put_polaris_env("polaris_console_tls_cert_file", "/etc/security/serverKeys/server.public.pem")
     if not str(polaris_env.get("polaris_console_tls_key_file", "")).strip():
-      put_polaris_env("polaris_console_tls_key_file", "/etc/polaris/conf/tls/polaris-console-key.pem")
+      put_polaris_env("polaris_console_tls_key_file", "/etc/security/serverKeys/server.key.pem")
 
     mcp_tls_enabled = str(
       polaris_env.get("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")

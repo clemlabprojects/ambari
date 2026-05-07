@@ -734,14 +734,33 @@ App.Router = Em.Router.extend({
     this.set('loginController.password', '');
     // When logOff is called by Sign Out button, context contains event object. As it is only case we should send logoff request, we are checking context below.
     if (!App.get('testMode') && context) {
+      // Use .always() rather than .complete(): jQuery 3 (which Ambari ships) removed
+      // the legacy .complete() method on jqXHR. .always() gets (data|jqXHR, textStatus,
+      // jqXHR|errorThrown) — pick the jqXHR off whichever side based on textStatus.
       App.ajax.send({
         name: 'router.logoff',
         sender: this,
         success: 'logOffSuccessCallback',
         error: 'logOffErrorCallback',
         beforeSend: 'logOffBeforeSend'
-      }).complete(function() {
-        self.logoffRedirect(context);
+      }).always(function(arg1, textStatus, arg3) {
+        var xhr = (textStatus === 'success' || textStatus === 'notmodified') ? arg3 : arg1;
+        // If the server returned a Keycloak end_session_endpoint URL (OIDC is enabled),
+        // navigate the browser there so the IdP session is killed too. Otherwise the
+        // next visit silently re-authenticates via the still-valid Keycloak SSO cookie.
+        var logoutUrl = null;
+        try {
+          var body = xhr && xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          if (body && body.logout_url) {
+            logoutUrl = body.logout_url;
+          }
+        } catch (e) { /* non-JSON response — fall through to local redirect */ }
+
+        if (logoutUrl) {
+          window.location.href = logoutUrl;
+        } else {
+          self.logoffRedirect(context);
+        }
       });
     } else {
       this.logoffRedirect();
