@@ -1,6 +1,6 @@
 {
   "label": "OpenMetadata",
-  "chart": "clemlabprojects/openmetadata",
+  "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
   "version": "1.12.6",
