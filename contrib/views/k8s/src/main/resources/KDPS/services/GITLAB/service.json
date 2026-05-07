@@ -8,7 +8,9 @@
   "pattern": "gitlab-.*",
 
   "dynamicValues": [
-    "AMBARI_OIDC_ISSUER_URL:gitlab.global.appConfig.omniauth.issuerUrl"
+    "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl",
+    "AMBARI_OIDC_ISSUER_URL:gitlab.global.appConfig.omniauth.issuerUrl",
+    "AMBARI_OIDC_REALM:global.security.auth.oidc.realm"
   ],
 
   "oidc": [
@@ -16,7 +18,7 @@
       "key": "gitlab",
       "clientIdTemplate": "{{releaseName}}-{{namespace}}",
       "secretNameTemplate": "{{releaseName}}-oidc-client",
-      "redirectUriTemplate": "",
+      "redirectUriTemplate": "https://gitlab.{{gitlabDomain}}/users/auth/openid_connect/callback",
       "publicClient": false,
       "standardFlowEnabled": true,
       "gitlabOmniauth": true,
@@ -148,6 +150,25 @@
           "type": "string",
           "defaultValue": "email",
           "help": "Attributes to sync from the OIDC provider (e.g. email)."
+        }
+      ]
+    }
+  ],
+
+  "variables": [
+    {
+      "name": "gitlabDomain",
+      "from": { "type": "form", "field": "gitlab.global.hosts.domain" }
+    }
+  ],
+
+  "bindings": [
+    {
+      "name": "oidc-omniauth-enabled",
+      "targets": [
+        {
+          "path": "gitlab.global.appConfig.omniauth.enabled",
+          "from": { "type": "template", "template": "true" }
         }
       ]
     }

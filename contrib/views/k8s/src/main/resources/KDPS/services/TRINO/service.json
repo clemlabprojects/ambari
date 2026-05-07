@@ -14,7 +14,7 @@
       "key": "trino",
       "clientIdTemplate": "{{releaseName}}-{{namespace}}",
       "secretNameTemplate": "{{releaseName}}-oidc-client",
-      "redirectUriTemplate": "",
+      "redirectUriTemplate": "https://{{ingressHost}}/oauth2/callback",
       "publicClient": false,
       "standardFlowEnabled": true,
       "enabled": true
