@@ -64,8 +64,12 @@ limitations under the License.
   </property>
   <property>
     <name>metastore.catalog.default</name>
-    <value>spark</value>
-    <description></description>
+    <value>hive</value>
+    <description>HMS supports multi-catalog (Hive 4.0+). Setting this to "spark"
+    gave Spark a private catalog invisible to Hive HS2, breaking the
+    "Hive writes / Spark reads" pattern used by the functional tests.
+    Default to "hive" so Spark and Hive share the same metadata namespace.
+    Override per-cluster only if tenant-isolated catalogs are intended.</description>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>

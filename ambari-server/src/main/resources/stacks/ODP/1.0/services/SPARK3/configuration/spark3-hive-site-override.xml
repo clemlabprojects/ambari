@@ -64,8 +64,9 @@ limitations under the License.
   </property>
   <property>
     <name>metastore.catalog.default</name>
-    <value>spark</value>
-    <description></description>
+    <value>hive</value>
+    <description>Default to "hive" so Spark and Hive HS2 share the same HMS
+    catalog (otherwise Spark gets a private catalog invisible to Hive).</description>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>

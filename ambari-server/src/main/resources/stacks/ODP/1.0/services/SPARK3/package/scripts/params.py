@@ -18,6 +18,9 @@ limitations under the License.
 
 """
 
+import glob
+import os
+import re
 import socket
 import status_params
 from urllib.parse import urlparse
@@ -89,6 +92,20 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
 spark_daemon_memory = config['configurations']['spark3-env']['spark_daemon_memory']
 spark_thrift_server_conf_file = spark_conf + "/spark-thrift-sparkconf.conf"
 java_home = config['ambariLevelParams']['java_home']
+
+# spark.sql.hive.metastore.version must exact-string match the Hive jars
+# bundled in /usr/odp/current/spark3-client/jars/ when
+# spark.sql.hive.metastore.jars=builtin. Derive from the installed jar so
+# the stack default is agnostic to the running ODP build version.
+hive_metastore_version = "4.2.0"  # safe fallback
+try:
+  hive_common_jars = glob.glob(format("{stack_root}/current/{component_directory}/jars/hive-common-*.jar"))
+  if hive_common_jars:
+    m = re.match(r'hive-common-(.+)\.jar$', os.path.basename(hive_common_jars[0]))
+    if m:
+      hive_metastore_version = m.group(1)
+except Exception:
+  pass
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
 hdfs_principal_name = config['configurations']['hadoop-env']['hdfs_principal_name']

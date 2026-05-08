@@ -227,14 +227,18 @@
 
   <property>
     <name>spark.sql.hive.metastore.version</name>
-    <value>3.0</value>
-    <description></description>
+    <value>{{hive_metastore_version}}</value>
+    <description>Hive metastore client version. Resolved at config-render
+    time by params.py from the actual installed hive-common-*.jar filename
+    so this default works for any ODP build (Spark does an exact-string
+    compare against the bundled jar version when metastore.jars=builtin).</description>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>spark.sql.hive.metastore.jars</name>
-    <value>/usr/odp/current/spark3-client/standalone-metastore/*</value>
-    <description></description>
+    <value>builtin</value>
+    <description>Use Hive jars bundled in /usr/odp/current/spark3-client/jars/.
+    Previous default referenced a non-existent standalone-metastore directory.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
