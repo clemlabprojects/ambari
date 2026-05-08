@@ -182,12 +182,21 @@ public class KubernetesService {
 
 
     private static final int MAX_METRICS_NODES = Integer.getInteger("k8s.view.metrics.sample.nodes", 200);
-    // Shared pool for short metrics calls to avoid blocking the main thread
-    private static final ExecutorService METRICS_POOL = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "k8s-metrics-pool");
-        t.setDaemon(true);
-        return t;
-    });
+    // Bounded pool for metrics calls. The caller already enforces a 2-second
+    // per-future timeout, but the underlying fabric8/OkHttp call can block
+    // much longer (TCP read timeout). An unbounded CachedThreadPool would grow
+    // without limit if the metrics-server or Prometheus is slow. Cap at 64 so
+    // that at most 64 blocking calls accumulate before new tasks are queued.
+    private static final ExecutorService METRICS_POOL = new java.util.concurrent.ThreadPoolExecutor(
+            0, 64,
+            60L, java.util.concurrent.TimeUnit.SECONDS,
+            new java.util.concurrent.LinkedBlockingQueue<>(512),
+            r -> {
+                Thread t = new Thread(r, "k8s-metrics-pool");
+                t.setDaemon(true);
+                return t;
+            },
+            new java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy());
     private static final ExecutorService BOOTSTRAP_POOL = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "k8s-monitoring-bootstrap");
         t.setDaemon(true);
@@ -584,6 +593,7 @@ public class KubernetesService {
                     usedCpuTotal += u[0];
                     usedMemoryTotal += u[1];
                 } catch (TimeoutException te) {
+                    f.cancel(true); // interrupt the blocked fabric8 call to free the pool thread
                     LOG.warn("Timeout fetching node metrics");
                 } catch (Exception ex) {
                     LOG.warn("Could not fetch node usage: {}", ex.getMessage());
@@ -1651,6 +1661,8 @@ public class KubernetesService {
         for (CompletableFuture<Void> future : futures) {
             try {
                 future.get(2, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                future.cancel(true); // interrupt the blocked fabric8 call to free the pool thread
             } catch (Exception ignore) {
                 // best effort
             }
