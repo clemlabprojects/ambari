@@ -1,0 +1,32 @@
+worker_processes 1;
+pid {{polaris_console_pid_file}};
+error_log {{polaris_log_dir}}/polaris-console-error.log warn;
+
+events { worker_connections 64; }
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    access_log {{polaris_log_dir}}/polaris-console-access.log;
+    client_body_temp_path {{polaris_pid_dir}}/nginx-tmp;
+    proxy_temp_path {{polaris_pid_dir}}/nginx-tmp;
+    fastcgi_temp_path {{polaris_pid_dir}}/nginx-tmp;
+    uwsgi_temp_path {{polaris_pid_dir}}/nginx-tmp;
+    scgi_temp_path {{polaris_pid_dir}}/nginx-tmp;
+
+    server {
+        listen {{polaris_console_port}}{% if polaris_console_tls_enabled %} ssl{% endif %};
+        server_name _;
+        root {{polaris_console_home}}/console/dist;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+{% if polaris_console_tls_enabled %}
+        ssl_certificate {{polaris_console_tls_cert_file}};
+        ssl_certificate_key {{polaris_console_tls_key_file}};
+{% endif %}
+    }
+}
