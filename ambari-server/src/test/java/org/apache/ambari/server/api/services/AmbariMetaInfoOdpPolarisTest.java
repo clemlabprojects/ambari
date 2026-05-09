@@ -148,7 +148,7 @@ public class AmbariMetaInfoOdpPolarisTest {
 
     String applicationType = findConfigurationValue(client.getConfigurations(),
         "polaris-application-properties", "quarkus.oidc.application-type");
-    assertEquals("service", applicationType);
+    assertEquals("hybrid", applicationType);
   }
 
   private static ComponentInfo findComponent(List<ComponentInfo> components, String name) {

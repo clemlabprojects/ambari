@@ -137,6 +137,8 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Capture<OidcClientDescriptor> clientCapture = Capture.newInstance();
     expect(handler.ensureClient(capture(clientCapture), eq("example")))
       .andReturn(new OidcClientResult(CLUSTER_NAME + "-polaris", "internal-id", "secret")).once();
+    expect(handler.ensureClient(org.easymock.EasyMock.anyObject(OidcClientDescriptor.class), eq("example")))
+      .andReturn(new OidcClientResult(CLUSTER_NAME + "-polaris-console", "internal-id-console", null)).once();
     handler.close();
     expectLastCall().once();
 
@@ -186,7 +188,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
     Assert.assertEquals("https://keycloak.example.com/realms/example",
       appUpdates.get("quarkus.oidc.auth-server-url"));
-    Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
+    Assert.assertEquals("hybrid", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
 
@@ -239,6 +241,8 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Capture<OidcClientDescriptor> clientCapture = Capture.newInstance();
     expect(handler.ensureClient(capture(clientCapture), eq("example")))
       .andReturn(new OidcClientResult(CLUSTER_NAME + "-polaris", "internal-id", "secret")).once();
+    expect(handler.ensureClient(org.easymock.EasyMock.anyObject(OidcClientDescriptor.class), eq("example")))
+      .andReturn(new OidcClientResult(CLUSTER_NAME + "-polaris-console", "internal-id-console", null)).once();
 
     Capture<Credential> credentialCapture = Capture.newInstance();
     credentialStoreService.setCredential(eq(CLUSTER_NAME), eq("polaris.oidc.client.secret"),
@@ -290,7 +294,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
     Assert.assertEquals("https://keycloak.example.com/realms/example",
       appUpdates.get("quarkus.oidc.auth-server-url"));
-    Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
+    Assert.assertEquals("hybrid", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
   }
@@ -330,6 +334,8 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
 
     Capture<OidcClientDescriptor> clientCapture = Capture.newInstance();
     handler.deleteClient(capture(clientCapture), eq("example"));
+    expectLastCall().once();
+    handler.deleteClient(org.easymock.EasyMock.anyObject(OidcClientDescriptor.class), eq("example"));
     expectLastCall().once();
 
     credentialStoreService.removeCredential(eq(CLUSTER_NAME), eq("polaris.oidc.client.secret"));
