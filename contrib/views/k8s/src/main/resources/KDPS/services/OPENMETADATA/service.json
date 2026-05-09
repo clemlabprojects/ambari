@@ -171,11 +171,11 @@
       "from": { "type": "form", "field": "security.adminGroups" }
     },
     {
-      "name": "monitoring.namespace",
+      "name": "monitoringNamespace",
       "from": { "type": "form", "field": "monitoring.namespace" }
     },
     {
-      "name": "monitoring.release",
+      "name": "monitoringRelease",
       "from": { "type": "form", "field": "monitoring.release" }
     },
     {
@@ -502,7 +502,7 @@
         {
           "path": "serviceMonitor.labels.release",
           "op": "set",
-          "from": { "type": "var", "name": "monitoring.release" }
+          "from": { "type": "var", "name": "monitoringRelease" }
         }
       ]
     },
