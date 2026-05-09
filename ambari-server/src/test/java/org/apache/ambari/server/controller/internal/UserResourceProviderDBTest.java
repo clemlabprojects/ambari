@@ -47,8 +47,10 @@ import org.apache.ambari.server.controller.spi.RequestStatus;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.utilities.PredicateBuilder;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
 import org.apache.ambari.server.security.TestAuthenticationFactory;
+
 import org.apache.ambari.server.security.authorization.AuthorizationHelper;
 import org.junit.After;
 import org.junit.Before;
@@ -59,7 +61,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 /**
  * Tests creation, retrieval and deletion of users using an in-memory database.
@@ -90,7 +91,7 @@ public class UserResourceProviderDBTest {
     properties.setProperty(Configuration.SERVER_JDBC_DRIVER.getKey(), Configuration.JDBC_IN_MEMORY_DRIVER);
     injector = Guice.createInjector(testModule);
 
-    injector.getInstance(PersistService.class).start();
+    injector.getInstance(GuiceJpaInitializer.class);
 
     amc = injector.getInstance(AmbariManagementController.class);
 

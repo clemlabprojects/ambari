@@ -21,8 +21,11 @@ import java.lang.reflect.Method;
 import java.sql.SQLException;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
+import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
 import org.apache.ambari.server.utils.EventBusSynchronizer;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,7 +34,6 @@ import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.multibindings.Multibinder;
-import com.google.inject.persist.jpa.AmbariJpaPersistService;
 
 /**
  * Base Test Upgrade Catalog class
@@ -132,13 +134,19 @@ class UpgradeHelperTestModule extends InMemoryDefaultTestModule {
  */
 public class SchemaUpgradeHelperTest {
 
+  private Injector injector;
   private SchemaUpgradeHelper schemaUpgradeHelper;
 
   @Before
-  public void init(){
-    Injector injector = Guice.createInjector(new UpgradeHelperTestModule());
-    injector.getInstance(AmbariJpaPersistService.class).start();
+  public void init() {
+    injector = Guice.createInjector(new UpgradeHelperTestModule());
+    injector.getInstance(GuiceJpaInitializer.class);
     schemaUpgradeHelper = injector.getInstance(SchemaUpgradeHelper.class);
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   @Test
