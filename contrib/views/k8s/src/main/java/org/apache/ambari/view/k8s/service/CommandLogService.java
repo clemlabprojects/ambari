@@ -39,6 +39,14 @@ public class CommandLogService {
     private static final long MAX_LOG_BYTES = 2 * 1024 * 1024; // 2 MB
     private static final int MAX_ROTATIONS = 2;
 
+    private static final java.util.concurrent.ConcurrentMap<String, CommandLogService> INSTANCES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Returns (or creates) the singleton {@code CommandLogService} for the given view instance. */
+    public static CommandLogService get(ViewContext ctx) {
+        return INSTANCES.computeIfAbsent(ctx.getInstanceName(), id -> new CommandLogService(ctx));
+    }
+
     private final Path logDir;
     private final java.util.concurrent.BlockingQueue<LogEvent> logQueue = new java.util.concurrent.LinkedBlockingQueue<>();
     private final Thread logWriterThread;

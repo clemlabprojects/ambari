@@ -56,7 +56,7 @@ public class CommandResource {
 
     this.viewContext = vc;
     this.ambariAliasResolver = new AmbariAliasResolver(this.viewContext);
-    this.commandLogService = new CommandLogService(vc);
+    this.commandLogService = CommandLogService.get(vc);
   }
 
   /**
@@ -68,7 +68,7 @@ public class CommandResource {
   public CommandResource(ViewContext vc, AmbariAliasResolver ambariAliasResolver) {
     this.viewContext = vc;
     this.ambariAliasResolver = ambariAliasResolver;
-    this.commandLogService = new CommandLogService(vc);
+    this.commandLogService = CommandLogService.get(vc);
   }
 
   /**
