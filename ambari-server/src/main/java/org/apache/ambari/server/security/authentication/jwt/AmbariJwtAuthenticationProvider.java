@@ -30,7 +30,6 @@ import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.entities.GroupEntity;
 import org.apache.ambari.server.orm.entities.MemberEntity;
 import org.apache.ambari.server.orm.entities.PermissionEntity;
-import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.UserAuthenticationEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.security.authentication.AccountDisabledException;
@@ -356,13 +355,13 @@ public class AmbariJwtAuthenticationProvider extends AmbariAuthenticationProvide
             defaultRole, userEntity.getUserName());
         return;
       }
-      ResourceEntity resource = cluster.getResource();
-      if (resource == null) {
-        LOG.warn("[JIT-AUTO-CREATE] Cluster '{}' has no resource entity; cannot grant '{}' to {}",
+      Long resourceId = cluster.getResourceId();
+      if (resourceId == null) {
+        LOG.warn("[JIT-AUTO-CREATE] Cluster '{}' has no resource id; cannot grant '{}' to {}",
             cluster.getClusterName(), permissionName, userEntity.getUserName());
         return;
       }
-      users.grantPrivilegeToUser(userEntity.getUserId(), resource.getId(), ResourceType.CLUSTER, permissionName);
+      users.grantPrivilegeToUser(userEntity.getUserId(), resourceId, ResourceType.CLUSTER, permissionName);
       LOG.info("[JIT-AUTO-CREATE] Granted {} on cluster {} to user {}",
           permissionName, cluster.getClusterName(), userEntity.getUserName());
     } catch (Exception e) {

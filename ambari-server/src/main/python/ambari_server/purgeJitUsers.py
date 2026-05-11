@@ -49,27 +49,18 @@ Filtering options
                                 auth types (e.g. when migrating away from LDAP entirely)
 """
 
+"""Imports are kept minimal at module scope so unit tests of pure-logic helpers
+(`_is_jit_candidate`) can load this module without dragging in the full Ambari
+runtime config (which requires ``/etc/ambari-server/conf/ambari.properties``
+on disk).  Heavier imports (setupSecurity, serverConfiguration, ...) are done
+lazily inside ``purge_jit_users()``.
+"""
+
 import json
 import sys
 
-# We import lazily to avoid a hard dependency on these modules during unit tests of pure-Python
-# argument parsing.
-try:
-  from urllib.request import build_opener, HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, HTTPSHandler
-  from urllib.error import HTTPError
-except ImportError:  # pragma: no cover (python2 fallback no longer expected)
-  from urllib2 import build_opener, HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, HTTPSHandler, HTTPError  # type: ignore
 
-import ssl
-
-from ambari_commons.exceptions import FatalException, NonFatalException
-from ambari_commons.logging_utils import print_info_msg, print_warning_msg
-from ambari_server.setupSecurity import get_ambari_admin_username_password_pair
-from ambari_server.serverConfiguration import get_ambari_properties, get_value_from_properties
-from ambari_server.userInput import get_YN_input
-
-
-def _client_url(ambari_properties):
+def _client_url(ambari_properties, get_value_from_properties):
   """Construct the local Ambari Server URL using the server's own properties (port + SSL)."""
   port = get_value_from_properties(ambari_properties, "client.api.port", "8080")
   ssl_port = get_value_from_properties(ambari_properties, "client.api.ssl.port", "")
@@ -81,6 +72,8 @@ def _client_url(ambari_properties):
 
 def _build_opener(admin_login, admin_password):
   """HTTP client with basic auth + tolerant TLS (the server's own cert may be self-signed)."""
+  import ssl
+  from urllib.request import build_opener, HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, HTTPSHandler
   pw_mgr = HTTPPasswordMgrWithDefaultRealm()
   pw_mgr.add_password(None, "http://localhost", admin_login, admin_password)
   pw_mgr.add_password(None, "https://localhost", admin_login, admin_password)
@@ -90,6 +83,9 @@ def _build_opener(admin_login, admin_password):
 
 def _http_json(opener, method, url, body=None):
   """Issue a single HTTP call returning parsed JSON (or {} for non-JSON 204 responses)."""
+  from urllib.request import Request
+  from urllib.error import HTTPError
+  from ambari_commons.exceptions import FatalException
   data = None
   if body is not None:
     data = json.dumps(body).encode("utf-8")
@@ -154,11 +150,19 @@ def _delete_user(opener, base_url, user_name):
 
 def purge_jit_users(options):
   """Action entry point — invoked from ``ambari-server purge-jit-users``."""
+  # Lazy imports: keep the module unit-testable in isolation (these imports require
+  # /etc/ambari-server/conf/ambari.properties to exist on disk, which a unit-test env doesn't have).
+  from ambari_commons.exceptions import FatalException, NonFatalException
+  from ambari_commons.logging_utils import print_info_msg, print_warning_msg
+  from ambari_server.setupSecurity import get_ambari_admin_username_password_pair
+  from ambari_server.serverConfiguration import get_ambari_properties, get_value_from_properties
+  from ambari_server.userInput import get_YN_input
+
   print_info_msg("Purging JIT (JWT-authenticated) Ambari users")
 
   ambari_properties = get_ambari_properties()
   admin_login, admin_password = get_ambari_admin_username_password_pair(options)
-  base_url = _client_url(ambari_properties)
+  base_url = _client_url(ambari_properties, get_value_from_properties)
   opener = _build_opener(admin_login, admin_password)
 
   inactive_only = (getattr(options, "purge_jit_inactive", None) == "true")

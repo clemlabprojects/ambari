@@ -43,7 +43,6 @@ import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.entities.GroupEntity;
 import org.apache.ambari.server.orm.entities.MemberEntity;
 import org.apache.ambari.server.orm.entities.PrincipalEntity;
-import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.UserAuthenticationEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.security.authentication.AmbariAuthenticationException;
@@ -433,9 +432,7 @@ public class AmbariJwtAuthenticationProviderTest {
   public void testJit_grantsClusterUserRole_namedCluster() throws Exception {
     UserEntity created = userWithJwtAuth("bob");
     Cluster cluster = createNiceMock(Cluster.class);
-    ResourceEntity resource = new ResourceEntity();
-    resource.setId(99L);
-    expect(cluster.getResource()).andReturn(resource).anyTimes();
+    expect(cluster.getResourceId()).andReturn(99L).anyTimes();
     expect(cluster.getClusterName()).andReturn("prod").anyTimes();
     Clusters clusters = createNiceMock(Clusters.class);
     expect(clusters.getCluster("prod")).andReturn(cluster).anyTimes();
@@ -466,9 +463,7 @@ public class AmbariJwtAuthenticationProviderTest {
   public void testJit_clusterRoleNoSuffix_singleClusterAutoResolves() throws Exception {
     UserEntity created = userWithJwtAuth("carol");
     Cluster cluster = createNiceMock(Cluster.class);
-    ResourceEntity resource = new ResourceEntity();
-    resource.setId(77L);
-    expect(cluster.getResource()).andReturn(resource).anyTimes();
+    expect(cluster.getResourceId()).andReturn(77L).anyTimes();
     expect(cluster.getClusterName()).andReturn("only-cluster").anyTimes();
     Clusters clusters = createNiceMock(Clusters.class);
     Map<String, Cluster> singleClusterMap = new HashMap<>();
