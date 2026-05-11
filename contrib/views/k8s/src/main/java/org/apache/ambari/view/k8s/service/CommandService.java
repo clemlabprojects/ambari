@@ -910,11 +910,72 @@ public class CommandService {
     }
 
     /**
-     * Read the first Ingress host for a release from the cluster.
-     * Used by the OIDC re-registration action to resolve {{ingressHost}} without the original deploy params.
-     * Returns empty string if no Ingress is found.
+     * Resolve service variables (from the service.json "variables" section) against Helm deploy params.
+     * Handles variables with from.type="form": reads the value at from.field (dotted path) from params.
+     * Any {{token}} used in redirectUriTemplate can be resolved this way — no hardcoded field names.
      */
-    private String resolveIngressHostForRelease(String namespace, String releaseName) {
+    @SuppressWarnings("unchecked")
+    private Map<String, String> resolveServiceVariablesFromParams(List<Map<String, Object>> variables,
+                                                                   Map<String, Object> params) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        if (variables == null || variables.isEmpty() || params == null) return resolved;
+        for (Map<String, Object> variable : variables) {
+            String name = resolveStringValue(variable.get("name"), null);
+            if (name == null || name.isBlank()) continue;
+            Map<String, Object> from = (Map<String, Object>) variable.get("from");
+            if (from == null) continue;
+            String type  = resolveStringValue(from.get("type"), "");
+            String field = resolveStringValue(from.get("field"), null);
+            if ("form".equals(type) && field != null) {
+                Object value = getByPath(params, field);
+                if (value == null) value = params.get(field);  // flat-key fallback
+                if (value != null) {
+                    resolved.put(name, String.valueOf(value));
+                }
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * Resolve service variables for the OIDC re-registration action, where deploy-time params
+     * are not available. Falls back to querying cluster resources.
+     *
+     * Currently handles variables whose from.field ends with ".host" (i.e. ingress host fields)
+     * by reading the first Ingress host from the cluster for this release.
+     * Other variable types are left unresolved and the template token stays blank.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> resolveServiceVariablesFromCluster(List<Map<String, Object>> variables,
+                                                                    String namespace, String releaseName) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        if (variables == null || variables.isEmpty()) return resolved;
+
+        String ingressHost = null;  // fetched lazily
+
+        for (Map<String, Object> variable : variables) {
+            String name = resolveStringValue(variable.get("name"), null);
+            if (name == null || name.isBlank()) continue;
+            Map<String, Object> from = (Map<String, Object>) variable.get("from");
+            if (from == null) continue;
+            String type  = resolveStringValue(from.get("type"), "");
+            String field = resolveStringValue(from.get("field"), null);
+            if ("form".equals(type) && field != null
+                    && field.endsWith(".host") && !field.contains("tls")) {
+                // Ingress host field — read from the live Kubernetes Ingress
+                if (ingressHost == null) {
+                    ingressHost = readIngressHostFromCluster(namespace, releaseName);
+                }
+                if (!ingressHost.isBlank()) {
+                    resolved.put(name, ingressHost);
+                }
+            }
+        }
+        return resolved;
+    }
+
+    /** Read the first Ingress host for a release from the cluster. Returns empty string if none found. */
+    private String readIngressHostFromCluster(String namespace, String releaseName) {
         try {
             var ingresses = kubernetesService.getClient()
                     .network().v1().ingresses()
@@ -922,7 +983,6 @@ public class CommandService {
                     .withLabel("app.kubernetes.io/instance", releaseName)
                     .list().getItems();
             if (ingresses == null || ingresses.isEmpty()) {
-                // Fallback: filter by name containing releaseName
                 ingresses = kubernetesService.getClient()
                         .network().v1().ingresses()
                         .inNamespace(namespace)
@@ -939,7 +999,7 @@ public class CommandService {
                 }
             }
         } catch (Exception ex) {
-            LOG.warn("resolveIngressHostForRelease {}/{}: {}", namespace, releaseName, ex.toString());
+            LOG.warn("readIngressHostFromCluster {}/{}: {}", namespace, releaseName, ex.toString());
         }
         return "";
     }
@@ -1052,8 +1112,8 @@ public class CommandService {
 
             String clientId   = renderOidcTemplate(clientIdT,  releaseName, namespace, oidcRealm);
             String secretName = renderOidcTemplate(secretT,     releaseName, namespace, oidcRealm);
-            String ingressHost = resolveIngressHostForRelease(namespace, releaseName);
-            Map<String, String> reRegExtraVars = ingressHost.isBlank() ? null : Map.of("ingressHost", ingressHost);
+            Map<String, String> reRegExtraVars = resolveServiceVariablesFromCluster(
+                    serviceDefinition.variables, namespace, releaseName);
             String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm, reRegExtraVars);
 
             appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
@@ -3580,9 +3640,8 @@ public class CommandService {
                         String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
                         String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
                         String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-                        Object ingressHostObj = getByPath(params, "ingress.host");
-                        String ingressHost = ingressHostObj != null ? String.valueOf(ingressHostObj) : "";
-                        Map<String, String> oidcExtraVars = ingressHost.isBlank() ? null : Map.of("ingressHost", ingressHost);
+                        Map<String, String> oidcExtraVars = resolveServiceVariablesFromParams(
+                                oidcServiceDef != null ? oidcServiceDef.variables : null, params);
                         String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
                         appendOidcRegistrationSteps(rootCommand, childCommands, params,
                                 clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
