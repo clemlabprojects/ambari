@@ -101,6 +101,27 @@ public enum AmbariServerConfigurationKey {
   SSO_OIDC_MANAGE_SERVICES(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.manage_services", PLAINTEXT, "false", "Whether Ambari should push OIDC-based SSO configuration to cluster services.  Services listed in ambari.sso.oidc.enabled_services receive Keycloak OIDC SSO config; all others fall back to Knox SSO config.", false),
   SSO_OIDC_ENABLED_SERVICES(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.enabled_services", PLAINTEXT, null, "Comma-delimited list of cluster services to configure with OIDC SSO (e.g. RANGER).  Use '*' for all services.  Services not listed here continue to use Knox SSO (ambari.sso.enabled_services).", false),
 
+  /* --- OIDC JIT (Just-In-Time) user / group provisioning ---
+   * When enabled, users who present a valid OIDC JWT but who don't yet exist
+   * in Ambari's local user database are auto-created (with UserAuthenticationType.JWT)
+   * instead of being rejected with "Cannot find user from JWT".  This avoids
+   * the LDAP-sync requirement for pure-OIDC deployments (Keycloak with social
+   * login, Okta, Azure AD without LDAP federation, etc.).
+   * Production-management notes:
+   *   - JIT users appear in /api/v1/users like any user — filter by authentication type
+   *     (UserAuthenticationType.JWT) to find/manage them.
+   *   - To revoke access permanently: DISABLE the user (validateLogin rejects).  Deleting
+   *     is a no-op against the JWT issuer — on the next login JIT will recreate.
+   *   - Audit: each auto-create writes one INFO line to ambari-server.log with the JWT subject.
+   */
+  SSO_OIDC_USER_AUTO_CREATE(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.user.auto.create", PLAINTEXT, "false", "When true, auto-create the Ambari user record on first successful OIDC JWT presentation (UserAuthenticationType=JWT).  Avoids requiring LDAP sync in pure-OIDC deployments.  Default false preserves the historical 'sync-or-reject' behavior.", false),
+  SSO_OIDC_USER_CASE_CONVERSION(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.user.case.conversion", PLAINTEXT, "none", "Case-normalization applied to the JWT username before lookup AND on JIT create.  Values: 'none' (preserve as-is), 'lower', 'upper'.  Apply consistently so lookups match across mixed-case identity providers.", false),
+  SSO_OIDC_USER_DEFAULT_ROLE(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.user.default.role", PLAINTEXT, "", "Reserved for future use: role to assign on JIT user creation (e.g. CLUSTER.USER).  Currently informational only — JIT-created users get no automatic role assignment.  Admin must assign roles after first login.", false),
+  SSO_OIDC_GROUPS_CLAIM(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.claim", PLAINTEXT, "", "JWT claim name carrying the user's group memberships (typically 'groups' for Keycloak).  Empty disables group sync.  When set, group memberships are read from this claim on every login and reconciled in Ambari.", false),
+  SSO_OIDC_GROUPS_AUTO_CREATE(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.auto.create", PLAINTEXT, "false", "When true, Ambari groups named in the JWT groups claim that don't yet exist are auto-created (GroupType=JWT).  When false, only pre-existing groups are joined; missing groups are silently skipped.  Use false to constrain which groups JWT users can join.", false),
+  SSO_OIDC_GROUPS_CASE_CONVERSION(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.case.conversion", PLAINTEXT, "none", "Case-normalization applied to JWT group names.  Values: 'none', 'lower', 'upper'.  Separate from user case conversion since group conventions often differ (e.g. lowercase users, UPPERCASE groups).", false),
+  SSO_OIDC_GROUPS_SYNC_ON_LOGIN(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.sync.on.login", PLAINTEXT, "true", "When true (default), group memberships are refreshed from the JWT on every login (additions AND removals reflected).  When false, groups are only synced at JIT user creation; subsequent membership changes in the IdP do not propagate.", false),
+
   /* ********************************************************
    * Trusted Proxy Configuration Keys
    * ******************************************************** */

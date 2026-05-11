@@ -541,6 +541,40 @@ public class Users {
   }
 
   /**
+   * Grants privilege to provided user.  Idempotent — repeats are a no-op.
+   *
+   * @param userId         user id
+   * @param resourceId     resource id (e.g. {@link ResourceEntity#AMBARI_RESOURCE_ID} for AMBARI scope,
+   *                       or a cluster's resource id for CLUSTER.* scope)
+   * @param resourceType   resource type
+   * @param permissionName permission name (e.g. {@link PermissionEntity#AMBARI_ADMINISTRATOR_PERMISSION_NAME},
+   *                       {@link PermissionEntity#CLUSTER_USER_PERMISSION_NAME}, etc.)
+   */
+  public synchronized void grantPrivilegeToUser(Integer userId, Long resourceId, ResourceType resourceType, String permissionName) {
+    final UserEntity userEntity = userDAO.findByPK(userId);
+    if (userEntity == null) {
+      return;
+    }
+    final PrivilegeEntity privilege = new PrivilegeEntity();
+    ResourceTypeEntity resourceTypeEntity = new ResourceTypeEntity();
+    resourceTypeEntity.setId(resourceType.getId());
+    resourceTypeEntity.setName(resourceType.name());
+    privilege.setPermission(permissionDAO.findPermissionByNameAndType(permissionName, resourceTypeEntity));
+    privilege.setPrincipal(userEntity.getPrincipal());
+    privilege.setResource(resourceDAO.findById(resourceId));
+    if (privilege.getPermission() == null || privilege.getResource() == null) {
+      return;
+    }
+    if (!userEntity.getPrincipal().getPrivileges().contains(privilege)) {
+      privilegeDAO.create(privilege);
+      userEntity.getPrincipal().getPrivileges().add(privilege);
+      principalDAO.merge(userEntity.getPrincipal()); //explicit merge for Derby support
+      userDAO.merge(userEntity);
+      privilegeDAO.merge(privilege);
+    }
+  }
+
+  /**
    * Grants privilege to provided group.
    *
    * @param groupId        group id

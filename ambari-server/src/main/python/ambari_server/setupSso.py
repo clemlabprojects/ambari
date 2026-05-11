@@ -51,6 +51,14 @@ SSO_OIDC_PROVIDER_CERTIFICATE = "ambari.sso.oidc.providerCertificate"
 SSO_OIDC_AUTHENTICATION_ENABLED = "ambari.sso.oidc.authentication.enabled"
 SSO_OIDC_MANAGE_SERVICES = "ambari.sso.oidc.manage_services"
 SSO_OIDC_ENABLED_SERVICES = "ambari.sso.oidc.enabled_services"
+# OIDC JIT (Just-In-Time) provisioning of users / groups from JWT claims
+SSO_OIDC_USER_AUTO_CREATE = "ambari.sso.oidc.user.auto.create"
+SSO_OIDC_USER_CASE_CONVERSION = "ambari.sso.oidc.user.case.conversion"
+SSO_OIDC_USER_DEFAULT_ROLE = "ambari.sso.oidc.user.default.role"
+SSO_OIDC_GROUPS_CLAIM = "ambari.sso.oidc.groups.claim"
+SSO_OIDC_GROUPS_AUTO_CREATE = "ambari.sso.oidc.groups.auto.create"
+SSO_OIDC_GROUPS_CASE_CONVERSION = "ambari.sso.oidc.groups.case.conversion"
+SSO_OIDC_GROUPS_SYNC_ON_LOGIN = "ambari.sso.oidc.groups.sync.on.login"
 
 SSO_PROVIDER_ORIGINAL_URL_QUERY_PARAM_DEFAULT = "originalUrl"
 SSO_PROVIDER_URL_DEFAULT = "https://knox.example.com:8443/gateway/knoxsso/api/v1/websso"
@@ -464,6 +472,100 @@ def populate_oidc_service_management(options, properties):
   properties[SSO_OIDC_ENABLED_SERVICES] = services
 
 
+# --- JIT (Just-In-Time) provisioning helpers -------------------------------------------------
+
+def _populate_bool_flag(options, properties, option_value, prop_key, prompt, current_default):
+  """Shared pattern: read a boolean flag from CLI (if provided) or prompt the user.
+
+  Empty CLI string is treated as "not provided" so callers can pass `--flag=''` to fall back to
+  the current persisted value (matching the existing populate-* helpers' semantics).
+  """
+  if option_value is None:
+    current = get_boolean_from_dictionary(properties, prop_key, current_default)
+    enabled = get_YN_input("{0} [y/n] ({1})? ".format(prompt, 'y' if current else 'n'), current)
+  else:
+    enabled = option_value == 'true'
+  properties[prop_key] = 'true' if enabled else 'false'
+
+
+def _validate_case_conversion(value):
+  """Coerce a case-conversion input to one of 'none' / 'lower' / 'upper'."""
+  if value is None:
+    return 'none'
+  v = value.strip().lower()
+  return v if v in ('none', 'lower', 'upper') else 'none'
+
+
+def populate_oidc_user_jit(options, properties):
+  """Populate the JIT user-provisioning settings.
+
+  When ``--sso-oidc-user-auto-create`` is true, missing-from-Ambari users are auto-created on
+  first JWT presentation with ``UserAuthenticationType.JWT``.  Case-conversion controls the
+  displayName; the persistence-layer userName is always lowercased by ``UserDAO`` regardless.
+  """
+  _populate_bool_flag(options, properties, options.sso_oidc_user_auto_create,
+                      SSO_OIDC_USER_AUTO_CREATE,
+                      "Auto-create Ambari users on first OIDC JWT (JIT provisioning)",
+                      False)
+
+  if options.sso_oidc_user_case_conversion is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_USER_CASE_CONVERSION, "none")
+    value = get_validated_string_input(
+      "JIT user case-conversion [none|lower|upper] ({0}): ".format(current or 'none'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_user_case_conversion
+  properties[SSO_OIDC_USER_CASE_CONVERSION] = _validate_case_conversion(value)
+
+  if options.sso_oidc_user_default_role is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_USER_DEFAULT_ROLE, "")
+    value = get_validated_string_input(
+      "JIT user default role (e.g. CLUSTER.USER, empty = none) ({0}): ".format(current or 'empty'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_user_default_role
+  properties[SSO_OIDC_USER_DEFAULT_ROLE] = value or ""
+
+
+def populate_oidc_groups_jit(options, properties):
+  """Populate the JIT group-sync settings.
+
+  When ``ambari.sso.oidc.groups.claim`` is non-empty, group memberships are read from that JWT
+  claim on every login (configurable via ``--sso-oidc-groups-sync-on-login``).  Groups are
+  auto-created when ``--sso-oidc-groups-auto-create`` is true; otherwise unknown groups are
+  silently skipped so the admin can constrain which groups JWT users can join.
+  """
+  if options.sso_oidc_groups_claim is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_GROUPS_CLAIM, "")
+    value = get_validated_string_input(
+      "JWT claim carrying group memberships (empty = disable group sync) ({0}): ".format(current or 'empty'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_groups_claim
+  properties[SSO_OIDC_GROUPS_CLAIM] = value or ""
+
+  # The remaining group settings are only meaningful when the claim is non-empty.  Still write
+  # them all so the persisted state is explicit (matches the user's --sso-oidc-* flags exactly).
+  _populate_bool_flag(options, properties, options.sso_oidc_groups_auto_create,
+                      SSO_OIDC_GROUPS_AUTO_CREATE,
+                      "Auto-create Ambari groups from JWT claim (GroupType=JWT)",
+                      False)
+
+  if options.sso_oidc_groups_case_conversion is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_GROUPS_CASE_CONVERSION, "none")
+    value = get_validated_string_input(
+      "JIT group case-conversion [none|lower|upper] ({0}): ".format(current or 'none'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_groups_case_conversion
+  properties[SSO_OIDC_GROUPS_CASE_CONVERSION] = _validate_case_conversion(value)
+
+  _populate_bool_flag(options, properties, options.sso_oidc_groups_sync_on_login,
+                      SSO_OIDC_GROUPS_SYNC_ON_LOGIN,
+                      "Refresh group memberships from JWT on every login (vs. only at JIT creation)",
+                      True)
+
+
 def setup_sso_oidc(options):
   print_info_msg("Setup SSO OIDC.")
 
@@ -497,10 +599,15 @@ def setup_sso_oidc(options):
       populate_oidc_authentication_enabled(options, properties)
       populate_oidc_service_management(options, properties)
       populate_jwt_username_claim(options, properties)
+      populate_oidc_user_jit(options, properties)
+      populate_oidc_groups_jit(options, properties)
     else:
       for key in [SSO_OIDC_CLIENT_ID, SSO_OIDC_CLIENT_SECRET, SSO_OIDC_CALLBACK_URL,
                   SSO_JWT_USERNAME_CLAIM, SSO_OIDC_PROVIDER_URL, SSO_OIDC_PROVIDER_CERTIFICATE,
-                  SSO_OIDC_AUTHENTICATION_ENABLED, SSO_OIDC_MANAGE_SERVICES, SSO_OIDC_ENABLED_SERVICES]:
+                  SSO_OIDC_AUTHENTICATION_ENABLED, SSO_OIDC_MANAGE_SERVICES, SSO_OIDC_ENABLED_SERVICES,
+                  SSO_OIDC_USER_AUTO_CREATE, SSO_OIDC_USER_CASE_CONVERSION, SSO_OIDC_USER_DEFAULT_ROLE,
+                  SSO_OIDC_GROUPS_CLAIM, SSO_OIDC_GROUPS_AUTO_CREATE, SSO_OIDC_GROUPS_CASE_CONVERSION,
+                  SSO_OIDC_GROUPS_SYNC_ON_LOGIN]:
         properties.pop(key, None)
 
     update_sso_conf(ambari_properties, properties, admin_login, admin_password)

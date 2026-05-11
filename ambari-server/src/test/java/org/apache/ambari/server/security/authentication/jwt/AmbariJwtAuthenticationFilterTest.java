@@ -427,7 +427,8 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
 
     replayAll();
 
-    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(users, configuration);
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
     AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
     filter.doFilter(request, response, filterChain);
 
@@ -477,7 +478,8 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
 
     replayAll();
 
-    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(users, configuration);
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
     AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
     filter.doFilter(request, response, filterChain);
 

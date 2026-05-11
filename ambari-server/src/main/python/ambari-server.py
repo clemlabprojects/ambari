@@ -49,7 +49,9 @@ from ambari_server.setupActions import BACKUP_ACTION, LDAP_SETUP_ACTION, LDAP_SY
   SETUP_ACTION, SETUP_SECURITY_ACTION, RESTART_ACTION, START_ACTION, STATUS_ACTION, STOP_ACTION, UPGRADE_ACTION, \
   SETUP_JCE_ACTION, SET_CURRENT_ACTION, ENABLE_STACK_ACTION, SETUP_SSO_ACTION, \
   DB_PURGE_ACTION, INSTALL_MPACK_ACTION, UNINSTALL_MPACK_ACTION, UPGRADE_MPACK_ACTION, PAM_SETUP_ACTION, \
-  MIGRATE_LDAP_PAM_ACTION, KERBEROS_SETUP_ACTION, SETUP_TPROXY_ACTION, SETUP_SSO_OIDC_ACTION
+  MIGRATE_LDAP_PAM_ACTION, KERBEROS_SETUP_ACTION, SETUP_TPROXY_ACTION, SETUP_SSO_OIDC_ACTION, \
+  PURGE_JIT_USERS_ACTION
+from ambari_server.purgeJitUsers import purge_jit_users
 from ambari_server.setupHttps import setup_https, setup_truststore
 from ambari_server.setupMpacks import install_mpack, uninstall_mpack, upgrade_mpack, STACK_DEFINITIONS_RESOURCE_NAME, \
   SERVICE_DEFINITIONS_RESOURCE_NAME, MPACKS_RESOURCE_NAME
@@ -632,11 +634,68 @@ def init_setup_sso_oidc_options(parser):
                     help="Comma-delimited list of cluster services to configure with OIDC SSO (e.g. RANGER,ATLAS or * for all). "
                          "Services not listed continue to use Knox SSO.",
                     dest="sso_oidc_enabled_services")
+  # --- JIT (Just-In-Time) provisioning of users / groups from OIDC JWT claims ---
+  parser.add_option('--sso-oidc-user-auto-create', default=None,
+                    help="When 'true', auto-create the Ambari user record on first successful OIDC JWT presentation "
+                         "(UserAuthenticationType=JWT). Avoids the LDAP-sync requirement for pure-OIDC deployments. "
+                         "Default 'false' preserves the legacy 'sync-or-reject' behavior.",
+                    dest="sso_oidc_user_auto_create")
+  parser.add_option('--sso-oidc-user-case-conversion', default=None,
+                    help="Case-normalization for the JIT user displayName: 'none' (default), 'lower', or 'upper'. "
+                         "The persistence-layer userName is always lowercased by UserDAO regardless.",
+                    dest="sso_oidc_user_case_conversion")
+  parser.add_option('--sso-oidc-user-default-role', default=None,
+                    help="Reserved for future use: role to assign on JIT user creation (e.g. CLUSTER.USER). "
+                         "Currently informational only — admin must assign roles after first login.",
+                    dest="sso_oidc_user_default_role")
+  parser.add_option('--sso-oidc-groups-claim', default=None,
+                    help="JWT claim carrying the user's group memberships (typically 'groups' for Keycloak). "
+                         "Empty disables group sync. When set, memberships are reconciled on every login.",
+                    dest="sso_oidc_groups_claim")
+  parser.add_option('--sso-oidc-groups-auto-create', default=None,
+                    help="When 'true', JWT-listed groups not in Ambari are auto-created (GroupType=JWT). "
+                         "When 'false', missing groups are silently skipped — constrains which groups JWT users can join.",
+                    dest="sso_oidc_groups_auto_create")
+  parser.add_option('--sso-oidc-groups-case-conversion', default=None,
+                    help="Case-normalization applied to JWT group names: 'none' (default), 'lower', or 'upper'. "
+                         "Separate from user case-conversion since group naming conventions often differ.",
+                    dest="sso_oidc_groups_case_conversion")
+  parser.add_option('--sso-oidc-groups-sync-on-login', default=None,
+                    help="When 'true' (default), group memberships refresh from the JWT on every login (adds AND removes). "
+                         "When 'false', groups sync only at JIT creation; subsequent IdP changes do not propagate.",
+                    dest="sso_oidc_groups_sync_on_login")
   parser.add_option('--ambari-admin-username', default=None,
                     help="Ambari administrator username for accessing Ambari's REST API",
                     dest="ambari_admin_username")
   parser.add_option('--ambari-admin-password', default=None,
                     help="Ambari administrator password for accessing Ambari's REST API",
+                    dest="ambari_admin_password")
+
+
+def init_purge_jit_users_options(parser):
+  """CLI options for ``ambari-server purge-jit-users``."""
+  parser.add_option('--user', default=None,
+                    help="Purge a single named user (must still be JIT/JWT-only).",
+                    dest="purge_jit_user")
+  parser.add_option('--inactive', default=None,
+                    help="When 'true', limit candidates to users with Users/active=false. "
+                         "Common workflow: disable revoked users in the UI, then bulk-purge with this flag.",
+                    dest="purge_jit_inactive")
+  parser.add_option('--include-jwt-with-ldap', default=None,
+                    help="When 'true', also purge users that have BOTH JWT and LDAP auth types (no LOCAL, no KERBEROS). "
+                         "Use during a 'migrate away from LDAP' cleanup. Default 'false' — JWT-only is required.",
+                    dest="purge_jit_include_jwt_with_ldap")
+  parser.add_option('--dry-run', default=None,
+                    help="When 'true', list candidates and exit without deleting.",
+                    dest="purge_jit_dry_run")
+  parser.add_option('--confirm', default=None,
+                    help="When 'true', skip the interactive y/n confirmation. Use for automation.",
+                    dest="purge_jit_confirm")
+  parser.add_option('--ambari-admin-username', default=None,
+                    help="Ambari administrator username for accessing Ambari's REST API.",
+                    dest="ambari_admin_username")
+  parser.add_option('--ambari-admin-password', default=None,
+                    help="Ambari administrator password for accessing Ambari's REST API.",
                     dest="ambari_admin_password")
 
 
@@ -870,6 +929,7 @@ def create_user_action_map(args, options):
     REFRESH_STACK_HASH_ACTION: UserAction(refresh_stack_hash_action),
     SETUP_SSO_ACTION: UserActionRestart(setup_sso, options),
     SETUP_SSO_OIDC_ACTION: UserAction(setup_sso_oidc, options),
+    PURGE_JIT_USERS_ACTION: UserAction(purge_jit_users, options),
     INSTALL_MPACK_ACTION: UserAction(install_mpack, options),
     UNINSTALL_MPACK_ACTION: UserAction(uninstall_mpack, options),
     UPGRADE_MPACK_ACTION: UserAction(upgrade_mpack, options),
@@ -900,6 +960,7 @@ def create_user_action_map(args, options):
         ENABLE_STACK_ACTION: UserAction(enable_stack, options, args),
         SETUP_SSO_ACTION: UserActionRestart(setup_sso, options),
         SETUP_SSO_OIDC_ACTION: UserAction(setup_sso_oidc, options),
+        PURGE_JIT_USERS_ACTION: UserAction(purge_jit_users, options),
         DB_PURGE_ACTION: UserAction(database_purge, options),
         INSTALL_MPACK_ACTION: UserAction(install_mpack, options),
         UNINSTALL_MPACK_ACTION: UserAction(uninstall_mpack, options),
@@ -934,6 +995,7 @@ def init_action_parser(action, parser):
     ENABLE_STACK_ACTION: init_enable_stack_parser_options,
     SETUP_SSO_ACTION: init_setup_sso_options,
     SETUP_SSO_OIDC_ACTION: init_setup_sso_oidc_options,
+    PURGE_JIT_USERS_ACTION: init_purge_jit_users_options,
     DB_PURGE_ACTION: init_db_purge_parser_options,
     INSTALL_MPACK_ACTION: init_install_mpack_parser_options,
     UNINSTALL_MPACK_ACTION: init_uninstall_mpack_parser_options,

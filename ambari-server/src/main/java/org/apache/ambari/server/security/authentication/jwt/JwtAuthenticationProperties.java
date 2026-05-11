@@ -26,9 +26,16 @@ import static org.apache.ambari.server.configuration.AmbariServerConfigurationKe
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_SECRET;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ENABLED_SERVICES;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_AUTO_CREATE;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_CASE_CONVERSION;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_CLAIM;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_SYNC_ON_LOGIN;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_MANAGE_SERVICES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_URL;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_USER_AUTO_CREATE;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_USER_CASE_CONVERSION;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_USER_DEFAULT_ROLE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_URL;
@@ -109,6 +116,33 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   /** Services to configure with OIDC SSO; comma-delimited, {@code *} = all.  {@code null} means none. */
   private String oidcEnabledServices = null;
 
+  // --- JIT (Just-In-Time) provisioning of users / groups from OIDC JWT claims ---
+
+  /** When true, missing-from-Ambari users are auto-created on first OIDC JWT presentation. */
+  private boolean oidcUserAutoCreate = false;
+
+  /**
+   * Case-normalization applied to JIT user's display name (the persistence-layer userName is
+   * always stored lowercase by Ambari's UserDAO, so this only affects the displayName shown
+   * in the UI / REST API).  Allowed: {@code none}, {@code lower}, {@code upper}.
+   */
+  private String oidcUserCaseConversion = "none";
+
+  /** Reserved for future use: default role to grant on JIT user creation (currently informational only). */
+  private String oidcUserDefaultRole = "";
+
+  /** JWT claim name carrying group memberships (e.g. {@code groups}).  Empty disables group sync. */
+  private String oidcGroupsClaim = "";
+
+  /** When true, group names in the JWT claim that don't exist in Ambari are auto-created (GroupType.JWT). */
+  private boolean oidcGroupsAutoCreate = false;
+
+  /** Case-normalization applied to JWT group names.  Allowed: {@code none}, {@code lower}, {@code upper}. */
+  private String oidcGroupsCaseConversion = "none";
+
+  /** When true, group membership is refreshed from the JWT on every login (otherwise: only at JIT user creation). */
+  private boolean oidcGroupsSyncOnLogin = true;
+
   JwtAuthenticationProperties(Map<String, String> configurationMap) {
     setEnabledForAmbari(Boolean.valueOf(getValue(SSO_AUTHENTICATION_ENABLED, configurationMap)));
     setAudiencesString(getValue(SSO_JWT_AUDIENCES, configurationMap));
@@ -125,6 +159,15 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setOidcAuthenticationEnabledFlag(getValue(SSO_OIDC_AUTHENTICATION_ENABLED, configurationMap));
     setOidcManageServices(Boolean.parseBoolean(getValue(SSO_OIDC_MANAGE_SERVICES, configurationMap)));
     setOidcEnabledServices(getValue(SSO_OIDC_ENABLED_SERVICES, configurationMap));
+
+    // JIT provisioning settings.  Defaults preserve the pre-existing "reject if unknown user" behavior.
+    setOidcUserAutoCreate(Boolean.parseBoolean(getValue(SSO_OIDC_USER_AUTO_CREATE, configurationMap)));
+    setOidcUserCaseConversion(getValue(SSO_OIDC_USER_CASE_CONVERSION, configurationMap));
+    setOidcUserDefaultRole(getValue(SSO_OIDC_USER_DEFAULT_ROLE, configurationMap));
+    setOidcGroupsClaim(getValue(SSO_OIDC_GROUPS_CLAIM, configurationMap));
+    setOidcGroupsAutoCreate(Boolean.parseBoolean(getValue(SSO_OIDC_GROUPS_AUTO_CREATE, configurationMap)));
+    setOidcGroupsCaseConversion(getValue(SSO_OIDC_GROUPS_CASE_CONVERSION, configurationMap));
+    setOidcGroupsSyncOnLogin(Boolean.parseBoolean(getValue(SSO_OIDC_GROUPS_SYNC_ON_LOGIN, configurationMap)));
   }
 
   public String getAuthenticationProviderUrl() {
@@ -359,6 +402,99 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
    * @param certificate a PEM-encode x509 certificate
    * @return an {@link RSAPublicKey}
    */
+  // --- JIT provisioning getters / setters ---
+
+  public boolean isOidcUserAutoCreate() {
+    return oidcUserAutoCreate;
+  }
+
+  public void setOidcUserAutoCreate(boolean oidcUserAutoCreate) {
+    this.oidcUserAutoCreate = oidcUserAutoCreate;
+  }
+
+  public String getOidcUserCaseConversion() {
+    return oidcUserCaseConversion;
+  }
+
+  public void setOidcUserCaseConversion(String oidcUserCaseConversion) {
+    this.oidcUserCaseConversion = normalizeCaseConversion(oidcUserCaseConversion);
+  }
+
+  public String getOidcUserDefaultRole() {
+    return oidcUserDefaultRole;
+  }
+
+  public void setOidcUserDefaultRole(String oidcUserDefaultRole) {
+    this.oidcUserDefaultRole = (oidcUserDefaultRole == null) ? "" : oidcUserDefaultRole.trim();
+  }
+
+  public String getOidcGroupsClaim() {
+    return oidcGroupsClaim;
+  }
+
+  public void setOidcGroupsClaim(String oidcGroupsClaim) {
+    this.oidcGroupsClaim = (oidcGroupsClaim == null) ? "" : oidcGroupsClaim.trim();
+  }
+
+  public boolean isOidcGroupsAutoCreate() {
+    return oidcGroupsAutoCreate;
+  }
+
+  public void setOidcGroupsAutoCreate(boolean oidcGroupsAutoCreate) {
+    this.oidcGroupsAutoCreate = oidcGroupsAutoCreate;
+  }
+
+  public String getOidcGroupsCaseConversion() {
+    return oidcGroupsCaseConversion;
+  }
+
+  public void setOidcGroupsCaseConversion(String oidcGroupsCaseConversion) {
+    this.oidcGroupsCaseConversion = normalizeCaseConversion(oidcGroupsCaseConversion);
+  }
+
+  public boolean isOidcGroupsSyncOnLogin() {
+    return oidcGroupsSyncOnLogin;
+  }
+
+  public void setOidcGroupsSyncOnLogin(boolean oidcGroupsSyncOnLogin) {
+    this.oidcGroupsSyncOnLogin = oidcGroupsSyncOnLogin;
+  }
+
+  /**
+   * Apply the configured case conversion to a value.  Used for the displayName of JIT-created
+   * users and for the group names read from the JWT claim.  Note that the persistence-layer
+   * userName / groupName is independently lowercased by UserDAO / GroupDAO.
+   *
+   * @param mode  the case-conversion mode ({@code none}, {@code lower}, {@code upper})
+   * @param value the value to convert
+   * @return the converted value, or the original if mode is {@code none} or unrecognized
+   */
+  public static String applyCaseConversion(String mode, String value) {
+    if (value == null || mode == null) {
+      return value;
+    }
+    switch (mode) {
+      case "lower":
+        return value.toLowerCase();
+      case "upper":
+        return value.toUpperCase();
+      default:
+        return value;
+    }
+  }
+
+  private static String normalizeCaseConversion(String mode) {
+    if (mode == null) {
+      return "none";
+    }
+    String trimmed = mode.trim().toLowerCase();
+    if ("lower".equals(trimmed) || "upper".equals(trimmed) || "none".equals(trimmed)) {
+      return trimmed;
+    }
+    LOG.warn("Unrecognized OIDC case-conversion value '{}', falling back to 'none'", mode);
+    return "none";
+  }
+
   private RSAPublicKey createPublicKey(String certificate) {
     RSAPublicKey publicKey = null;
     if (certificate != null) {
