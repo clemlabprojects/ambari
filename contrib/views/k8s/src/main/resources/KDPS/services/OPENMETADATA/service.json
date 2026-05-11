@@ -15,7 +15,7 @@
       "key": "openmetadata",
       "clientIdTemplate": "{{releaseName}}-{{namespace}}",
       "secretNameTemplate": "{{releaseName}}-oidc-client",
-      "redirectUriTemplate": "",
+      "redirectUriTemplate": "https://{{ingressHost}}/callback",
       "publicClient": false,
       "standardFlowEnabled": true,
       "enabled": true

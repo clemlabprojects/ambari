@@ -546,6 +546,15 @@ export const regenerateReleaseKeytabs = async (namespace: string, releaseName: s
 };
 
 /**
+ * Re-register the OIDC client in Keycloak for a deployed release.
+ * Idempotent: updates the existing client if it already exists.
+ */
+export const registerReleaseOidcClient = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/oidc`;
+  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
  * Re-apply the Ranger repository configuration for a deployed release.
  * The backend replays the same install-time Ranger action without a Helm upgrade.
  */

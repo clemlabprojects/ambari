@@ -890,13 +890,58 @@ public class CommandService {
      * Validates the result contains only safe characters to prevent injection.
      */
     private String renderOidcTemplate(String template, String releaseName, String namespace, String realm) {
+        return renderOidcTemplate(template, releaseName, namespace, realm, null);
+    }
+
+    private String renderOidcTemplate(String template, String releaseName, String namespace, String realm,
+                                       Map<String, String> extraVars) {
         if (template == null || template.isBlank()) return "";
         String result = template
                 .replace("{{releaseName}}", releaseName != null ? releaseName : "")
                 .replace("{{namespace}}", namespace != null ? namespace : "")
                 .replace("{{realm}}", realm != null ? realm : "");
+        if (extraVars != null) {
+            for (Map.Entry<String, String> e : extraVars.entrySet()) {
+                result = result.replace("{{" + e.getKey() + "}}", e.getValue() != null ? e.getValue() : "");
+            }
+        }
         validateOidcClientId(result);
         return result;
+    }
+
+    /**
+     * Read the first Ingress host for a release from the cluster.
+     * Used by the OIDC re-registration action to resolve {{ingressHost}} without the original deploy params.
+     * Returns empty string if no Ingress is found.
+     */
+    private String resolveIngressHostForRelease(String namespace, String releaseName) {
+        try {
+            var ingresses = kubernetesService.getClient()
+                    .network().v1().ingresses()
+                    .inNamespace(namespace)
+                    .withLabel("app.kubernetes.io/instance", releaseName)
+                    .list().getItems();
+            if (ingresses == null || ingresses.isEmpty()) {
+                // Fallback: filter by name containing releaseName
+                ingresses = kubernetesService.getClient()
+                        .network().v1().ingresses()
+                        .inNamespace(namespace)
+                        .list().getItems().stream()
+                        .filter(ing -> ing.getMetadata() != null
+                                && ing.getMetadata().getName() != null
+                                && ing.getMetadata().getName().contains(releaseName))
+                        .toList();
+            }
+            if (ingresses != null && !ingresses.isEmpty()) {
+                var rules = ingresses.get(0).getSpec() != null ? ingresses.get(0).getSpec().getRules() : null;
+                if (rules != null && !rules.isEmpty() && rules.get(0).getHost() != null) {
+                    return rules.get(0).getHost();
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("resolveIngressHostForRelease {}/{}: {}", namespace, releaseName, ex.toString());
+        }
+        return "";
     }
 
     /**
@@ -1007,7 +1052,9 @@ public class CommandService {
 
             String clientId   = renderOidcTemplate(clientIdT,  releaseName, namespace, oidcRealm);
             String secretName = renderOidcTemplate(secretT,     releaseName, namespace, oidcRealm);
-            String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm);
+            String ingressHost = resolveIngressHostForRelease(namespace, releaseName);
+            Map<String, String> reRegExtraVars = ingressHost.isBlank() ? null : Map.of("ingressHost", ingressHost);
+            String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm, reRegExtraVars);
 
             appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
                     clientId, redirectUri, secretName, entryKey, vaultPath, Collections.emptyMap());
@@ -3533,7 +3580,10 @@ public class CommandService {
                         String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
                         String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
                         String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-                        String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm);
+                        Object ingressHostObj = getByPath(params, "ingress.host");
+                        String ingressHost = ingressHostObj != null ? String.valueOf(ingressHostObj) : "";
+                        Map<String, String> oidcExtraVars = ingressHost.isBlank() ? null : Map.of("ingressHost", ingressHost);
+                        String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
                         appendOidcRegistrationSteps(rootCommand, childCommands, params,
                                 clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
                     }

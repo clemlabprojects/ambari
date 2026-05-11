@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
@@ -303,8 +303,26 @@ const HelmReleasesPage: React.FC = () => {
     }
   };
 
-    // legacy commandHistory kept for label building; actual statuses fetched via shared modal
-    
+    const triggerOidcRegistration = async (release: HelmRelease) => {
+    const hide = message.loading(`Registering OIDC client for ${release.name}...`, 0);
+    try {
+      const response = await registerReleaseOidcClient(release.namespace, release.name);
+      if (response?.id) {
+        setWatchedCommandId(response.id);
+        setIsCommandDrawerOpen(true);
+        message.success('OIDC client registration started');
+      } else {
+        message.success('OIDC client registration submitted');
+      }
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to register OIDC client');
+    } finally {
+      hide();
+    }
+  };
+
+  // legacy commandHistory kept for label building; actual statuses fetched via shared modal
+
     const renderServiceCell = (releaseRecord: HelmRelease) => {
         const serviceKey = releaseRecord.serviceKey;
         const serviceLabel = serviceKey && serviceDefinitions[serviceKey]?.label ? serviceDefinitions[serviceKey].label : (serviceKey || '—');
@@ -337,6 +355,7 @@ const HelmReleasesPage: React.FC = () => {
       const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
       const supportsKerberosRegeneration = !!(serviceDefinition?.kerberos && serviceDefinition.kerberos.length > 0);
       const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
+      const supportsOidcRegistration = !!(serviceDefinition?.oidc && serviceDefinition.oidc.length > 0);
 
       return ([
         {
@@ -379,6 +398,12 @@ const HelmReleasesPage: React.FC = () => {
           icon: <KeyOutlined />,
           label: 'Regenerate keytabs',
           onClick: () => triggerKeytabRegeneration(record)
+        }] : []),
+        ...(supportsOidcRegistration ? [{
+          key: 'register-oidc',
+          icon: <SafetyCertificateOutlined />,
+          label: 'Re-register OIDC client',
+          onClick: () => triggerOidcRegistration(record)
         }] : []),
         ...(supportsRangerReapply ? [{
           key: 'reapply-ranger',

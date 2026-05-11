@@ -104,6 +104,7 @@ export interface ServiceDefinition {
   // Optional backend-driven metadata for post-install actions (e.g., keytab/ranger replay).
   kerberos?: Array<Record<string, any>>;
   ranger?: Record<string, Record<string, any>>;
+  oidc?: Array<Record<string, any>>;
 }
 
 export type ComponentStatusType = 'Healthy' | 'Unhealthy';
