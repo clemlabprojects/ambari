@@ -493,16 +493,17 @@
     },
     {
       "name": "service-monitor-enable",
+      "skipIfVarEmpty": "monitoringRelease",
       "targets": [
-        {
-          "path": "serviceMonitor.enabled",
-          "op": "set",
-          "value": true
-        },
         {
           "path": "serviceMonitor.labels.release",
           "op": "set",
           "from": { "type": "var", "name": "monitoringRelease" }
+        },
+        {
+          "path": "serviceMonitor.namespace",
+          "op": "set",
+          "from": { "type": "var", "name": "monitoringNamespace" }
         }
       ]
     },
@@ -604,9 +605,9 @@
           "name": "global.security.auth.mode",
           "label": "Authentication mode",
           "type": "select",
-          "defaultValue": "no-auth",
+          "defaultValue": "basic",
           "options": [
-            { "label": "No authentication (dev/internal)",        "value": "no-auth" },
+            { "label": "Basic (username / password)",             "value": "basic"   },
             { "label": "OpenID Connect (Keycloak / SSO)",        "value": "oidc"    },
             { "label": "LDAP / Active Directory",                "value": "ldap"    }
           ],

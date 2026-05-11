@@ -164,7 +164,7 @@ public class CommandService {
         this.configResolutionService = new ConfigResolutionService();
         this.commandUtils = new CommandUtils(this.ctx,this.kubernetesService);
         this.commandPlanFactory = new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
-        this.commandLogService = new CommandLogService(this.ctx);
+        this.commandLogService = CommandLogService.get(this.ctx);
         PathConfig pathConfig = new PathConfig(ctx);
         pathConfig.ensureDirs();
         this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);

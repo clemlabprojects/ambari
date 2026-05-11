@@ -20,7 +20,6 @@ package org.apache.ambari.view.k8s;
 
 import org.glassfish.jersey.media.multipart.MultiPartFeature;
 
-import org.apache.ambari.view.k8s.resources.CommandResource;
 import org.apache.ambari.view.k8s.resources.StackResource;
 
 import javax.ws.rs.core.Application;
@@ -38,7 +37,6 @@ public class K8sViewApplication extends Application {
         
         // Declare our main REST service
         classes.add(KubeService.class);
-        classes.add(CommandResource.class);
         classes.add(StackResource.class);
 
         // Declare the feature needed to handle file uploads
