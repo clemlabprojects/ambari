@@ -30,6 +30,7 @@ import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.entities.GroupEntity;
 import org.apache.ambari.server.orm.entities.MemberEntity;
 import org.apache.ambari.server.orm.entities.PermissionEntity;
+import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.UserAuthenticationEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.security.authentication.AccountDisabledException;
@@ -145,6 +146,15 @@ public class AmbariJwtAuthenticationProvider extends AmbariAuthenticationProvide
     String normalizedUserName = JwtAuthenticationProperties.applyCaseConversion(
         jwtProperties == null ? "none" : jwtProperties.getOidcUserCaseConversion(), userName);
 
+    // Parse the JWT once up-front: claims drive both the allowed-groups gate (pre-create)
+    // and the group-membership sync (post-auth).  Signature has already been validated by
+    // AmbariJwtAuthenticationFilter so we trust the token string.
+    Set<String> jwtGroups = parseJwtGroupsClaim(authentication.getCredentials().toString(), jwtProperties);
+
+    // AMBARI-423 allowed-groups gate.  Throws UserNotFoundException — same response shape
+    // an admin sees today for unknown users, so we don't leak whether the user exists.
+    enforceAllowedGroupsGate(normalizedUserName, jwtGroups, jwtProperties);
+
     UserEntity userEntity = users.getUserEntity(normalizedUserName);
     boolean jitCreated = false;
 
@@ -193,9 +203,27 @@ public class AmbariJwtAuthenticationProvider extends AmbariAuthenticationProvide
           && !jwtProperties.getOidcGroupsClaim().isEmpty()
           && (jitCreated || jwtProperties.isOidcGroupsSyncOnLogin())) {
         try {
-          syncGroupsFromJwt(users, userEntity, authentication.getCredentials().toString(), jwtProperties);
+          reconcileGroupMemberships(users, userEntity, jwtGroups, jwtProperties);
         } catch (Exception e) {
           LOG.warn("OIDC group sync failed for user {}: {}", normalizedUserName, e.getMessage());
+        }
+      }
+
+      // AMBARI-423: bootstrap the admin.groups → AMBARI.ADMINISTRATOR binding (idempotent) and
+      // the one-time admin.users grant (only when jitCreated).  Failures here are logged but
+      // do not fail authentication — privilege grants can always be retried manually.
+      if (jwtProperties != null) {
+        try {
+          bootstrapAdminGroups(users, jwtProperties);
+        } catch (Exception e) {
+          LOG.warn("OIDC admin-groups bootstrap failed: {}", e.getMessage());
+        }
+        if (jitCreated) {
+          try {
+            grantAdminUserOnCreate(users, userEntity, normalizedUserName, jwtProperties);
+          } catch (Exception e) {
+            LOG.warn("OIDC admin-user one-shot grant failed for {}: {}", normalizedUserName, e.getMessage());
+          }
         }
       }
 
@@ -371,46 +399,120 @@ public class AmbariJwtAuthenticationProvider extends AmbariAuthenticationProvide
   }
 
   /**
-   * Read the configured groups claim from the JWT and reconcile the user's group memberships.
-   * <p>
-   * Behavior:
+   * Parse the JWT once at the top of authentication and extract the case-normalized set of
+   * group names from the configured claim.  Returns an empty set when:
+   *
    * <ul>
-   *   <li>Groups in the JWT but missing in Ambari: created if {@code ambari.sso.oidc.groups.auto.create=true};
-   *       otherwise silently skipped (allows the admin to constrain which groups JWT users can join).</li>
-   *   <li>Groups in Ambari (already members) but no longer in the JWT: user is removed.  Only
-   *       JWT-typed groups are affected — LDAP/LOCAL group memberships are preserved.</li>
-   *   <li>Group name case-conversion is applied before lookup (see {@code ambari.sso.oidc.groups.case.conversion}).</li>
+   *   <li>{@code ambari.sso.oidc.groups.claim} is empty (group sync disabled entirely)</li>
+   *   <li>The JWT does not carry the configured claim</li>
+   *   <li>Parsing fails (malformed token) — we'd rather treat the request as "no groups" and
+   *       let downstream filters/auth handle the malformed-token case than crash here</li>
    * </ul>
    *
-   * <p>The JWT signature was already validated by {@link AmbariJwtAuthenticationFilter}; we trust
-   * the serialized token and parse it for claims only.
+   * <p>The returned set is used by:
+   * <ul>
+   *   <li>{@link #enforceAllowedGroupsGate} — to decide whether to admit the login</li>
+   *   <li>{@link #reconcileGroupMemberships} — to reconcile Ambari-side membership</li>
+   * </ul>
+   *
+   * <p>Signature validation is already done by {@link AmbariJwtAuthenticationFilter}; we trust
+   * the serialized string and parse it only for claims here.
    */
-  private void syncGroupsFromJwt(Users users, UserEntity userEntity, String serializedJwt,
-                                 JwtAuthenticationProperties jwtProperties) throws ParseException {
-    SignedJWT jwt = SignedJWT.parse(serializedJwt);
-    JWTClaimsSet claims = jwt.getJWTClaimsSet();
+  private Set<String> parseJwtGroupsClaim(String serializedJwt, JwtAuthenticationProperties jwtProperties) {
+    if (jwtProperties == null || jwtProperties.getOidcGroupsClaim() == null
+        || jwtProperties.getOidcGroupsClaim().isEmpty()) {
+      return Collections.emptySet();
+    }
+    try {
+      SignedJWT jwt = SignedJWT.parse(serializedJwt);
+      JWTClaimsSet claims = jwt.getJWTClaimsSet();
+      List<String> rawGroups = readStringListClaim(claims, jwtProperties.getOidcGroupsClaim());
+      if (rawGroups == null) {
+        return Collections.emptySet();
+      }
+      String caseMode = jwtProperties.getOidcGroupsCaseConversion();
+      Set<String> out = new HashSet<>();
+      for (String g : rawGroups) {
+        if (g == null) {
+          continue;
+        }
+        // Keycloak often returns group paths like "/admins"; strip leading slashes so the
+        // Ambari group name matches the admin's mental model.
+        String stripped = g.startsWith("/") ? g.substring(1) : g;
+        if (stripped.isEmpty()) {
+          continue;
+        }
+        out.add(JwtAuthenticationProperties.applyCaseConversion(caseMode, stripped));
+      }
+      return out;
+    } catch (ParseException e) {
+      LOG.warn("Failed to parse JWT for groups-claim extraction; proceeding with empty group set: {}", e.getMessage());
+      return Collections.emptySet();
+    }
+  }
 
-    String claimName = jwtProperties.getOidcGroupsClaim();
-    List<String> rawGroups = readStringListClaim(claims, claimName);
-    if (rawGroups == null) {
-      LOG.debug("OIDC groups claim '{}' not present in JWT for user {}; skipping group sync",
-          claimName, userEntity.getUserName());
+  /**
+   * AMBARI-423 allowed-groups gate.  When {@code ambari.sso.oidc.allowed.groups} is non-empty,
+   * login is rejected unless one of:
+   *
+   * <ul>
+   *   <li>The JWT subject (case-normalized) is listed in {@code ambari.sso.oidc.admin.users}</li>
+   *   <li>The JWT 'groups' claim intersects {@code ambari.sso.oidc.allowed.groups}</li>
+   *   <li>The JWT 'groups' claim intersects {@code ambari.sso.oidc.admin.groups} — admin groups
+   *       are implicitly allowed (no need to also list them in allowed.groups)</li>
+   * </ul>
+   *
+   * <p>When {@code allowed.groups} is empty (the default), this method is a no-op — preserving
+   * the pre-AMBARI-423 "any valid JWT admits" behavior.
+   *
+   * <p>The error response is intentionally the same {@link UserNotFoundException} an admin sees
+   * for any unknown user, so we don't leak whether the username exists in Ambari's DB.
+   */
+  private void enforceAllowedGroupsGate(String normalizedUserName, Set<String> jwtGroups,
+                                        JwtAuthenticationProperties jwtProperties) {
+    if (jwtProperties == null) {
       return;
     }
+    List<String> allowedGroups = jwtProperties.getOidcAllowedGroups();
+    if (allowedGroups.isEmpty()) {
+      return;  // gating disabled — historical behavior
+    }
+    if (jwtProperties.getOidcAdminUsers().contains(normalizedUserName)) {
+      return;  // explicit admin user — bypass gate
+    }
+    for (String g : allowedGroups) {
+      if (jwtGroups.contains(g)) {
+        return;
+      }
+    }
+    for (String g : jwtProperties.getOidcAdminGroups()) {
+      if (jwtGroups.contains(g)) {
+        return;
+      }
+    }
+    LOG.info("[JIT-LOGIN-DENIED] User {} is not in any of {} (allowed.groups) or {} (admin.groups); "
+            + "JWT groups were {}",
+        normalizedUserName, allowedGroups, jwtProperties.getOidcAdminGroups(), jwtGroups);
+    throw new UserNotFoundException(normalizedUserName,
+        "Cannot find user from JWT. Please, ensure LDAP is configured and users are synced.");
+  }
 
-    String caseMode = jwtProperties.getOidcGroupsCaseConversion();
-    Set<String> desiredGroups = new HashSet<>();
-    for (String g : rawGroups) {
-      if (g == null) {
-        continue;
-      }
-      // Keycloak often returns group paths like "/admins"; strip leading slashes so the
-      // Ambari group name matches the admin's mental model.
-      String stripped = g.startsWith("/") ? g.substring(1) : g;
-      if (stripped.isEmpty()) {
-        continue;
-      }
-      desiredGroups.add(JwtAuthenticationProperties.applyCaseConversion(caseMode, stripped));
+  /**
+   * Reconcile Ambari group memberships against the (already-parsed) JWT groups.  Same semantics
+   * as the legacy {@code syncGroupsFromJwt} but takes the pre-computed set so we don't re-parse
+   * the JWT for what's effectively the same work.
+   *
+   * <ul>
+   *   <li>Groups in the JWT but missing in Ambari: created if {@code ambari.sso.oidc.groups.auto.create=true};
+   *       otherwise silently skipped (admin pre-creates the groups they want).</li>
+   *   <li>JWT-typed Ambari groups the user is in but the JWT no longer lists: removed (only when
+   *       {@code groups.sync.on.login=true}).  LDAP/LOCAL group memberships are preserved.</li>
+   * </ul>
+   */
+  private void reconcileGroupMemberships(Users users, UserEntity userEntity, Set<String> desiredGroups,
+                                         JwtAuthenticationProperties jwtProperties) {
+    if (desiredGroups.isEmpty() && !jwtProperties.isOidcGroupsSyncOnLogin()) {
+      return;
     }
 
     // Compute current JWT-typed group memberships from the user's MemberEntity list.
@@ -468,6 +570,67 @@ public class AmbariJwtAuthenticationProvider extends AmbariAuthenticationProvide
         }
       }
     }
+  }
+
+  /**
+   * AMBARI-423 admin.groups bootstrap.  For each group named in {@code ambari.sso.oidc.admin.groups}:
+   *
+   * <ol>
+   *   <li>Ensure a {@link GroupType#JWT} group with that name exists (created when missing —
+   *       idempotent; subsequent logins are no-ops)</li>
+   *   <li>Ensure the group has {@code AMBARI.ADMINISTRATOR} privilege (re-asserted on every login
+   *       as the policy source of truth — manual revocation via UI/REST does not stick)</li>
+   * </ol>
+   *
+   * <p>Users inherit admin transitively when {@link #reconcileGroupMemberships} adds them to the
+   * group via the JWT 'groups' claim sync.  Revocation in Keycloak (via removing the user from
+   * the group) propagates on next login when {@code groups.sync.on.login=true}.
+   *
+   * <p>To dismantle the binding entirely, the admin must remove the group name from
+   * {@code admin.groups}; the existing privilege rows are not auto-cleaned (left to admin
+   * curation since they may have been augmented with other manual grants).
+   */
+  private void bootstrapAdminGroups(Users users, JwtAuthenticationProperties jwtProperties) {
+    List<String> adminGroups = jwtProperties.getOidcAdminGroups();
+    if (adminGroups.isEmpty()) {
+      return;
+    }
+    for (String groupName : adminGroups) {
+      GroupEntity groupEntity = users.getGroupEntity(groupName, GroupType.JWT);
+      if (groupEntity == null) {
+        LOG.info("[JIT-ADMIN-GROUP-BOOTSTRAP] Provisioning admin group from admin.groups property: {}", groupName);
+        groupEntity = users.createGroup(groupName, GroupType.JWT);
+      }
+      try {
+        // Idempotent — grantPrivilegeToGroup does a contains-check before INSERT.  AMBARI_RESOURCE_ID
+        // is the global Ambari resource; AMBARI.ADMINISTRATOR is the global super-admin permission.
+        users.grantPrivilegeToGroup(groupEntity.getGroupId(),
+            ResourceEntity.AMBARI_RESOURCE_ID,
+            ResourceType.AMBARI,
+            PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION_NAME);
+      } catch (Exception e) {
+        LOG.warn("[JIT-ADMIN-GROUP-BOOTSTRAP] Failed to bind AMBARI.ADMINISTRATOR to group {}: {}",
+            groupName, e.getMessage());
+      }
+    }
+  }
+
+  /**
+   * AMBARI-423 admin.users one-shot grant.  When the JIT-just-created user is listed in
+   * {@code ambari.sso.oidc.admin.users}, grants {@code AMBARI.ADMINISTRATOR} directly to them.
+   *
+   * <p>This fires <strong>only at first JIT-create</strong>, not every login — so an admin who
+   * later wants to demote one of these users can revoke via UI without the next login
+   * re-asserting the privilege.  Use this property for bootstrap only; for ongoing governance
+   * prefer {@code admin.groups}.
+   */
+  private void grantAdminUserOnCreate(Users users, UserEntity userEntity, String normalizedUserName,
+                                      JwtAuthenticationProperties jwtProperties) {
+    if (!jwtProperties.getOidcAdminUsers().contains(normalizedUserName)) {
+      return;
+    }
+    users.grantAdminPrivilege(userEntity);
+    LOG.info("[JIT-ADMIN-GRANT-USER] Granted AMBARI.ADMINISTRATOR to bootstrap admin user {}", normalizedUserName);
   }
 
   /**

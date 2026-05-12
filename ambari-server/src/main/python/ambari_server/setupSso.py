@@ -59,6 +59,10 @@ SSO_OIDC_GROUPS_CLAIM = "ambari.sso.oidc.groups.claim"
 SSO_OIDC_GROUPS_AUTO_CREATE = "ambari.sso.oidc.groups.auto.create"
 SSO_OIDC_GROUPS_CASE_CONVERSION = "ambari.sso.oidc.groups.case.conversion"
 SSO_OIDC_GROUPS_SYNC_ON_LOGIN = "ambari.sso.oidc.groups.sync.on.login"
+# AMBARI-423: group-based admin grant + login gating
+SSO_OIDC_ADMIN_USERS = "ambari.sso.oidc.admin.users"
+SSO_OIDC_ADMIN_GROUPS = "ambari.sso.oidc.admin.groups"
+SSO_OIDC_ALLOWED_GROUPS = "ambari.sso.oidc.allowed.groups"
 
 SSO_PROVIDER_ORIGINAL_URL_QUERY_PARAM_DEFAULT = "originalUrl"
 SSO_PROVIDER_URL_DEFAULT = "https://knox.example.com:8443/gateway/knoxsso/api/v1/websso"
@@ -566,6 +570,41 @@ def populate_oidc_groups_jit(options, properties):
                       True)
 
 
+def populate_oidc_admin_and_gating(options, properties):
+  """AMBARI-423 — populate the three governance properties (admin.users, admin.groups, allowed.groups).
+
+  All three are CSV strings; empty means "feature disabled".  Like the other populate_* helpers,
+  ``--flag=''`` (explicit empty string on CLI) is treated as "clear the value", whereas omitting
+  the flag falls back to the existing DB value with an interactive prompt.
+  """
+  if options.sso_oidc_admin_users is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_ADMIN_USERS, "")
+    value = get_validated_string_input(
+      "OIDC admin users — comma-separated usernames granted AMBARI.ADMINISTRATOR at JIT-create ({0}): ".format(current or 'empty'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_admin_users
+  properties[SSO_OIDC_ADMIN_USERS] = value or ""
+
+  if options.sso_oidc_admin_groups is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_ADMIN_GROUPS, "")
+    value = get_validated_string_input(
+      "OIDC admin groups — comma-separated group names auto-bound to AMBARI.ADMINISTRATOR ({0}): ".format(current or 'empty'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_admin_groups
+  properties[SSO_OIDC_ADMIN_GROUPS] = value or ""
+
+  if options.sso_oidc_allowed_groups is None:
+    current = get_value_from_dictionary(properties, SSO_OIDC_ALLOWED_GROUPS, "")
+    value = get_validated_string_input(
+      "OIDC allowed groups — comma-separated allow-list (empty = no gate, anyone with a valid JWT logs in) ({0}): ".format(current or 'empty'),
+      current, REGEX_ANYTHING, "Invalid value", False)
+  else:
+    value = options.sso_oidc_allowed_groups
+  properties[SSO_OIDC_ALLOWED_GROUPS] = value or ""
+
+
 def setup_sso_oidc(options):
   print_info_msg("Setup SSO OIDC.")
 
@@ -601,13 +640,15 @@ def setup_sso_oidc(options):
       populate_jwt_username_claim(options, properties)
       populate_oidc_user_jit(options, properties)
       populate_oidc_groups_jit(options, properties)
+      populate_oidc_admin_and_gating(options, properties)
     else:
       for key in [SSO_OIDC_CLIENT_ID, SSO_OIDC_CLIENT_SECRET, SSO_OIDC_CALLBACK_URL,
                   SSO_JWT_USERNAME_CLAIM, SSO_OIDC_PROVIDER_URL, SSO_OIDC_PROVIDER_CERTIFICATE,
                   SSO_OIDC_AUTHENTICATION_ENABLED, SSO_OIDC_MANAGE_SERVICES, SSO_OIDC_ENABLED_SERVICES,
                   SSO_OIDC_USER_AUTO_CREATE, SSO_OIDC_USER_CASE_CONVERSION, SSO_OIDC_USER_DEFAULT_ROLE,
                   SSO_OIDC_GROUPS_CLAIM, SSO_OIDC_GROUPS_AUTO_CREATE, SSO_OIDC_GROUPS_CASE_CONVERSION,
-                  SSO_OIDC_GROUPS_SYNC_ON_LOGIN]:
+                  SSO_OIDC_GROUPS_SYNC_ON_LOGIN,
+                  SSO_OIDC_ADMIN_USERS, SSO_OIDC_ADMIN_GROUPS, SSO_OIDC_ALLOWED_GROUPS]:
         properties.pop(key, None)
 
     update_sso_conf(ambari_properties, properties, admin_login, admin_password)

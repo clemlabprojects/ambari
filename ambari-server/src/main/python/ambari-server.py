@@ -664,6 +664,21 @@ def init_setup_sso_oidc_options(parser):
                     help="When 'true' (default), group memberships refresh from the JWT on every login (adds AND removes). "
                          "When 'false', groups sync only at JIT creation; subsequent IdP changes do not propagate.",
                     dest="sso_oidc_groups_sync_on_login")
+  # --- AMBARI-423: group-based admin grant + allow-list login gating ---
+  parser.add_option('--sso-oidc-admin-users', default=None,
+                    help="Comma-separated usernames granted AMBARI.ADMINISTRATOR on JIT-create (one-shot, not re-asserted on every login). "
+                         "Use for bootstrap before groups are wired up. Empty disables.",
+                    dest="sso_oidc_admin_users")
+  parser.add_option('--sso-oidc-admin-groups', default=None,
+                    help="Comma-separated group names whose AMBARI.ADMINISTRATOR binding is policy-managed by JIT. "
+                         "On every login: each group is created (GroupType=JWT) if missing, AMBARI.ADMINISTRATOR is asserted (idempotent), "
+                         "and the JWT groups-claim sync joins matching users in. Users inherit admin transitively.",
+                    dest="sso_oidc_admin_groups")
+  parser.add_option('--sso-oidc-allowed-groups', default=None,
+                    help="Comma-separated group names. When NON-EMPTY, login is rejected unless the JWT subject is in --sso-oidc-admin-users "
+                         "OR the JWT 'groups' claim intersects this list (or --sso-oidc-admin-groups, which are implicitly allowed). "
+                         "Empty (default) permits all valid JWTs — legacy behavior.",
+                    dest="sso_oidc_allowed_groups")
   parser.add_option('--ambari-admin-username', default=None,
                     help="Ambari administrator username for accessing Ambari's REST API",
                     dest="ambari_admin_username")

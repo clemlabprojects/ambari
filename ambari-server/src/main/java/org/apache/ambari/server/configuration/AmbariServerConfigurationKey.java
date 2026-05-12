@@ -122,6 +122,24 @@ public enum AmbariServerConfigurationKey {
   SSO_OIDC_GROUPS_CASE_CONVERSION(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.case.conversion", PLAINTEXT, "none", "Case-normalization applied to JWT group names.  Values: 'none', 'lower', 'upper'.  Separate from user case conversion since group conventions often differ (e.g. lowercase users, UPPERCASE groups).", false),
   SSO_OIDC_GROUPS_SYNC_ON_LOGIN(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.groups.sync.on.login", PLAINTEXT, "true", "When true (default), group memberships are refreshed from the JWT on every login (additions AND removals reflected).  When false, groups are only synced at JIT user creation; subsequent membership changes in the IdP do not propagate.", false),
 
+  /* --- OIDC JIT group-based privilege model + login gating ---
+   * AMBARI-423.  Three properties that together let an operator govern OIDC SSO using
+   * Keycloak group membership as the single source of truth, the way mature LDAP-backed
+   * deployments do today.
+   *
+   * Recommended pattern:
+   *   1. In Keycloak: create realm groups (e.g. "ambari-admins", "data-engineers")
+   *      and assign users.  Configure the OIDC client to emit them in a "groups" claim.
+   *   2. In Ambari: set admin.groups=ambari-admins, allowed.groups=ambari-admins,data-engineers,...
+   *      (and ambari.sso.oidc.groups.claim=groups, groups.auto.create=true).
+   *   3. JIT bootstrap on first matching login grants AMBARI.ADMINISTRATOR to the
+   *      "ambari-admins" group; users inherit transitively through MemberEntity.
+   *      Non-listed users are rejected at login (no DB pollution).
+   */
+  SSO_OIDC_ADMIN_USERS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.admin.users", PLAINTEXT, "", "Comma-separated list of usernames (matched against the case-converted JWT subject).  On JIT-create, these users receive AMBARI.ADMINISTRATOR directly (not via a group).  The grant fires ONLY at first create — admin retains the ability to revoke manually afterward.  Use for bootstrap (e.g. your own login before groups are wired up).", false),
+  SSO_OIDC_ADMIN_GROUPS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.admin.groups", PLAINTEXT, "", "Comma-separated list of group names.  At login, the JIT provider: (1) ensures each group exists with GroupType.JWT, (2) ensures AMBARI.ADMINISTRATOR is granted to the group (idempotent — re-asserted on every login as a security guarantee, so manual revocation requires removing the group name from this property), (3) normal group sync joins members in via the JWT 'groups' claim.  Users inherit admin transitively; revocation in Keycloak (via membership removal) propagates on next login.", false),
+  SSO_OIDC_ALLOWED_GROUPS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.allowed.groups", PLAINTEXT, "", "Comma-separated list of group names.  When NON-EMPTY, login is rejected unless either: (a) the JWT subject is listed in ambari.sso.oidc.admin.users, OR (b) the JWT 'groups' claim intersects this list or ambari.sso.oidc.admin.groups (admin groups are implicitly allowed).  Closes the 'any authenticated OIDC user can log in' risk.  When EMPTY (default), all OIDC users are allowed in (legacy behavior).  Local-password users bypass this gate — they authenticate through AmbariLocalAuthenticationProvider, not JwtAuthenticationProvider.", false),
+
   /* ********************************************************
    * Trusted Proxy Configuration Keys
    * ******************************************************** */

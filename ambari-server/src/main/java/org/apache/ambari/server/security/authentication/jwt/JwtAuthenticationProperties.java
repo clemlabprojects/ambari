@@ -21,6 +21,9 @@ import static org.apache.ambari.server.configuration.AmbariServerConfigurationKe
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_AUDIENCES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_COOKIE_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_JWT_USERNAME_CLAIM;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ADMIN_GROUPS;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ADMIN_USERS;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ALLOWED_GROUPS;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_AUTHENTICATION_ENABLED;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CALLBACK_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
@@ -143,6 +146,28 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
   /** When true, group membership is refreshed from the JWT on every login (otherwise: only at JIT user creation). */
   private boolean oidcGroupsSyncOnLogin = true;
 
+  /**
+   * AMBARI-423: explicit list of usernames who get AMBARI.ADMINISTRATOR on JIT-create.
+   * Compared against the case-converted JWT subject.  Empty list = no per-user admin bootstrap.
+   */
+  private List<String> oidcAdminUsers = Collections.emptyList();
+
+  /**
+   * AMBARI-423: explicit list of group names whose AMBARI.ADMINISTRATOR binding is policy-managed.
+   * Each login asserts: (a) group exists with GroupType.JWT, (b) it has the privilege.  Users
+   * inherit admin transitively when JWT 'groups' claim sync joins them in.  Empty list = no
+   * group-based admin bootstrap.
+   */
+  private List<String> oidcAdminGroups = Collections.emptyList();
+
+  /**
+   * AMBARI-423: optional login allow-list (group names).  When non-empty, only users whose
+   * JWT 'groups' claim intersects this list (or {@link #oidcAdminGroups}, which are implicitly
+   * allowed) — or who are listed in {@link #oidcAdminUsers} — may complete authentication.
+   * Empty = no gating (any valid JWT is admitted, the historical default).
+   */
+  private List<String> oidcAllowedGroups = Collections.emptyList();
+
   JwtAuthenticationProperties(Map<String, String> configurationMap) {
     setEnabledForAmbari(Boolean.valueOf(getValue(SSO_AUTHENTICATION_ENABLED, configurationMap)));
     setAudiencesString(getValue(SSO_JWT_AUDIENCES, configurationMap));
@@ -168,6 +193,11 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setOidcGroupsAutoCreate(Boolean.parseBoolean(getValue(SSO_OIDC_GROUPS_AUTO_CREATE, configurationMap)));
     setOidcGroupsCaseConversion(getValue(SSO_OIDC_GROUPS_CASE_CONVERSION, configurationMap));
     setOidcGroupsSyncOnLogin(Boolean.parseBoolean(getValue(SSO_OIDC_GROUPS_SYNC_ON_LOGIN, configurationMap)));
+
+    // AMBARI-423 group-based admin grant + login gating.
+    setOidcAdminUsers(getValue(SSO_OIDC_ADMIN_USERS, configurationMap));
+    setOidcAdminGroups(getValue(SSO_OIDC_ADMIN_GROUPS, configurationMap));
+    setOidcAllowedGroups(getValue(SSO_OIDC_ALLOWED_GROUPS, configurationMap));
   }
 
   public String getAuthenticationProviderUrl() {
@@ -481,6 +511,50 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
       default:
         return value;
     }
+  }
+
+  // --- AMBARI-423: group-based admin / allow-list helpers ---
+
+  public List<String> getOidcAdminUsers() {
+    return oidcAdminUsers;
+  }
+
+  public void setOidcAdminUsers(String csv) {
+    this.oidcAdminUsers = parseCommaDelimited(csv);
+  }
+
+  public List<String> getOidcAdminGroups() {
+    return oidcAdminGroups;
+  }
+
+  public void setOidcAdminGroups(String csv) {
+    this.oidcAdminGroups = parseCommaDelimited(csv);
+  }
+
+  public List<String> getOidcAllowedGroups() {
+    return oidcAllowedGroups;
+  }
+
+  public void setOidcAllowedGroups(String csv) {
+    this.oidcAllowedGroups = parseCommaDelimited(csv);
+  }
+
+  /**
+   * Parse a comma-delimited property value into a list of non-empty trimmed entries.  Tolerant
+   * of leading / trailing whitespace and stray commas — common when admins hand-edit the value.
+   */
+  static List<String> parseCommaDelimited(String csv) {
+    if (csv == null || csv.isEmpty()) {
+      return Collections.emptyList();
+    }
+    List<String> out = new ArrayList<>();
+    for (String piece : csv.split(",")) {
+      String trimmed = piece.trim();
+      if (!trimmed.isEmpty()) {
+        out.add(trimmed);
+      }
+    }
+    return out;
   }
 
   private static String normalizeCaseConversion(String mode) {

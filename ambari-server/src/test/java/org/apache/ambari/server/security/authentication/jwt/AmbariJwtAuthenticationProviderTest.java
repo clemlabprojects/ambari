@@ -104,6 +104,15 @@ public class AmbariJwtAuthenticationProviderTest {
   private JwtAuthenticationProperties jitProperties(boolean autoCreate, String caseMode,
                                                     String defaultRole, String groupsClaim,
                                                     boolean groupsAutoCreate, boolean groupsSyncOnLogin) {
+    return jitProperties(autoCreate, caseMode, defaultRole, groupsClaim, groupsAutoCreate, groupsSyncOnLogin,
+        "", "", "");
+  }
+
+  /** Full-fat overload — AMBARI-423 admin/allowed governance properties. */
+  private JwtAuthenticationProperties jitProperties(boolean autoCreate, String caseMode,
+                                                    String defaultRole, String groupsClaim,
+                                                    boolean groupsAutoCreate, boolean groupsSyncOnLogin,
+                                                    String adminUsers, String adminGroups, String allowedGroups) {
     Map<String, String> raw = new HashMap<>();
     raw.put("ambari.sso.oidc.user.auto.create", Boolean.toString(autoCreate));
     raw.put("ambari.sso.oidc.user.case.conversion", caseMode == null ? "none" : caseMode);
@@ -111,6 +120,9 @@ public class AmbariJwtAuthenticationProviderTest {
     raw.put("ambari.sso.oidc.groups.claim", groupsClaim == null ? "" : groupsClaim);
     raw.put("ambari.sso.oidc.groups.auto.create", Boolean.toString(groupsAutoCreate));
     raw.put("ambari.sso.oidc.groups.sync.on.login", Boolean.toString(groupsSyncOnLogin));
+    raw.put("ambari.sso.oidc.admin.users", adminUsers == null ? "" : adminUsers);
+    raw.put("ambari.sso.oidc.admin.groups", adminGroups == null ? "" : adminGroups);
+    raw.put("ambari.sso.oidc.allowed.groups", allowedGroups == null ? "" : allowedGroups);
     return new JwtAuthenticationProperties(raw);
   }
 
@@ -593,6 +605,205 @@ public class AmbariJwtAuthenticationProviderTest {
     assertEquals("Foo",
         JwtAuthenticationProperties.applyCaseConversion("BOGUS", "Foo")); // unrecognized → none
   }
+
+  // ============================================================================================
+  // AMBARI-423: group-based admin grant + login allow-list gating
+  // ============================================================================================
+
+  @Test
+  public void testAllowedGroups_userInListIsAdmitted() throws Exception {
+    // allowed.groups=engineering,ops; JWT subject is in 'engineering' → login proceeds normally.
+    UserEntity userEntity = userWithJwtAuth("alice");
+    expect(users.getUserEntity("alice")).andReturn(userEntity).anyTimes();
+    expect(users.getUser(userEntity)).andReturn(new org.apache.ambari.server.security.authorization.User(userEntity)).anyTimes();
+    expect(users.getUserAuthorities(userEntity)).andReturn(Collections.emptyList()).anyTimes();
+    // Engineering exists already; sync joins user (no-op since membership not modeled in MemberEntity).
+    expect(users.getGroupEntity("engineering", GroupType.JWT)).andReturn(null).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(false, "none", "", "groups", true, true, "", "", "engineering,ops")).anyTimes();
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(
+        tokenFor("alice", buildJwt("alice", Collections.singletonList("engineering"))));
+
+    assertNotNull(result);
+    assertTrue(result.isAuthenticated());
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAllowedGroups_userNotInListRejected() throws Exception {
+    // allowed.groups=engineering; JWT groups=[outsiders] → reject WITHOUT touching the DB.
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(true, "none", "", "groups", true, true, "", "", "engineering")).anyTimes();
+    // NO users.getUserEntity / createUser expectations — gate must fire BEFORE DB access.
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    try {
+      provider.authenticate(tokenFor("mallory", buildJwt("mallory", Collections.singletonList("outsiders"))));
+      fail("Expected UserNotFoundException — mallory is not in any allowed group");
+    } catch (UserNotFoundException expected) {
+      assertTrue("Error message should be the indistinguishable-from-unknown-user response",
+          expected.getMessage().contains("LDAP is configured and users are synced"));
+    }
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAllowedGroups_emptyDisablesGate_legacyBehaviorPreserved() throws Exception {
+    // allowed.groups="" (default) → gate disabled.  Any valid JWT admits.
+    UserEntity created = userWithJwtAuth("bob");
+    expect(users.getUserEntity("bob")).andReturn(null).once();
+    expect(users.createUser(eq("bob"), anyObject(), eq("bob"), eq(true))).andReturn(created).once();
+    users.addJWTAuthentication(eq(created), eq("bob"));
+    expectLastCall().once();
+    expect(users.getUserEntity("bob")).andReturn(created).anyTimes();
+    expect(users.getUser(created)).andReturn(new org.apache.ambari.server.security.authorization.User(created)).anyTimes();
+    expect(users.getUserAuthorities(created)).andReturn(Collections.emptyList()).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(true, "none", "", "", false, true, "", "", "")).anyTimes();  // allowed.groups=""
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(tokenFor("bob", buildJwt("bob", null)));
+
+    assertNotNull(result);
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAllowedGroups_adminUsersBypassGate() throws Exception {
+    // allowed.groups=engineering; JWT subject NOT in any group BUT listed in admin.users → admit.
+    UserEntity created = userWithJwtAuth("root-admin");
+    expect(users.getUserEntity("root-admin")).andReturn(null).once();
+    expect(users.createUser(eq("root-admin"), anyObject(), eq("root-admin"), eq(true))).andReturn(created).once();
+    users.addJWTAuthentication(eq(created), eq("root-admin"));
+    expectLastCall().once();
+    // admin.users grant fires at create
+    users.grantAdminPrivilege(eq(created));
+    expectLastCall().once();
+    expect(users.getUserEntity("root-admin")).andReturn(created).anyTimes();
+    expect(users.getUser(created)).andReturn(new org.apache.ambari.server.security.authorization.User(created)).anyTimes();
+    expect(users.getUserAuthorities(created)).andReturn(Collections.emptyList()).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(true, "none", "", "groups", true, true,
+            /*adminUsers=*/"root-admin", /*adminGroups=*/"", /*allowedGroups=*/"engineering")).anyTimes();
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(
+        tokenFor("root-admin", buildJwt("root-admin", Collections.<String>emptyList())));
+
+    assertNotNull(result);
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAdminGroups_bootstrapsGroupAndPrivilegeOnLogin() throws Exception {
+    // admin.groups=ambari-admins.  On any login (here: existing user, not even in the group),
+    // provider must create the group with GroupType.JWT and grant AMBARI.ADMINISTRATOR to it.
+    UserEntity userEntity = userWithJwtAuth("alice");
+    GroupEntity adminsGroup = new GroupEntity();
+    adminsGroup.setGroupId(7);
+    adminsGroup.setGroupName("ambari-admins");
+    adminsGroup.setGroupType(GroupType.JWT);
+
+    expect(users.getUserEntity("alice")).andReturn(userEntity).anyTimes();
+    expect(users.getUser(userEntity)).andReturn(new org.apache.ambari.server.security.authorization.User(userEntity)).anyTimes();
+    expect(users.getUserAuthorities(userEntity)).andReturn(Collections.emptyList()).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(false, "none", "", "groups", true, true, "", "ambari-admins", "")).anyTimes();
+
+    // Bootstrap path: getGroupEntity("ambari-admins", JWT) returns null → createGroup → grantPrivilegeToGroup
+    expect(users.getGroupEntity("ambari-admins", GroupType.JWT)).andReturn(null).once();
+    expect(users.createGroup("ambari-admins", GroupType.JWT)).andReturn(adminsGroup).once();
+    users.grantPrivilegeToGroup(eq(7), eq(1L), eq(ResourceType.AMBARI), eq("AMBARI.ADMINISTRATOR"));
+    expectLastCall().once();
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(
+        tokenFor("alice", buildJwt("alice", Collections.singletonList("unrelated"))));
+
+    assertNotNull(result);
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAdminGroups_idempotentWhenGroupAlreadyExists() throws Exception {
+    // admin.groups bootstrap re-asserts the privilege on every login, even when the group
+    // already exists.  grantPrivilegeToGroup itself is contains-checked at the Users layer,
+    // so re-calling it is safe.  This test verifies the provider tolerates the "already exists"
+    // case (no createGroup) and still re-asserts the grant.
+    UserEntity userEntity = userWithJwtAuth("alice");
+    GroupEntity adminsGroup = new GroupEntity();
+    adminsGroup.setGroupId(7);
+    adminsGroup.setGroupName("ambari-admins");
+    adminsGroup.setGroupType(GroupType.JWT);
+
+    expect(users.getUserEntity("alice")).andReturn(userEntity).anyTimes();
+    expect(users.getUser(userEntity)).andReturn(new org.apache.ambari.server.security.authorization.User(userEntity)).anyTimes();
+    expect(users.getUserAuthorities(userEntity)).andReturn(Collections.emptyList()).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(false, "none", "", "groups", true, true, "", "ambari-admins", "")).anyTimes();
+
+    // Group already exists.  getGroupEntity is called twice — once during reconcileGroupMemberships
+    // (to add alice as a member since she's in the JWT 'groups' claim) and once during
+    // bootstrapAdminGroups.  The grant is re-asserted exactly once per login.
+    expect(users.getGroupEntity("ambari-admins", GroupType.JWT)).andReturn(adminsGroup).anyTimes();
+    users.addMemberToGroup(eq(adminsGroup), eq(userEntity));
+    expectLastCall().once();
+    users.grantPrivilegeToGroup(eq(7), eq(1L), eq(ResourceType.AMBARI), eq("AMBARI.ADMINISTRATOR"));
+    expectLastCall().once();
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(
+        tokenFor("alice", buildJwt("alice", Collections.singletonList("ambari-admins"))));
+
+    assertNotNull(result);
+    verify(users, propertiesProvider);
+  }
+
+  @Test
+  public void testAdminUsers_oneShotGrantFiresOnlyAtCreate() throws Exception {
+    // Second login of the same admin.users user must NOT re-grant.
+    UserEntity existing = userWithJwtAuth("root-admin");
+    expect(users.getUserEntity("root-admin")).andReturn(existing).anyTimes();
+    expect(users.getUser(existing)).andReturn(new org.apache.ambari.server.security.authorization.User(existing)).anyTimes();
+    expect(users.getUserAuthorities(existing)).andReturn(Collections.emptyList()).anyTimes();
+    expect(propertiesProvider.get()).andReturn(
+        jitProperties(true, "none", "", "", false, true, "root-admin", "", "")).anyTimes();
+    // NO grantAdminPrivilege expectation — user already exists, so jitCreated=false, so the
+    // one-shot grant must NOT fire.  EasyMock will fail if the method is called unexpectedly.
+
+    replay(users, configuration, propertiesProvider);
+
+    provider = new AmbariJwtAuthenticationProvider(users, configuration, propertiesProvider,
+        com.google.inject.util.Providers.<Clusters>of(null));
+    Authentication result = provider.authenticate(tokenFor("root-admin", buildJwt("root-admin", null)));
+
+    assertNotNull(result);
+    verify(users, propertiesProvider);
+  }
+
+  // ============================================================================================
+  // Misc — claim-shape tolerance
+  // ============================================================================================
 
   @Test
   public void testReadStringListClaim_commaDelimited() throws Exception {
