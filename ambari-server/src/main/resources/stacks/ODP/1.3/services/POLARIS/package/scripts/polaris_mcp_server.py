@@ -53,6 +53,12 @@ class PolarisMcpServer(Script):
     env.set_params(params)
     self.configure(env)
 
+    # Verify the PEM cert/key the uvicorn process will bind to exist on disk.  Done at
+    # start (not configure) so service installation doesn't fail when the operator
+    # hasn't yet laid down the cert material.
+    from polaris import verify_mcp_tls_at_start
+    verify_mcp_tls_at_start()
+
     if str(params.polaris_mcp_transport).lower() == "stdio":
       raise Fail("POLARIS_MCP_SERVER does not support stdio transport in managed mode. Set polaris_mcp_transport to http or sse.")
 

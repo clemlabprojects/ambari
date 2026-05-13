@@ -57,6 +57,12 @@ class PolarisServer(Script):
     env.set_params(params)
     self.configure(env)
 
+    # Verify the JKS keystore/truststore exist on disk before launching the Quarkus
+    # daemon.  Done at start (not configure) so service installation doesn't fail when
+    # the operator hasn't yet laid down the cert material.
+    from polaris import verify_server_tls_at_start
+    verify_server_tls_at_start()
+
     app_cfg = "{0}/{1}".format(params.polaris_conf_dir, params.polaris_conf_file)
     logging_cfg = "{0}/logging.properties".format(params.polaris_conf_dir)
     quarkus_locations = "{0},{1}".format(app_cfg, logging_cfg)

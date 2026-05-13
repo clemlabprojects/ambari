@@ -52,6 +52,12 @@ class PolarisConsole(Script):
     env.set_params(params)
     self.configure(env)
 
+    # Verify the PEM cert/key the nginx process will bind to exist on disk.  Done at
+    # start (not configure) so service installation doesn't fail when the operator
+    # hasn't yet laid down the cert material.
+    from polaris import verify_console_tls_at_start
+    verify_console_tls_at_start()
+
     if params.polaris_console_start_command:
       no_op_test = format('test -f {polaris_console_pid_file} && ps -p `cat {polaris_console_pid_file}` >/dev/null 2>&1')
       Execute(

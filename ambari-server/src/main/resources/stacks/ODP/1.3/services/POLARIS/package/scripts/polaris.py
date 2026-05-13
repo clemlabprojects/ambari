@@ -74,20 +74,25 @@ def configure_polaris(component_type='server'):
   if component_type == 'console':
     configure_console()
 
-  setup_tools_tls()
+  # TLS cert-file existence checks intentionally moved out of configure_polaris() into the
+  # per-component verify_*_tls_at_start() functions below.  Rationale: configure_polaris()
+  # is called from BOTH install and configure actions; testing for cert files at install
+  # time fails the install if operators haven't laid the certs down yet (a common
+  # bootstrap order — Ambari installs services BEFORE the ansible cert-distribution role
+  # runs).  Cert checks now happen at start() — when the file is actually needed — so
+  # install/configure stay pure config-rendering operations.
 
   if component_type == 'server':
-    setup_server_tls()
     setup_database()
     run_admin_bootstrap()
     setup_token_broker()
 
 
-def setup_server_tls():
-  """Verify that the JKS keystore/truststore referenced by polaris-application-properties
-  exist on disk. The keystore/truststore are managed externally (by the ambari-api ansible
-  role, in line with how every other ODP service consumes /etc/security/serverKeys/*) — we
-  do not generate or rebuild them here. This keeps key material under operator control."""
+def verify_server_tls_at_start():
+  """Called from PolarisServer.start() ONLY.  Fails fast if the Quarkus JKS keystore/
+  truststore declared in polaris-application-properties is missing.  Operator is expected
+  to lay down cluster-CA-signed material via the ambari-api ansible role (or equivalent);
+  we never auto-generate, so the file simply must exist before the daemon launches."""
   import params
 
   if not params.polaris_ssl_enabled:
@@ -104,18 +109,22 @@ def setup_server_tls():
             user=params.polaris_user)
 
 
-def setup_tools_tls():
-  """Verify the PEM cert/key files used by the Python-based MCP server and the nginx-based
-  console exist on disk. These are PEM-format because nginx and uvicorn don't read JKS;
-  they're laid down by the ambari-api ansible role (typically /etc/security/serverKeys/server.{public,key}.pem)."""
+def verify_mcp_tls_at_start():
+  """Called from PolarisMcpServer.start() ONLY.  Verifies the PEM cert/key the Python
+  uvicorn process will bind to.  Skipped silently when polaris_mcp_tls_enabled is false."""
   import params
-
   _setup_pem_tls(
     enabled=params.polaris_mcp_tls_enabled,
     cert_file=params.polaris_mcp_tls_cert_file,
     key_file=params.polaris_mcp_tls_key_file,
     label="Polaris MCP"
   )
+
+
+def verify_console_tls_at_start():
+  """Called from PolarisConsole.start() ONLY.  Verifies the PEM cert/key the nginx process
+  will bind to.  Skipped silently when polaris_console_tls_enabled is false."""
+  import params
   _setup_pem_tls(
     enabled=params.polaris_console_tls_enabled,
     cert_file=params.polaris_console_tls_cert_file,
