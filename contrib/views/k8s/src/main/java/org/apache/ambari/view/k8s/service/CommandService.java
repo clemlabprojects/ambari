@@ -171,7 +171,34 @@ public class CommandService {
         // Dispatcher registry (can be extended later)
         this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), fluxGitOpsBackend);
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
+        recoverOrphanedCommands();
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
+    }
+
+    /**
+     * On startup, any command whose status is still RUNNING was orphaned by a JVM crash or restart.
+     * Mark them FAILED so the UI stops polling and the user can retry.
+     */
+    private void recoverOrphanedCommands() {
+        try {
+            String now = java.time.Instant.now().toString();
+            Collection<CommandStatusEntity> all = dataStore.findAll(CommandStatusEntity.class, null);
+            int recovered = 0;
+            for (CommandStatusEntity st : all) {
+                if (CommandState.RUNNING.name().equals(st.getState())) {
+                    st.setState(CommandState.FAILED.name());
+                    st.setMessage("Operation interrupted by server restart.");
+                    st.setUpdatedAt(now);
+                    dataStore.store(st);
+                    recovered++;
+                }
+            }
+            if (recovered > 0) {
+                LOG.warn("Marked {} orphaned RUNNING command(s) as FAILED after restart.", recovered);
+            }
+        } catch (Exception e) {
+            LOG.warn("Orphan recovery failed (non-fatal): {}", e.toString());
+        }
     }
 
     /**
@@ -905,7 +932,6 @@ public class CommandService {
                 result = result.replace("{{" + e.getKey() + "}}", e.getValue() != null ? e.getValue() : "");
             }
         }
-        validateOidcClientId(result);
         return result;
     }
 
@@ -919,6 +945,20 @@ public class CommandService {
                                                                    Map<String, Object> params) {
         Map<String, String> resolved = new LinkedHashMap<>();
         if (variables == null || variables.isEmpty() || params == null) return resolved;
+
+        // Chart values are stored in a file (valuesPath) rather than inline in params.
+        // Load them once so form fields like ingress.host can be resolved.
+        Map<String, Object> chartValues = null;
+        String valuesPath = resolveStringValue(params.get("valuesPath"), null);
+        if (valuesPath != null) {
+            try {
+                String json = java.nio.file.Files.readString(java.nio.file.Paths.get(valuesPath));
+                chartValues = gson.fromJson(json, new com.google.gson.reflect.TypeToken<Map<String, Object>>(){}.getType());
+            } catch (Exception ex) {
+                LOG.warn("resolveServiceVariablesFromParams: could not load chart values from {}: {}", valuesPath, ex.toString());
+            }
+        }
+
         for (Map<String, Object> variable : variables) {
             String name = resolveStringValue(variable.get("name"), null);
             if (name == null || name.isBlank()) continue;
@@ -927,8 +967,27 @@ public class CommandService {
             String type  = resolveStringValue(from.get("type"), "");
             String field = resolveStringValue(from.get("field"), null);
             if ("form".equals(type) && field != null) {
+                // 1. Try params directly (flat or nested)
                 Object value = getByPath(params, field);
-                if (value == null) value = params.get(field);  // flat-key fallback
+                if (value == null) value = params.get(field);
+                // 2. Fall back to chart values file (covers excludeFromValues fields resolved via bindings)
+                if (value == null && chartValues != null) {
+                    value = getByPath(chartValues, field);
+                    if (value == null) value = chartValues.get(field);
+                }
+                // 3. For X.host fields excluded from values, bindings write to X.hosts[0].host instead.
+                if (value == null && chartValues != null && field.endsWith(".host") && !field.contains("tls")) {
+                    String hostsField = field.substring(0, field.length() - 5) + ".hosts";
+                    Object hostsList = getByPath(chartValues, hostsField);
+                    if (hostsList == null) hostsList = chartValues.get(hostsField);
+                    if (hostsList instanceof List && !((List<?>) hostsList).isEmpty()) {
+                        Object first = ((List<?>) hostsList).get(0);
+                        if (first instanceof Map) {
+                            Object host = ((Map<?, ?>) first).get("host");
+                            if (host != null) value = host;
+                        }
+                    }
+                }
                 if (value != null) {
                     resolved.put(name, String.valueOf(value));
                 }
@@ -3615,6 +3674,18 @@ public class CommandService {
                             || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
 
                     Map<String, Object> extraOidcParams = new LinkedHashMap<>();
+                    // Forward client flow flags declared in service.json oidc[] entry.
+                    // Defaults match the historical KeycloakAdminClient behavior
+                    // (publicClient=false, standardFlowEnabled=true, implicitFlowEnabled=false).
+                    extraOidcParams.put("publicClient",
+                            Boolean.TRUE.equals(entry.get("publicClient"))
+                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("publicClient"))));
+                    Object stdFlowEntry = entry.get("standardFlowEnabled");
+                    extraOidcParams.put("standardFlowEnabled",
+                            stdFlowEntry == null || Boolean.parseBoolean(String.valueOf(stdFlowEntry)));
+                    extraOidcParams.put("implicitFlowEnabled",
+                            Boolean.TRUE.equals(entry.get("implicitFlowEnabled"))
+                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("implicitFlowEnabled"))));
                     String providerSecretName = null;
                     if (gitlabOmniauth) {
                         providerSecretName = request.getReleaseName() + "-omniauth-provider";
@@ -3640,9 +3711,13 @@ public class CommandService {
                         String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
                         String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
                         String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
+                        validateOidcClientId(clientId);
                         Map<String, String> oidcExtraVars = resolveServiceVariablesFromParams(
                                 oidcServiceDef != null ? oidcServiceDef.variables : null, params);
                         String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
+                        if (redirectUri.contains("{{")) {
+                            LOG.warn("OIDC redirectUri still contains unresolved tokens after variable substitution: {}", redirectUri);
+                        }
                         appendOidcRegistrationSteps(rootCommand, childCommands, params,
                                 clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
                     }
@@ -4304,7 +4379,7 @@ public class CommandService {
                     if (!crdExists) {
                         LOG.info("CRD: {} does not exist, proceeding with installation", crd);
                         LOG.info("Processing CRD resource path: {} for release: {} in namespace: {} ", crdResourcePath, releaseName, releaseNamespace);
-                        String workingDirectory = this.kubernetesService.getConfigurationService().getViewResourcePath();
+                        String workingDirectory = this.kubernetesService.getConfigurationService().getExtractDir();
                         this.kubernetesService.applyYaml(workingDirectory + "/" + crdResourcePath, releaseName, releaseNamespace);
                     } else {
                         LOG.info("CRD: {} already exists, skipping installation", crd);
@@ -5403,6 +5478,8 @@ public class CommandService {
                     boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
                     Object stdFlowObj      = childParams.get("standardFlowEnabled");
                     boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
+                    Object implFlowObj     = childParams.get("implicitFlowEnabled");
+                    boolean implFlow       = Boolean.parseBoolean(String.valueOf(implFlowObj));
 
                     validateOidcClientId(desiredClientId);
 
@@ -5416,7 +5493,7 @@ public class CommandService {
                             + "' in realm '" + oidcRealm + "'");
 
                     var oidcResult = keycloakClient.registerClient(
-                            desiredClientId, redirectUri, publicClient, stdFlow, !publicClient);
+                            desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient);
 
                     String issuerUrl = resolveOidcIssuerUrl(ambariCli, clstr);
                     if (issuerUrl == null || issuerUrl.isBlank()) {

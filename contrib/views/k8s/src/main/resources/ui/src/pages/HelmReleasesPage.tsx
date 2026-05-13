@@ -376,6 +376,7 @@ const HelmReleasesPage: React.FC = () => {
                 repoId: record.repoId,
                 deploymentMode: record.deploymentMode,
                 git: gitOptionsForRelease(record),
+                securityProfile: record.securityProfile,
               },
             });
           }

@@ -40,7 +40,9 @@ public class PathConfig {
      *            {@code k8s.view.helm.repositoriesConfig}, and {@code k8s.view.helm.registryConfig} properties
      */
     public PathConfig(ViewContext ctx) {
-        String workingDirectory = getProperty(ctx, "k8s.view.working.dir", "/var/lib/ambari/views/work/K8S-VIEW{3}");
+        // Delegate to ViewConfigurationService so there is a single source of truth for the
+        // work directory default (stable path outside the Ambari ViewExtractor work tree).
+        String workingDirectory = new ViewConfigurationService(ctx).getConfigurationDirectoryPath();
         String repositoriesPath = getProperty(ctx, "k8s.view.helm.repositoriesConfig", "");
         String registryPath = getProperty(ctx, "k8s.view.helm.registryConfig", "");
 

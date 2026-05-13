@@ -197,6 +197,12 @@ public class ConfigurationBootstrapService {
             oidcCfg.scopes = "openid email profile";
             oidcCfg.userClaim = "preferred_username";
             oidcCfg.groupsClaim = "groups";
+            try {
+                String principalDomain = ambariClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_principal_domain");
+                if (principalDomain != null && !principalDomain.isBlank()) {
+                    oidcCfg.principalDomain = principalDomain.trim();
+                }
+            } catch (Exception ignored) {}
             profileCfg.oidc = oidcCfg;
 
             String profileKey = "keycloak";

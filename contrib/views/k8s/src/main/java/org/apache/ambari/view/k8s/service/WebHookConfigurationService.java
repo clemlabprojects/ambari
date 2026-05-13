@@ -773,7 +773,7 @@ public class WebHookConfigurationService {
         if (configured != null && !configured.isBlank()) {
             return Paths.get(configured);
         }
-        String base = configurationService.getViewResourcePath();
+        String base = configurationService.getConfigurationDirectoryPath();
         return Paths.get(base, "ca");
     }
 

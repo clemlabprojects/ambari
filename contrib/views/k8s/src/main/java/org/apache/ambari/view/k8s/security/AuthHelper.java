@@ -107,12 +107,26 @@ public class AuthHelper {
      * @throws ForbiddenException if the user does not hold write permission
      */
     public void checkWritePermission() {
-        LOG.info("Performing write permission check for user '{}'", viewContext.getUsername());
-        if (isUserInList("view.admin.users") || isUserInList("view.operator.users")) {
-            LOG.info("Write permission GRANTED for user '{}' based on instance properties.", viewContext.getUsername());
-            return;
+        String username = viewContext.getUsername();
+        LOG.info("Performing write permission check for user '{}'", username);
+
+        String adminListRaw    = viewContext.getProperties().get("view.admin.users");
+        String operatorListRaw = viewContext.getProperties().get("view.operator.users");
+        boolean listsConfigured = (adminListRaw    != null && !adminListRaw.trim().isEmpty())
+                               || (operatorListRaw != null && !operatorListRaw.trim().isEmpty());
+
+        if (listsConfigured) {
+            if (isUserInList("view.admin.users") || isUserInList("view.operator.users")) {
+                LOG.info("Write permission GRANTED for user '{}' via view.admin.users / view.operator.users.", username);
+                return;
+            }
+            LOG.warn("Write permission DENIED for user '{}'. User not in admin or operator list.", username);
+            throw new ForbiddenException("L'utilisateur n'a pas les droits pour effectuer des actions d'écriture.");
         }
-        LOG.warn("Write permission DENIED for user '{}'. User not in admin or operator list.", viewContext.getUsername());
-        throw new ForbiddenException("L'utilisateur n'a pas les droits pour effectuer des actions d'écriture.");
+
+        // Neither list configured: fall back to Ambari view ACL.
+        // The view instance is already restricted to CLUSTER.ADMINISTRATOR and above,
+        // so any authenticated view user is implicitly an operator.
+        LOG.info("view.admin.users / view.operator.users not configured — write permission GRANTED for user '{}' via Ambari view ACL.", username);
     }
 }

@@ -116,6 +116,7 @@ public class KeycloakAdminClient {
      * @param redirectUri              redirect URI (may be null/blank to omit)
      * @param publicClient             whether this is a public (no-secret) client
      * @param standardFlowEnabled      whether Authorization Code flow is enabled
+     * @param implicitFlowEnabled      whether Implicit flow (response_type=id_token/token) is enabled
      * @param serviceAccountsEnabled   whether service-account (client-credentials) flow is enabled
      * @return OidcClientResult with resolved clientId, clientSecret, and issuerUrl
      */
@@ -123,6 +124,7 @@ public class KeycloakAdminClient {
                                            String redirectUri,
                                            boolean publicClient,
                                            boolean standardFlowEnabled,
+                                           boolean implicitFlowEnabled,
                                            boolean serviceAccountsEnabled) throws Exception {
         String token = obtainAdminToken();
 
@@ -130,7 +132,7 @@ public class KeycloakAdminClient {
         String existingUuid = findClientUuid(token, desiredClientId);
 
         Map<String, Object> clientRep = buildClientRepresentation(
-                desiredClientId, redirectUri, publicClient, standardFlowEnabled, serviceAccountsEnabled);
+                desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled, serviceAccountsEnabled);
 
         if (existingUuid != null) {
             LOG.info("KeycloakAdminClient: client '{}' already exists (uuid={}), updating", desiredClientId, existingUuid);
@@ -307,13 +309,14 @@ public class KeycloakAdminClient {
                                                            String redirectUri,
                                                            boolean publicClient,
                                                            boolean standardFlowEnabled,
+                                                           boolean implicitFlowEnabled,
                                                            boolean serviceAccountsEnabled) {
         java.util.LinkedHashMap<String, Object> rep = new java.util.LinkedHashMap<>();
         rep.put("clientId", id);
         rep.put("enabled", true);
         rep.put("publicClient", publicClient);
         rep.put("standardFlowEnabled", standardFlowEnabled);
-        rep.put("implicitFlowEnabled", false);
+        rep.put("implicitFlowEnabled", implicitFlowEnabled);
         rep.put("directAccessGrantsEnabled", false);
         rep.put("serviceAccountsEnabled", serviceAccountsEnabled);
         rep.put("protocol", "openid-connect");

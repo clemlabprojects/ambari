@@ -126,7 +126,8 @@ public class CommandUtils {
             "AMBARI_OIDC_ISSUER_URL",       new AmbariConfigRef("oidc-env", "oidc_issuer_url"),
             "AMBARI_OIDC_REALM",            new AmbariConfigRef("oidc-env", "oidc_realm"),
             "AMBARI_OIDC_ADMIN_URL",        new AmbariConfigRef("oidc-env", "oidc_admin_url"),
-            "AMBARI_OIDC_VERIFY_TLS",       new AmbariConfigRef("oidc-env", "oidc_verify_tls")
+            "AMBARI_OIDC_VERIFY_TLS",       new AmbariConfigRef("oidc-env", "oidc_verify_tls"),
+            "AMBARI_OIDC_PRINCIPAL_DOMAIN", new AmbariConfigRef("oidc-env", "oidc_principal_domain")
     );
 
     public static final class AmbariConfigRef {

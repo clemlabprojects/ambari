@@ -719,8 +719,10 @@ public class ConfigResolutionService {
      *   <li><b>key</b>   — Helm values path (e.g. {@code "backend.krbRealm"})</li>
      *   <li><b>value</b> — The resolved value to inject</li>
      * </ul>
-     * Each valid entry will be copied into {@code overrideProperties}, overriding any
-     * existing value for the same key.
+     * Dynamic values act as <em>defaults</em>: an entry is only copied into
+     * {@code overrideProperties} when that path is not already set (or is set to an empty
+     * value). Anything the operator explicitly entered in the install form therefore wins
+     * over the cluster-wide Ambari value.
      *
      * @param childParams        The params attached to the command (may be {@code null}).
      * @param overrideProperties The map of Helm overrides to mutate (must not be {@code null}).
@@ -748,6 +750,11 @@ public class ConfigResolutionService {
             }
             if (value == null || value.isEmpty()) {
                 continue; // skip empty value
+            }
+            String existing = overrideProperties.get(helmPath);
+            if (existing != null && !existing.trim().isEmpty()) {
+                // Form/operator-supplied value already present — do not overwrite.
+                continue;
             }
             overrideProperties.put(helmPath, value);
         }

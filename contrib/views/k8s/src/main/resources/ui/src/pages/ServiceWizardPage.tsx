@@ -203,6 +203,61 @@ const ServiceWizardPage: React.FC = () => {
     load();
   }, [serviceName]);
 
+  // Pre-fill form fields that declare "defaultFromProfile" using the selected Security Profile.
+  // Walks the form schema looking for fields with a `defaultFromProfile` path (dotted, looked up
+  // inside the selected profile's SecurityConfigDTO, e.g. "oidc.principalDomain"). The value is
+  // applied only when the form field is currently empty/undefined, so explicit user input is
+  // preserved and switching profiles is non-destructive.
+  useEffect(() => {
+    if (!def || !installValues) return;
+    const profileName = (installValues as any)?.securityProfile;
+    if (!profileName) return;
+    const profile = (securityProfiles?.profiles as any)?.[profileName];
+    if (!profile) return;
+
+    const getByPath = (obj: any, path: string): any => {
+      if (!obj || !path) return undefined;
+      return path.split('.').reduce<any>((acc, p) => (acc == null ? undefined : acc[p]), obj);
+    };
+
+    const collectProfileBackfills = (fields: any[], out: Array<[string[], any]>) => {
+      fields.forEach(f => {
+        if (f?.type === 'group' && Array.isArray(f.fields)) {
+          collectProfileBackfills(f.fields, out);
+          return;
+        }
+        const pPath = (f as any)?.defaultFromProfile;
+        if (!pPath || typeof pPath !== 'string') return;
+        const v = getByPath(profile, pPath);
+        if (v === undefined || v === null || v === '') return;
+        const parts = String(f.name).replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+        out.push([parts, v]);
+      });
+    };
+    const backfills: Array<[string[], any]> = [];
+    if (Array.isArray((def as any)?.form)) collectProfileBackfills((def as any).form, backfills);
+    if (backfills.length === 0) return;
+
+    setInstallValues((prev: any) => {
+      const next = JSON.parse(JSON.stringify(prev || {}));
+      let mutated = false;
+      backfills.forEach(([parts, value]) => {
+        let cur = next;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+          cur = cur[parts[i]];
+        }
+        const leaf = parts[parts.length - 1];
+        const existing = cur[leaf];
+        if (existing === undefined || existing === null || existing === '') {
+          cur[leaf] = value;
+          mutated = true;
+        }
+      });
+      return mutated ? next : prev;
+    });
+  }, [def, securityProfiles, (installValues as any)?.securityProfile]);
+
   // When launched in upgrade mode, pre-load current values from the existing release
   useEffect(() => {
     if (!isUpgrade || !upgradeState || !upgradeState.releaseName || !upgradeState.namespace) return;

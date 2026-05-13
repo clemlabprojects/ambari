@@ -64,6 +64,7 @@
     { "name": "oidc.redirectUri", "displayName": "Redirect URI", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.redirectUri" },
     { "name": "oidc.userClaim", "displayName": "User Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.userClaim" },
     { "name": "oidc.groupsClaim", "displayName": "Groups Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.groupsClaim" },
+    { "name": "oidc.principalDomain", "displayName": "Principal Email Domain", "description": "Email domain your IdP issues for human users (e.g. dev21.hadoop.clemlab.com). Used by KDPS services such as OpenMetadata to bootstrap admin user records with matching emails. Pre-filled from cluster OIDC config (oidc-env/oidc_principal_domain) when this profile is first auto-created — existing profiles will not be updated automatically.", "type": "string", "modes": ["oidc"] },
     { "name": "oidc.skipTlsVerify", "displayName": "Skip TLS Verify", "type": "boolean", "default": false, "modes": ["oidc"], "helmPath": "global.security.auth.oidc.skipTlsVerify" },
     { "name": "oidc.caSecret", "displayName": "CA Secret", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.caSecret" },
 

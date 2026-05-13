@@ -33,4 +33,11 @@ public class OidcConfig {
     public String groupsClaim;
     public Boolean skipTlsVerify;
     public String caSecret;
+    /**
+     * Email domain the IdP issues for human users (e.g. "dev21.hadoop.clemlab.com").
+     * Bootstrapped from {@code oidc-env/oidc_principal_domain}. Consumed by services
+     * (e.g. OpenMetadata) that need to bootstrap admin user records with matching
+     * email addresses to avoid "Account already exists" on first OIDC login.
+     */
+    public String principalDomain;
 }

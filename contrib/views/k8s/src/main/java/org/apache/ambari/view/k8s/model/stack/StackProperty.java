@@ -18,19 +18,24 @@
 
 package org.apache.ambari.view.k8s.model.stack;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class StackProperty {
-    public String name;          // "SUPERSET_SECRET_KEY"
+    public String name;
     public String displayName;
     public String description;
 
     // Types: "string", "int", "boolean", "password", "content"
     public String type = "string";
 
-    public Object value;         // Default value
+    @JsonAlias("default")
+    public Object value;
 
     // If set, the service reads the content of this file from classpath relative to config
     public String valueSourceFile;
 
     public boolean required = false;
-    public String language;      // For editor: "python", "xml", "ini"
+    public String language;
 }

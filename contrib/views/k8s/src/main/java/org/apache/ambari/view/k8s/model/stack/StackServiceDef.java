@@ -63,6 +63,8 @@ public class StackServiceDef {
      *   vaultPath         – optional Vault KV path; when set credentials are also written to Vault
      *   publicClient      – boolean, default false
      *   standardFlowEnabled – boolean, default true
+     *   implicitFlowEnabled – boolean, default false (set true for clients whose frontend
+     *                         uses response_type=id_token, e.g. OpenMetadata custom-oidc)
      *   enabled           – boolean, default true
      */
     public List<Map<String, Object>> oidc;

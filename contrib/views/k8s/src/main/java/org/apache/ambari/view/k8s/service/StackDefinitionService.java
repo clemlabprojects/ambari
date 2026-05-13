@@ -28,9 +28,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 
 public class StackDefinitionService {
@@ -38,24 +35,9 @@ public class StackDefinitionService {
     private final ObjectMapper mapper = new ObjectMapper();
     private static final String BASE_PATH = "KDPS/services";
 
-    private final String resourceRoot;
+    public StackDefinitionService() {}
 
-    public StackDefinitionService() {
-        this.resourceRoot = null;
-    }
-
-    public StackDefinitionService(org.apache.ambari.view.ViewContext ctx) {
-        String root = null;
-        try {
-            if (ctx != null) {
-                ViewConfigurationService cfg = new ViewConfigurationService(ctx);
-                root = cfg.getViewResourcePath();
-            }
-        } catch (Exception e) {
-            LOG.warn("Unable to resolve view resource path for KDPS lookup: {}", e.toString());
-        }
-        this.resourceRoot = root;
-    }
+    public StackDefinitionService(org.apache.ambari.view.ViewContext ctx) {}
 
     // simple caches
     private final Map<String, StackServiceDef> serviceCache = new java.util.concurrent.ConcurrentHashMap<>();
@@ -91,23 +73,17 @@ public class StackDefinitionService {
             return discoveredServices;
         }
         List<String> names = new ArrayList<>();
-
-        // 1) If view is exploded on disk, list from resourceRoot/KDPS/services
-        LOG.info("Resource root for KDPS service discovery: {}", resourceRoot);
-        Path dir = Paths.get(resourceRoot, "KDPS", "services");
-        LOG.info("Looking for KDPS services in {}", dir.toString());
-        if (Files.isDirectory(dir)) {
-            try (var stream = Files.list(dir)) {
-                stream.filter(Files::isDirectory)
-                        .map(path -> path.getFileName().toString())
-                        .sorted()
-                        .forEach(names::add);
-                if (!names.isEmpty()) return names;
-            } catch (Exception e) {
-                LOG.warn("Failed listing KDPS/services from {}: {}", dir, e.toString());
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("KDPS/services/catalog.json")) {
+            if (is == null) {
+                LOG.warn("KDPS catalog not found in classpath (KDPS/services/catalog.json) — no services available.");
+            } else {
+                String[] arr = mapper.readValue(is, String[].class);
+                names = new ArrayList<>(Arrays.asList(arr));
+                LOG.info("Discovered {} KDPS services: {}", names.size(), names);
             }
+        } catch (Exception e) {
+            LOG.warn("Failed reading KDPS/services/catalog.json: {}", e.toString());
         }
-
         discoveredServices = names;
         return names;
     }

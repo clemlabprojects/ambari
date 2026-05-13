@@ -290,31 +290,24 @@ public class ViewConfigurationService {
     }
     
     /**
-     * Returns the resource path for this view instance.
-     * Falls back to a version-derived default when the {@code k8s.view.resource.path} property is not set.
-     *
-     * @return the absolute path to the view's resource directory
+     * Returns the directory where Ambari's ViewExtractor unpacked this JAR.
+     * Used for read-only bundled assets (CRD YAMLs, etc.) that are refreshed on every upgrade.
+     * This path is NOT configurable — it is always derived from the view name and version.
      */
-    public String getViewResourcePath(){
-        LOG.debug("Reading View Resource Path...");
-        String resourcePath = viewContext.getProperties().get("k8s.view.resource.path");
-
-        if (resourcePath == null || resourcePath.trim().isEmpty()) {
-            resourcePath = defaultWorkDir();
-            LOG.warn("View resource path property 'k8s.view.resource.path' is not set. Using default for this view version: {}", resourcePath);
-        } else {
-            LOG.info("Using configured view resource path: {}", resourcePath);
-        }
-
-        return resourcePath;
+    public String getExtractDir() {
+        String name    = viewContext.getViewDefinition().getViewName();
+        String version = viewContext.getViewDefinition().getVersion();
+        return "/var/lib/ambari-server/resources/views/work/" + name + "{" + version + "}";
     }
 
     /**
-     * Build the default work/resource directory based on the current view version.
+     * Persistent data directory — survives JAR upgrades and Ambari restarts.
+     * Configurable via the {@code k8s.view.working.dir} view instance property.
+     * Default: {@code /var/lib/ambari-server/resources/views/k8s-view-data/<instanceName>}
      */
     private String defaultWorkDir() {
-        String version = viewContext.getViewDefinition() != null ? viewContext.getViewDefinition().getVersion() : "1.0.0.5";
-        return "/var/lib/ambari-server/resources/views/work/K8S-VIEW{" + version + "}";
+        String instanceName = viewContext.getInstanceName() != null ? viewContext.getInstanceName() : "default";
+        return "/var/lib/ambari-server/resources/views/k8s-view-data/" + instanceName;
     }
 
     // helper methods in order to cache values.yml file
