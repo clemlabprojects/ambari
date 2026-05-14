@@ -641,6 +641,74 @@ class Kudu(Script):
         else:
             self._run_follower_add(params)
 
+    def _on_disk_voter_addresses(self, params):
+        """Parse the sys-catalog consensus-meta protobuf and return the list
+        of master addresses currently registered as Raft voters. Empty list
+        if the file doesn't exist or can't be parsed.
+
+        Used at start time to derive a --master_addresses override that
+        matches the current on-disk Raft config and never violates Kudu's
+        'differ by more than one address' check."""
+        wal_dirs = self._split_dirs(params.master_wal_dir)
+        if not wal_dirs:
+            return []
+        consensus_path = os.path.join(wal_dirs[0], 'consensus-meta', SYS_CATALOG_TABLET_ID)
+        if not self._has_local_sys_catalog(params):
+            return []
+        rc, out, _ = self._run_kudu_cli(params, ['pbc', 'dump', consensus_path], check=False)
+        if rc != 0 or not out:
+            return []
+        # The pbc dump may include both `committed_config` and (during an
+        # in-flight Raft reconfig) `pending_config`, each listing the same
+        # peers. Dedupe by host:port while preserving first-seen order so the
+        # generated --master_addresses is deterministic.
+        addresses = []
+        seen = set()
+        current_host = None
+        current_port = None
+        in_addr_block = False
+        for raw in out.splitlines():
+            line = raw.strip()
+            if 'last_known_addr' in line and line.endswith('{'):
+                in_addr_block = True
+                current_host = None
+                current_port = None
+                continue
+            if in_addr_block:
+                if line == '}':
+                    if current_host and current_port:
+                        key = '{0}:{1}'.format(current_host, current_port)
+                        if key not in seen:
+                            seen.add(key)
+                            addresses.append(key)
+                    in_addr_block = False
+                elif line.startswith('host:'):
+                    if '"' in line:
+                        current_host = line.split('"')[1]
+                elif line.startswith('port:'):
+                    token = line.split(':', 1)[1].strip()
+                    try:
+                        current_port = int(token)
+                    except ValueError:
+                        current_port = None
+        return addresses
+
+    def _runtime_master_addresses(self, params):
+        """Return the --master_addresses value to use at daemon start time.
+
+        During multi-master bootstrap (or rolling expansion), the persistent
+        master.gflagfile lists the full target master set, but the on-disk
+        Raft config may still be in the process of growing toward that target
+        via incremental `kudu master add`. Kudu refuses to start when those
+        two sets differ by more than one address. Deriving the runtime flag
+        from the on-disk voter set keeps us within that rule on every start;
+        as Raft catches up, the override eventually matches the gflag and
+        becomes a no-op."""
+        on_disk = self._on_disk_voter_addresses(params)
+        if on_disk:
+            return ','.join(on_disk)
+        return params.master_addresses
+
     def start_kudu(self, role):
         import params
         meta = self._component_meta(role, params)
@@ -650,6 +718,20 @@ class Kudu(Script):
             self._ensure_master_onboarded(params)
 
         runtime_env = self._runtime_env(params)
+
+        if role == 'master':
+            runtime_addresses = self._runtime_master_addresses(params)
+            if runtime_addresses and runtime_addresses != (params.master_addresses or ''):
+                existing = runtime_env.get('KUDU_MASTER_FLAGS', '')
+                override = '--master_addresses={0}'.format(runtime_addresses)
+                runtime_env['KUDU_MASTER_FLAGS'] = ((existing + ' ' if existing else '') + override).strip()
+                Logger.info(
+                    "KUDU master {0}: persistent gflag --master_addresses=[{1}] but on-disk "
+                    "Raft voters=[{2}]; applying runtime override to satisfy Kudu's "
+                    "'differ by at most one address' start check."
+                    .format(params.hostname, params.master_addresses, runtime_addresses)
+                )
+
         command = '{0} start {1}'.format(meta['binary'], meta['role_arg'])
         Execute(command, user=params.kudu_user, environment=runtime_env, logoutput=True)
 
