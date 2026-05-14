@@ -21,16 +21,6 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>master_addresses</name>
-    <value></value>
-    <description>Comma-separated Kudu master host:port list. If empty, Ambari will auto-generate from KUDU_MASTER hosts.</description>
-    <value-attributes>
-      <type>string</type>
-      <empty-value-valid>true</empty-value-valid>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>fs_wal_dir</name>
     <value>/var/lib/kudu/master</value>
     <description>WAL directory for Kudu master.</description>
@@ -49,6 +39,38 @@
     <value-attributes>
       <type>string</type>
       <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>bootstrap_leader_override</name>
+    <value></value>
+    <description>Optional override for the multi-master bootstrap leader (FQDN). If empty, the lexicographically smallest KUDU_MASTER FQDN is elected. Only consulted when the local sys-catalog tablet is missing AND --master_addresses lists more than one master.</description>
+    <value-attributes>
+      <type>string</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>bootstrap_timeout_seconds</name>
+    <value>180</value>
+    <description>Max seconds the bootstrap leader waits for its single-master daemon to persist the sys-catalog tablet metadata to disk. The Python wrapper sets --flush_threshold_secs=10 on the bootstrap daemon so this normally completes within ~15s; the larger budget here is a safety margin for slow disks.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>30</minimum>
+      <maximum>3600</maximum>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>follower_wait_timeout_seconds</name>
+    <value>120</value>
+    <description>Max seconds a follower master waits for all lexicographically-preceding masters to appear as voters in the Raft quorum before giving up. Ambari dispatches the START command to all KUDU_MASTER hosts in parallel; with the bootstrap-leader needing ~15-30s and each subsequent follower-add ~10-30s, 120s is comfortably more than the normal worst case. If the leader hasn't come up in this window it almost certainly never will, so failing fast surfaces the real problem instead of holding the operation open for minutes.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>30</minimum>
+      <maximum>7200</maximum>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>

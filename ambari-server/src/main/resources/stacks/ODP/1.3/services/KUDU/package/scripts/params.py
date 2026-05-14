@@ -79,17 +79,23 @@ master_webserver_port = default('/configurations/kudu-master-env/webserver_port'
 master_wal_dir = default('/configurations/kudu-master-env/fs_wal_dir', '/var/lib/kudu/master')
 master_data_dirs = default('/configurations/kudu-master-env/fs_data_dirs', '/var/lib/kudu/master')
 master_additional_flags = default('/configurations/kudu-master-env/master_additional_flags', '')
+bootstrap_leader_override = default('/configurations/kudu-master-env/bootstrap_leader_override', '') or ''
+bootstrap_leader_override = bootstrap_leader_override.strip()
+bootstrap_timeout_seconds = int(default('/configurations/kudu-master-env/bootstrap_timeout_seconds', 180))
+follower_wait_timeout_seconds = int(default('/configurations/kudu-master-env/follower_wait_timeout_seconds', 120))
 
 master_rpc_port = _extract_port(master_rpc_bind_addresses, '7051')
-recommended_master_addresses = ','.join(
+
+# `master_addresses` is computed at runtime from the live blueprint
+# (`/clusterHostInfo/kudu_master_hosts`) like ZooKeeper's `zookeeper_hosts`.
+# There is intentionally no `kudu-master-env/master_addresses` config property:
+# any explicit override would go stale the moment a KUDU_MASTER component is
+# added or removed in Ambari, causing the rendered gflagfile to diverge from
+# the on-disk Raft config and refusing to start with "on-disk master list has
+# more entries than provided master list".
+master_addresses = ','.join(
     ['{0}:{1}'.format(host, master_rpc_port) for host in kudu_master_hosts]
 )
-
-master_addresses = default('/configurations/kudu-master-env/master_addresses', '')
-if master_addresses:
-    master_addresses = master_addresses.strip()
-if not master_addresses:
-    master_addresses = recommended_master_addresses
 
 
 tserver_rpc_bind_addresses = default('/configurations/kudu-tserver-env/rpc_bind_addresses', '0.0.0.0:7050')
@@ -99,11 +105,10 @@ tserver_wal_dir = default('/configurations/kudu-tserver-env/fs_wal_dir', '/var/l
 tserver_data_dirs = default('/configurations/kudu-tserver-env/fs_data_dirs', '/var/lib/kudu/tserver')
 tserver_additional_flags = default('/configurations/kudu-tserver-env/tserver_additional_flags', '')
 
-tserver_master_addrs = default('/configurations/kudu-tserver-env/tserver_master_addrs', '')
-if tserver_master_addrs:
-    tserver_master_addrs = tserver_master_addrs.strip()
-if not tserver_master_addrs:
-    tserver_master_addrs = master_addresses
+# Tablet servers discover masters via the same dynamically-computed list;
+# no `kudu-tserver-env/tserver_master_addrs` property for the same staleness
+# reason described above for master_addresses.
+tserver_master_addrs = master_addresses
 
 
 kudu_master_bin = '/usr/odp/current/kudu-master/bin/kudu.sh'

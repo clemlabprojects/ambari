@@ -21,16 +21,6 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
-    <name>tserver_master_addrs</name>
-    <value></value>
-    <description>Comma-separated Kudu master host:port list for tablet servers. If empty, Ambari will auto-generate from KUDU_MASTER hosts.</description>
-    <value-attributes>
-      <type>string</type>
-      <empty-value-valid>true</empty-value-valid>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-  <property>
     <name>fs_wal_dir</name>
     <value>/var/lib/kudu/tserver</value>
     <description>WAL directory for Kudu tablet server.</description>
