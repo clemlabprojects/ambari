@@ -21,11 +21,18 @@ export interface K8sDiscoveryFormField extends FormFieldBase {
     type: 'k8s-discovery';
     lookupLabel: string;
 }
+export interface SecretDiscoveryFormField extends FormFieldBase {
+    // Lookup driven by Kubernetes Secret labels rather than Service labels.
+    // Used today by the Company CA picker in KDPS/_shared/ingress.json which
+    // surfaces Secrets stored in `ambari-pki` via the PKI registry.
+    type: 'secret-discovery';
+    lookupLabel: string;
+}
 export interface GroupFormField extends FormFieldBase {
     type: 'group';
     fields: FormField[];
 }
-export type FormField = StandardFormField | ServiceSelectFormField | K8sDiscoveryFormField | GroupFormField;
+export type FormField = StandardFormField | ServiceSelectFormField | K8sDiscoveryFormField | SecretDiscoveryFormField | GroupFormField;
 
 export interface ServiceDefinition {
   label: string;

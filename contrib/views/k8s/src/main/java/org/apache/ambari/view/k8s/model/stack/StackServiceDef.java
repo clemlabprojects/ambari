@@ -74,4 +74,43 @@ public class StackServiceDef {
      *   postDeploy.ambariViewInstance — auto-provisions a linked Ambari view instance.
      */
     public Map<String, Object> postDeploy;
+
+    /**
+     * Maps a canonical form-field path to the chart-specific values.yaml path it must
+     * be written to. Use this when the shared form schema (e.g. KDPS/_shared/ingress.json)
+     * declares <code>ingress.ingressClassName</code> but the chart's values.yaml reads
+     * <code>ingress.className</code>. At deploy time the backend rewrites every value
+     * map and every <code>_ov</code> override key matching the LHS to the RHS path.
+     * Example:
+     * <pre>
+     *   "valueAliases": {
+     *     "ingress.ingressClassName": "ingress.className"
+     *   }
+     * </pre>
+     */
+    public Map<String, String> valueAliases;
+
+    /**
+     * Declarative rule for how the wizard couples auth profile selection with ingress
+     * + TLS settings. The wizard reads this at step 1 → step 3 transition to enforce
+     * the rule visibly (banner + auto-defaults) instead of hardcoding it in TypeScript.
+     *
+     * Fields:
+     *   requireIngress  – when true and an auth profile is picked, force ingress.enabled=true (default true)
+     *   requireTls      – when true and an auth profile is picked, bump ingress.tlsMode off "none" (default true)
+     *   minTlsMode      – default TLS mode to apply when auto-bumping (default "signedByAmbariCA")
+     *
+     * Backwards compatibility: if absent, the wizard applies requireIngress=true,
+     * requireTls=true, minTlsMode="signedByAmbariCA" — matching the legacy behavior.
+     */
+    public Map<String, Object> securityCoupling;
+
+    /**
+     * Optional chart version range this service.json was tested against (semver
+     * range, e.g. "&gt;=0.12.24"). The deploy controller compares the resolved chart
+     * version against this range and refuses the install with a clear error if it
+     * doesn't match. Prevents silent breakage when the chart and the service.json
+     * drift apart.
+     */
+    public String requiredChartVersion;
 }

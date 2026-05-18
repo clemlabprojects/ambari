@@ -853,6 +853,36 @@ const handleServiceChange = (value: string) => {
             });
         }
 
+        // Translate the new TLS mode selector into the wire payload the backend expects.
+        // - uploadLeaf       → ingressTlsUpload { secretName, certPem, keyPem }   (existing path)
+        // - signedByAmbariCA → ingressTlsSelfSign { mode: "ambariInternal", validityDays }
+        // - signedByCompanyCA → ingressTlsSelfSign { mode: "companyUploaded", caName, validityDays }
+        // - bringYourOwn     → ingress.tlsSecret remains in values (chart references it directly)
+        // - none             → nothing
+        let ingressTlsUploadPayload: any = undefined;
+        let ingressTlsSelfSignPayload: any = undefined;
+        const tlsMode: string | undefined = allValues?.ingress?.tlsMode;
+        if (tlsMode === 'uploadLeaf') {
+          const up = allValues?.ingress?.tlsUpload || {};
+          if (up.cert && up.key) {
+            ingressTlsUploadPayload = {
+              secretName: up.secretName || `${allValues.releaseName}-ingress-tls`,
+              certPem: up.cert,
+              keyPem: up.key,
+            };
+          }
+        } else if (tlsMode === 'signedByAmbariCA' || tlsMode === 'signedByCompanyCA') {
+          const selfSign = allValues?.ingress?.tlsSelfSign || {};
+          const validityDays = parseInt(selfSign.validityDays, 10);
+          ingressTlsSelfSignPayload = {
+            mode: tlsMode === 'signedByAmbariCA' ? 'ambariInternal' : 'companyUploaded',
+            secretName: `${allValues.releaseName}-ingress-tls`,
+            ingressHost: allValues?.ingress?.host,
+            validityDays: Number.isFinite(validityDays) ? validityDays : 90,
+            ...(tlsMode === 'signedByCompanyCA' ? { caName: selfSign.caName } : {}),
+          };
+        }
+
         payload = {
             chart: chartRef,
             releaseName: allValues.releaseName,
@@ -860,6 +890,8 @@ const handleServiceChange = (value: string) => {
             values: mergedValues,
             mounts,
             tls: tlsPayload || undefined,
+            ingressTlsUpload: ingressTlsUploadPayload,
+            ingressTlsSelfSign: ingressTlsSelfSignPayload,
             serviceKey: (allValues.svcKey ?? selectedServiceKey) || undefined,
             repoId: repoId || undefined,
             dependencies: currentService.dependencies || null,

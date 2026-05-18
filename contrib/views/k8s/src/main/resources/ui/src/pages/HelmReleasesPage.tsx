@@ -20,11 +20,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, type ReleaseTlsEntry } from '../api/client';
+import { API_BASE_URL } from '../api/client';
+import type { HelmHistoryEntry } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
@@ -51,9 +53,17 @@ const HelmReleasesPage: React.FC = () => {
   const [showAllReleases, setShowAllReleases] = useState(false);
   const [statusByRelease, setStatusByRelease] = useState<Record<string, HelmRelease>>({});
   const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
+  // TLS state per release, keyed by "<namespace>/<releaseName>". Loaded lazily after the
+  // release list arrives so the page doesn't stall waiting for cert parses on large lists.
+  const [tlsByRelease, setTlsByRelease] = useState<Record<string, ReleaseTlsEntry[]>>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
   const [operationsCount, setOperationsCount] = useState<number>(0);
+  const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<HelmHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | undefined>(undefined);
+  const [rollingBackRevision, setRollingBackRevision] = useState<number | undefined>(undefined);
 
   const loadOperationsCount = useCallback(async () => {
     try {
@@ -168,10 +178,20 @@ const HelmReleasesPage: React.FC = () => {
     try {
       const offset = (pageNum - 1) * size;
       const releasesResponse = await getHelmReleases(size, offset);
-      setHelmReleases(releasesResponse.items || []);
+      const items = releasesResponse.items || [];
+      setHelmReleases(items);
       setTotalReleases(releasesResponse.total || 0);
       setPageIndex(pageNum);
       setPageSize(size);
+      // Kick off per-release TLS state lookups in parallel — non-blocking, populates
+      // the badges as results arrive. A failure on any single release just leaves
+      // that row showing the empty placeholder.
+      items.forEach((r) => {
+        const key = `${r.namespace}/${r.name}`;
+        getReleaseTlsState(r.namespace, r.name)
+          .then((entries) => setTlsByRelease((prev) => ({ ...prev, [key]: entries })))
+          .catch(() => setTlsByRelease((prev) => ({ ...prev, [key]: [] })));
+      });
     } catch (e: any) {
       const errorMessage = e?.message || 'Failed to load releases';
       console.error('Failed to fetch Helm releases:', e);
@@ -321,6 +341,104 @@ const HelmReleasesPage: React.FC = () => {
     }
   };
 
+  /**
+   * Return the chart version published in the service catalog (service.json) for a release,
+   * or undefined when the release is not bound to a known service.
+   */
+  const catalogVersionFor = useCallback((release: HelmRelease): string | undefined => {
+    if (!release.serviceKey) return undefined;
+    return serviceDefinitions[release.serviceKey]?.version;
+  }, [serviceDefinitions]);
+
+  /**
+   * Detect a chart version drift between what is deployed and what the catalog ships with.
+   * Returns the catalog version when an in-place upgrade is offered, otherwise undefined.
+   */
+  const upgradeAvailableFor = useCallback((release: HelmRelease): string | undefined => {
+    const catalogVersion = catalogVersionFor(release);
+    if (!catalogVersion) return undefined;
+    if (!release.version) return undefined;
+    if (release.version === catalogVersion) return undefined;
+    if (release.deploymentMode === 'FLUX_GITOPS') return undefined;
+    return catalogVersion;
+  }, [catalogVersionFor]);
+
+  /**
+   * Open the Revision History modal for a release. The modal fetches `helm history`
+   * via the backend and lets the operator pick a concrete revision to roll back to,
+   * removing the "what does previous mean?" ambiguity of the old action.
+   */
+  const openHistoryModal = useCallback(async (release: HelmRelease) => {
+    setHistoryModalRelease(release);
+    setHistoryEntries([]);
+    setHistoryError(undefined);
+    setHistoryLoading(true);
+    try {
+      const entries = await getReleaseHistory(release.namespace, release.name);
+      // Newest first so the current revision sits at the top.
+      const sorted = [...(entries || [])].sort((a, b) => (b.revision ?? 0) - (a.revision ?? 0));
+      setHistoryEntries(sorted);
+    } catch (e: any) {
+      setHistoryError(e?.message || 'Failed to load revision history');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  /**
+   * Roll back to a specific revision picked from the history modal. Used by the per-row
+   * action button inside the modal; closes the modal on success.
+   */
+  const performRollbackToRevision = useCallback(async (release: HelmRelease, revision: number) => {
+    setRollingBackRevision(revision);
+    try {
+      await rollbackReleaseToRevision(release.namespace, release.name, revision);
+      message.success(`Rolled back ${release.name} to revision ${revision}`);
+      setHistoryModalRelease(null);
+      void refreshReleaseStatus(release, { notifyOnError: false });
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to roll back release');
+    } finally {
+      setRollingBackRevision(undefined);
+    }
+  }, [refreshReleaseStatus]);
+
+  /**
+   * Trigger an in-place chart upgrade for a release after explicit user confirmation.
+   * The backend preserves deployed values and only bumps the chart version.
+   */
+  const triggerChartUpgrade = async (release: HelmRelease, targetVersion: string) => {
+    Modal.confirm({
+      title: `Upgrade ${release.name} to chart ${targetVersion}?`,
+      content: (
+        <Space direction="vertical" size={4}>
+          <Text>This will run a Helm upgrade preserving the values currently deployed.</Text>
+          <Text type="secondary">Current chart version: {release.version || 'unknown'}</Text>
+          <Text type="secondary">Target chart version: {targetVersion}</Text>
+        </Space>
+      ),
+      okText: 'Upgrade',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        const hide = message.loading(`Upgrading ${release.name} to ${targetVersion}...`, 0);
+        try {
+          const response = await upgradeReleaseChart(release.namespace, release.name, targetVersion);
+          if (response?.id) {
+            setWatchedCommandId(response.id);
+            setIsCommandDrawerOpen(true);
+            message.success('Chart upgrade started');
+          } else {
+            message.success('Chart upgrade submitted');
+          }
+        } catch (e: any) {
+          message.error(e?.message || 'Failed to upgrade chart');
+        } finally {
+          hide();
+        }
+      }
+    });
+  };
+
   // legacy commandHistory kept for label building; actual statuses fetched via shared modal
 
     const renderServiceCell = (releaseRecord: HelmRelease) => {
@@ -356,8 +474,21 @@ const HelmReleasesPage: React.FC = () => {
       const supportsKerberosRegeneration = !!(serviceDefinition?.kerberos && serviceDefinition.kerberos.length > 0);
       const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
       const supportsOidcRegistration = !!(serviceDefinition?.oidc && serviceDefinition.oidc.length > 0);
+      const upgradeTargetVersion = upgradeAvailableFor(record);
 
       return ([
+        ...(upgradeTargetVersion ? [{
+          key: 'upgrade-chart',
+          icon: <ArrowUpOutlined />,
+          label: `Upgrade chart to ${upgradeTargetVersion}`,
+          onClick: () => triggerChartUpgrade(record, upgradeTargetVersion),
+        }] : []),
+        {
+          key: 'rollback',
+          icon: <RollbackOutlined />,
+          label: 'Revision history…',
+          onClick: () => { void openHistoryModal(record); },
+        },
         {
           key: 'update',
           icon: <SyncOutlined />,
@@ -482,6 +613,84 @@ const HelmReleasesPage: React.FC = () => {
     );
     };
 
+    /**
+     * Render a small badge per TLS entry of a release: green/yellow/red on expiry,
+     * grey on "no TLS" / external, with a tooltip carrying issuer + SAN + source +
+     * a "Renew" button when the source is renew-capable.
+     */
+    const renderTlsBadges = (release: HelmRelease) => {
+      const key = `${release.namespace}/${release.name}`;
+      const entries = tlsByRelease[key];
+      if (entries === undefined) return <Text type="secondary">…</Text>;
+      if (entries.length === 0) return <Text type="secondary">—</Text>;
+      const renewable = entries.some(e =>
+        e.source === 'k8s-view-self-signed' || e.source === 'cert-manager' || e.source === 'external-secrets'
+      );
+      const onRenew = async () => {
+        try {
+          const res = await fetch(
+            `${API_BASE_URL}/helm/releases/${encodeURIComponent(release.namespace)}/${encodeURIComponent(release.name)}/tls/renew`,
+            { method: 'POST', headers: { 'X-Requested-By': 'ambari' } }
+          );
+          if (!res.ok) throw new Error(await res.text());
+          const body = await res.json();
+          message.success('TLS renewal scheduled');
+          setWatchedCommandId(body.id);
+          setIsCommandDrawerOpen(true);
+        } catch (e: any) {
+          message.error('Failed to schedule renewal: ' + (e?.message || e));
+        }
+      };
+      return (
+        <Space size={4} direction="vertical" style={{ width: '100%' }}>
+          {entries.map((e, i) => {
+            const tone: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
+              valid: 'success',
+              'expiring-warning': 'warning',
+              'expiring-soon': 'warning',
+              expired: 'error',
+              'no-tls': 'default',
+              'secret-missing': 'error',
+              'no-tls-crt': 'error',
+              'no-cert-in-secret': 'error',
+              'read-error': 'error',
+            };
+            const sourceLabel: Record<string, string> = {
+              'k8s-view-self-signed': 'self-signed (k8s-view)',
+              'cert-manager': 'cert-manager',
+              'external-secrets': 'external-secrets',
+              'external': 'operator-managed',
+            };
+            const txt = e.status === 'valid'
+              ? `${e.daysUntilExpiry}d`
+              : e.status === 'expiring-warning' || e.status === 'expiring-soon'
+                ? `Expires ${e.daysUntilExpiry}d`
+                : e.status;
+            const tip = (
+              <div>
+                <div><b>Status:</b> {e.status}</div>
+                {e.source && <div><b>Source:</b> {sourceLabel[e.source] ?? e.source}</div>}
+                {e.issuer && <div><b>Issuer:</b> {e.issuer}</div>}
+                {e.notAfter && <div><b>Expires:</b> {new Date(e.notAfter).toLocaleString()}</div>}
+                {e.sans && e.sans.length > 0 && <div><b>SANs:</b> {e.sans.join(', ')}</div>}
+                {e.secretName && <div><b>Secret:</b> {e.namespace}/{e.secretName}</div>}
+              </div>
+            );
+            return (
+              <Tooltip key={i} title={tip}>
+                <Tag color={tone[e.status] || 'default'}>{txt}</Tag>
+              </Tooltip>
+            );
+          })}
+          {renewable && (
+            <Button size="small" type="link" onClick={onRenew} style={{ padding: 0 }}>
+              Renew
+            </Button>
+          )}
+        </Space>
+      );
+    };
+
     const columns = [
         {
           title: 'Name',
@@ -506,8 +715,29 @@ const HelmReleasesPage: React.FC = () => {
           )
         },
         { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
-        { title: 'Chart', dataIndex: 'chart', key: 'chart' },
-        // { title: 'Version', dataIndex: 'version', key: 'version', render: (_: any, r: HelmRelease) => r.version || r.appVersion || '—' },
+        {
+          title: 'Chart',
+          dataIndex: 'chart',
+          key: 'chart',
+          render: (_: any, r: HelmRelease) => {
+            const upgradeTargetVersion = upgradeAvailableFor(r);
+            return (
+              <Space size={4} direction="vertical" align="start">
+                <span>{r.chart}</span>
+                {r.version ? (
+                  <Space size={4}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>v{r.version}</Text>
+                    {upgradeTargetVersion ? (
+                      <Tooltip title={`Catalog ships chart v${upgradeTargetVersion}. Click the row menu to upgrade in place.`}>
+                        <Tag color="gold" style={{ marginLeft: 0 }}>Upgrade → v{upgradeTargetVersion}</Tag>
+                      </Tooltip>
+                    ) : null}
+                  </Space>
+                ) : null}
+              </Space>
+            );
+          }
+        },
         { title: 'App Version', dataIndex: 'appVersion', key: 'appVersion', render: (v: any) => v || '—' },
         { title: 'Service', key: 'service', width: 130, render: (_: any, releaseRecord: HelmRelease) => renderServiceCell(releaseRecord) },
         { title: 'Security', key: 'securityProfile', width: 140, render: (_: any, r: HelmRelease) => (
@@ -605,6 +835,7 @@ const HelmReleasesPage: React.FC = () => {
               </Space>
             );
           } },
+        { title: 'TLS', key: 'tls', width: 140, render: (_: any, r: HelmRelease) => renderTlsBadges(r) },
         { title: 'Endpoints', key: 'endpoints', render: (_: any, r: HelmRelease) => renderEndpoints(r) },
         {
         title: 'Actions',
@@ -727,6 +958,84 @@ const HelmReleasesPage: React.FC = () => {
                   )) : '—'}
                 </Descriptions.Item>
               </Descriptions>
+            </Modal>
+
+            <Modal
+              title={`Revision history — ${historyModalRelease?.namespace || ''}/${historyModalRelease?.name || ''}`}
+              open={!!historyModalRelease}
+              onCancel={() => setHistoryModalRelease(null)}
+              footer={<Button onClick={() => setHistoryModalRelease(null)}>Close</Button>}
+              width={820}
+            >
+              {historyError ? (
+                <Text type="danger">{historyError}</Text>
+              ) : (
+                <Table
+                  size="small"
+                  rowKey="revision"
+                  loading={historyLoading}
+                  dataSource={historyEntries}
+                  pagination={{ pageSize: 10, showSizeChanger: false, hideOnSinglePage: true }}
+                  columns={[
+                    { title: 'Rev', dataIndex: 'revision', key: 'revision', width: 60 },
+                    { title: 'Chart', dataIndex: 'chart', key: 'chart' },
+                    { title: 'App', dataIndex: 'app_version', key: 'app_version', width: 100 },
+                    {
+                      title: 'Status', dataIndex: 'status', key: 'status', width: 110,
+                      render: (s: string) => {
+                        const color = s === 'deployed' ? 'green'
+                          : s === 'failed' ? 'red'
+                          : s === 'superseded' ? 'default'
+                          : 'blue';
+                        return <Tag color={color}>{s || 'unknown'}</Tag>;
+                      }
+                    },
+                    {
+                      title: 'Updated', dataIndex: 'updated', key: 'updated', width: 170,
+                      render: (v: string) => v ? new Date(v).toLocaleString() : '—'
+                    },
+                    { title: 'Description', dataIndex: 'description', key: 'description' },
+                    {
+                      title: '', key: 'actions', width: 160,
+                      render: (_: any, entry: HelmHistoryEntry) => {
+                        // Top revision is current deployment — disable rollback to self.
+                        const isCurrent = entry.status === 'deployed';
+                        if (isCurrent) {
+                          return <Tag color="green">Current</Tag>;
+                        }
+                        return (
+                          <Button
+                            danger
+                            size="small"
+                            icon={<RollbackOutlined />}
+                            loading={rollingBackRevision === entry.revision}
+                            onClick={() => {
+                              if (!historyModalRelease) return;
+                              Modal.confirm({
+                                title: `Roll back to revision ${entry.revision}?`,
+                                content: (
+                                  <Space direction="vertical" size={4}>
+                                    <Text>Chart: <b>{entry.chart || '—'}</b></Text>
+                                    <Text>App version: {entry.app_version || '—'}</Text>
+                                    <Text>Status: {entry.status || '—'}</Text>
+                                    <Text type="secondary">{entry.description || ''}</Text>
+                                  </Space>
+                                ),
+                                okText: 'Rollback',
+                                okButtonProps: { danger: true },
+                                cancelText: 'Cancel',
+                                onOk: () => performRollbackToRevision(historyModalRelease, entry.revision)
+                              });
+                            }}
+                          >
+                            Rollback to {entry.revision}
+                          </Button>
+                        );
+                      }
+                    }
+                  ]}
+                />
+              )}
             </Modal>
 
             <Modal

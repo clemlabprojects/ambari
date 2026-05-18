@@ -69,10 +69,21 @@ public interface HelmClient {
     void uninstall(String releaseName, String namespace, String kubeconfigContents);
 
     /**
-     * Rollback functionality - currently not supported by helm-java library
+     * Roll back a release to the specified revision. helm-java 0.0.15 does not expose
+     * rollback so implementations typically shell out to the {@code helm} CLI.
      */
     default void rollback(String releaseName, String namespace, int revision, String kubeconfigContents) {
         throw new UnsupportedOperationException("Rollback not supported by helm-java yet.");
+    }
+
+    /**
+     * Return the Helm history for a release, ordered by revision ascending. Each entry
+     * is a generic map mirroring the JSON shape of {@code helm history -o json}
+     * ({@code revision}, {@code updated}, {@code status}, {@code chart}, {@code app_version},
+     * {@code description}).
+     */
+    default List<Map<String, Object>> history(String releaseName, String namespace, String kubeconfigContents) {
+        throw new UnsupportedOperationException("History not supported by helm-java yet.");
     }
 
     /**

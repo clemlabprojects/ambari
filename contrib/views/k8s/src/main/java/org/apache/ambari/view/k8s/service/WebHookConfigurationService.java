@@ -847,6 +847,164 @@ public class WebHookConfigurationService {
         return maybeNull == null ? Collections.emptyList() : maybeNull;
     }
 
+    // -------------------- Ingress TLS minting (cert + key + chain) --------------------
+
+    /**
+     * Mint a leaf TLS certificate for an ingress host and write it into a
+     * {@code kubernetes.io/tls} Secret. Used by the {@code INGRESS_TLS_SELFSIGN}
+     * deploy step when the operator picks {@code signedByAmbariCA} or
+     * {@code signedByCompanyCA} mode.
+     *
+     * <p>The signing CA is provided by the caller — for Ambari Internal CA use
+     * {@link #ensureAmbariCertificateAuthority()}, for an admin-uploaded company
+     * CA use {@link #loadUploadedCertificateAuthority(String, String)}.
+     *
+     * @param namespace      target namespace
+     * @param secretName     Secret name to create / replace (typically {@code <release>-ingress-tls})
+     * @param ingressHost    primary DNS name (becomes CN + first SAN entry)
+     * @param extraSans      additional DNS SANs (cluster service name etc., may be empty)
+     * @param validityDays   leaf validity (clamped to 1..825 to comply with the CA/Browser Forum cap)
+     * @param ca             the signing CA material
+     * @param additionalLabels extra labels applied to the Secret (audit / managed-by)
+     */
+    public ServerKeystoreMaterial issueIngressTlsSecret(String namespace,
+                                                        String secretName,
+                                                        String ingressHost,
+                                                        List<String> extraSans,
+                                                        Integer validityDays,
+                                                        CertificateAuthorityMaterial ca,
+                                                        Map<String, String> additionalLabels) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(ingressHost, "ingressHost");
+        Objects.requireNonNull(ca, "ca");
+        if (ingressHost.isBlank()) {
+            throw new IllegalArgumentException("ingressHost must be non-empty");
+        }
+
+        // Build SAN list: ingress host first (also used as CN by signServerCertificate),
+        // then any extras the caller wants (service.svc, service.svc.cluster.local, etc).
+        List<String> sans = new ArrayList<>();
+        sans.add(ingressHost);
+        if (extraSans != null) {
+            for (String s : extraSans) {
+                if (s != null && !s.isBlank() && !sans.contains(s)) sans.add(s);
+            }
+        }
+
+        // CA/Browser Forum baseline: leaf TLS certs cap at 825 days; clamp aggressively.
+        int days = (validityDays == null || validityDays <= 0) ? 90
+                : Math.min(validityDays, 825);
+
+        // Ensure the CA itself hasn't expired (refuse to sign past it).
+        try {
+            X509Certificate caCert = parseCertificateFromPem(ca.caCertificatePem());
+            Date now = Date.from(Instant.now().plus(days, ChronoUnit.DAYS));
+            if (caCert.getNotAfter().before(now)) {
+                throw new IllegalStateException("Signing CA expires before the requested leaf validity (" +
+                        caCert.getNotAfter() + " < " + now + "); rotate the CA or shorten validityDays.");
+            }
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to parse signing CA certificate", ex);
+        }
+
+        KeyPair leafKeyPair = generateKeyPair();
+        X509Certificate leafCert = signServerCertificate(leafKeyPair.getPublic(), sans, days, ca);
+
+        String leafCertPem = toPemCertificate(leafCert);
+        String leafKeyPem = toPemPrivateKey(leafKeyPair.getPrivate());
+
+        // Build the cert chain: leaf + CA (PEM-concat) so clients can build a trust path
+        // without needing the CA pre-installed.
+        String chainPem = leafCertPem + ca.caCertificatePem();
+
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("managed-by", "ambari-k8s-view");
+        labels.put("ambari.clemlab.com/tls-issuer", "self-signed");
+        if (additionalLabels != null) labels.putAll(additionalLabels);
+
+        Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("ambari.clemlab.com/tls-issued-at", Instant.now().toString());
+        annotations.put("ambari.clemlab.com/tls-not-after", leafCert.getNotAfter().toInstant().toString());
+        annotations.put("ambari.clemlab.com/tls-serial",
+                leafCert.getSerialNumber().toString(16));
+
+        Secret desired = new SecretBuilder()
+                .withNewMetadata()
+                .withName(secretName)
+                .withNamespace(namespace)
+                .addToLabels(labels)
+                .addToAnnotations(annotations)
+                .endMetadata()
+                .withType("kubernetes.io/tls")
+                // tls.crt is the chain (leaf + CA) so non-cluster clients without the CA trust
+                // it via the bundle; tls.key is the leaf private key; ca.crt is the issuing CA
+                // for callers that explicitly want only the CA (e.g. truststore building).
+                .addToData("tls.crt", base64(chainPem))
+                .addToData("tls.key", base64(leafKeyPem))
+                .addToData("ca.crt",  base64(ca.caCertificatePem()))
+                .build();
+
+        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        if (existing == null) {
+            kubernetesClient.secrets().inNamespace(namespace).resource(desired).create();
+            LOG.info("Created ingress TLS Secret '{}/{}' for host '{}', serial={}, notAfter={}",
+                    namespace, secretName, ingressHost, leafCert.getSerialNumber().toString(16),
+                    leafCert.getNotAfter().toInstant());
+        } else {
+            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Replaced ingress TLS Secret '{}/{}' for host '{}', serial={}, notAfter={}",
+                    namespace, secretName, ingressHost, leafCert.getSerialNumber().toString(16),
+                    leafCert.getNotAfter().toInstant());
+        }
+
+        return new ServerKeystoreMaterial(leafCertPem, leafKeyPem, ca.caCertificatePem(), new byte[0]);
+    }
+
+    /**
+     * Load an admin-uploaded company issuing CA from the K8s Secret persisted by
+     * {@link org.apache.ambari.view.k8s.service.CaRegistryService}. The Secret is
+     * expected to contain {@code tls.crt} (CA cert PEM, possibly with chain) and
+     * {@code tls.key} (CA private key PEM).
+     *
+     * @param namespace  namespace of the registry Secret (typically {@code ambari-pki})
+     * @param secretName the registry Secret name (one Secret per CA)
+     */
+    public CertificateAuthorityMaterial loadUploadedCertificateAuthority(String namespace,
+                                                                          String secretName) {
+        Secret secret = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        if (secret == null) {
+            throw new IllegalArgumentException("Uploaded CA not found: " + namespace + "/" + secretName);
+        }
+        Map<String, String> data = secret.getData() != null ? secret.getData() : Collections.emptyMap();
+        String certB64 = data.get("tls.crt");
+        String keyB64 = data.get("tls.key");
+        if (certB64 == null || keyB64 == null) {
+            throw new IllegalStateException("Uploaded CA secret '" + namespace + "/" + secretName +
+                    "' is missing tls.crt and/or tls.key entries.");
+        }
+        String certPem = new String(java.util.Base64.getDecoder().decode(certB64), StandardCharsets.UTF_8);
+        String keyPem = new String(java.util.Base64.getDecoder().decode(keyB64), StandardCharsets.UTF_8);
+        try {
+            // Sanity-check both halves can be parsed before we hand them to the signer.
+            X509Certificate caCert = parseCertificateFromPem(certPem);
+            parsePrivateKeyFromPem(keyPem);
+            // Confirm it can sign (basicConstraints.CA=true). cert.getBasicConstraints() returns
+            // -1 on a non-CA cert, or path length >= 0 on a CA.
+            if (caCert.getBasicConstraints() < 0) {
+                throw new IllegalStateException("Uploaded CA secret '" + namespace + "/" + secretName +
+                        "' contains a leaf certificate (basicConstraints.CA=false). Upload an issuing CA.");
+            }
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to parse uploaded CA in '" + namespace + "/" + secretName + "'", ex);
+        }
+        return new CertificateAuthorityMaterial(certPem, keyPem, "k8s-secret://" + namespace + "/" + secretName);
+    }
+
     // -------------------- Value objects --------------------
 
     public record CertificateAuthorityMaterial(String caCertificatePem,

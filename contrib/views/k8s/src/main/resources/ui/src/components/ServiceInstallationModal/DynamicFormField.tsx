@@ -17,11 +17,30 @@
  */
 
 import React from 'react';
-import { Card, Checkbox, Form, Input, InputNumber, Select } from 'antd';
+import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Tooltip, Typography } from 'antd';
 import type { FormField } from '../../types/ServiceTypes';
+import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
 import ServiceSelect from './ServiceSelect';
 
 const { Option } = Select;
+
+// Module-level memoization: capability probe is the same for every form on the page,
+// so a single fetch is enough — and we cache the Promise so concurrent first renders
+// don't fan out into N network calls. Refresh on full reload (or when /cluster/capabilities
+// is invalidated server-side, which already happens on a 60s TTL).
+let capabilitiesPromise: Promise<ClusterCapabilities> | null = null;
+const useCapabilities = (): ClusterCapabilities | undefined => {
+  const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(undefined);
+  React.useEffect(() => {
+    if (!capabilitiesPromise) capabilitiesPromise = getClusterCapabilities();
+    capabilitiesPromise.then(setCaps).catch(() => {
+      // On error we leave caps undefined; the consumer should fail-open (show all
+      // options). Reset the cached promise so a future render can retry.
+      capabilitiesPromise = null;
+    });
+  }, []);
+  return caps;
+};
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();
@@ -29,22 +48,71 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
   const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+  // Cluster capabilities (cert-manager / external-secrets / OpenShift) drive the
+  // adaptive filtering of select options below. We call the hook unconditionally
+  // so React's rule-of-hooks holds regardless of field type.
+  const caps = useCapabilities();
+  const capabilityAvailable = (cap?: string): boolean => {
+    if (!cap) return true;
+    if (!caps) return true; // fail-open while loading
+    if (cap === 'certManager') return caps.certManager.installed;
+    if (cap === 'externalSecrets') return caps.externalSecrets.installed;
+    return true;
+  };
 
   const condition = (field as any).condition;
-  // Always call useWatch in the same order; pass undefined when no condition
+  // Always call useWatch in the same order; pass undefined when no condition.
   const watchedValue = Form.useWatch(condition ? condition.field.split('.') : undefined, form);
-  const isVisible = condition ? watchedValue === condition.value : true;
+  // condition.value may be a scalar (legacy) or an array of allowed values
+  // (e.g. `"value": ["signedByAmbariCA", "signedByCompanyCA"]` — show this
+  // field when the watched value matches ANY entry). Without the array branch,
+  // such fields would never render because `array === scalar` is always false.
+  const isVisible = !condition
+      ? true
+      : Array.isArray(condition.value)
+          ? condition.value.includes(watchedValue)
+          : watchedValue === condition.value;
   if (!isVisible) return null;
 
   switch (field.type) {
-    case 'group':
+    case 'group': {
+      // Groups marked `collapsed: true` render as an antd Collapse panel (closed by default)
+      // instead of a Card. Used for "Advanced — usually leave blank" sections like
+      // `ingressTuning` so they don't clutter the wizard but stay accessible.
+      const isCollapsible = Boolean((field as any).collapsed);
+      const children = (field as any).fields.map((subField: FormField) => (
+        <DynamicFormField key={subField.name} field={subField} />
+      ));
+      if (isCollapsible) {
+        return (
+          <Collapse
+            size="small"
+            style={{ marginBottom: 16 }}
+            items={[{
+              key: field.name,
+              label: (
+                <span>
+                  {field.label}
+                  {(field as any).help && (
+                    <Typography.Text type="secondary" style={{ marginLeft: 8, fontWeight: 'normal' }}>
+                      — {(field as any).help.length > 80
+                          ? (field as any).help.slice(0, 78) + '…'
+                          : (field as any).help}
+                    </Typography.Text>
+                  )}
+                </span>
+              ),
+              children,
+            }]}
+          />
+        );
+      }
       return (
         <Card title={field.label} size="small" style={{ marginBottom: 16 }}>
-          {(field as any).fields.map((subField: FormField) => (
-            <DynamicFormField key={subField.name} field={subField} />
-          ))}
+          {children}
         </Card>
       );
+    }
     case 'service-select':
     case 'hadoop-discovery': {
       const f = field as any;
@@ -84,7 +152,10 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           }}
         />
       );
-    case 'k8s-discovery': {
+    case 'k8s-discovery':
+    case 'secret-discovery':
+    case 'cluster-issuer-discovery':
+    case 'secret-store-discovery': {
       const f = field as any;
       if (f.targetHost || f.targetPort) {
         return (
@@ -105,11 +176,17 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
           <Select disabled={disabledProp}>
-            {(field as any).options.map((opt: any) => (
-              <Option key={opt.value} value={opt.value}>
-                {opt.label}
-              </Option>
-            ))}
+            {(field as any).options
+              // Options can declare `capability: "certManager" | "externalSecrets"` so the
+              // wizard hides modes whose backing operator isn't installed. Until the
+              // capabilities probe returns we render everything (fail-open) so the form
+              // doesn't briefly appear empty on first paint.
+              .filter((opt: any) => capabilityAvailable(opt.capability))
+              .map((opt: any) => (
+                <Option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </Option>
+              ))}
           </Select>
         </Form.Item>
       );

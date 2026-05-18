@@ -2511,6 +2511,536 @@ public class KubernetesService {
     }
 
     /**
+     * Fetch a Secret by name from a namespace, or null if absent.
+     * Public helper used by ReleaseTlsService to read tls.crt for cert parsing.
+     */
+    public io.fabric8.kubernetes.api.model.Secret getSecret(String namespace, String name) {
+        checkConfiguration();
+        if (namespace == null || namespace.isBlank() || name == null || name.isBlank()) return null;
+        return client.secrets().inNamespace(namespace).withName(name).get();
+    }
+
+    /**
+     * Lists all Ingress objects belonging to a Helm release within a namespace.
+     * Matches via standard Helm labels first ({@code app.kubernetes.io/instance}),
+     * falls back to a name-prefix match for charts that don't set the canonical label.
+     */
+    public java.util.List<io.fabric8.kubernetes.api.model.networking.v1.Ingress>
+            listIngressesForRelease(String namespace, String releaseName) {
+        checkConfiguration();
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        var byLabel = client.network().v1().ingresses().inNamespace(namespace)
+                .withLabel("app.kubernetes.io/instance", releaseName).list().getItems();
+        if (!byLabel.isEmpty()) return byLabel;
+        // Helm releases like the bundled bitnami charts don't always set the label.
+        // Fall back to a case-insensitive prefix match on metadata.name.
+        String prefix = releaseName.toLowerCase(java.util.Locale.ROOT);
+        return client.network().v1().ingresses().inNamespace(namespace).list().getItems().stream()
+                .filter(i -> i.getMetadata() != null
+                        && i.getMetadata().getName() != null
+                        && i.getMetadata().getName().toLowerCase(java.util.Locale.ROOT).startsWith(prefix))
+                .toList();
+    }
+
+    // -------------------------------------------------------------------------
+    // cert-manager + external-secrets generic CR helpers
+    // -------------------------------------------------------------------------
+    // These use Fabric8's GenericKubernetesResource API so we don't need to import
+    // the cert-manager / external-secrets client libraries — keeps the JAR slim
+    // and avoids version coupling. The CR shapes we write are stable since the
+    // GA v1 release of each operator.
+
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext CERT_MANAGER_CLUSTER_ISSUER_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("cert-manager.io")
+                    .withVersion("v1")
+                    .withKind("ClusterIssuer")
+                    .withPlural("clusterissuers")
+                    .withNamespaced(false)
+                    .build();
+
+    // ESO is v1 GA since 0.15 (March 2025). Older clusters (0.9-0.14) only have v1beta1.
+    // We pick at runtime based on which version the cluster's CRD advertises as served.
+    private volatile String externalSecretsApiVersion; // "v1" or "v1beta1"
+
+    private String esoApiVersion() {
+        String cached = externalSecretsApiVersion;
+        if (cached != null) return cached;
+        try {
+            var crd = client.apiextensions().v1().customResourceDefinitions()
+                    .withName("externalsecrets.external-secrets.io").get();
+            String picked = "v1beta1";
+            if (crd != null && crd.getSpec() != null && crd.getSpec().getVersions() != null) {
+                // Prefer v1 (GA) over v1beta1 when both are served.
+                boolean hasV1 = crd.getSpec().getVersions().stream().anyMatch(v -> "v1".equals(v.getName()) && Boolean.TRUE.equals(v.getServed()));
+                if (hasV1) picked = "v1";
+            }
+            externalSecretsApiVersion = picked;
+            LOG.info("external-secrets API version detected: {}", picked);
+            return picked;
+        } catch (Exception ex) {
+            LOG.warn("Falling back to external-secrets.io/v1beta1: {}", ex.toString());
+            externalSecretsApiVersion = "v1beta1";
+            return "v1beta1";
+        }
+    }
+
+    private io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext externalSecretClusterStoreRdc() {
+        return new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                .withGroup("external-secrets.io")
+                .withVersion(esoApiVersion())
+                .withKind("ClusterSecretStore")
+                .withPlural("clustersecretstores")
+                .withNamespaced(false)
+                .build();
+    }
+
+    private io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext externalSecretStoreRdc() {
+        return new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                .withGroup("external-secrets.io")
+                .withVersion(esoApiVersion())
+                .withKind("SecretStore")
+                .withPlural("secretstores")
+                .withNamespaced(true)
+                .build();
+    }
+
+    private io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext externalSecretRdc() {
+        return new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                .withGroup("external-secrets.io")
+                .withVersion(esoApiVersion())
+                .withKind("ExternalSecret")
+                .withPlural("externalsecrets")
+                .withNamespaced(true)
+                .build();
+    }
+
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext CERT_MANAGER_CERT_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("cert-manager.io")
+                    .withVersion("v1")
+                    .withKind("Certificate")
+                    .withPlural("certificates")
+                    .withNamespaced(true)
+                    .build();
+
+    // EXTERNAL_SECRET_RDC is built dynamically via externalSecretRdc() below — see esoApiVersion().
+
+    /**
+     * Apply a cert-manager.io/v1 Certificate. Creates or updates by name.
+     *
+     * @param certName     Certificate metadata name (we use the target Secret name by convention)
+     * @param secretName   the Secret cert-manager will write the leaf into
+     * @param issuerName   ClusterIssuer or Issuer name in the cluster
+     * @param issuerKind   "ClusterIssuer" (default) or "Issuer"
+     * @param dnsNames     SANs to put on the leaf
+     * @param durationHours leaf validity in hours; cert-manager defaults to 2160 (90d)
+     */
+    public void applyCertManagerCertificate(String namespace, String certName, String secretName,
+                                            String issuerName, String issuerKind,
+                                            java.util.List<String> dnsNames, Integer durationHours) {
+        checkConfiguration();
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(certName, "certName");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(issuerName, "issuerName");
+        if (dnsNames == null || dnsNames.isEmpty()) {
+            throw new IllegalArgumentException("dnsNames must include at least one host");
+        }
+
+        Map<String, Object> spec = new java.util.LinkedHashMap<>();
+        spec.put("secretName", secretName);
+        spec.put("dnsNames", dnsNames);
+        // duration controls the validity. renewBefore is set to 1/6 of duration so
+        // cert-manager rotates well before expiry without thrashing.
+        int dur = durationHours == null ? 2160 : durationHours;
+        spec.put("duration", dur + "h");
+        spec.put("renewBefore", Math.max(dur / 6, 24) + "h");
+        Map<String, Object> issuerRef = new java.util.LinkedHashMap<>();
+        issuerRef.put("name", issuerName);
+        issuerRef.put("kind", issuerKind == null || issuerKind.isBlank() ? "ClusterIssuer" : issuerKind);
+        issuerRef.put("group", "cert-manager.io");
+        spec.put("issuerRef", issuerRef);
+
+        var resource = buildGenericCr("cert-manager.io/v1", "Certificate",
+                certName, namespace,
+                Map.of("managed-by", "ambari-k8s-view"),
+                Map.of("spec", spec));
+        upsertGenericCr(
+                client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName),
+                resource);
+        LOG.info("cert-manager.Certificate {}/{} applied (issuer={}/{}, sans={})", namespace, certName, issuerKind, issuerName, dnsNames);
+    }
+
+    /**
+     * Build a {@link io.fabric8.kubernetes.api.model.GenericKubernetesResource} with the
+     * apiVersion, kind and metadata fields properly initialised (the default constructor
+     * leaves them null, so direct mutation of {@code resource.getMetadata()} throws). The
+     * extra fields (spec, status, custom fields) come via {@code additionalProperties}.
+     */
+    private static io.fabric8.kubernetes.api.model.GenericKubernetesResource buildGenericCr(
+            String apiVersion, String kind, String name, String namespace,
+            Map<String, String> labels, Map<String, Object> additional) {
+        var resource = new io.fabric8.kubernetes.api.model.GenericKubernetesResource();
+        resource.setApiVersion(apiVersion);
+        resource.setKind(kind);
+        var meta = new io.fabric8.kubernetes.api.model.ObjectMeta();
+        meta.setName(name);
+        if (namespace != null && !namespace.isBlank()) meta.setNamespace(namespace);
+        if (labels != null && !labels.isEmpty()) meta.setLabels(new java.util.HashMap<>(labels));
+        resource.setMetadata(meta);
+        if (additional != null) {
+            // GenericKubernetesResource stores unknown fields in additionalProperties; we
+            // can only put one key at a time, so iterate.
+            for (Map.Entry<String, Object> e : additional.entrySet()) {
+                resource.setAdditionalProperty(e.getKey(), e.getValue());
+            }
+        }
+        return resource;
+    }
+
+    /**
+     * Read-or-create-or-replace for a generic CR by name. The withName(String) call on
+     * either MixedOperation or NonNamespaceOperation returns the same
+     * {@link io.fabric8.kubernetes.client.dsl.Resource} interface — passing a pre-bound
+     * Resource sidesteps the parameter-type incompatibility between the two operation
+     * types. Caller does: {@code upsertGenericCr(gkr.withName(name), resource)}.
+     */
+    private static void upsertGenericCr(
+            io.fabric8.kubernetes.client.dsl.Resource<io.fabric8.kubernetes.api.model.GenericKubernetesResource> handle,
+            io.fabric8.kubernetes.api.model.GenericKubernetesResource resource) {
+        var existing = handle.get();
+        if (existing == null) {
+            handle.create(resource);
+        } else {
+            resource.getMetadata().setResourceVersion(existing.getMetadata().getResourceVersion());
+            handle.patch(resource);
+        }
+    }
+
+    /**
+     * Patch a Certificate by merging the supplied map (typically annotations) into its metadata.
+     * Used by the renew flow to force re-issue.
+     */
+    public void patchCertManagerCertificate(String namespace, String certName, Map<String, Object> patch) {
+        checkConfiguration();
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(certName, "certName");
+        var gkr = client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName);
+        var existing = gkr.get();
+        if (existing == null) {
+            throw new IllegalArgumentException("Certificate " + namespace + "/" + certName + " not found");
+        }
+        // Shallow-merge the patch into existing.additionalProperties (single nesting level).
+        mergeAdditionalProperties(existing.getAdditionalProperties(), patch);
+        gkr.patch(existing);
+        LOG.info("cert-manager.Certificate {}/{} patched", namespace, certName);
+    }
+
+    /**
+     * Apply an external-secrets.io/v1 ExternalSecret. Creates or updates by name.
+     *
+     * @param esName          ExternalSecret metadata name
+     * @param secretName      target K8s Secret name ESO will write
+     * @param storeName       SecretStore / ClusterSecretStore name
+     * @param storeKind       "ClusterSecretStore" (default) or "SecretStore"
+     * @param remoteKey       path/key in the upstream secret store (e.g. "pki/issue/clemlab/foo")
+     * @param refreshInterval ESO refresh cadence (e.g. "1h"; "0" disables periodic refresh)
+     */
+    public void applyExternalSecret(String namespace, String esName, String secretName,
+                                    String storeName, String storeKind, String remoteKey,
+                                    String refreshInterval) {
+        checkConfiguration();
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(esName, "esName");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(storeName, "storeName");
+        Objects.requireNonNull(remoteKey, "remoteKey");
+
+        Map<String, Object> spec = new java.util.LinkedHashMap<>();
+        spec.put("refreshInterval", refreshInterval == null || refreshInterval.isBlank() ? "1h" : refreshInterval);
+        Map<String, Object> storeRef = new java.util.LinkedHashMap<>();
+        storeRef.put("name", storeName);
+        storeRef.put("kind", storeKind == null || storeKind.isBlank() ? "ClusterSecretStore" : storeKind);
+        spec.put("secretStoreRef", storeRef);
+        Map<String, Object> target = new java.util.LinkedHashMap<>();
+        target.put("name", secretName);
+        target.put("creationPolicy", "Owner");
+        spec.put("target", target);
+        Map<String, Object> dataFrom = new java.util.LinkedHashMap<>();
+        Map<String, Object> extract = new java.util.LinkedHashMap<>();
+        extract.put("key", remoteKey);
+        dataFrom.put("extract", extract);
+        spec.put("dataFrom", java.util.List.of(dataFrom));
+
+        var resource = buildGenericCr("external-secrets.io/" + esoApiVersion(), "ExternalSecret",
+                esName, namespace,
+                Map.of("managed-by", "ambari-k8s-view"),
+                Map.of("spec", spec));
+        upsertGenericCr(
+                client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName),
+                resource);
+        LOG.info("external-secrets.ExternalSecret {}/{} applied (store={}/{}, key={})", namespace, esName, storeKind, storeName, remoteKey);
+    }
+
+    /**
+     * Create/update a cert-manager.io/v1 ClusterIssuer of kind {@code ca} that wraps an
+     * existing {@code kubernetes.io/tls} Secret (typically a Company CA uploaded via the
+     * PKI registry). Idempotent: replaces if the ClusterIssuer already exists.
+     *
+     * @param issuerName     ClusterIssuer name to create (cluster-scoped)
+     * @param caNamespace    namespace where the CA Secret lives (must be readable by
+     *                       the cert-manager controller — by default cert-manager has
+     *                       cluster-wide Secret read perms only in its own namespace; we
+     *                       rely on the CA Registry's namespace ({@code ambari-pki}) being
+     *                       exposed to cert-manager via the standard installation)
+     * @param caSecretName   name of the {@code kubernetes.io/tls} Secret holding tls.crt + tls.key
+     */
+    public void applyCertManagerClusterIssuerFromCa(String issuerName, String caNamespace, String caSecretName) {
+        checkConfiguration();
+        Objects.requireNonNull(issuerName, "issuerName");
+        Objects.requireNonNull(caNamespace, "caNamespace");
+        Objects.requireNonNull(caSecretName, "caSecretName");
+
+        Map<String, Object> spec = new java.util.LinkedHashMap<>();
+        // The ca.secretName must be in cert-manager's own namespace (default: cert-manager).
+        // The Secret has to be replicated there. We handle that by either:
+        //   - mirroring the Secret into cert-manager's namespace, OR
+        //   - using a Namespaced Issuer in the source namespace (less general).
+        // Mirroring is simpler from a UI perspective; do it here.
+        ensureCaSecretMirroredToCertManagerNamespace(caNamespace, caSecretName);
+        Map<String, Object> ca = new java.util.LinkedHashMap<>();
+        ca.put("secretName", caSecretName);
+        spec.put("ca", ca);
+
+        var labels = new java.util.LinkedHashMap<String, String>();
+        labels.put("managed-by", "ambari-k8s-view");
+        labels.put("ambari.clemlab.com/source-ca-namespace", caNamespace);
+        labels.put("ambari.clemlab.com/source-ca-secret", caSecretName);
+        var resource = buildGenericCr("cert-manager.io/v1", "ClusterIssuer",
+                issuerName, null, labels,
+                Map.of("spec", spec));
+        upsertGenericCr(
+                client.genericKubernetesResources(CERT_MANAGER_CLUSTER_ISSUER_RDC).withName(issuerName),
+                resource);
+        LOG.info("cert-manager.ClusterIssuer {} applied (CA secret={}/{})", issuerName, caNamespace, caSecretName);
+    }
+
+    /**
+     * cert-manager only reads ca.secretName from its own namespace (default {@code cert-manager}).
+     * Our CA registry stores Secrets in {@code ambari-pki}; we therefore copy the Secret into
+     * cert-manager's namespace whenever a CA is promoted. The mirror Secret is read-only —
+     * any future update must come via the registry's promote action (idempotent overwrite).
+     */
+    private void ensureCaSecretMirroredToCertManagerNamespace(String sourceNs, String secretName) {
+        final String certManagerNs = "cert-manager";
+        Secret src = client.secrets().inNamespace(sourceNs).withName(secretName).get();
+        if (src == null) {
+            throw new IllegalStateException("Source CA Secret " + sourceNs + "/" + secretName + " not found");
+        }
+        Secret mirror = new io.fabric8.kubernetes.api.model.SecretBuilder()
+                .withNewMetadata()
+                    .withName(secretName)
+                    .withNamespace(certManagerNs)
+                    .withLabels(Map.of(
+                            "managed-by", "ambari-k8s-view",
+                            "ambari.clemlab.com/mirror-of-namespace", sourceNs))
+                    .withAnnotations(Map.of(
+                            "ambari.clemlab.com/mirrored-at", java.time.Instant.now().toString()))
+                    .endMetadata()
+                .withType(src.getType())
+                .withData(src.getData())
+                .build();
+        try {
+            client.secrets().inNamespace(certManagerNs).resource(mirror).create();
+        } catch (KubernetesClientException e) {
+            // Already exists or namespace missing — try createOrReplace as fallback.
+            try {
+                createNamespace(certManagerNs);
+                client.secrets().inNamespace(certManagerNs).resource(mirror).createOrReplace();
+            } catch (Exception fallback) {
+                throw new IllegalStateException("Failed to mirror CA secret to " + certManagerNs + ": " + fallback.getMessage(), fallback);
+            }
+        }
+        LOG.info("Mirrored CA Secret {}/{} into {}/{}", sourceNs, secretName, certManagerNs, secretName);
+    }
+
+    /**
+     * Returns true if the ClusterIssuer's Ready condition is True. Used by promote/discovery
+     * to surface live status in the UI.
+     */
+    @SuppressWarnings("unchecked")
+    public boolean isClusterIssuerReady(String issuerName) {
+        checkConfiguration();
+        try {
+            var ci = client.genericKubernetesResources(CERT_MANAGER_CLUSTER_ISSUER_RDC).withName(issuerName).get();
+            if (ci == null) return false;
+            var add = ci.getAdditionalProperties();
+            if (add == null) return false;
+            Object status = add.get("status");
+            if (status instanceof Map<?, ?> stm && stm.get("conditions") instanceof java.util.List<?> conds) {
+                for (Object c : conds) {
+                    if (c instanceof Map<?, ?> cm
+                            && "Ready".equals(cm.get("type"))
+                            && "True".equals(cm.get("status"))) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception ignore) {}
+        return false;
+    }
+
+    /**
+     * Enumerate cert-manager ClusterIssuer resources, optionally filtering to Ready=True only.
+     * Returns maps of {name, kind, type, ready} where {@code type} is best-effort inferred from
+     * the spec (ca / acme / vault / selfSigned).
+     */
+    public java.util.List<java.util.Map<String, Object>> listClusterIssuers(boolean includeNotReady) {
+        checkConfiguration();
+        java.util.List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        try {
+            var list = client.genericKubernetesResources(CERT_MANAGER_CLUSTER_ISSUER_RDC).list().getItems();
+            for (var ci : list) {
+                java.util.Map<String, Object> entry = describeIssuerLike(ci, "ClusterIssuer");
+                if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
+            }
+        } catch (Exception ex) {
+            LOG.warn("listClusterIssuers failed: {}", ex.toString());
+        }
+        return result;
+    }
+
+    /**
+     * Enumerate external-secrets ClusterSecretStore + SecretStore resources, optionally
+     * filtering to Ready=True only. Maps include {name, namespace, kind, provider, ready}.
+     */
+    public java.util.List<java.util.Map<String, Object>> listSecretStores(boolean includeNotReady) {
+        checkConfiguration();
+        java.util.List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        try {
+            var clusterStores = client.genericKubernetesResources(externalSecretClusterStoreRdc()).list().getItems();
+            for (var s : clusterStores) {
+                java.util.Map<String, Object> entry = describeStoreLike(s, "ClusterSecretStore");
+                if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
+            }
+        } catch (Exception ex) {
+            LOG.warn("listClusterSecretStores failed: {}", ex.toString());
+        }
+        try {
+            var nsStores = client.genericKubernetesResources(externalSecretStoreRdc()).inAnyNamespace().list().getItems();
+            for (var s : nsStores) {
+                java.util.Map<String, Object> entry = describeStoreLike(s, "SecretStore");
+                if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
+            }
+        } catch (Exception ex) {
+            LOG.warn("listSecretStores failed: {}", ex.toString());
+        }
+        return result;
+    }
+
+    /** Build an issuer description {name, kind, type, ready}. {@code type} inferred from spec keys. */
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, Object> describeIssuerLike(io.fabric8.kubernetes.api.model.GenericKubernetesResource r, String kind) {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("name", r.getMetadata() != null ? r.getMetadata().getName() : "");
+        out.put("kind", kind);
+        out.put("type", "unknown");
+        out.put("ready", false);
+        java.util.Map<String, Object> add = r.getAdditionalProperties();
+        if (add == null) return out;
+        Object spec = add.get("spec");
+        if (spec instanceof java.util.Map<?, ?> sm) {
+            // cert-manager issuer spec has exactly one of: acme, ca, vault, selfSigned, venafi.
+            for (String k : new String[]{"acme", "ca", "vault", "selfSigned", "venafi"}) {
+                if (sm.get(k) != null) { out.put("type", k); break; }
+            }
+        }
+        Object status = add.get("status");
+        if (status instanceof java.util.Map<?, ?> stm && stm.get("conditions") instanceof java.util.List<?> conds) {
+            for (Object c : conds) {
+                if (c instanceof java.util.Map<?, ?> cm
+                        && "Ready".equals(cm.get("type"))
+                        && "True".equals(cm.get("status"))) {
+                    out.put("ready", true);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Build a secret-store description {name, namespace, kind, provider, ready}. */
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, Object> describeStoreLike(io.fabric8.kubernetes.api.model.GenericKubernetesResource r, String kind) {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("name", r.getMetadata() != null ? r.getMetadata().getName() : "");
+        out.put("namespace", r.getMetadata() != null ? r.getMetadata().getNamespace() : "");
+        out.put("kind", kind);
+        out.put("provider", "unknown");
+        out.put("ready", false);
+        java.util.Map<String, Object> add = r.getAdditionalProperties();
+        if (add == null) return out;
+        Object spec = add.get("spec");
+        if (spec instanceof java.util.Map<?, ?> sm && sm.get("provider") instanceof java.util.Map<?, ?> pm) {
+            // First non-empty provider sub-key wins (vault / aws / gcp / azurekv / kubernetes / ...).
+            for (java.util.Map.Entry<?, ?> e : pm.entrySet()) {
+                if (e.getValue() != null) { out.put("provider", String.valueOf(e.getKey())); break; }
+            }
+        }
+        Object status = add.get("status");
+        if (status instanceof java.util.Map<?, ?> stm && stm.get("conditions") instanceof java.util.List<?> conds) {
+            for (Object c : conds) {
+                if (c instanceof java.util.Map<?, ?> cm
+                        && "Ready".equals(cm.get("type"))
+                        && "True".equals(cm.get("status"))) {
+                    out.put("ready", true);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Patch an ExternalSecret by merging metadata (typically a force-sync annotation).
+     */
+    public void patchExternalSecret(String namespace, String esName, Map<String, Object> patch) {
+        checkConfiguration();
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(esName, "esName");
+        var gkr = client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName);
+        var existing = gkr.get();
+        if (existing == null) {
+            throw new IllegalArgumentException("ExternalSecret " + namespace + "/" + esName + " not found");
+        }
+        mergeAdditionalProperties(existing.getAdditionalProperties(), patch);
+        gkr.patch(existing);
+        LOG.info("external-secrets.ExternalSecret {}/{} patched", namespace, esName);
+    }
+
+    /**
+     * Recursive shallow-merge for nested map patches (annotations / labels). Treats
+     * leaf values as overwrites; only same-key nested objects get recursed into.
+     * Used so a patch like {metadata: {annotations: {foo: bar}}} doesn't wipe existing labels.
+     */
+    @SuppressWarnings("unchecked")
+    private static void mergeAdditionalProperties(Map<String, Object> target, Map<String, Object> patch) {
+        if (target == null || patch == null) return;
+        for (Map.Entry<String, Object> e : patch.entrySet()) {
+            Object existing = target.get(e.getKey());
+            Object incoming = e.getValue();
+            if (existing instanceof Map && incoming instanceof Map) {
+                mergeAdditionalProperties((Map<String, Object>) existing, (Map<String, Object>) incoming);
+            } else {
+                target.put(e.getKey(), incoming);
+            }
+        }
+    }
+
+    /**
      * Returns the {@link ViewConfigurationService} for this service instance.
      *
      * @return the view configuration service

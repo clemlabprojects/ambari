@@ -20,7 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Form, Select, AutoComplete, Button, Divider, Space, Typography } from 'antd';
 import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
-import { getClusterServices, getDiscoveredK8sServices, getMonitoringDiscovery } from '../../api/client';
+import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
 
 const { Option } = Select;
@@ -53,6 +53,28 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
         if (!res) return [];
         return [{ label: `${res.release} (${res.namespace})`, value: JSON.stringify(res) }];
       }).catch(() => []);
+    } else if (field.type === 'secret-discovery') {
+      // Dropdown populated from Kubernetes Secrets matching `lookupLabel`. The
+      // backend mirrors the {label, value} shape that ServiceSelect already
+      // renders, so we can reuse the same component. Used for Company CA
+      // selection (Secrets in the ambari-pki namespace) and any future
+      // Secret-backed picker.
+      if (!field.lookupLabel) {
+        console.warn('secret-discovery called without lookupLabel');
+        setServices([]);
+        setIsLoading(false);
+        return;
+      }
+      promise = getDiscoveredK8sSecrets(field.lookupLabel);
+    } else if (field.type === 'cluster-issuer-discovery') {
+      // cert-manager.io ClusterIssuer / Issuer picker. Backend filters to Ready=True
+      // by default; surface the issuer type (ca / acme / vault / selfSigned) in the
+      // label so operators can pick the right one at a glance.
+      promise = getDiscoveredClusterIssuers(false);
+    } else if (field.type === 'secret-store-discovery') {
+      // external-secrets.io SecretStore / ClusterSecretStore picker. Label embeds the
+      // provider type (vault / aws / gcp / azurekv / kubernetes / ...).
+      promise = getDiscoveredSecretStores(false);
     } else {
       if (!field.lookupLabel) {
         console.warn('k8s-discovery called without lookupLabel');

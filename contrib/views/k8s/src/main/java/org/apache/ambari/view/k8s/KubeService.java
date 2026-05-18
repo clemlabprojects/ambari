@@ -326,6 +326,15 @@ public class KubeService {
     }
 
     /**
+     * Sub-resource for Cluster Capabilities (cert-manager / external-secrets / OpenShift detection).
+     * URL: /api/v1/.../resources/api/cluster/capabilities
+     */
+    @Path("/cluster/capabilities")
+    public ClusterCapabilitiesResource clusterCapabilities() {
+        return new ClusterCapabilitiesResource(getKubernetesService());
+    }
+
+    /**
      * Sub-resource for Configuration Management
      * URL: /api/v1/.../resources/api/configurations
      */
@@ -333,6 +342,17 @@ public class KubeService {
     public ConfigurationResource configuration() {
         // Pass dependencies
         return new ConfigurationResource(viewContext, getKubernetesService());
+    }
+
+    /**
+     * Sub-resource for the Company Issuing CA registry (PKI). Backs the
+     * {@code signedByCompanyCA} ingress-TLS mode by holding admin-uploaded CAs
+     * as K8s Secrets in the {@code ambari-pki} namespace.
+     * URL: /api/v1/.../resources/api/pki/cas
+     */
+    @Path("/pki/cas")
+    public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry() {
+        return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService());
     }
 
     @GET

@@ -1822,25 +1822,69 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
+    /** Match a path segment with an optional list-index suffix, e.g. {@code customCAs[0]}. */
+    private static final java.util.regex.Pattern LIST_SEGMENT =
+            java.util.regex.Pattern.compile("^(?<key>[^\\[\\]]+)(\\[(?<idx>\\d+)])?$");
+
     /**
-     * Set a value at a dotted path, creating nested maps as needed.
+     * Set a value at a dotted path, creating nested maps and lists as needed.
+     *
+     * <p>Supports Helm-style list-index syntax in each segment, e.g.
+     * {@code certificates.customCAs[0].secret} writes
+     * {@code certificates: { customCAs: [ { secret: ... } ] }} — not a literal
+     * key named {@code customCAs[0]}. This mirrors {@code HelmService.applyOverrides};
+     * keeping the two implementations in sync matters because both code paths feed
+     * the same chart and disagreement produces silently-wrong YAML.
      */
     @SuppressWarnings("unchecked")
     static void setAtPath(Map<String, Object> root, String dottedPath, Object value) {
         String[] parts = dottedPath.split("\\.");
-        Map<String, Object> current = root;
+        Object cursor = root;
         for (int i = 0; i < parts.length; i++) {
-            String p = parts[i];
             boolean last = (i == parts.length - 1);
-            if (last) {
-                current.put(p, value);
-            } else {
-                Object next = current.get(p);
-                if (!(next instanceof Map)) {
-                    next = new LinkedHashMap<String, Object>();
-                    current.put(p, next);
+            java.util.regex.Matcher m = LIST_SEGMENT.matcher(parts[i]);
+            if (!m.matches()) continue;
+
+            String key = m.group("key");
+            String idxStr = m.group("idx");
+
+            if (!(cursor instanceof Map)) {
+                // Defensive: caller guarantees we start from a Map; this can only happen
+                // if a prior segment was a list-index leading nowhere. Reset to a fresh map.
+                cursor = new LinkedHashMap<String, Object>();
+            }
+            Map<String, Object> map = (Map<String, Object>) cursor;
+
+            if (idxStr == null) {
+                if (last) {
+                    map.put(key, value);
+                } else {
+                    Object next = map.get(key);
+                    if (!(next instanceof Map) && !(next instanceof List)) {
+                        next = new LinkedHashMap<String, Object>();
+                        map.put(key, next);
+                    }
+                    cursor = next;
                 }
-                current = (Map<String, Object>) next;
+            } else {
+                int idx = Integer.parseInt(idxStr);
+                Object next = map.get(key);
+                if (!(next instanceof List)) {
+                    next = new ArrayList<>();
+                    map.put(key, next);
+                }
+                List<Object> list = (List<Object>) next;
+                while (list.size() <= idx) list.add(null);
+                if (last) {
+                    list.set(idx, value);
+                } else {
+                    Object elem = list.get(idx);
+                    if (!(elem instanceof Map)) {
+                        elem = new LinkedHashMap<String, Object>();
+                        list.set(idx, elem);
+                    }
+                    cursor = elem;
+                }
             }
         }
     }

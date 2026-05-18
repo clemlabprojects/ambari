@@ -175,6 +175,126 @@ public class DiscoveryResource {
     }
 
     /**
+     * Discover cert-manager.io ClusterIssuer / Issuer resources. Returns ready issuers
+     * (status.conditions[type=Ready,status=True]) by default; pass {@code ?includeNotReady=true}
+     * to surface all of them with their status. Form fields of type
+     * {@code cluster-issuer-discovery} consume this.
+     */
+    @GET
+    @Path("/cluster-issuers")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response discoverClusterIssuers(@QueryParam("includeNotReady") boolean includeNotReady) {
+        try {
+            List<Map<String, Object>> items = kubernetesService.listClusterIssuers(includeNotReady);
+            // Reshape to the {label, value, ...metadata} contract used by ServiceSelect.
+            List<Map<String, String>> out = new ArrayList<>(items.size());
+            for (Map<String, Object> i : items) {
+                Map<String, String> e = new HashMap<>();
+                String name = String.valueOf(i.getOrDefault("name", ""));
+                boolean ready = Boolean.TRUE.equals(i.get("ready"));
+                String kind = String.valueOf(i.getOrDefault("kind", "ClusterIssuer"));
+                String type = String.valueOf(i.getOrDefault("type", "unknown"));
+                e.put("label", name + " (" + kind + ", " + type + (ready ? "" : ", not-ready") + ")");
+                e.put("value", name);
+                e.put("kind", kind);
+                e.put("type", type);
+                e.put("ready", String.valueOf(ready));
+                out.add(e);
+            }
+            return Response.ok(out).build();
+        } catch (Exception e) {
+            LOG.error("Failed to discover cert-manager issuers", e);
+            return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Discover external-secrets.io SecretStore / ClusterSecretStore resources. Returns
+     * ready stores by default; the {@code provider} field is inferred from the spec
+     * (vault / aws / gcp / azurekv / kubernetes / ...). Form fields of type
+     * {@code secret-store-discovery} consume this.
+     */
+    @GET
+    @Path("/secret-stores")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response discoverSecretStores(@QueryParam("includeNotReady") boolean includeNotReady) {
+        try {
+            List<Map<String, Object>> items = kubernetesService.listSecretStores(includeNotReady);
+            List<Map<String, String>> out = new ArrayList<>(items.size());
+            for (Map<String, Object> i : items) {
+                Map<String, String> e = new HashMap<>();
+                String name = String.valueOf(i.getOrDefault("name", ""));
+                Object nsRaw = i.get("namespace");
+                String ns = (nsRaw == null || "null".equals(String.valueOf(nsRaw))) ? "" : String.valueOf(nsRaw);
+                String kind = String.valueOf(i.getOrDefault("kind", "ClusterSecretStore"));
+                String provider = String.valueOf(i.getOrDefault("provider", "unknown"));
+                boolean ready = Boolean.TRUE.equals(i.get("ready"));
+                e.put("label", name + (ns.isEmpty() ? "" : " (" + ns + ")") + " — " + provider + (ready ? "" : ", not-ready"));
+                e.put("value", name);
+                e.put("kind", kind);
+                e.put("namespace", ns);
+                e.put("provider", provider);
+                e.put("ready", String.valueOf(ready));
+                out.add(e);
+            }
+            return Response.ok(out).build();
+        } catch (Exception e) {
+            LOG.error("Failed to discover external-secrets stores", e);
+            return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Discover Kubernetes Secrets matching a label selector. Used by service.json
+     * form fields of type "secret-discovery" — e.g. the Company CA picker in
+     * KDPS/_shared/ingress.json populates from this endpoint (CA secrets carry
+     * label ambari.clemlab.com/resource-type=issuing-ca in the ambari-pki namespace).
+     *
+     * Accepts:
+     *   ?label=key=value   selector "key=value"
+     *   ?label=key         existence-only selector (any value)
+     *
+     * Returns the same {label, value} shape as /api/discovery/k8s so the UI can
+     * reuse ServiceSelect rendering with only a `lookupResource` switch.
+     */
+    @GET
+    @Path("/secrets")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response discoverK8sSecrets(@QueryParam("label") String label) {
+        try {
+            if (label == null || label.isBlank()) {
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity(Collections.singletonMap("error", "missing label query parameter"))
+                        .build();
+            }
+            String key = label;
+            String value = null;
+            int eq = label.indexOf('=');
+            if (eq > 0) {
+                key = label.substring(0, eq);
+                value = label.substring(eq + 1);
+            }
+            List<Map<String, String>> secrets = kubernetesService.listSecretsByLabel(key, value);
+            // Rewrite into the {label, value} contract ServiceSelect expects.
+            List<Map<String, String>> items = new ArrayList<>(secrets.size());
+            for (Map<String, String> s : secrets) {
+                String name = s.getOrDefault("name", "");
+                String ns = s.getOrDefault("namespace", "");
+                Map<String, String> entry = new HashMap<>();
+                entry.put("label", name + (ns.isBlank() ? "" : " (" + ns + ")"));
+                entry.put("value", name);
+                entry.put("namespace", ns);
+                entry.put("description", s.getOrDefault("description", ""));
+                items.add(entry);
+            }
+            return Response.ok(items).build();
+        } catch (Exception e) {
+            LOG.error("Failed to discover K8s secrets", e);
+            return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+    }
+
+    /**
      * Discover monitoring stack (kube-prometheus-stack) deployment to provide namespace/release info to charts.
      * This endpoint only reads cluster state — it never triggers an install.
      * If the service is found healthy after a prior FAILED bootstrap, the state is self-healed to COMPLETED.

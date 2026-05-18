@@ -29,29 +29,55 @@ interface PropertyRendererProps {
   property: StackProperty;
   currentValue: any; // The override value (undefined if not overridden)
   onChange: (configName: string, propName: string, value: any) => void;
+  /**
+   * Notify the parent whenever this password field's confirm/match state changes,
+   * so the wizard's Next-button gate (ServiceWizardPage.hasInvalidPasswords) can
+   * refuse to advance on mismatch. Only emitted for password-typed properties.
+   *
+   * Crucially we DO NOT lift the confirm value itself — that would force the entire
+   * wizard tree (Steps + Tabs + ConfigurationStep + PropertyRenderer) to re-render
+   * on every keystroke, and the cascade through antd Tabs steals focus from the
+   * confirm input. Keeping `confirm` as local state preserves focus; the parent
+   * only learns the boolean validity, which changes far less often than every key.
+   */
+  onPasswordValidityChange?: (configName: string, propName: string, valid: boolean) => void;
 }
 
-const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, property, currentValue, onChange }) => {
+const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, property, currentValue, onChange, onPasswordValidityChange }) => {
   const val = currentValue !== undefined ? currentValue : property.value;
   const isModified = currentValue !== undefined && currentValue !== property.value;
-  const [error, setError] = React.useState<string | null>(null);
-  const [confirm, setConfirm] = React.useState('');
   const isPassword = property.type === "password";
-  const mismatch = isPassword && currentValue !== undefined && confirm !== "" && confirm !== val;
-
-  React.useEffect(() => {
-    if (!isPassword) {
-      setError(null);
-      return;
-    }
-    if (property.required && (!val || val === "")) {
-      setError("Password is required");
+  const [confirm, setConfirm] = React.useState('');
+  const passwordEmpty = isPassword && (!val || val === "");
+  const mismatch = isPassword && !passwordEmpty && confirm !== "" && confirm !== val;
+  const confirmEmpty = isPassword && property.required && confirm === "" && !passwordEmpty;
+  let error: string | null = null;
+  if (isPassword) {
+    if (property.required && passwordEmpty) {
+      error = "Password is required";
+    } else if (confirmEmpty) {
+      error = "Please confirm the password";
     } else if (mismatch) {
-      setError("Passwords do not match");
-    } else {
-      setError(null);
+      error = "Passwords do not match";
     }
-  }, [isPassword, val, confirm, mismatch, property.required]);
+  }
+
+  // Report validity up so the Next button can react. Computed from the same state
+  // visible to the user (passwordEmpty / mismatch / confirmEmpty). Effect runs only
+  // when validity *changes*, not on every keystroke — pleasant on focus.
+  const isValid = !isPassword
+      || (!error
+          && !(property.required && passwordEmpty)
+          && !(property.required && confirmEmpty)
+          && !mismatch);
+  const lastReportedRef = React.useRef<boolean | undefined>(undefined);
+  React.useEffect(() => {
+    if (!isPassword || !onPasswordValidityChange) return;
+    if (lastReportedRef.current !== isValid) {
+      lastReportedRef.current = isValid;
+      onPasswordValidityChange(configName, property.name, isValid);
+    }
+  }, [isPassword, isValid, onPasswordValidityChange, configName, property.name]);
 
   const handleChange = (v: any) => onChange(configName, property.name, v);
 
@@ -75,11 +101,12 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
     return (
       <div style={{ marginBottom: 16 }}>
         {label}
-        <Input.Password 
-          value={val} 
-          onChange={e => handleChange(e.target.value)} 
+        <Input.Password
+          value={val}
+          onChange={e => handleChange(e.target.value)}
           prefix={<LockOutlined />}
           placeholder="Enter secret..."
+          status={passwordEmpty && property.required ? 'error' : undefined}
           style={{ marginBottom: 8 }}
         />
         <Input.Password

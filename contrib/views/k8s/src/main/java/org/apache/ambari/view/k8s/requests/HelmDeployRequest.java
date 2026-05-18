@@ -78,6 +78,38 @@ public class HelmDeployRequest {
     // Optional ingress TLS upload (cert/key) to create a kubernetes.io/tls Secret ahead of deploy
     private Map<String, Object> ingressTlsUpload;
 
+    // Optional ingress TLS self-signing. When set, the deploy plan inserts an
+    // INGRESS_TLS_SELFSIGN step before HELM_DEPLOY_DRY_RUN. Keys:
+    //   mode         "ambariInternal" | "companyUploaded"
+    //   caName       (companyUploaded only) admin-uploaded CA name from the registry
+    //   secretName   override (default "<release>-ingress-tls")
+    //   ingressHost  override (default reads ingress.host from values)
+    //   extraSans    additional DNS SANs
+    //   validityDays leaf validity (capped to 825 server-side)
+    private Map<String, Object> ingressTlsSelfSign;
+
+    // Optional ingress TLS issuance via cert-manager. When set, the deploy pipeline writes
+    // a cert-manager.io/v1 Certificate before installing the chart; cert-manager produces
+    // the K8s Secret the chart references via ingress.tls[0].secretName. Auto-renewal is
+    // free with cert-manager. Shape:
+    //   issuerName    ClusterIssuer / Issuer name to reference
+    //   issuerKind    "ClusterIssuer" (default) | "Issuer"
+    //   secretName    override (default "<release>-ingress-tls")
+    //   ingressHost   primary DNS name (default reads ingress.host from values)
+    //   extraSans     additional DNS SANs
+    //   durationHours leaf validity in hours (default 2160 = 90d)
+    private Map<String, Object> ingressTlsCertManager;
+
+    // Optional ingress TLS sourced from an external-secrets SecretStore. When set, the
+    // deploy pipeline writes an ExternalSecret CR before installing the chart; ESO syncs
+    // the upstream secret (typically Vault PKI) into the K8s Secret the chart references.
+    //   secretStoreName  SecretStore / ClusterSecretStore name
+    //   secretStoreKind  "ClusterSecretStore" (default) | "SecretStore"
+    //   remoteKey        path/key in the upstream store
+    //   secretName       override (default "<release>-ingress-tls")
+    //   refreshInterval  ESO refresh cadence (default "1h")
+    private Map<String, Object> ingressTlsExternalSecret;
+
     public static class GitOptions {
         private String repoUrl;
         private String baseBranch;
@@ -406,6 +438,65 @@ public class HelmDeployRequest {
         } catch (Exception ignore) {
             this.ingressTlsUpload = null;
         }
+    }
+
+    /**
+     * Optional Ingress TLS self-sign payload. When present, an
+     * {@code INGRESS_TLS_SELFSIGN} step is appended to the deploy plan that mints a
+     * leaf TLS cert into a Secret using either the Ambari Internal CA or an
+     * admin-uploaded company CA from {@link
+     * org.apache.ambari.view.k8s.service.CaRegistryService}.
+     */
+    public Map<String, Object> getIngressTlsSelfSign() {
+        return ingressTlsSelfSign;
+    }
+
+    @JsonSetter("ingressTlsSelfSign")
+    public void setIngressTlsSelfSign(Object raw) {
+        try {
+            if (raw == null) {
+                this.ingressTlsSelfSign = null;
+            } else if (raw instanceof Map) {
+                //noinspection unchecked
+                this.ingressTlsSelfSign = (Map<String, Object>) raw;
+            } else if (raw instanceof String s) {
+                this.ingressTlsSelfSign = s.isBlank() ? null : OM.readValue(s, Map.class);
+            }
+        } catch (Exception ignore) {
+            this.ingressTlsSelfSign = null;
+        }
+    }
+
+    /** @see #ingressTlsCertManager */
+    public Map<String, Object> getIngressTlsCertManager() {
+        return ingressTlsCertManager;
+    }
+    @JsonSetter("ingressTlsCertManager")
+    public void setIngressTlsCertManager(Object raw) {
+        try {
+            if (raw == null) this.ingressTlsCertManager = null;
+            else if (raw instanceof Map) { //noinspection unchecked
+                this.ingressTlsCertManager = (Map<String, Object>) raw;
+            } else if (raw instanceof String s) {
+                this.ingressTlsCertManager = s.isBlank() ? null : OM.readValue(s, Map.class);
+            }
+        } catch (Exception ignore) { this.ingressTlsCertManager = null; }
+    }
+
+    /** @see #ingressTlsExternalSecret */
+    public Map<String, Object> getIngressTlsExternalSecret() {
+        return ingressTlsExternalSecret;
+    }
+    @JsonSetter("ingressTlsExternalSecret")
+    public void setIngressTlsExternalSecret(Object raw) {
+        try {
+            if (raw == null) this.ingressTlsExternalSecret = null;
+            else if (raw instanceof Map) { //noinspection unchecked
+                this.ingressTlsExternalSecret = (Map<String, Object>) raw;
+            } else if (raw instanceof String s) {
+                this.ingressTlsExternalSecret = s.isBlank() ? null : OM.readValue(s, Map.class);
+            }
+        } catch (Exception ignore) { this.ingressTlsExternalSecret = null; }
     }
 
     // ----------------- global config management --------------

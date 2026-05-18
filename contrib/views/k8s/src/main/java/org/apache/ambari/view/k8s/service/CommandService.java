@@ -975,7 +975,10 @@ public class CommandService {
                     value = getByPath(chartValues, field);
                     if (value == null) value = chartValues.get(field);
                 }
-                // 3. For X.host fields excluded from values, bindings write to X.hosts[0].host instead.
+                // 3. For X.host fields excluded from values, bindings write to X.hosts[] instead.
+                //    Two shapes are supported by upstream charts:
+                //      a. List<Map> e.g. openmetadata: hosts: [{host: "...", paths: [...]}]
+                //      b. List<String> e.g. superset (Bitnami): hosts: ["..."]
                 if (value == null && chartValues != null && field.endsWith(".host") && !field.contains("tls")) {
                     String hostsField = field.substring(0, field.length() - 5) + ".hosts";
                     Object hostsList = getByPath(chartValues, hostsField);
@@ -985,6 +988,8 @@ public class CommandService {
                         if (first instanceof Map) {
                             Object host = ((Map<?, ?>) first).get("host");
                             if (host != null) value = host;
+                        } else if (first instanceof String && !((String) first).isBlank()) {
+                            value = first;
                         }
                     }
                 }
@@ -2825,6 +2830,389 @@ public class CommandService {
     }
 
     /**
+     * Re-issue TLS leaf certificates for every host of a running release, regardless of which
+     * provisioning system issued the existing Secret. Dispatches per source:
+     * <ul>
+     *   <li>{@code k8s-view-self-signed} — re-runs INGRESS_TLS_SELFSIGN with the labels we
+     *       saved on the original Secret (ca-mode + optional ca-name + release name). The
+     *       Secret is overwritten in place, nginx-ingress picks up the new cert on its
+     *       Secret watcher within seconds.</li>
+     *   <li>{@code cert-manager} — annotates the cert-manager.io Certificate CR with
+     *       {@code cert-manager.io/issue-temporary-certificate=true} and bumps
+     *       {@code renewBefore} just enough to trigger immediate re-issuance.</li>
+     *   <li>{@code external-secrets} — annotates the ExternalSecret with the standard
+     *       force-sync annotation so ESO re-pulls from Vault on the next reconcile.</li>
+     *   <li>{@code external} — skipped with a clear log entry; the operator owns it.</li>
+     * </ul>
+     * Per-host steps run in parallel where the controllers allow it (cert-manager / ESO are
+     * eventually-consistent CR patches that don't queue).
+     *
+     * @return command id for status polling
+     */
+    public String submitReleaseTlsRenewal(String namespace,
+                                          String releaseName,
+                                          MultivaluedMap<String, String> callerHeaders,
+                                          URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+
+        ReleaseTlsService tlsSvc = new ReleaseTlsService(ctx, kubernetesService);
+        List<Map<String, Object>> entries = tlsSvc.describe(namespace, releaseName);
+        if (entries.isEmpty()) {
+            throw new IllegalArgumentException("No Ingress objects found for " + namespace + "/" + releaseName);
+        }
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.TLS_RENEW.name());
+        rootCommand.setTitle("Renew TLS cert(s) for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("namespace", namespace);
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("_baseUri", baseUri == null ? "" : baseUri.toString());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+
+        List<String> childIds = new ArrayList<>();
+        int planned = 0, skippedExternal = 0;
+        for (Map<String, Object> e : entries) {
+            String source = String.valueOf(e.getOrDefault("source", "external"));
+            String secretName = (String) e.get("secretName");
+            List<?> hosts = (List<?>) e.getOrDefault("hosts", List.of());
+            String primaryHost = hosts.isEmpty() ? "" : String.valueOf(hosts.get(0));
+            if (secretName == null || secretName.isBlank() || primaryHost.isBlank()) continue;
+
+            switch (source) {
+                case "k8s-view-self-signed" -> {
+                    Map<String, String> labels = readSecretLabels(namespace, secretName);
+                    String caMode = labels.getOrDefault("ambari.clemlab.com/ca-mode", "ambariInternal");
+                    String caName = labels.get("ambari.clemlab.com/ca-name");
+                    List<String> extraSans = new ArrayList<>();
+                    for (int i = 1; i < hosts.size(); i++) extraSans.add(String.valueOf(hosts.get(i)));
+                    String stepId = this.commandPlanFactory.appendIngressTlsSelfSignStep(
+                            rootCommand, releaseName, namespace, secretName, primaryHost,
+                            extraSans, caMode, caName, null);
+                    childIds.add(stepId);
+                    planned++;
+                }
+                case "cert-manager" -> {
+                    String stepId = appendCertManagerRenewStep(rootCommand, namespace, secretName, primaryHost);
+                    childIds.add(stepId);
+                    planned++;
+                }
+                case "external-secrets" -> {
+                    String stepId = appendExternalSecretRenewStep(rootCommand, namespace, secretName);
+                    childIds.add(stepId);
+                    planned++;
+                }
+                default -> skippedExternal++;
+            }
+        }
+
+        if (planned == 0) {
+            throw new IllegalStateException("Nothing to renew for " + namespace + "/" + releaseName
+                    + (skippedExternal > 0 ? " (all " + skippedExternal + " TLS Secret(s) are operator-managed)" : ""));
+        }
+
+        rootCommand.setChildListJson(gson.toJson(childIds));
+        store(rootStatus);
+        store(rootCommand);
+        LOG.info("TLS_RENEW: planned {} step(s), skipped {} external secret(s) for {}/{}",
+                planned, skippedExternal, namespace, releaseName);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plan an INGRESS_TLS_CERTMANAGER step under the given root command. Used by the
+     * install pipeline (operation=create) — the Certificate CR is applied pre-deploy so
+     * cert-manager already has the Secret ready by the time the chart references it.
+     */
+    private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace,
+                                                   String certName, String secretName,
+                                                   String issuerName, String issuerKind,
+                                                   List<String> dnsNames, Integer durationHours) {
+        String stepId = root.getId() + "-tls-cm-" + UUID.randomUUID();
+        CommandEntity step = new CommandEntity();
+        step.setId(stepId);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setType(CommandType.INGRESS_TLS_CERTMANAGER.name());
+        step.setTitle("cert-manager: create Certificate " + secretName);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("operation", "create");
+        params.put("namespace", namespace);
+        params.put("certName", certName);
+        params.put("secretName", secretName);
+        params.put("issuerName", issuerName);
+        params.put("issuerKind", issuerKind == null || issuerKind.isBlank() ? "ClusterIssuer" : issuerKind);
+        params.put("dnsNames", dnsNames);
+        if (durationHours != null) params.put("durationHours", durationHours);
+        step.setParamsJson(gson.toJson(params));
+        CommandStatusEntity st = new CommandStatusEntity();
+        st.setId(stepId + "-status");
+        st.setViewInstance(ctx.getInstanceName());
+        st.setCreatedBy(ctx.getUsername());
+        st.setState(CommandState.PENDING.name());
+        String now = Instant.now().toString();
+        st.setCreatedAt(now);
+        st.setUpdatedAt(now);
+        st.setAttempt(0);
+        step.setCommandStatusId(st.getId());
+        store(st);
+        store(step);
+        return stepId;
+    }
+
+    /**
+     * Plan an INGRESS_TLS_EXTERNAL_SECRET step under the given root command. Used by the
+     * install pipeline — the ExternalSecret CR is applied pre-deploy so ESO has already
+     * synced the Secret from the upstream store by the time the chart references it.
+     */
+    private String appendIngressTlsExternalSecretStep(CommandEntity root, String namespace,
+                                                       String esName, String secretName,
+                                                       String storeName, String storeKind,
+                                                       String remoteKey, String refreshInterval) {
+        String stepId = root.getId() + "-tls-es-" + UUID.randomUUID();
+        CommandEntity step = new CommandEntity();
+        step.setId(stepId);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setType(CommandType.INGRESS_TLS_EXTERNAL_SECRET.name());
+        step.setTitle("external-secrets: create ExternalSecret " + secretName);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("operation", "create");
+        params.put("namespace", namespace);
+        params.put("externalSecretName", esName);
+        params.put("secretName", secretName);
+        params.put("secretStoreName", storeName);
+        params.put("secretStoreKind", storeKind == null || storeKind.isBlank() ? "ClusterSecretStore" : storeKind);
+        params.put("remoteKey", remoteKey);
+        params.put("refreshInterval", refreshInterval == null || refreshInterval.isBlank() ? "1h" : refreshInterval);
+        step.setParamsJson(gson.toJson(params));
+        CommandStatusEntity st = new CommandStatusEntity();
+        st.setId(stepId + "-status");
+        st.setViewInstance(ctx.getInstanceName());
+        st.setCreatedBy(ctx.getUsername());
+        st.setState(CommandState.PENDING.name());
+        String now = Instant.now().toString();
+        st.setCreatedAt(now);
+        st.setUpdatedAt(now);
+        st.setAttempt(0);
+        step.setCommandStatusId(st.getId());
+        store(st);
+        store(step);
+        return stepId;
+    }
+
+    /** Reads labels of a Secret, returning empty map if missing or unreadable. */
+    private Map<String, String> readSecretLabels(String namespace, String secretName) {
+        try {
+            var secret = kubernetesService.getSecret(namespace, secretName);
+            if (secret != null && secret.getMetadata() != null && secret.getMetadata().getLabels() != null) {
+                return secret.getMetadata().getLabels();
+            }
+        } catch (Exception ignore) {}
+        return Map.of();
+    }
+
+    /**
+     * Plan an INGRESS_TLS_CERTMANAGER step that simply annotates the existing Certificate CR
+     * to force re-issue. The Certificate must already exist (it's created by the install path
+     * when tlsMode=signedByClusterIssuer); we just patch it.
+     */
+    private String appendCertManagerRenewStep(CommandEntity root, String namespace, String secretName, String primaryHost) {
+        String stepId = root.getId() + "-tls-cm-" + UUID.randomUUID();
+        CommandEntity step = new CommandEntity();
+        step.setId(stepId);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setType(CommandType.INGRESS_TLS_CERTMANAGER.name());
+        step.setTitle("cert-manager: force renew " + namespace + "/" + secretName);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("namespace", namespace);
+        params.put("secretName", secretName);
+        params.put("primaryHost", primaryHost);
+        params.put("operation", "renew");
+        step.setParamsJson(gson.toJson(params));
+        CommandStatusEntity st = new CommandStatusEntity();
+        st.setId(stepId + "-status");
+        st.setViewInstance(ctx.getInstanceName());
+        st.setCreatedBy(ctx.getUsername());
+        st.setState(CommandState.PENDING.name());
+        String now = Instant.now().toString();
+        st.setCreatedAt(now);
+        st.setUpdatedAt(now);
+        st.setAttempt(0);
+        step.setCommandStatusId(st.getId());
+        store(st);
+        store(step);
+        return stepId;
+    }
+
+    /**
+     * Plan an INGRESS_TLS_EXTERNAL_SECRET step that annotates the ExternalSecret to force
+     * an immediate refresh from the upstream secret store.
+     */
+    private String appendExternalSecretRenewStep(CommandEntity root, String namespace, String secretName) {
+        String stepId = root.getId() + "-tls-es-" + UUID.randomUUID();
+        CommandEntity step = new CommandEntity();
+        step.setId(stepId);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setType(CommandType.INGRESS_TLS_EXTERNAL_SECRET.name());
+        step.setTitle("external-secrets: force refresh " + namespace + "/" + secretName);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("namespace", namespace);
+        params.put("secretName", secretName);
+        params.put("operation", "refresh");
+        step.setParamsJson(gson.toJson(params));
+        CommandStatusEntity st = new CommandStatusEntity();
+        st.setId(stepId + "-status");
+        st.setViewInstance(ctx.getInstanceName());
+        st.setCreatedBy(ctx.getUsername());
+        st.setState(CommandState.PENDING.name());
+        String now = Instant.now().toString();
+        st.setCreatedAt(now);
+        st.setUpdatedAt(now);
+        st.setAttempt(0);
+        step.setCommandStatusId(st.getId());
+        store(st);
+        store(step);
+        return stepId;
+    }
+
+    /**
+     * Entry point for in-place Helm release upgrades. Reads the deployed values from the running
+     * release so they are preserved, persists a single {@code HELM_UPGRADE} step, and schedules execution.
+     *
+     * @param namespace      target Kubernetes namespace
+     * @param releaseName    Helm release name to upgrade
+     * @param targetVersion  chart version to install; required, must differ from the running one
+     * @param callerHeaders  request headers used for downstream Ambari calls (cluster resolution, logs)
+     * @param baseUri        Ambari base URI used to resolve the cluster context
+     * @return the root command id, suitable for polling via the commands API
+     */
+    public String submitReleaseUpgrade(String namespace,
+                                       String releaseName,
+                                       String targetVersion,
+                                       MultivaluedMap<String, String> callerHeaders,
+                                       URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+        if (targetVersion == null || targetVersion.isBlank()) {
+            throw new IllegalArgumentException("targetVersion is required");
+        }
+
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+        if (releaseMetadata.getChartRef() == null || releaseMetadata.getChartRef().isBlank()) {
+            throw new IllegalStateException("Release metadata missing chartRef for " + namespace + "/" + releaseName);
+        }
+        if (releaseMetadata.getRepoId() == null || releaseMetadata.getRepoId().isBlank()) {
+            throw new IllegalStateException("Release metadata missing repoId for " + namespace + "/" + releaseName);
+        }
+        if (targetVersion.equals(releaseMetadata.getVersion())) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is already at version " + targetVersion);
+        }
+
+        // Preserve operator-supplied values: read the merged values from the deployed release.
+        Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        if (deployedValues == null) {
+            deployedValues = Collections.emptyMap();
+        }
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.K8S_MANAGER_RELEASE_DEPLOY.name());
+        rootCommand.setTitle("Upgrade release " + releaseName + " to chart " + targetVersion);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        // Persist deployed values to a cache file so the HELM_UPGRADE step picks them up
+        // through the standard loadValuesFromParams() flow used by HELM_DEPLOY.
+        String valuesPath = kubernetesService.getConfigurationService()
+                .writeCacheFile("values-" + commandId, gson.toJson(deployedValues));
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("chart", releaseMetadata.getChartRef());
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("repoId", releaseMetadata.getRepoId());
+        rootParams.put("version", targetVersion);
+        rootParams.put("valuesPath", valuesPath);
+        rootParams.put("_baseUri", baseUri.toString());
+        if (callerHeaders != null) {
+            rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        }
+
+        // Create the single HELM_UPGRADE child step.
+        String subId = UUID.randomUUID().toString();
+        String childId = commandId + "-" + subId;
+        CommandEntity upgradeStep = new CommandEntity();
+        upgradeStep.setId(childId);
+        upgradeStep.setViewInstance(ctx.getInstanceName());
+        upgradeStep.setType(CommandType.HELM_UPGRADE.name());
+        upgradeStep.setTitle("Helm upgrade " + releaseName + " to " + targetVersion);
+        upgradeStep.setParamsJson(gson.toJson(rootParams));
+
+        CommandStatusEntity upgradeStepStatus = new CommandStatusEntity();
+        upgradeStepStatus.setId(childId + "-status");
+        upgradeStepStatus.setAttempt(0);
+        upgradeStepStatus.setState(CommandState.PENDING.name());
+        upgradeStepStatus.setCreatedBy(ctx.getUsername());
+        upgradeStepStatus.setCreatedAt(now);
+        upgradeStepStatus.setUpdatedAt(now);
+        upgradeStep.setCommandStatusId(upgradeStepStatus.getId());
+
+        store(upgradeStepStatus);
+        store(upgradeStep);
+
+        List<String> childCommandIds = new ArrayList<>();
+        // Ensure the repo is logged in before the upgrade so the new chart version is pullable.
+        String helmRepoLoginId = this.commandPlanFactory.createHelmRepoCommand(rootCommand, releaseMetadata.getRepoId());
+        childCommandIds.add(helmRepoLoginId);
+        childCommandIds.add(upgradeStep.getId());
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+
+        store(rootStatus);
+        store(rootCommand);
+
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
      * Entry point for deploy requests. Creates the orchestration plan, persists it, and schedules execution.
      * Thread-safe: no shared mutable state beyond the DataStore and thread pools.
      */
@@ -2837,6 +3225,11 @@ public class CommandService {
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
+
+        // Apply value-path aliases and version compatibility checks before the backend
+        // dispatch so every code path (direct helm, flux GitOps, dry-run preview) sees
+        // the same rewritten values map.
+        applyValueAliasesAndVersionCheck(request, version);
 
         DeploymentContext context = new DeploymentContext(
                 repoId,
@@ -2862,6 +3255,146 @@ public class CommandService {
             LOG.error("Deployment failed for {}/{} using mode {}: {}", request.getNamespace(), request.getReleaseName(), deploymentMode, ex.toString(), ex);
             throw new RuntimeException(ex);
         }
+    }
+
+    /**
+     * Apply two service-definition-driven transforms to the request before backend dispatch.
+     *
+     * <p><b>valueAliases.</b> The shared form schema (KDPS/_shared/ingress.json) uses
+     * canonical field paths like {@code ingress.ingressClassName} that match the Kubernetes
+     * Ingress spec, but individual charts may consume different paths (OpenMetadata uses
+     * {@code ingress.className}, Trino uses {@code ingress.className}). The service.json
+     * declares <code>"valueAliases": { "ingress.ingressClassName": "ingress.className" }</code>
+     * to bridge the gap. At submit time we rewrite both <code>request.values</code> and any
+     * pending overrides in <code>request._ov</code> so the alias is applied uniformly.
+     *
+     * <p><b>requiredChartVersion.</b> If the service.json carries
+     * <code>"requiredChartVersion": "&gt;=0.12.24"</code>, compare against the resolved
+     * chart version. Refuse the install with a clear error if they don't match — prevents
+     * silent breakage when chart and service.json drift apart.
+     */
+    private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion) {
+        if (request.getServiceKey() == null || request.getServiceKey().isBlank()) return;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (skipping aliases + version check): {}",
+                    request.getServiceKey(), ex.toString());
+            return;
+        }
+
+        // ----- chart version compatibility check
+        if (def.requiredChartVersion != null && !def.requiredChartVersion.isBlank()
+                && resolvedVersion != null && !resolvedVersion.isBlank()) {
+            if (!isChartVersionCompatible(resolvedVersion, def.requiredChartVersion)) {
+                throw new IllegalArgumentException(
+                        "Chart version " + resolvedVersion + " does not match the range '"
+                                + def.requiredChartVersion + "' declared in service.json (" + request.getServiceKey()
+                                + "). Update the chart version or the service.json compatibility range.");
+            }
+            LOG.info("Chart version {} satisfies range '{}' for {}", resolvedVersion, def.requiredChartVersion, request.getServiceKey());
+        }
+
+        // ----- value path rewrites
+        if (def.valueAliases == null || def.valueAliases.isEmpty()) return;
+        Map<String, Object> values = request.getValues();
+        for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
+            String from = e.getKey();
+            String to = e.getValue();
+            if (from == null || from.isBlank() || to == null || to.isBlank() || from.equals(to)) continue;
+            rewriteDottedPath(values, from, to);
+            LOG.info("Applied valueAlias for {}: {} -> {}", request.getServiceKey(), from, to);
+        }
+    }
+
+    /**
+     * Moves the value at dotted path {@code fromPath} to dotted path {@code toPath}, leaving
+     * any other keys untouched. Both paths are interpreted as nested-map keys (no list-index
+     * support — list indices in chart values are not aliased today). No-op if the source
+     * is absent.
+     */
+    @SuppressWarnings("unchecked")
+    private void rewriteDottedPath(Map<String, Object> root, String fromPath, String toPath) {
+        if (root == null) return;
+        String[] from = fromPath.split("\\.");
+        Map<String, Object> srcParent = root;
+        for (int i = 0; i < from.length - 1; i++) {
+            Object next = srcParent.get(from[i]);
+            if (!(next instanceof Map)) return; // path doesn't exist
+            srcParent = (Map<String, Object>) next;
+        }
+        if (!srcParent.containsKey(from[from.length - 1])) return;
+        Object value = srcParent.remove(from[from.length - 1]);
+
+        String[] to = toPath.split("\\.");
+        Map<String, Object> dstParent = root;
+        for (int i = 0; i < to.length - 1; i++) {
+            Object next = dstParent.get(to[i]);
+            if (!(next instanceof Map)) {
+                Map<String, Object> child = new LinkedHashMap<>();
+                dstParent.put(to[i], child);
+                next = child;
+            }
+            dstParent = (Map<String, Object>) next;
+        }
+        dstParent.put(to[to.length - 1], value);
+    }
+
+    /**
+     * Minimal semver-range matcher supporting the forms we actually use:
+     *   ">=X.Y.Z"   inclusive lower bound
+     *   "X.Y.Z"     exact match
+     *   "&gt;X.Y.Z"      strict lower bound
+     *   "&lt;=X.Y.Z" / "&lt;X.Y.Z"  upper bounds
+     * Multiple constraints separated by commas (AND).
+     */
+    private boolean isChartVersionCompatible(String actual, String range) {
+        if (range == null || range.isBlank()) return true;
+        String act = actual.trim();
+        // strip leading 'v'
+        if (act.startsWith("v") || act.startsWith("V")) act = act.substring(1);
+        for (String constraintRaw : range.split(",")) {
+            String constraint = constraintRaw.trim();
+            if (constraint.isEmpty()) continue;
+            String op = "=";
+            String ver;
+            if (constraint.startsWith(">=")) { op = ">="; ver = constraint.substring(2).trim(); }
+            else if (constraint.startsWith("<=")) { op = "<="; ver = constraint.substring(2).trim(); }
+            else if (constraint.startsWith(">"))  { op = ">";  ver = constraint.substring(1).trim(); }
+            else if (constraint.startsWith("<"))  { op = "<";  ver = constraint.substring(1).trim(); }
+            else if (constraint.startsWith("="))  { op = "=";  ver = constraint.substring(1).trim(); }
+            else                                    { op = "=";  ver = constraint; }
+            int cmp = compareSemver(act, ver);
+            boolean ok = switch (op) {
+                case ">=" -> cmp >= 0;
+                case ">" -> cmp > 0;
+                case "<=" -> cmp <= 0;
+                case "<" -> cmp < 0;
+                default -> cmp == 0;
+            };
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private int compareSemver(String a, String b) {
+        String[] pa = a.split("[.-]", -1);
+        String[] pb = b.split("[.-]", -1);
+        int n = Math.max(pa.length, pb.length);
+        for (int i = 0; i < n; i++) {
+            String sa = i < pa.length ? pa[i] : "0";
+            String sb = i < pb.length ? pb[i] : "0";
+            try {
+                int ia = Integer.parseInt(sa);
+                int ib = Integer.parseInt(sb);
+                if (ia != ib) return Integer.compare(ia, ib);
+            } catch (NumberFormatException nfe) {
+                int sc = sa.compareTo(sb);
+                if (sc != 0) return sc;
+            }
+        }
+        return 0;
     }
 
     /**
@@ -3023,8 +3556,167 @@ public class CommandService {
                         null,
                         null
                 );
+                // Inject the standard ingress.tls[0] list shape every KDPS chart understands.
+                // We don't rely on the UI's `ingress-setup` binding here because that binding
+                // is gated on a form field (`ingress.tlsSecret`) that is only populated in the
+                // bringYourOwn flow — uploadLeaf and selfSign flows would otherwise leave the
+                // rendered Ingress object without a `tls:` block, and the discovered endpoint
+                // URL falls back to http://.
+                Object ingressHostVal = (request.getValues() != null)
+                        ? (request.getValues().get("ingress.host") != null
+                                ? request.getValues().get("ingress.host")
+                                : getByPath(request.getValues(), "ingress.host"))
+                        : null;
+                if (ingressHostVal != null && !String.valueOf(ingressHostVal).isBlank()) {
+                    this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", String.valueOf(ingressHostVal));
+                } else {
+                    LOG.warn("Ingress TLS upload created Secret '{}' but ingress.host is missing — cannot write ingress.tls[] override; chart will render Ingress without TLS.", secretName);
+                }
             } else {
                 LOG.warn("Ingress TLS upload present but cert/key are empty; skipping ingress TLS secret creation for release {}", request.getReleaseName());
+            }
+        }
+
+        // ----- INGRESS_TLS_SELFSIGN: mint a leaf signed by Ambari Internal CA or a Company CA.
+        // Triggered by request.ingressTlsSelfSign={ mode: "ambariInternal"|"companyUploaded",
+        // caName: <registry-name>, secretName: <override>, ingressHost: <override>, validityDays: <int> }.
+        // This step creates the Secret before HELM_DEPLOY_DRY_RUN and then writes the
+        // canonical ingress.tls[0] list shape into the Helm override map so the chart's
+        // ingress.yaml renders a TLS spec — every KDPS chart's template iterates
+        // .Values.ingress.tls (list of {secretName, hosts}), so a scalar ingress.tlsSecret
+        // would be ignored and the K8s Ingress would have no TLS section.
+        Map<String, Object> ingressTlsSelfSign = request.getIngressTlsSelfSign();
+        if (ingressTlsSelfSign != null && !ingressTlsSelfSign.isEmpty()) {
+            String mode = String.valueOf(ingressTlsSelfSign.getOrDefault("mode", "ambariInternal"));
+            String caName = (String) ingressTlsSelfSign.get("caName");
+            String secretName = String.valueOf(ingressTlsSelfSign.getOrDefault(
+                    "secretName", request.getReleaseName() + "-ingress-tls"));
+            // Default the host to whatever ingress.host the form provided (resolved earlier via values).
+            String ingressHost = (String) ingressTlsSelfSign.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                Object fromValues = getByPath(request.getValues(), "ingress.host");
+                if (fromValues == null && request.getValues() != null) {
+                    fromValues = request.getValues().get("ingress.host");
+                }
+                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+            }
+            Integer validityDays = null;
+            Object vd = ingressTlsSelfSign.get("validityDays");
+            if (vd instanceof Number) validityDays = ((Number) vd).intValue();
+            else if (vd instanceof String s && !s.isBlank()) {
+                try { validityDays = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
+            }
+            List<String> extraSans = new ArrayList<>();
+            Object sansRaw = ingressTlsSelfSign.get("extraSans");
+            if (sansRaw instanceof List<?> l) {
+                for (Object o : l) if (o != null) extraSans.add(String.valueOf(o));
+            } else {
+                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc");
+                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc.cluster.local");
+            }
+
+            if (ingressHost == null || ingressHost.isBlank()) {
+                LOG.warn("INGRESS_TLS_SELFSIGN requested but no ingress.host found; skipping");
+            } else {
+                String stepId = this.commandPlanFactory.appendIngressTlsSelfSignStep(
+                        rootCommand,
+                        request.getReleaseName(),
+                        request.getNamespace(),
+                        secretName,
+                        ingressHost,
+                        extraSans,
+                        mode,
+                        caName,
+                        validityDays
+                );
+                childCommands.add(stepId);
+                // Write the canonical list shape (ingress.tls[0]) so the chart's
+                // {{- if .Values.ingress.tls }}{{- range ... }} block renders.
+                // Helm's --set list-index syntax is the same as HelmService.applyOverrides
+                // expects, which materialises ingress.tls as List<Map> in finalValues.
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
+                LOG.info("Planned INGRESS_TLS_SELFSIGN: stepId={}, secret={}/{}, host={}, mode={}, ca={}",
+                        stepId, request.getNamespace(), secretName, ingressHost, mode, caName);
+            }
+        }
+
+        // ----- INGRESS_TLS_CERTMANAGER: write a cert-manager.io Certificate so cert-manager
+        // produces (and auto-renews) the leaf Secret. The chart references the Secret name in
+        // ingress.tls[0].secretName as it would for any other TLS mode — the difference is
+        // who fills the Secret.
+        Map<String, Object> ingressTlsCM = request.getIngressTlsCertManager();
+        if (ingressTlsCM != null && !ingressTlsCM.isEmpty()) {
+            String issuerName = (String) ingressTlsCM.get("issuerName");
+            String issuerKind = String.valueOf(ingressTlsCM.getOrDefault("issuerKind", "ClusterIssuer"));
+            String secretName = String.valueOf(ingressTlsCM.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String certName = String.valueOf(ingressTlsCM.getOrDefault("certName", secretName));
+            String ingressHost = (String) ingressTlsCM.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                Object fromValues = getByPath(request.getValues(), "ingress.host");
+                if (fromValues == null && request.getValues() != null) fromValues = request.getValues().get("ingress.host");
+                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+            }
+            Integer durationHours = null;
+            Object dh = ingressTlsCM.get("durationHours");
+            if (dh instanceof Number n) durationHours = n.intValue();
+            else if (dh instanceof String s && !s.isBlank()) {
+                try { durationHours = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
+            }
+            List<String> dnsNames = new ArrayList<>();
+            if (ingressHost != null && !ingressHost.isBlank()) dnsNames.add(ingressHost);
+            Object sansRaw = ingressTlsCM.get("extraSans");
+            if (sansRaw instanceof List<?> l) for (Object o : l) if (o != null) dnsNames.add(String.valueOf(o));
+
+            if (issuerName == null || issuerName.isBlank() || dnsNames.isEmpty()) {
+                // Fail loud instead of skip-and-warn: a silent skip plus a downstream OIDC
+                // preflight failure is the worst combination for diagnosis. Throw now so
+                // the operator sees the problem at submit time.
+                throw new IllegalArgumentException(
+                        "INGRESS_TLS_CERTMANAGER: issuerName and at least one DNS name (ingress.host) are required."
+                                + " Pick a ClusterIssuer from the dropdown in the wizard's TLS mode section.");
+            } else {
+                String stepId = appendIngressTlsCertManagerStep(rootCommand, request.getNamespace(),
+                        certName, secretName, issuerName, issuerKind, dnsNames, durationHours);
+                childCommands.add(stepId);
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", dnsNames.get(0));
+                LOG.info("Planned INGRESS_TLS_CERTMANAGER: stepId={}, secret={}/{}, issuer={}/{}",
+                        stepId, request.getNamespace(), secretName, issuerKind, issuerName);
+            }
+        }
+
+        // ----- INGRESS_TLS_EXTERNAL_SECRET: write an ExternalSecret so external-secrets
+        // syncs an upstream secret (typically Vault PKI) into the K8s Secret the chart wants.
+        Map<String, Object> ingressTlsES = request.getIngressTlsExternalSecret();
+        if (ingressTlsES != null && !ingressTlsES.isEmpty()) {
+            String storeName = (String) ingressTlsES.get("secretStoreName");
+            String storeKind = String.valueOf(ingressTlsES.getOrDefault("secretStoreKind", "ClusterSecretStore"));
+            String remoteKey = (String) ingressTlsES.get("remoteKey");
+            String secretName = String.valueOf(ingressTlsES.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String esName = String.valueOf(ingressTlsES.getOrDefault("externalSecretName", secretName));
+            String refreshInterval = String.valueOf(ingressTlsES.getOrDefault("refreshInterval", "1h"));
+            String ingressHost = (String) ingressTlsES.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                Object fromValues = getByPath(request.getValues(), "ingress.host");
+                if (fromValues == null && request.getValues() != null) fromValues = request.getValues().get("ingress.host");
+                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+            }
+            if (storeName == null || storeName.isBlank() || remoteKey == null || remoteKey.isBlank()) {
+                throw new IllegalArgumentException(
+                        "INGRESS_TLS_EXTERNAL_SECRET: secretStoreName and remoteKey are required."
+                                + " Pick a SecretStore from the dropdown and provide the upstream key/path.");
+            } else {
+                String stepId = appendIngressTlsExternalSecretStep(rootCommand, request.getNamespace(),
+                        esName, secretName, storeName, storeKind, remoteKey, refreshInterval);
+                childCommands.add(stepId);
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                if (ingressHost != null && !ingressHost.isBlank()) {
+                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
+                }
+                LOG.info("Planned INGRESS_TLS_EXTERNAL_SECRET: stepId={}, secret={}/{}, store={}/{}, key={}",
+                        stepId, request.getNamespace(), secretName, storeKind, storeName, remoteKey);
             }
         }
         if (baseUri != null) {
@@ -3689,16 +4381,11 @@ public class CommandService {
                     String providerSecretName = null;
                     if (gitlabOmniauth) {
                         providerSecretName = request.getReleaseName() + "-omniauth-provider";
-                        Object domainObj = getByPath(params, "gitlab.global.hosts.domain");
-                        if (domainObj == null) domainObj = params.get("gitlab.global.hosts.domain");
-                        Object httpsObj = getByPath(params, "gitlab.global.hosts.https");
-                        if (httpsObj == null) httpsObj = params.get("gitlab.global.hosts.https");
-                        String domain = domainObj != null ? String.valueOf(domainObj) : "";
-                        boolean https = Boolean.TRUE.equals(httpsObj) || "true".equalsIgnoreCase(String.valueOf(httpsObj));
-                        String callbackUrl = (https ? "https" : "http") + "://gitlab." + domain + "/users/auth/openid_connect/callback";
                         extraOidcParams.put("oidcGitlabOmniauth", "true");
                         extraOidcParams.put("oidcProviderSecretName", providerSecretName);
-                        extraOidcParams.put("oidcGitlabCallbackUrl", callbackUrl);
+                        // The actual callback URL is filled in below once we've resolved
+                        // the redirect URI via the service-definition variable pipeline
+                        // (which knows how to substitute gitlabDomain etc.).
                     }
 
                     if (oidcIsExternal) {
@@ -3717,6 +4404,18 @@ public class CommandService {
                         String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
                         if (redirectUri.contains("{{")) {
                             LOG.warn("OIDC redirectUri still contains unresolved tokens after variable substitution: {}", redirectUri);
+                        }
+                        if (gitlabOmniauth) {
+                            // The provider YAML written by OIDC_CREATE_SECRET needs the
+                            // same callback URL that we register with Keycloak. Earlier
+                            // code path tried to read gitlab.global.hosts.domain straight
+                            // out of `params`, which doesn't hold the nested chart values
+                            // tree at this point — it returned an empty string and the
+                            // resulting YAML pointed at `http://gitlab./users/...`,
+                            // breaking the OAuth flow. Reusing the resolved redirectUri
+                            // is the single source of truth and keeps Keycloak's
+                            // registered URI and GitLab's emitted URI byte-identical.
+                            extraOidcParams.put("oidcGitlabCallbackUrl", redirectUri);
                         }
                         appendOidcRegistrationSteps(rootCommand, childCommands, params,
                                 clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
@@ -4279,6 +4978,12 @@ public class CommandService {
 
         // 4) If nothing RUNNING/PENDING remains, all steps are SUCCEEDED
         if (runningIdx == null && pendingIdx == null) {
+            // Re-record the endpoints snapshot from live cluster state before marking
+            // SUCCEEDED. The install-time snapshot is computed from service.json url
+            // templates which hardcode http:// — for chart-managed TLS releases (e.g.
+            // GitLab) the chart's Ingress is what actually decides the scheme. Live
+            // discovery reads spec.tls[] and produces the truthful URL.
+            refreshEndpointSnapshotFromLive(root, rootParams);
             succeed(rootSt, "All steps completed.");
             refreshCurrentStepSnapshot(root);
             return;
@@ -5129,6 +5834,234 @@ public class CommandService {
 
 
                 }
+                case HELM_UPGRADE -> {
+                    String chartName = (String) childParams.get("chart");
+                    String namespace = (String) childParams.get("namespace");
+                    String releaseName = (String) childParams.get("releaseName");
+                    String version = (String) childParams.get("version");
+                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
+
+                    // Existing release values are pre-loaded by submitUpgrade() via the standard
+                    // valuesPath mechanism so loadValuesFromParams returns the deployed values.
+                    Map<String, Object> valuesMap = this.commandUtils.loadValuesFromParams(childParams);
+                    Map<String, String> overrideProperties = new HashMap<>();
+
+                    Object ovRaw = childParams.get("_ov");
+                    if (ovRaw instanceof Map<?, ?> ovMap) {
+                        for (Map.Entry<?, ?> e : ovMap.entrySet()) {
+                            if (e.getKey() == null || e.getValue() == null) continue;
+                            String helmPath = String.valueOf(e.getKey()).trim();
+                            String val = String.valueOf(e.getValue());
+                            if (!helmPath.isEmpty()) {
+                                overrideProperties.put(helmPath, val);
+                                LOG.info("Applying explicit override {} -> {}", helmPath, val);
+                            }
+                        }
+                    }
+                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
+
+                    // Re-apply image registry override so the upgrade pulls from the same registry.
+                    if (repoId != null && !repoId.isBlank()) {
+                        if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
+                            overrideProperties.put(imageGlobalRegistryProperty,
+                                    this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+                        } else {
+                            overrideProperties.put("global.imageRegistry",
+                                    this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+                        }
+                    }
+
+                    Object secretName = childParams.get("secretName");
+                    if (secretName != null) {
+                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
+                    }
+
+                    appendCommandLog(id, "Upgrading release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
+                    ScheduledFuture<?> heartbeatUpgrade = startHeartbeat(id, () -> {
+                        CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+                        return st != null && CommandState.RUNNING.name().equals(st.getState());
+                    });
+                    try {
+                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                                this.helmService.deployOrUpgrade(
+                                        chartName,
+                                        releaseName,
+                                        namespace, valuesMap, overrideProperties,
+                                        this.kubernetesService.getConfigurationService().getKubeconfigContents(),
+                                        repoId, version, false));
+                        this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
+                    } finally {
+                        if (heartbeatUpgrade != null) heartbeatUpgrade.cancel(false);
+                    }
+
+                    // Refresh release metadata with the new chart version so the UI shows it.
+                    try {
+                        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+                        K8sReleaseEntity existing = metadataService.find(namespace, releaseName);
+                        if (existing != null) {
+                            metadataService.recordInstallOrUpgrade(
+                                    namespace,
+                                    releaseName,
+                                    existing.getServiceKey(),
+                                    existing.getChartRef(),
+                                    existing.getRepoId(),
+                                    version,
+                                    valuesMap,
+                                    id,
+                                    null,
+                                    existing.getGlobalConfigVersion(),
+                                    existing.getSecurityProfile(),
+                                    existing.getSecurityProfileHash(),
+                                    existing.getDeploymentMode(),
+                                    existing.getGitCommitSha(),
+                                    existing.getGitBranch(),
+                                    existing.getGitPath(),
+                                    existing.getGitRepoUrl(),
+                                    existing.getGitCredentialAlias(),
+                                    existing.getGitCommitMode(),
+                                    existing.getGitPrUrl(),
+                                    existing.getGitPrNumber(),
+                                    existing.getGitPrState()
+                            );
+                            LOG.info("Updated release metadata for {}/{} to chart version {}", namespace, releaseName, version);
+                        }
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to refresh release metadata after upgrade for {}/{}: {}", namespace, releaseName, ex.toString());
+                    }
+                }
+                case INGRESS_TLS_SELFSIGN -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String secretName = (String) childParams.get("secretName");
+                    String ingressHost = (String) childParams.get("ingressHost");
+                    String caMode = String.valueOf(childParams.getOrDefault("ca", "ambariInternal"));
+                    String caName = (String) childParams.get("caName"); // for companyUploaded
+                    Integer validityDays = null;
+                    Object vd = childParams.get("validityDays");
+                    if (vd instanceof Number) validityDays = ((Number) vd).intValue();
+                    else if (vd instanceof String s && !s.isBlank()) {
+                        try { validityDays = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
+                    }
+                    // SANs: include any cluster-internal service name caller may want trusted.
+                    List<String> extraSans = new ArrayList<>();
+                    Object sansRaw = childParams.get("extraSans");
+                    if (sansRaw instanceof List<?> l) {
+                        for (Object o : l) if (o != null) extraSans.add(String.valueOf(o));
+                    }
+
+                    if (namespace == null || namespace.isBlank()
+                            || secretName == null || secretName.isBlank()
+                            || ingressHost == null || ingressHost.isBlank()) {
+                        throw new IllegalStateException("INGRESS_TLS_SELFSIGN: namespace, secretName, and ingressHost are required");
+                    }
+
+                    WebHookConfigurationService webHookCfg = new WebHookConfigurationService(ctx, this.kubernetesService);
+                    WebHookConfigurationService.CertificateAuthorityMaterial ca;
+                    if ("companyUploaded".equalsIgnoreCase(caMode)) {
+                        if (caName == null || caName.isBlank()) {
+                            throw new IllegalStateException("INGRESS_TLS_SELFSIGN: caName is required when ca=companyUploaded");
+                        }
+                        CaRegistryService caRegistry = new CaRegistryService(ctx, this.kubernetesService);
+                        CaRegistryService.CaEntry entry = caRegistry.get(caName);
+                        ca = webHookCfg.loadUploadedCertificateAuthority(entry.namespace(), entry.secretName());
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using company CA '" + caName + "' (subject=" + entry.subject() + ")");
+                    } else {
+                        ca = webHookCfg.ensureAmbariCertificateAuthority();
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using Ambari Internal CA (testing trust)");
+                    }
+
+                    this.kubernetesService.createNamespace(namespace);
+                    Map<String, String> labels = new LinkedHashMap<>();
+                    labels.put("ambari.clemlab.com/release", (String) childParams.getOrDefault("releaseName", ""));
+                    labels.put("ambari.clemlab.com/ca-mode", caMode);
+                    if (caName != null) labels.put("ambari.clemlab.com/ca-name",
+                            caName.toLowerCase().replaceAll("[^a-z0-9._-]", "-"));
+
+                    var result = webHookCfg.issueIngressTlsSecret(namespace, secretName, ingressHost,
+                            extraSans, validityDays, ca, labels);
+                    appendCommandLog(id, "INGRESS_TLS_SELFSIGN: wrote " + namespace + "/" + secretName +
+                            " (cert chars=" + result.certificatePem().length() + ", key chars=" + result.privateKeyPem().length() + ")");
+                }
+                case INGRESS_TLS_CERTMANAGER -> {
+                    // Two operations supported via the `operation` param:
+                    //  - "create": create or update a cert-manager.io/v1 Certificate CR (Day 4 path,
+                    //    invoked from the install pipeline).
+                    //  - "renew":  patch an existing Certificate to force re-issue (Day 3 path,
+                    //    invoked from the TLS_RENEW root command).
+                    String namespace = (String) childParams.get("namespace");
+                    String operation = String.valueOf(childParams.getOrDefault("operation", "create"));
+                    if ("renew".equals(operation)) {
+                        String secretName = (String) childParams.get("secretName");
+                        // The Certificate name we use is "<secretName>" (one Certificate per
+                        // Secret). Patch it with the standard force-renew trigger.
+                        try {
+                            this.kubernetesService.patchCertManagerCertificate(namespace, secretName,
+                                    Map.of("metadata", Map.of("annotations",
+                                            Map.of("cert-manager.io/issue-temporary-certificate", "true",
+                                                   "ambari.clemlab.com/renew-requested-at", Instant.now().toString()))));
+                            appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: annotated Certificate "
+                                    + namespace + "/" + secretName + " to force re-issue");
+                        } catch (Exception ex) {
+                            throw new IllegalStateException("Failed to annotate Certificate "
+                                    + namespace + "/" + secretName + ": " + ex.getMessage(), ex);
+                        }
+                    } else {
+                        // Create / update path. Reads spec fields from params.
+                        String certName = String.valueOf(childParams.getOrDefault("certName", childParams.get("secretName")));
+                        String secretName = (String) childParams.get("secretName");
+                        String issuerName = (String) childParams.get("issuerName");
+                        String issuerKind = String.valueOf(childParams.getOrDefault("issuerKind", "ClusterIssuer"));
+                        List<String> dnsNames = childParams.get("dnsNames") instanceof List<?> l
+                                ? l.stream().map(String::valueOf).toList()
+                                : List.of();
+                        Integer durationHours = childParams.get("durationHours") instanceof Number n
+                                ? n.intValue() : 2160; // 90 days
+                        if (issuerName == null || issuerName.isBlank()) {
+                            throw new IllegalStateException("INGRESS_TLS_CERTMANAGER: issuerName is required");
+                        }
+                        this.kubernetesService.applyCertManagerCertificate(namespace, certName, secretName,
+                                issuerName, issuerKind, dnsNames, durationHours);
+                        appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: applied Certificate "
+                                + namespace + "/" + certName + " issuer=" + issuerKind + "/" + issuerName);
+                    }
+                }
+                case INGRESS_TLS_EXTERNAL_SECRET -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String operation = String.valueOf(childParams.getOrDefault("operation", "create"));
+                    if ("refresh".equals(operation)) {
+                        String secretName = (String) childParams.get("secretName");
+                        // ESO refresh: annotate the ExternalSecret with force-sync timestamp.
+                        try {
+                            this.kubernetesService.patchExternalSecret(namespace, secretName,
+                                    Map.of("metadata", Map.of("annotations",
+                                            Map.of("force-sync", Instant.now().toString()))));
+                            appendCommandLog(id, "INGRESS_TLS_EXTERNAL_SECRET: forced refresh on "
+                                    + namespace + "/" + secretName);
+                        } catch (Exception ex) {
+                            throw new IllegalStateException("Failed to refresh ExternalSecret "
+                                    + namespace + "/" + secretName + ": " + ex.getMessage(), ex);
+                        }
+                    } else {
+                        // Create path: write an ExternalSecret CR.
+                        String esName = String.valueOf(childParams.getOrDefault("externalSecretName", childParams.get("secretName")));
+                        String secretName = (String) childParams.get("secretName");
+                        String storeName = (String) childParams.get("secretStoreName");
+                        String storeKind = String.valueOf(childParams.getOrDefault("secretStoreKind", "ClusterSecretStore"));
+                        String remoteKey = (String) childParams.get("remoteKey");
+                        String refreshInterval = String.valueOf(childParams.getOrDefault("refreshInterval", "1h"));
+                        if (storeName == null || storeName.isBlank() || remoteKey == null || remoteKey.isBlank()) {
+                            throw new IllegalStateException("INGRESS_TLS_EXTERNAL_SECRET: secretStoreName + remoteKey are required");
+                        }
+                        this.kubernetesService.applyExternalSecret(namespace, esName, secretName,
+                                storeName, storeKind, remoteKey, refreshInterval);
+                        appendCommandLog(id, "INGRESS_TLS_EXTERNAL_SECRET: applied ExternalSecret "
+                                + namespace + "/" + esName + " store=" + storeKind + "/" + storeName);
+                    }
+                }
+                case TLS_RENEW -> {
+                    // Root command — no inline work; child steps already scheduled when planned.
+                    appendCommandLog(id, "TLS_RENEW: orchestrating child step(s)");
+                }
                 case AMBARI_VIEW_PROVISION -> {
                     String viewName      = (String) childParams.get("viewName");
                     String viewVersion   = (String) childParams.get("viewVersion");
@@ -5432,6 +6365,100 @@ public class CommandService {
 
                 case OIDC_REGISTER_CLIENT -> {
                     LOG.info("OIDC_REGISTER_CLIENT starting for id={} title={}", child.getId(), child.getTitle());
+
+                    // Pre-flight: OAuth callbacks require https — Keycloak rejects http redirect URIs for
+                    // non-localhost clients, and the cluster-internal token-exchange call requires the
+                    // proxy to terminate TLS. Refuse to register the client if the rendered chart values
+                    // don't have a TLS configuration on the ingress; this short-circuits a hard-to-diagnose
+                    // "Invalid parameter: redirect_uri" or "502 Bad Gateway" several steps later.
+                    // The param key was renamed `oidcRedirectUri` (vs the legacy `redirectUri`) when the
+                    // OIDC step plumbing was extended; keep the legacy alias as a fallback so old plans
+                    // persisted to disk continue to validate correctly after a redeploy.
+                    {
+                        String redirectUri = (String) childParams.get("oidcRedirectUri");
+                        if (redirectUri == null || redirectUri.isBlank()) {
+                            redirectUri = (String) childParams.get("redirectUri");
+                        }
+                        Object rootParamsRaw = rootParams; // resolved at function top
+                        String redirectScheme = (redirectUri != null && redirectUri.contains("://"))
+                                ? redirectUri.substring(0, redirectUri.indexOf("://")).toLowerCase()
+                                : "";
+                        // Service definitions declare how they expect TLS to be wired via
+                        // `securityCoupling.tlsProvisioning`:
+                        //   "k8s-view"       (default) — view participates in the unified ingress.tls[] pipeline
+                        //   "chart-managed"  — chart owns its own TLS (GitLab uses this)
+                        //   "external"       — operator manages TLS entirely outside, view stays hands-off
+                        // The preflight only enforces the ingress.tls[] check for the "k8s-view"
+                        // provisioning model; other models bypass it.
+                        // Backward compat: legacy `requireTls: false` is still read for one chart cycle.
+                        boolean skipIngressTlsCheck = false;
+                        try {
+                            String svcKey = (String) childParams.get("serviceKey");
+                            if (svcKey != null && !svcKey.isBlank()) {
+                                StackServiceDef preflightDef =
+                                        new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
+                                if (preflightDef != null && preflightDef.securityCoupling != null) {
+                                    Object tlsProv = preflightDef.securityCoupling.get("tlsProvisioning");
+                                    if (tlsProv != null) {
+                                        String s = String.valueOf(tlsProv).trim().toLowerCase();
+                                        if (!s.isEmpty() && !"k8s-view".equals(s)) {
+                                            skipIngressTlsCheck = true;
+                                        }
+                                    } else {
+                                        Object legacyRequireTls = preflightDef.securityCoupling.get("requireTls");
+                                        if (legacyRequireTls != null
+                                                && !"true".equalsIgnoreCase(String.valueOf(legacyRequireTls))
+                                                && !Boolean.TRUE.equals(legacyRequireTls)) {
+                                            skipIngressTlsCheck = true;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Exception ex) {
+                            LOG.debug("OIDC pre-flight: could not read securityCoupling, falling back to strict check: {}",
+                                    ex.toString());
+                        }
+                        if ("https".equals(redirectScheme) && !skipIngressTlsCheck) {
+                            // Look at the chart values that will be sent to Helm to confirm tls is present.
+                            Map<String, Object> chartVals = this.commandUtils.loadValuesFromParams(rootParams);
+                            Object ingress = (chartVals != null) ? chartVals.get("ingress") : null;
+                            boolean tlsConfigured = false;
+                            if (ingress instanceof Map<?, ?> ingMap) {
+                                Object tls = ingMap.get("tls");
+                                if (tls instanceof List<?> tlsList && !tlsList.isEmpty()) tlsConfigured = true;
+                                Object tlsSecret = ingMap.get("tlsSecret");
+                                if (tlsSecret instanceof String s && !s.isBlank()) tlsConfigured = true;
+                            }
+                            // Any TLS-provisioning sibling step counts as "TLS configured" — the Secret
+                            // will exist (or be reconciled) before HELM_DEPLOY actually rolls out:
+                            //   INGRESS_TLS_SELFSIGN          → view mints + writes Secret in-line
+                            //   INGRESS_TLS_CERTMANAGER       → view writes Certificate CR, cert-manager fills the Secret
+                            //   INGRESS_TLS_EXTERNAL_SECRET   → view writes ExternalSecret, ESO syncs from upstream store
+                            // We check the rootCommand child list for any of those step types.
+                            if (!tlsConfigured) {
+                                try {
+                                    Type listTy = new TypeToken<ArrayList<String>>(){}.getType();
+                                    List<String> siblings = gson.fromJson(root.getChildListJson(), listTy);
+                                    if (siblings != null) {
+                                        for (String sid : siblings) {
+                                            CommandEntity s = find(sid);
+                                            if (s == null) continue;
+                                            String t = s.getType();
+                                            if (CommandType.INGRESS_TLS_SELFSIGN.name().equals(t)
+                                                    || CommandType.INGRESS_TLS_CERTMANAGER.name().equals(t)
+                                                    || CommandType.INGRESS_TLS_EXTERNAL_SECRET.name().equals(t)) {
+                                                tlsConfigured = true; break;
+                                            }
+                                        }
+                                    }
+                                } catch (Exception ignore) {}
+                            }
+                            if (!tlsConfigured) {
+                                throw new IllegalStateException("OIDC_REGISTER_CLIENT pre-flight: redirectUri is https but the chart values have no ingress.tls and no INGRESS_TLS_SELFSIGN step is planned. " +
+                                        "Configure an ingress TLS mode (bringYourOwn / uploadLeaf / signedByAmbariCA / signedByCompanyCA) before enabling OIDC, otherwise the OAuth callback will fail with 502 or Keycloak will reject the redirect_uri.");
+                            }
+                        }
+                    }
 
                     String baseUriStr = (String) childParams.get("_baseUri");
                     if (baseUriStr == null || baseUriStr.isBlank()) {
@@ -5799,6 +6826,57 @@ public class CommandService {
     }
 
     // -------------------- Persistence helpers --------------------
+
+    /**
+     * For HELM_DEPLOY / HELM_UPGRADE root commands, replace the persisted endpoint
+     * snapshot with what live cluster discovery sees right now. This fixes the case
+     * where service.json url templates hardcoded http:// but the chart materialized
+     * an Ingress with spec.tls[] (chart-managed TLS), so the snapshot would otherwise
+     * show the wrong scheme until the user refreshed. Best-effort: any failure is
+     * logged and swallowed.
+     */
+    private void refreshEndpointSnapshotFromLive(CommandEntity root, Map<String, Object> rootParams) {
+        try {
+            if (root == null || rootParams == null) return;
+            String type = root.getType();
+            if (!CommandType.HELM_DEPLOY.name().equals(type)
+                    && !CommandType.HELM_UPGRADE.name().equals(type)) {
+                return;
+            }
+            Object nsObj = rootParams.get("namespace");
+            Object rnObj = rootParams.get("releaseName");
+            if (!(nsObj instanceof String) || !(rnObj instanceof String)) return;
+            String namespace = (String) nsObj;
+            String releaseName = (String) rnObj;
+            if (namespace.isBlank() || releaseName.isBlank()) return;
+
+            ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+            List<org.apache.ambari.view.k8s.model.ReleaseEndpointDTO> live =
+                    metadataService.discoverExternalClusterEndpoints(namespace, releaseName);
+            if (live == null || live.isEmpty()) {
+                // Keep the install-time snapshot rather than wiping it — Ingress may
+                // not be observable yet (rare; helm install applied it synchronously
+                // but the API server is briefly slow), and a stale snapshot is better
+                // than no snapshot.
+                LOG.info("refreshEndpointSnapshotFromLive: no live endpoints yet for {}/{}, keeping install-time snapshot",
+                        namespace, releaseName);
+                return;
+            }
+            List<Map<String, Object>> asMaps = new ArrayList<>(live.size());
+            for (org.apache.ambari.view.k8s.model.ReleaseEndpointDTO dto : live) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                if (dto.getId() != null) m.put("id", dto.getId());
+                if (dto.getLabel() != null) m.put("label", dto.getLabel());
+                if (dto.getUrl() != null) m.put("url", dto.getUrl());
+                if (dto.getDescription() != null) m.put("description", dto.getDescription());
+                if (dto.getKind() != null) m.put("kind", dto.getKind());
+                asMaps.add(m);
+            }
+            metadataService.recordEndpoints(namespace, releaseName, asMaps);
+        } catch (Exception ex) {
+            LOG.warn("refreshEndpointSnapshotFromLive failed (best-effort): {}", ex.toString());
+        }
+    }
 
     private void succeed(CommandStatusEntity e, String message) {
         e.setState(CommandState.SUCCEEDED.name());

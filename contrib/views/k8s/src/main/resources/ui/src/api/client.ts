@@ -414,7 +414,7 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
  */
 
 export const getDiscoveredK8sServices = async (labelSelector: string): Promise<ClusterService[]> => {
-    // In import.meta.env.DEV you might want to return mock data, 
+    // In import.meta.env.DEV you might want to return mock data,
     // otherwise call the real backend.
     if (import.meta.env.DEV) {
        console.log(`Mocking K8s discovery for label: ${labelSelector}`);
@@ -426,6 +426,40 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
     const params = new URLSearchParams({ label: labelSelector });
     // Note: ensure API_BASE_URL includes the /resources/api part as defined in your file
     const response = await fetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
+    return handleApiResponse(response);
+};
+
+/**
+ * Fetches Kubernetes Secrets matching a label selector. Used by service.json form
+ * fields of type "secret-discovery" — chiefly the Company CA picker which surfaces
+ * Secrets stored in the `ambari-pki` namespace via the PKI registry.
+ * Calls GET /api/discovery/secrets?label=...
+ */
+export const getDiscoveredK8sSecrets = async (labelSelector: string): Promise<ClusterService[]> => {
+    if (import.meta.env.DEV) {
+       console.log(`Mocking K8s Secret discovery for label: ${labelSelector}`);
+       return [];
+    }
+    const params = new URLSearchParams({ label: labelSelector });
+    const response = await fetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
+    return handleApiResponse(response);
+};
+
+/** cert-manager.io ClusterIssuer/Issuer discovery (Ready=True by default). */
+export const getDiscoveredClusterIssuers = async (includeNotReady = false): Promise<ClusterService[]> => {
+    if (import.meta.env.DEV) return [];
+    const params = new URLSearchParams();
+    if (includeNotReady) params.set('includeNotReady', 'true');
+    const response = await fetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
+    return handleApiResponse(response);
+};
+
+/** external-secrets.io SecretStore/ClusterSecretStore discovery (Ready=True by default). */
+export const getDiscoveredSecretStores = async (includeNotReady = false): Promise<ClusterService[]> => {
+    if (import.meta.env.DEV) return [];
+    const params = new URLSearchParams();
+    if (includeNotReady) params.set('includeNotReady', 'true');
+    const response = await fetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 }
 
@@ -561,6 +595,83 @@ export const registerReleaseOidcClient = async (namespace: string, releaseName: 
 export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ranger`;
   return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
+ * Upgrade a deployed release to a new chart version in place. Backend preserves the
+ * deployed values and only changes the chart version. Returns the background command id.
+ */
+export const upgradeReleaseChart = async (namespace: string, releaseName: string, version: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/chart-upgrade?version=${encodeURIComponent(version)}`;
+  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
+ * Roll back a deployed release to a specific Helm revision picked by the operator.
+ * Returns 200 on success with the revision that was applied.
+ */
+export const rollbackReleaseToRevision = async (namespace: string, releaseName: string, revision: number) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/rollback?revision=${revision}`;
+  return fetchJson<{ ok?: boolean; revision?: number }>(requestPath, { method: 'POST' });
+};
+
+export interface HelmHistoryEntry {
+  revision: number;
+  updated?: string;
+  status?: string;
+  chart?: string;
+  app_version?: string;
+  description?: string;
+}
+
+/**
+ * Fetch the Helm revision history for a release so the UI can render the picker
+ * modal that drives `rollbackReleaseToRevision`.
+ */
+export const getReleaseHistory = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/history`;
+  return fetchJson<HelmHistoryEntry[]>(requestPath);
+};
+
+/**
+ * Per-host TLS state for a release. Returns one entry per Ingress × TLS Secret
+ * combo describing source (k8s-view-self-signed / cert-manager / external-secrets / external),
+ * status (valid / expiring-warning / expiring-soon / expired / no-tls / secret-missing),
+ * issuer, expiry, SANs. Drives the TLS column + Renew button on the Releases page.
+ */
+export interface ReleaseTlsEntry {
+  ingressName: string;
+  namespace: string;
+  secretName: string | null;
+  hosts: string[];
+  source?: 'k8s-view-self-signed' | 'cert-manager' | 'external-secrets' | 'external';
+  status: 'valid' | 'expiring-warning' | 'expiring-soon' | 'expired' | 'no-tls' | 'secret-missing' | 'no-tls-crt' | 'no-cert-in-secret' | 'read-error';
+  issuer?: string;
+  subject?: string;
+  notBefore?: string;
+  notAfter?: string;
+  daysUntilExpiry?: number;
+  serial?: string;
+  sans?: string[];
+  error?: string;
+}
+export const getReleaseTlsState = async (namespace: string, releaseName: string): Promise<ReleaseTlsEntry[]> => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls`;
+  return fetchJson<ReleaseTlsEntry[]>(requestPath);
+};
+
+/**
+ * Cluster capability snapshot — drives the wizard's adaptive TLS dropdown
+ * (cert-manager / ESO / OpenShift detection). Cached for 60 s on the backend.
+ */
+export interface ClusterCapabilities {
+  platform: 'kubernetes' | 'openshift';
+  openshift: { routeCrd: boolean };
+  certManager: { installed: boolean; clusterIssuerCrd: boolean; certificateCrd: boolean };
+  externalSecrets: { installed: boolean; secretStoreCrd: boolean; clusterSecretStoreCrd: boolean; externalSecretCrd: boolean };
+}
+export const getClusterCapabilities = async (): Promise<ClusterCapabilities> => {
+  return fetchJson<ClusterCapabilities>('/cluster/capabilities');
 };
 
 export const getHelmRepos = () => {

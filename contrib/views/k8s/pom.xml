@@ -326,6 +326,8 @@ limitations under the License.
                         <exclude>src/main/resources/keda-2.18.0-crds.yaml</exclude>
                         <exclude>src/main/resources/kube-prometheus-stack-77.5.0-crds.yaml</exclude>
                         <exclude>src/main/resources/kube-prometheus-stack-78.3.2-crds.yaml</exclude>
+                        <!-- Operational docs; markdown does not carry a license header. -->
+                        <exclude>docs/**/*.md</exclude>
                     </excludes>
                 </configuration>
             </plugin>

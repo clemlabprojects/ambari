@@ -265,8 +265,15 @@ public class HelmResource {
                         }
                     }
 
-                    // Endpoints: combine stored endpointsJson and live discovery
-                    List<ReleaseEndpointDTO> endpointsCombined = new ArrayList<>();
+                    // Endpoints: combine stored endpointsJson and live discovery. Live state is the
+                    // truth (it sees chart-managed Ingress with spec.tls[] and picks https://), so
+                    // we dedup by id and let live win — the install-time snapshot is only used as
+                    // a fallback for entries that live discovery couldn't find.
+                    LinkedHashMap<String, ReleaseEndpointDTO> endpointsById = new LinkedHashMap<>();
+                    for (ReleaseEndpointDTO live :
+                            releaseMetadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)) {
+                        if (live.getId() != null) endpointsById.put(live.getId(), live);
+                    }
                     if (metadata != null && metadata.getEndpointsJson() != null && !metadata.getEndpointsJson().isEmpty()) {
                         try {
                             @SuppressWarnings("unchecked")
@@ -280,18 +287,15 @@ public class HelmResource {
                                     if (e.get("url") != null) dto.setUrl(String.valueOf(e.get("url")));
                                     if (e.get("description") != null) dto.setDescription(String.valueOf(e.get("description")));
                                     if (e.get("kind") != null) dto.setKind(String.valueOf(e.get("kind")));
-                                    endpointsCombined.add(dto);
+                                    if (dto.getId() != null) endpointsById.putIfAbsent(dto.getId(), dto);
                                 }
                             }
                         } catch (Exception ex) {
                             LOG.warn("Failed to parse endpointsJson for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
                         }
                     }
-                    endpointsCombined.addAll(
-                            releaseMetadataService.discoverExternalClusterEndpoints(releaseDto.namespace, releaseDto.name)
-                    );
-                    if (!endpointsCombined.isEmpty()) {
-                        releaseDto.endpoints = endpointsCombined;
+                    if (!endpointsById.isEmpty()) {
+                        releaseDto.endpoints = new ArrayList<>(endpointsById.values());
                     }
 
                     // If version is still missing, attempt to resolve via helm show chart
@@ -510,6 +514,185 @@ public class HelmResource {
                     .build();
         } catch (Exception ex) {
             LOG.warn("OIDC registration failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Roll back a deployed release to a specific Helm revision picked by the operator.
+     *
+     * @param namespace      release namespace
+     * @param releaseName    release name
+     * @param revision       target Helm revision number (required, must be > 0)
+     * @return HTTP 200 on success
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/rollback")
+    public Response rollbackReleaseToRevision(@PathParam("namespace") String namespace,
+                                              @PathParam("release") String releaseName,
+                                              @QueryParam("revision") int revision) {
+        try {
+            authHelper.checkWritePermission();
+            if (revision <= 0) {
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity(Map.of("error", "revision query parameter is required and must be > 0"))
+                        .build();
+            }
+            LOG.info("Rolling back release {}/{} to revision {}", namespace, releaseName, revision);
+            new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+            RELEASE_CACHE.clear();
+            return Response.ok(Map.of("ok", true, "revision", revision)).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Rollback failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * List the Helm revision history for a release. Each entry mirrors {@code helm history -o json}:
+     * {@code revision}, {@code updated}, {@code status}, {@code chart}, {@code app_version}, {@code description}.
+     *
+     * @param namespace   release namespace
+     * @param releaseName release name
+     * @return ordered list of revisions; 200 on success or 500 with the helm CLI error otherwise
+     */
+    @GET
+    @Path("/releases/{namespace}/{release}/history")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getReleaseHistory(@PathParam("namespace") String namespace,
+                                      @PathParam("release") String releaseName) {
+        try {
+            List<Map<String, Object>> history = new HelmService(viewContext)
+                    .history(namespace, releaseName, getKubeconfigContents());
+            return Response.ok(history).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Failed to read helm history for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Describe the current TLS state of a release's Ingress(es).
+     * Returns one entry per (Ingress × TLS Secret) combo:
+     * <pre>
+     *   [{
+     *     "ingressName": "superset",
+     *     "namespace": "dashboarding",
+     *     "secretName": "superset-ingress-tls",
+     *     "hosts": ["superset.example.com"],
+     *     "source": "k8s-view-self-signed" | "cert-manager" | "external-secrets" | "external",
+     *     "status": "valid" | "expiring-warning" | "expiring-soon" | "expired" | "no-tls" | ...,
+     *     "issuer": "...",
+     *     "subject": "...",
+     *     "notBefore": "...",
+     *     "notAfter": "...",
+     *     "daysUntilExpiry": 87,
+     *     "sans": ["..."]
+     *   }, ...]
+     * </pre>
+     */
+    @GET
+    @Path("/releases/{namespace}/{release}/tls")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getReleaseTlsState(@PathParam("namespace") String namespace,
+                                       @PathParam("release") String releaseName) {
+        try {
+            org.apache.ambari.view.k8s.service.KubernetesService ks =
+                    org.apache.ambari.view.k8s.service.KubernetesService.get(viewContext);
+            org.apache.ambari.view.k8s.service.ReleaseTlsService svc =
+                    new org.apache.ambari.view.k8s.service.ReleaseTlsService(viewContext, ks);
+            return Response.ok(svc.describe(namespace, releaseName)).build();
+        } catch (Exception ex) {
+            LOG.warn("Failed to describe TLS state for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Operator-triggered renewal of all TLS Secrets for a release. Returns the command id;
+     * the UI polls /commands/{id} for progress. Internally schedules one child step per
+     * (host × Secret), with dispatch by source:
+     *   - k8s-view-self-signed → re-runs INGRESS_TLS_SELFSIGN
+     *   - cert-manager         → patches the Certificate CR to force re-issue
+     *   - external-secrets     → patches the ExternalSecret to force a Vault re-sync
+     *   - external             → no-op (operator owns it)
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/tls/renew")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response renewReleaseTls(@PathParam("namespace") String namespace,
+                                    @PathParam("release") String releaseName,
+                                    @Context HttpHeaders headers,
+                                    @Context UriInfo uriInfo) {
+        try {
+            String commandId = org.apache.ambari.view.k8s.service.CommandService.get(viewContext)
+                    .submitReleaseTlsRenewal(namespace, releaseName,
+                            headers.getRequestHeaders(), uriInfo.getBaseUri());
+            return Response.ok(Map.of("id", commandId)).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Failed to schedule TLS renewal for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Upgrade an existing Helm release in place to a new chart version, preserving the values
+     * captured when the release was originally deployed (read from the running release).
+     *
+     * @param namespace      release namespace
+     * @param releaseName    release name
+     * @param targetVersion  chart version to upgrade to; required
+     * @param requestHeaders caller headers for downstream Ambari calls
+     * @param uriInfo        request URI context for building command links
+     * @return HTTP 202 with command id and href
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/chart-upgrade")
+    public Response upgradeReleaseChart(@PathParam("namespace") String namespace,
+                                        @PathParam("release") String releaseName,
+                                        @QueryParam("version") String targetVersion,
+                                        @Context HttpHeaders requestHeaders,
+                                        @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            LOG.info("Submitting chart upgrade for release {}/{} → version {}", namespace, releaseName, targetVersion);
+            String commandId = commandService.submitReleaseUpgrade(
+                    namespace,
+                    releaseName,
+                    targetVersion,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Chart upgrade failed for {}/{}: {}", namespace, releaseName, ex.toString());
             return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
         }
     }

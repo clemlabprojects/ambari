@@ -323,6 +323,29 @@ public class KeycloakAdminClient {
         if (redirectUri != null && !redirectUri.isBlank()) {
             rep.put("redirectUris", List.of(redirectUri));
         }
+        // Ensure the ID token + userinfo response include the "groups" claim so
+        // Superset (and any KDPS service relying on AUTH_ROLES_MAPPING) can map
+        // group → role. Without this mapper Keycloak emits no groups even when
+        // the user has them in FreeIPA/LDAP, so every signed-in user gets the
+        // default registration role (Gamma in our charts) and never escalates
+        // to Admin no matter what's configured under security.adminGroups.
+        rep.put("protocolMappers", List.of(
+                Map.of(
+                        "name", "groups",
+                        "protocol", "openid-connect",
+                        "protocolMapper", "oidc-group-membership-mapper",
+                        "config", Map.of(
+                                "claim.name", "groups",
+                                // full.path=false emits short names ("hadoop_admins")
+                                // rather than DN-like paths ("/hadoop_admins"). Our
+                                // AUTH_ROLES_MAPPING is built from short names.
+                                "full.path", "false",
+                                "id.token.claim", "true",
+                                "access.token.claim", "true",
+                                "userinfo.token.claim", "true"
+                        )
+                )
+        ));
         return rep;
     }
 

@@ -110,6 +110,14 @@ public class HelmService {
         helmClient.rollback(name, namespace, revision, kubeconfig);
     }
 
+    /**
+     * Lists the Helm history for a release. Returns the parsed JSON output of
+     * {@code helm history -o json} ordered by revision ascending.
+     */
+    public List<Map<String, Object>> history(String namespace, String name, String kubeconfig) {
+        return helmClient.history(name, namespace, kubeconfig);
+    }
+
     /* --------------------------- Public entry points --------------------------- */
 
     // Original entry point kept (defaults + dryRun=false)
@@ -617,23 +625,66 @@ public class HelmService {
         } else {
             parts = key.split("\\.");
         }
-        Map<String, Object> cursor = target;
+        // Each part may carry a Helm-style list-index suffix (e.g. customCAs[0]).
+        // Without honoring it here, a binding path like `certificates.customCAs[0].secret`
+        // ends up as a literal map key `customCAs[0]` in the final values — produces
+        // structurally wrong YAML and the chart silently sees no customCAs list.
+        // applyOverrides already handles this; mirror its LIST_SEGMENT logic here.
+        Object cursor = target;
         for (int i = 0; i < parts.length; i++) {
             String part = parts[i];
             if (part.isBlank()) {
                 continue;
             }
             boolean last = (i == parts.length - 1);
-            if (last) {
-                cursor.put(part, expandIfNeeded(value));
+            java.util.regex.Matcher m = LIST_SEGMENT.matcher(part);
+            String mapKey;
+            String idxStr;
+            if (m.matches()) {
+                mapKey = m.group("key");
+                idxStr = m.group("idx");
             } else {
-                Object next = cursor.get(part);
-                if (!(next instanceof Map)) {
-                    // Initialize intermediate node as a linked map to preserve insertion order.
-                    next = new LinkedHashMap<String, Object>();
-                    cursor.put(part, next);
+                // Annotation-style keys (slash separators) won't match LIST_SEGMENT;
+                // treat them as a plain map key with no index.
+                mapKey = part;
+                idxStr = null;
+            }
+            if (!(cursor instanceof Map)) {
+                // Caller guarantees target is a Map; defensive reset if a previous
+                // segment's bookkeeping went sideways.
+                cursor = new LinkedHashMap<String, Object>();
+            }
+            Map<String, Object> map = (Map<String, Object>) cursor;
+            if (idxStr == null) {
+                if (last) {
+                    map.put(mapKey, expandIfNeeded(value));
+                } else {
+                    Object next = map.get(mapKey);
+                    if (!(next instanceof Map) && !(next instanceof List)) {
+                        next = new LinkedHashMap<String, Object>();
+                        map.put(mapKey, next);
+                    }
+                    cursor = next;
                 }
-                cursor = (Map<String, Object>) next;
+            } else {
+                int idx = Integer.parseInt(idxStr);
+                Object next = map.get(mapKey);
+                if (!(next instanceof List)) {
+                    next = new ArrayList<Object>();
+                    map.put(mapKey, next);
+                }
+                List<Object> list = (List<Object>) next;
+                while (list.size() <= idx) list.add(null);
+                if (last) {
+                    list.set(idx, expandIfNeeded(value));
+                } else {
+                    Object elem = list.get(idx);
+                    if (!(elem instanceof Map)) {
+                        elem = new LinkedHashMap<String, Object>();
+                        list.set(idx, elem);
+                    }
+                    cursor = elem;
+                }
             }
         }
     }

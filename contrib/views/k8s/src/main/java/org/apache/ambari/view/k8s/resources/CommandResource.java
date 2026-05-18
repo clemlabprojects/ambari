@@ -99,6 +99,18 @@ public class CommandResource {
       return Response.status(Response.Status.BAD_REQUEST)
               .entity(Map.of("error", iae.getMessage()))
               .build();
+    } catch (RuntimeException re) {
+      // submitDeploy wraps backend.apply(...) exceptions in RuntimeException for
+      // logging; unwrap so the operator gets a 400 with the original validation
+      // message instead of a 500 "Request failed." when the cause is a deliberate
+      // IllegalArgumentException (typically from a TLS-mode payload validation).
+      Throwable cause = re.getCause();
+      if (cause instanceof IllegalArgumentException) {
+        return Response.status(Response.Status.BAD_REQUEST)
+                .entity(Map.of("error", cause.getMessage()))
+                .build();
+      }
+      throw re;
     }
   }
 

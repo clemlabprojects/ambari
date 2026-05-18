@@ -26,7 +26,8 @@ import {
   DashboardOutlined,
   CloudServerOutlined,
   FileTextOutlined,
-  LockOutlined
+  LockOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons';
 // import { usePermissions } from '../../hooks/usePermissions';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
@@ -102,6 +103,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     '/nodes': 'Nodes',
     '/workloads': 'Workloads',
     '/global-security': 'Global Security',
+    '/certificate-authorities': 'Certificate Authorities',
     '/managed-configs': 'Profiles',
     '/configuration': 'Settings',
   };
@@ -138,6 +140,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       label: 'Configuration',
       children: [
         { key: '/global-security', icon: <LockOutlined />, label: <NavLink to="/global-security">Security</NavLink> },
+        { key: '/certificate-authorities', icon: <SafetyCertificateOutlined />, label: <NavLink to="/certificate-authorities">Certificate Authorities</NavLink> },
         { key: '/managed-configs', icon: <FileTextOutlined />, label: <NavLink to="/managed-configs">Profiles</NavLink> },
         { key: '/configuration', icon: <SettingOutlined />, label: <NavLink to="/configuration">Settings</NavLink> },
       ],

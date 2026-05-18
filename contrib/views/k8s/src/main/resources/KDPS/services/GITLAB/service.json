@@ -6,13 +6,11 @@
   "defaultRepo": "clemlabprojects",
   "secretName": "registry-credentials",
   "pattern": "gitlab-.*",
-
   "dynamicValues": [
     "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl",
     "AMBARI_OIDC_ISSUER_URL:gitlab.global.appConfig.omniauth.issuerUrl",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm"
   ],
-
   "oidc": [
     {
       "key": "gitlab",
@@ -25,7 +23,6 @@
       "enabled": true
     }
   ],
-
   "form": [
     {
       "name": "releaseName",
@@ -55,8 +52,8 @@
       "name": "gitlab.global.hosts.https",
       "label": "Enable HTTPS",
       "type": "boolean",
-      "defaultValue": false,
-      "help": "Disable for dev clusters without cert-manager. When false, GitLab is served over plain HTTP."
+      "defaultValue": true,
+      "help": "Serve GitLab over HTTPS. MUST be true when a Keycloak security profile is selected in Step 1 — OAuth callbacks reject http:// redirect URIs and the OmniAuth provider YAML built by the view will mirror this setting. Disable only for HTTP-only dev clusters without SSO."
     },
     {
       "name": "gitlab.global.ingress.class",
@@ -66,11 +63,22 @@
       "help": "IngressClass to use for GitLab web and SSH ingress (e.g. nginx, traefik)."
     },
     {
+      "name": "gitlabTlsClusterIssuer",
+      "label": "Ingress TLS ClusterIssuer (cert-manager)",
+      "type": "cluster-issuer-discovery",
+      "excludeFromValues": true,
+      "help": "Pick a cert-manager ClusterIssuer. When set, the chart's Ingresses get cert-manager.io/cluster-issuer + tls.enabled, so cert-manager auto-issues a Certificate and populates spec.tls[]. Leave blank only if you will provide a TLS Secret out-of-band (otherwise HTTPS will be unreachable and OIDC SSO will 302-loop back to the sign-in page).",
+      "condition": {
+        "field": "gitlab.global.hosts.https",
+        "value": true
+      }
+    },
+    {
       "name": "gitlab.global.ingress.configureCertmanager",
-      "label": "Configure cert-manager",
+      "label": "Configure cert-manager (chart's own Issuer)",
       "type": "boolean",
       "defaultValue": false,
-      "help": "Let the GitLab chart manage cert-manager TLS certificates. Disable if you do not have cert-manager installed."
+      "help": "Let the GitLab chart create its OWN Let's Encrypt Issuer. Keep false if you picked a ClusterIssuer above — that's the right path for internal clusters."
     },
     {
       "name": "gitlab.certmanager.install",
@@ -113,8 +121,14 @@
       "type": "select",
       "defaultValue": "ce",
       "options": [
-        { "label": "Community Edition (CE) — free", "value": "ce" },
-        { "label": "Enterprise Edition (EE) — requires licence", "value": "ee" }
+        {
+          "label": "Community Edition (CE) — free",
+          "value": "ce"
+        },
+        {
+          "label": "Enterprise Edition (EE) — requires licence",
+          "value": "ee"
+        }
       ],
       "help": "CE is free and suitable for dev/GitOps use. EE requires a valid licence key."
     },
@@ -131,6 +145,13 @@
       "type": "boolean",
       "defaultValue": false,
       "help": "Allow users to self-register. Disable for private dev instances."
+    },
+    {
+      "name": "gitlabRootPasswordSecret",
+      "label": "Initial root password Secret (optional)",
+      "type": "secret-discovery",
+      "excludeFromValues": true,
+      "help": "Kubernetes Secret in the install namespace whose 'password' key holds the password for the built-in 'root' user. Leave blank to let the chart auto-generate one (stored in Secret '<releaseName>-gitlab-initial-root-password', key 'password' — fetchable via 'kubectl get secret ... -o jsonpath=...'). Use this field when you want a known/managed password (e.g. provisioned via Vault) so 'root' can promote SSO users via Admin Area > Users."
     },
     {
       "name": "ssoConfig",
@@ -154,32 +175,117 @@
       ]
     }
   ],
-
   "variables": [
     {
       "name": "gitlabDomain",
-      "from": { "type": "form", "field": "gitlab.global.hosts.domain" }
+      "from": {
+        "type": "form",
+        "field": "gitlab.global.hosts.domain"
+      }
+    },
+    {
+      "name": "gitlabTlsClusterIssuer",
+      "from": {
+        "type": "form",
+        "field": "gitlabTlsClusterIssuer"
+      }
+    },
+    {
+      "name": "gitlabRootPasswordSecret",
+      "from": {
+        "type": "form",
+        "field": "gitlabRootPasswordSecret"
+      }
     }
   ],
-
   "bindings": [
     {
       "name": "oidc-omniauth-enabled",
       "targets": [
         {
           "path": "gitlab.global.appConfig.omniauth.enabled",
-          "from": { "type": "template", "template": "true" }
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ingress-tls-defaults",
+      "_description": "Make spec.tls[] actually land on the chart's Ingresses (the chart only adds it when tls.enabled is explicitly true) and force HTTP→HTTPS at the edge so the OmniAuth POST does not lose its Secure session cookie and 302-loop back to /users/sign_in.",
+      "targets": [
+        {
+          "path": "gitlab.global.ingress.tls.enabled",
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        },
+        {
+          "path": "gitlab.global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/force-ssl-redirect",
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ingress-tls-cluster-issuer",
+      "_description": "Wire the user-picked cert-manager ClusterIssuer via annotation. cert-manager's ingress-shim watches Ingresses with this annotation + tls[] and auto-creates the Certificate + Secret. Skipped silently if the user left the field blank.",
+      "targets": [
+        {
+          "path": "gitlab.global.ingress.annotations.cert-manager\\.io/cluster-issuer",
+          "skipIfVarEmpty": "gitlabTlsClusterIssuer",
+          "from": {
+            "type": "template",
+            "template": "${gitlabTlsClusterIssuer}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "initial-root-password",
+      "_description": "Point the chart at a user-provided Secret holding the 'root' password (key 'password'). Skipped when blank — the chart then auto-generates and stores it in Secret '<releaseName>-gitlab-initial-root-password'.",
+      "targets": [
+        {
+          "path": "gitlab.global.initialRootPassword.secret",
+          "skipIfVarEmpty": "gitlabRootPasswordSecret",
+          "from": {
+            "type": "template",
+            "template": "${gitlabRootPasswordSecret}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "trusted-ca-customcas",
+      "_description": "Mount the merged Ambari/company truststore (Secret '<releaseName>-truststore' — created automatically by the security-profile step earlier in the deploy plan) into every GitLab pod via the chart's customCAs volume. The same Secret also carries the JKS for JVM services; we MUST pin keys=['ca.crt'] to avoid feeding the binary JKS to update-ca-certificates as if it were a PEM bundle. See docs/OUTBOUND_TLS_TRUSTSTORE.md for the Secret schema.",
+      "targets": [
+        {
+          "path": "gitlab.global.certificates.customCAs[0].secret",
+          "from": {
+            "type": "template",
+            "template": "${releaseName}-truststore"
+          }
+        },
+        {
+          "path": "gitlab.global.certificates.customCAs[0].keys[0]",
+          "from": {
+            "type": "template",
+            "template": "ca.crt"
+          }
         }
       ]
     }
   ],
-
   "endpoints": [
     {
       "id": "ui",
       "label": "GitLab Web UI",
       "type": "template",
-      "template": "http://gitlab.{{domain}}",
+      "template": "https://gitlab.{{domain}}",
       "properties": {
         "domain": {
           "source": "helm",
@@ -192,7 +298,7 @@
       "id": "api",
       "label": "GitLab REST API",
       "type": "template",
-      "template": "http://gitlab.{{domain}}/api/v4",
+      "template": "https://gitlab.{{domain}}/api/v4",
       "properties": {
         "domain": {
           "source": "helm",
@@ -214,5 +320,12 @@
         }
       }
     }
-  ]
+  ],
+  "requiredChartVersion": ">=8.11.2",
+  "securityCoupling": {
+    "requireIngress": false,
+    "minTlsMode": "signedByAmbariCA",
+    "tlsProvisioning": "chart-managed"
+  },
+  "valueAliases": {}
 }

@@ -275,4 +275,106 @@ public class HelmClientDefault implements HelmClient {
             return "";
         }
     }
+
+    @Override
+    public void rollback(String releaseName, String namespace, int revision, String kubeconfigContents) {
+        Path kubeconfig = writeKubeconfigToTempFile(kubeconfigContents);
+        try {
+            List<String> cmd = new java.util.ArrayList<>();
+            cmd.add(resolveHelmBinary());
+            cmd.add("rollback");
+            cmd.add(releaseName);
+            if (revision > 0) {
+                cmd.add(String.valueOf(revision));
+            }
+            cmd.add("--namespace");
+            cmd.add(namespace);
+            cmd.add("--kubeconfig");
+            cmd.add(kubeconfig.toString());
+            cmd.add("--wait");
+            String output = runHelmCli(cmd, /*allowFailure*/ false);
+            LOG.info("helm rollback succeeded for {}/{} -> revision {}: {}", namespace, releaseName, revision, output.trim());
+        } finally {
+            try { Files.deleteIfExists(kubeconfig); } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> history(String releaseName, String namespace, String kubeconfigContents) {
+        Path kubeconfig = writeKubeconfigToTempFile(kubeconfigContents);
+        try {
+            // Cap at 50 even when retention is configured higher — anything older is
+            // archaeological and the picker UI tops out at a few pages anyway.
+            List<String> cmd = List.of(
+                    resolveHelmBinary(), "history", releaseName,
+                    "--namespace", namespace,
+                    "--kubeconfig", kubeconfig.toString(),
+                    "--max", "50",
+                    "-o", "json"
+            );
+            String json = runHelmCli(cmd, /*allowFailure*/ false);
+            if (json == null || json.isBlank()) {
+                return Collections.emptyList();
+            }
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, List.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read helm history for " + namespace + "/" + releaseName + ": " + e.getMessage(), e);
+        } finally {
+            try { Files.deleteIfExists(kubeconfig); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Resolve the helm CLI binary path. The Ambari server runs with a minimal PATH so we
+     * cannot rely on plain "helm"; we probe the standard locations and fall back to PATH.
+     */
+    private static String resolveHelmBinary() {
+        String[] candidates = {"/usr/local/sbin/helm", "/usr/local/bin/helm", "/opt/local/helm/helm"};
+        for (String candidate : candidates) {
+            if (java.nio.file.Files.isExecutable(java.nio.file.Paths.get(candidate))) {
+                return candidate;
+            }
+        }
+        return "helm";
+    }
+
+    private static Path writeKubeconfigToTempFile(String contents) {
+        if (contents == null || contents.isBlank()) {
+            throw new IllegalArgumentException("kubeconfig contents are required for helm CLI invocation");
+        }
+        try {
+            Path tempFile = Files.createTempFile("kubeconfig-", ".yaml");
+            Files.writeString(tempFile, contents, java.nio.charset.StandardCharsets.UTF_8);
+            try {
+                Files.setPosixFilePermissions(tempFile,
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException nonPosix) {
+                tempFile.toFile().setReadable(false, false);
+                tempFile.toFile().setReadable(true, true);
+            }
+            return tempFile;
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot write temporary kubeconfig file: " + e.getMessage(), e);
+        }
+    }
+
+    private static String runHelmCli(List<String> command, boolean allowFailure) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String out = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            int code = p.waitFor();
+            if (code != 0 && !allowFailure) {
+                throw new RuntimeException("helm command failed (" + code + "): "
+                        + String.join(" ", command) + " output=" + out);
+            }
+            return out;
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to run helm command: " + e.getMessage(), e);
+        }
+    }
 }

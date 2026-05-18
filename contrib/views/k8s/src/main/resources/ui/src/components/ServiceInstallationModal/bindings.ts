@@ -6,17 +6,31 @@ import type { BindingSpec, BindingTarget } from './types';
    Crucially, they support escaped dots (e.g. "node\.data-dir") which are common in Helm keys.
    ============================================================================================== */
 
-/** * Splits a path string into parts, respecting escaped dots.
- * Example: "server.node\.data-dir" -> ["server", "node.data-dir"]
- */
-export const pathToParts = (p: string) =>
-    p.replace(/\\\./g, '__DOT__').split('.').map(s => s.replace(/__DOT__/g, '.'));
+/** Splits a path string into parts, respecting escaped dots AND Helm-style
+ *  list indices (e.g. `foo[0].bar` -> ['foo', 0, 'bar']).
+ *  Numbers in the returned array signal "index into a list" for the writers.
+ *  Without honoring [N], a binding path like `customCAs[0].secret` writes a
+ *  literal map key `customCAs[0]` instead of a list element, producing
+ *  structurally wrong YAML that the chart silently ignores. */
+export const pathToParts = (p: string): (string | number)[] => {
+  const raw = p.replace(/\\\./g, '__DOT__').split('.').map(s => s.replace(/__DOT__/g, '.'));
+  const out: (string | number)[] = [];
+  for (const seg of raw) {
+    const m = /^([^\[\]]+)((?:\[\d+\])*)$/.exec(seg);
+    if (!m) { out.push(seg); continue; }
+    out.push(m[1]);
+    const idxBlock = m[2];
+    if (idxBlock) {
+      for (const num of idxBlock.matchAll(/\[(\d+)\]/g)) out.push(Number(num[1]));
+    }
+  }
+  return out;
+};
 
-/** * Safely retrieves a value from a nested object using a dot-notation string.
- * Returns undefined if the path doesn't exist.
- */
+/** Safely retrieves a value from a nested object/list using a dot-notation
+ *  string with optional [N] indices. Returns undefined if the path doesn't exist. */
 export const getAtStr = (obj: any, path: string) =>
-    pathToParts(path).reduce((o, k) => (o ? o[k] : undefined), obj);
+    pathToParts(path).reduce((o: any, k) => (o == null ? undefined : o[k as any]), obj);
 
 /**
  * Basic string interpolation. Replaces ${key} with value from ctx.
@@ -28,36 +42,45 @@ export const interpolateStr = (tpl: string, ctx: any) =>
       return v == null ? '' : String(v);
     });
 
-/**
- * Navigates to a path in an object, creating nested objects if they don't exist.
- * If the leaf node doesn't exist, initializes it with `init`.
- * Returns the leaf node.
- */
-export const ensureAtStr = (obj: any, path: string, init: any) => {
-  const parts = pathToParts(path);
-  let cur = obj;
+/** Ensure each segment of `parts` exists as a Map (for string keys) or List
+ *  (for numeric keys) on `cur`, and return the parent of the final segment.
+ *  Used by both ensureAtStr and setAtStr so the list-vs-map decision happens
+ *  in exactly one place. */
+const walkAndEnsure = (cur: any, parts: (string | number)[]): any => {
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i];
-    if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+    const nextIsIndex = typeof parts[i + 1] === 'number';
+    if (typeof k === 'number') {
+      while ((cur as any[]).length <= k) (cur as any[]).push(undefined);
+      if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = nextIsIndex ? [] : {};
+    } else {
+      if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = nextIsIndex ? [] : {};
+    }
     cur = cur[k];
   }
-  const leaf = parts[parts.length - 1];
-  if (cur[leaf] == null) cur[leaf] = typeof init === 'function' ? init() : init;
-  return cur[leaf];
+  return cur;
 };
 
 /**
- * Sets a value at a specific dot-notation path, creating intermediate objects as needed.
+ * Navigates to a path in an object, creating nested objects/lists if they don't exist.
+ * If the leaf node doesn't exist, initializes it with `init`. Returns the leaf node.
+ */
+export const ensureAtStr = (obj: any, path: string, init: any) => {
+  const parts = pathToParts(path);
+  const parent = walkAndEnsure(obj, parts);
+  const leaf = parts[parts.length - 1];
+  if (parent[leaf as any] == null) parent[leaf as any] = typeof init === 'function' ? init() : init;
+  return parent[leaf as any];
+};
+
+/**
+ * Sets a value at a specific dot-notation path (with optional [N] indices),
+ * creating intermediate objects/lists as needed.
  */
 export const setAtStr = (obj: any, path: string, value: any) => {
   const parts = pathToParts(path);
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const k = parts[i];
-    if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
-    cur = cur[k];
-  }
-  cur[parts[parts.length - 1]] = value;
+  const parent = walkAndEnsure(obj, parts);
+  parent[parts[parts.length - 1] as any] = value;
 };
 
 /**
@@ -67,18 +90,17 @@ export const setAtStr = (obj: any, path: string, value: any) => {
 export const deleteAtStr = (obj: any, path: string) => {
   const parts = pathToParts(path);
   const leaf = parts.pop();
-  if (!leaf) return;
+  // Index 0 is a valid leaf, so check for undefined explicitly (truthy-check would skip).
+  if (leaf === undefined) return;
 
   let cur = obj;
-  // Navigate to the parent object
   for (const p of parts) {
     if (!cur || typeof cur !== 'object') return;
-    cur = cur[p];
+    cur = cur[p as any];
   }
 
-  // Delete the leaf key from the parent
   if (cur && typeof cur === 'object') {
-    delete cur[leaf];
+    delete cur[leaf as any];
   }
 };
 

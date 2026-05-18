@@ -24,15 +24,33 @@ interface ConfigurationStepProps {
   configs: any[];
   overrides: Record<string, any>;
   onChange: (overrides: Record<string, any>) => void;
+  /**
+   * Parent-owned map of password validity flags, keyed by `${configName}/${propName}`.
+   * PropertyRenderer reports the boolean here whenever its local confirm state changes
+   * the password's validity. The wizard reads this map to gate the Next button.
+   *
+   * We only lift the *boolean*, not the full confirm string — lifting the string
+   * causes a re-render cascade through Tabs/PropertyRenderer that steals focus
+   * from the confirm input (each keystroke re-renders the wizard).
+   */
+  passwordValidity: Record<string, boolean>;
+  onPasswordValidityChange: (validity: Record<string, boolean>) => void;
 }
 
-const ConfigurationStep: React.FC<ConfigurationStepProps> = ({ configs, overrides, onChange }) => {
+const ConfigurationStep: React.FC<ConfigurationStepProps> = ({ configs, overrides, onChange, passwordValidity, onPasswordValidityChange }) => {
   if (!configs || configs.length === 0) return <Empty description="No stack configurations found." />;
 
   const handlePropChange = (configName: string, propName: string, value: any) => {
     const key = `${configName}/${propName}`;
     onChange({ ...overrides, [key]: value });
   };
+
+  // Stable per-Property callback: only fires when validity *flips*, not on every key.
+  // PropertyRenderer's effect debounces by comparing against lastReportedRef.
+  const handleValidityChange = React.useCallback((configName: string, propName: string, valid: boolean) => {
+    const key = `${configName}/${propName}`;
+    onPasswordValidityChange({ ...passwordValidity, [key]: valid });
+  }, [passwordValidity, onPasswordValidityChange]);
 
   const items = configs.map(cfg => ({
     key: cfg.name,
@@ -41,12 +59,13 @@ const ConfigurationStep: React.FC<ConfigurationStepProps> = ({ configs, override
         <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 8 }}>
             <Typography.Paragraph type="secondary">{cfg.description}</Typography.Paragraph>
             {cfg.properties.map((prop: any) => (
-                <PropertyRenderer 
+                <PropertyRenderer
                     key={prop.name}
                     configName={cfg.name}
                     property={prop}
                     currentValue={overrides[`${cfg.name}/${prop.name}`]}
                     onChange={handlePropChange}
+                    onPasswordValidityChange={handleValidityChange}
                 />
             ))}
         </div>

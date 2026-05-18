@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.42.0",
+  "version": "1.42.1",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -371,6 +371,83 @@
   ],
   "variables": [
     {
+      "name": "ingressEnabled",
+      "from": {
+        "type": "form",
+        "field": "ingress.enabled"
+      }
+    },
+    {
+      "name": "ingressClassName",
+      "from": {
+        "type": "form",
+        "field": "ingress.ingressClassName"
+      }
+    },
+    {
+      "name": "ingressPath",
+      "from": {
+        "type": "form",
+        "field": "ingress.path"
+      }
+    },
+    {
+      "name": "ingressHost",
+      "from": {
+        "type": "form",
+        "field": "ingress.host"
+      }
+    },
+    {
+      "name": "ingressTLSSecret",
+      "from": {
+        "type": "form",
+        "field": "ingress.tlsSecret"
+      }
+    },
+    {
+      "name": "ingressProxyBufferSize",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyBufferSize"
+      }
+    },
+    {
+      "name": "ingressProxyBuffersNumber",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyBuffersNumber"
+      }
+    },
+    {
+      "name": "ingressProxyBusyBuffersSize",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyBusyBuffersSize"
+      }
+    },
+    {
+      "name": "ingressProxyBodySize",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyBodySize"
+      }
+    },
+    {
+      "name": "ingressProxyReadTimeout",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyReadTimeout"
+      }
+    },
+    {
+      "name": "ingressProxyConnectTimeout",
+      "from": {
+        "type": "form",
+        "field": "ingress.tuning.proxyConnectTimeout"
+      }
+    },
+    {
       "name": "namespace",
       "from": {
         "type": "form",
@@ -499,52 +576,10 @@
       "template": "enabled"
     },
     {
-      "name": "ingressEnabled",
-      "from": {
-        "type": "form",
-        "field": "ingress.enabled"
-      }
-    },
-    {
-      "name": "ingressClassName",
-      "from": {
-        "type": "form",
-        "field": "ingress.className"
-      }
-    },
-    {
-      "name": "ingressPath",
-      "from": {
-        "type": "form",
-        "field": "ingress.path"
-      }
-    },
-    {
-      "name": "ingressHost",
-      "from": {
-        "type": "form",
-        "field": "ingress.host"
-      }
-    },
-    {
-      "name": "ingressTLSSecret",
-      "from": {
-        "type": "form",
-        "field": "ingress.tlsSecret"
-      }
-    },
-    {
       "name": "ingressTLSSecretUpload",
       "from": {
         "type": "form",
         "field": "ingress.tlsUpload.secretName"
-      }
-    },
-    {
-      "name": "ingressTLSHost",
-      "from": {
-        "type": "form",
-        "field": "ingress.tlsHost"
       }
     },
     {
@@ -634,9 +669,148 @@
         "type": "form",
         "field": "internalSharedSecret"
       }
+    },
+    {
+      "name": "ingressCertManagerIssuerName",
+      "from": {
+        "type": "form",
+        "field": "ingress.certManager.issuerName"
+      }
+    },
+    {
+      "name": "ingressCertManagerValidityDays",
+      "from": {
+        "type": "form",
+        "field": "ingress.certManager.validityDays"
+      }
+    },
+    {
+      "name": "ingressExternalSecretStoreName",
+      "from": {
+        "type": "form",
+        "field": "ingress.externalSecret.secretStoreName"
+      }
+    },
+    {
+      "name": "ingressExternalSecretRemoteKey",
+      "from": {
+        "type": "form",
+        "field": "ingress.externalSecret.remoteKey"
+      }
+    },
+    {
+      "name": "ingressExternalSecretRefreshInterval",
+      "from": {
+        "type": "form",
+        "field": "ingress.externalSecret.refreshInterval"
+      }
     }
   ],
   "bindings": [
+    {
+      "name": "ingress-setup",
+      "_description": "Writes the canonical ingress shape every KDPS chart accepts. The `hosts[]` entry uses the rich object form `{host, paths[]}` so OpenMetadata- and Trino-style charts work out of the box; the Superset chart's template was made shape-tolerant (accepts string OR object) in chart >= 0.12.25.",
+      "targets": [
+        {
+          "path": "ingress.hosts[]",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "host": "${ingressHost}",
+              "paths": [
+                {
+                  "path": "${ingressPath}",
+                  "pathType": "ImplementationSpecific"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "path": "ingress.pathType",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "ImplementationSpecific"
+          }
+        },
+        {
+          "path": "ingress.tls[]",
+          "skipIfVarEmpty": "ingressTLSSecret",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": {
+              "secretName": "${ingressTLSSecret}",
+              "hosts": [
+                "${ingressHost}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ingress-nginx-tuning",
+      "_description": "Backslash-escaped dots in the leaf key — the UI binding engine (bindings.ts:pathToParts) treats backslash-dot as a literal dot so the rendered values look like `ingress.annotations: { \"nginx.ingress.kubernetes.io/proxy-buffer-size\": \"...\" }`.",
+      "targets": [
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-buffer-size",
+          "skipIfVarEmpty": "ingressProxyBufferSize",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyBufferSize}"
+          }
+        },
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-buffers-number",
+          "skipIfVarEmpty": "ingressProxyBuffersNumber",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyBuffersNumber}"
+          }
+        },
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-busy-buffers-size",
+          "skipIfVarEmpty": "ingressProxyBusyBuffersSize",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyBusyBuffersSize}"
+          }
+        },
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-body-size",
+          "skipIfVarEmpty": "ingressProxyBodySize",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyBodySize}"
+          }
+        },
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-read-timeout",
+          "skipIfVarEmpty": "ingressProxyReadTimeout",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyReadTimeout}"
+          }
+        },
+        {
+          "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/proxy-connect-timeout",
+          "skipIfVarEmpty": "ingressProxyConnectTimeout",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${ingressProxyConnectTimeout}"
+          }
+        }
+      ]
+    },
     {
       "role": "coordinator",
       "field": "coordinator.config.nodeProperties.node\\.data-dir",
@@ -1037,55 +1211,6 @@
       ]
     },
     {
-      "name": "ingress-setup",
-      "targets": [
-        {
-          "path": "ingress.hosts[]",
-          "op": "set",
-          "from": {
-            "type": "template",
-            "template": {
-              "host": "${ingressHost}",
-              "paths": [
-                {
-                  "path": "${ingressPath}",
-                  "pathType": "ImplementationSpecific"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "path": "ingress.tls[]",
-          "skipIfVarEmpty": "ingressTLSSecretUpload",
-          "op": "set",
-          "from": {
-            "type": "template",
-            "template": {
-              "secretName": "${ingressTLSSecretUpload}",
-              "hosts": [
-                "${ingressHost}"
-              ]
-            }
-          }
-        },
-        {
-          "path": "ingress.tls[]",
-          "skipIfVarEmpty": "ingressTLSSecret",
-          "op": "set",
-          "from": {
-            "type": "template",
-            "template": {
-              "secretName": "${ingressTLSSecret}",
-              "hosts": [
-                "${ingressTLSHost}"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
       "name": "https-config",
       "targets": [
         {
@@ -1308,11 +1433,11 @@
       "label": "Nom logique (nameOverride)",
       "type": "string",
       "defaultValue": "clemlab-trino",
-      "help": "Sera concat\u00e9n\u00e9 au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
+      "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
     },
     {
       "name": "acls",
-      "label": "Contr\u00f4le d'acc\u00e8s (Service Trino)",
+      "label": "Contrôle d'accès (Service Trino)",
       "type": "group",
       "fields": [
         {
@@ -1330,11 +1455,11 @@
             }
           ],
           "defaultValue": "ranger",
-          "help": "Activer l'int\u00e9gration avec Apache Ranger pour le contr\u00f4le d'acc\u00e8s."
+          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
         },
         {
           "name": "nodePort.port",
-          "label": "Port du N\u0153ud (Optionnel)",
+          "label": "Port du Nœud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1366,7 +1491,7 @@
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
-          "help": "Utilis\u00e9 pour construire l'URL du Prometheus interne."
+          "help": "Utilisé pour construire l'URL du Prometheus interne."
         },
         {
           "name": "serviceMonitor.enabled",
@@ -1390,24 +1515,24 @@
     },
     {
       "name": "networkAccess",
-      "label": "Acc\u00e8s R\u00e9seau (Service Trino)",
+      "label": "Accès Réseau (Service Trino)",
       "type": "group",
       "fields": [
         {
           "name": "service.enabled",
-          "label": "Activer l'acc\u00e8s interne (ClusterIP)",
+          "label": "Activer l'accès interne (ClusterIP)",
           "type": "boolean",
           "defaultValue": true
         },
         {
           "name": "nodePort.enabled",
-          "label": "Activer l'acc\u00e8s externe (NodePort)",
+          "label": "Activer l'accès externe (NodePort)",
           "type": "boolean",
           "defaultValue": false
         },
         {
           "name": "nodePort.port",
-          "label": "Port du N\u0153ud (Optionnel)",
+          "label": "Port du Nœud (Optionnel)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1418,14 +1543,14 @@
     },
     {
       "name": "security",
-      "label": "S\u00e9curit\u00e9 interne",
+      "label": "Sécurité interne",
       "type": "group",
       "fields": [
         {
           "name": "internalSharedSecret",
           "label": "Shared secret interne",
           "type": "password",
-          "help": "Valeur utilis\u00e9e pour internal-communication.shared-secret afin de s\u00e9curiser les communications internes Trino."
+          "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
         }
       ]
     },
@@ -1439,36 +1564,41 @@
           "label": "Activer l'interface Web",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par d\u00e9faut)."
+          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par défaut)."
         }
       ]
     },
     {
       "name": "ingressConfig",
-      "label": "Exposition HTTP(S) / Ingress",
+      "label": "HTTP(S) ingress",
       "type": "group",
       "fields": [
         {
           "name": "ingress.enabled",
-          "label": "Activer l'Ingress",
+          "label": "Enable Ingress",
           "type": "boolean",
-          "defaultValue": false,
-          "help": "Active la cr\u00e9ation d'un objet Ingress pour exposer Trino via un hostname."
+          "defaultValue": true,
+          "help": "Expose the service through a Kubernetes Ingress. Required when an authentication profile (OIDC / LDAP-over-SSL) is selected in Step 1 — OAuth callbacks need a public hostname and HTTPS."
         },
         {
-          "name": "ingress.className",
-          "label": "Classe d'Ingress",
-          "required": true,
+          "name": "ingress.ingressClassName",
+          "label": "Ingress class",
           "type": "string",
-          "help": "Nom de la classe d'Ingress (par ex. 'nginx'). Laisser vide pour le contr\u00f4leur par d\u00e9faut."
+          "required": true,
+          "defaultValue": "nginx",
+          "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
         },
         {
           "name": "ingress.host",
-          "label": "Host (DNS) externe",
+          "label": "Hostname (DNS)",
           "type": "string",
           "required": true,
           "excludeFromValues": true,
-          "help": "Nom DNS public (ex: trino.example.com).",
+          "help": "Public DNS name the ingress controller will route. e.g. service.example.com.",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -1476,11 +1606,55 @@
         },
         {
           "name": "ingress.path",
-          "label": "Chemin HTTP",
+          "label": "HTTP path",
           "type": "string",
           "defaultValue": "/",
           "excludeFromValues": true,
-          "help": "Chemin de base pour l'Ingress (souvent '/').",
+          "help": "Base path for the Ingress (usually '/').",
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "ingress.tlsMode",
+          "label": "TLS mode",
+          "type": "select",
+          "defaultValue": "signedByAmbariCA",
+          "excludeFromValues": true,
+          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1.",
+          "options": [
+            {
+              "label": "Sign via cert-manager (recommended)",
+              "value": "signedByClusterIssuer",
+              "capability": "certManager"
+            },
+            {
+              "label": "Source from external Secret store (Vault, ESO)",
+              "value": "sourcedFromExternalSecret",
+              "capability": "externalSecrets"
+            },
+            {
+              "label": "Sign with Company CA (production)",
+              "value": "signedByCompanyCA"
+            },
+            {
+              "label": "Bring your own Secret",
+              "value": "bringYourOwn"
+            },
+            {
+              "label": "Upload cert + key",
+              "value": "uploadLeaf"
+            },
+            {
+              "label": "Sign with Ambari Internal CA (testing)",
+              "value": "signedByAmbariCA"
+            },
+            {
+              "label": "None (HTTP only — not allowed with auth)",
+              "value": "none"
+            }
+          ],
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -1488,59 +1662,187 @@
         },
         {
           "name": "ingress.tlsSecret",
-          "label": "Secret TLS (optionnel)",
+          "label": "Existing TLS Secret name",
           "type": "string",
-          "help": "Nom du Secret contenant le certificat TLS. Laisser vide pour HTTP uniquement.",
+          "help": "Name of a kubernetes.io/tls Secret already present in the release namespace. The chart references it via ingress.tls[].secretName.",
           "condition": {
-            "field": "ingress.enabled",
-            "value": true
-          }
-        },
-        {
-          "name": "ingress.tlsHost",
-          "label": "Host TLS",
-          "type": "string",
-          "help": "Host associ\u00e9 \u00e0 ce certificat TLS (en g\u00e9n\u00e9ral le m\u00eame que l'host Ingress).",
-          "condition": {
-            "field": "ingress.enabled",
-            "value": true
+            "field": "ingress.tlsMode",
+            "value": "bringYourOwn"
           }
         },
         {
           "name": "ingress.tlsUpload.cert",
-          "label": "Certificat TLS (PEM)",
+          "label": "TLS certificate (PEM, leaf + chain)",
           "type": "content",
-          "help": "Collez le cert PEM pour l'Ingress (sign\u00e9 par la CA interne/entreprise).",
           "language": "plaintext",
           "excludeFromValues": true,
+          "help": "Paste the full chain (leaf first). Saved as tls.crt in the new Secret.",
           "condition": {
-            "field": "ingress.enabled",
-            "value": true
+            "field": "ingress.tlsMode",
+            "value": "uploadLeaf"
           }
         },
         {
           "name": "ingress.tlsUpload.key",
-          "label": "Cl\u00e9 priv\u00e9e TLS (PEM)",
+          "label": "TLS private key (PEM)",
           "type": "content",
-          "help": "Collez la cl\u00e9 priv\u00e9e PEM associ\u00e9e.",
           "language": "plaintext",
           "excludeFromValues": true,
+          "help": "Paste the private key matching the certificate above. Saved as tls.key.",
           "condition": {
-            "field": "ingress.enabled",
-            "value": true
+            "field": "ingress.tlsMode",
+            "value": "uploadLeaf"
           }
         },
         {
           "name": "ingress.tlsUpload.secretName",
-          "label": "Nom du Secret TLS",
+          "label": "Target Secret name",
           "type": "string",
-          "defaultValue": "trino-ingress-tls",
-          "help": "Nom du Secret Kubernetes \u00e0 cr\u00e9er/mettre \u00e0 jour avec ce cert/cl\u00e9.",
           "excludeFromValues": true,
+          "help": "Name of the kubernetes.io/tls Secret the view will create from the uploaded cert/key. Leave blank to use the default `<releaseName>-ingress-tls` (computed server-side at deploy time).",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "uploadLeaf"
+          }
+        },
+        {
+          "name": "ingress.tlsSelfSign.caName",
+          "label": "Company CA",
+          "type": "secret-discovery",
+          "lookupLabel": "ambari.clemlab.com/resource-type=issuing-ca",
+          "excludeFromValues": true,
+          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. CAs are stored as Kubernetes Secrets in the `ambari-pki` namespace labeled `ambari.clemlab.com/resource-type=issuing-ca`. Upload CAs via Cluster security → Certificate Authorities.",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "signedByCompanyCA"
+          }
+        },
+        {
+          "name": "ingress.tlsSelfSign.validityDays",
+          "label": "Leaf validity (days)",
+          "type": "string",
+          "defaultValue": "90",
+          "excludeFromValues": true,
+          "help": "How long the minted leaf certificate is valid. Capped server-side at 825 (CA/Browser Forum baseline).",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": [
+              "signedByAmbariCA",
+              "signedByCompanyCA"
+            ]
+          }
+        },
+        {
+          "name": "ingress.certManager.issuerName",
+          "label": "ClusterIssuer",
+          "type": "cluster-issuer-discovery",
+          "excludeFromValues": true,
+          "help": "Pick a cert-manager ClusterIssuer or Issuer. The view writes a Certificate resource pre-install; cert-manager mints the Secret and auto-renews it before expiry.",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "signedByClusterIssuer"
+          }
+        },
+        {
+          "name": "ingress.certManager.validityDays",
+          "label": "Leaf validity (days)",
+          "type": "string",
+          "defaultValue": "90",
+          "excludeFromValues": true,
+          "help": "Validity in days. Translated to durationHours on the Certificate resource. cert-manager renews at duration/6 before expiry.",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "signedByClusterIssuer"
+          }
+        },
+        {
+          "name": "ingress.externalSecret.secretStoreName",
+          "label": "SecretStore",
+          "type": "secret-store-discovery",
+          "excludeFromValues": true,
+          "help": "Pick an external-secrets SecretStore or ClusterSecretStore. Typically Vault-backed for TLS leaves (PKI mount).",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "sourcedFromExternalSecret"
+          }
+        },
+        {
+          "name": "ingress.externalSecret.remoteKey",
+          "label": "Remote key / path",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Path/key in the upstream store. For Vault PKI: 'pki/issue/<role>'. For Vault KV: 'secret/data/tls/<name>'. For AWS Secrets Manager: the secret name.",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "sourcedFromExternalSecret"
+          }
+        },
+        {
+          "name": "ingress.externalSecret.refreshInterval",
+          "label": "Refresh interval",
+          "type": "string",
+          "defaultValue": "1h",
+          "excludeFromValues": true,
+          "help": "ESO refresh cadence. e.g. '1h', '15m', '0' (no periodic refresh).",
+          "condition": {
+            "field": "ingress.tlsMode",
+            "value": "sourcedFromExternalSecret"
+          }
+        },
+        {
+          "name": "ingressTuning",
+          "label": "Ingress tuning (nginx)",
+          "type": "group",
           "condition": {
             "field": "ingress.enabled",
             "value": true
-          }
+          },
+          "fields": [
+            {
+              "name": "ingress.tuning.proxyBufferSize",
+              "label": "proxy-buffer-size",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-buffer-size. Leave blank to use chart default (16k under OIDC/OAuth, otherwise nginx default 4k/8k). Bump if you see 502 + 'upstream sent too big header' on OAuth callbacks."
+            },
+            {
+              "name": "ingress.tuning.proxyBuffersNumber",
+              "label": "proxy-buffers-number",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-buffers-number. Total response buffers = number × size."
+            },
+            {
+              "name": "ingress.tuning.proxyBusyBuffersSize",
+              "label": "proxy-busy-buffers-size",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-busy-buffers-size. Should be ≥ proxy-buffer-size and ≤ total buffer capacity."
+            },
+            {
+              "name": "ingress.tuning.proxyBodySize",
+              "label": "proxy-body-size",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-body-size. Maximum request body the proxy accepts (e.g. '64m'). Bump for large uploads / file imports."
+            },
+            {
+              "name": "ingress.tuning.proxyReadTimeout",
+              "label": "proxy-read-timeout (seconds)",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-read-timeout. Bump for long-running queries (Trino, Superset). Default 60."
+            },
+            {
+              "name": "ingress.tuning.proxyConnectTimeout",
+              "label": "proxy-connect-timeout (seconds)",
+              "type": "string",
+              "excludeFromValues": true,
+              "help": "nginx.ingress.kubernetes.io/proxy-connect-timeout. Time the proxy waits when opening a connection to the backend pod."
+            }
+          ],
+          "collapsed": true,
+          "help": "Advanced — usually leave blank. nginx ingress annotations (proxy buffers / timeouts). Chart-side defaults are sensible for the common case; expand if you need to override (large headers on OAuth, long-running queries, big uploads)."
         }
       ]
     },
@@ -1555,11 +1857,11 @@
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
-          "help": "Active le serveur HTTPS de Trino. G\u00e9n\u00e8re un keystore sign\u00e9 par l'autorit\u00e9 interne si demand\u00e9."
+          "help": "Active le serveur HTTPS de Trino. Génère un keystore signé par l'autorité interne si demandé."
         },
         {
           "name": "tls.https.autoGenerate",
-          "label": "Auto-g\u00e9n\u00e9rer le keystore",
+          "label": "Auto-générer le keystore",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
@@ -1567,7 +1869,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Si activ\u00e9, Ambari g\u00e9n\u00e8re un certificat sign\u00e9 par la CA interne et un Secret Kubernetes."
+          "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
         },
         {
           "name": "tls.https.port",
@@ -1584,7 +1886,7 @@
           "name": "tls.https.secretName",
           "label": "Secret keystore (optionnel)",
           "type": "string",
-          "help": "Nom du Secret qui contiendra le keystore. Vide \u2192 <release>-https.",
+          "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -1593,7 +1895,7 @@
         },
         {
           "name": "tls.https.keystoreKey",
-          "label": "Cl\u00e9 du keystore dans le Secret",
+          "label": "Clé du keystore dans le Secret",
           "type": "string",
           "defaultValue": "truststore.jks",
           "excludeFromValues": true,
@@ -1607,7 +1909,7 @@
           "label": "Mot de passe keystore",
           "type": "password",
           "defaultValue": "",
-          "help": "Laisser vide pour g\u00e9n\u00e9ration al\u00e9atoire.",
+          "help": "Laisser vide pour génération aléatoire.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -1616,7 +1918,7 @@
         },
         {
           "name": "tls.https.mountPath",
-          "label": "Chemin mont\u00e9 du keystore",
+          "label": "Chemin monté du keystore",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -1627,7 +1929,7 @@
         },
         {
           "name": "tls.https.keystorePath",
-          "label": "Chemin utilis\u00e9 par Trino",
+          "label": "Chemin utilisé par Trino",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -1635,7 +1937,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Valeur inject\u00e9e dans server.config.https.keystore.path."
+          "help": "Valeur injectée dans server.config.https.keystore.path."
         },
         {
           "name": "tls.https.keystoreType",
@@ -1661,7 +1963,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Choisissez le format de stockage du certificat serveur. PEM cr\u00e9e tls.crt/tls.key/ca.crt."
+          "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
         }
       ]
     },
@@ -1672,13 +1974,13 @@
       "fields": [
         {
           "name": "coordinator.resources.requests.cpu",
-          "label": "CPU Demand\u00e9",
+          "label": "CPU Demandé",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "coordinator.resources.requests.memory",
-          "label": "M\u00e9moire Demand\u00e9e",
+          "label": "Mémoire Demandée",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1690,13 +1992,13 @@
         },
         {
           "name": "coordinator.resources.limits.memory",
-          "label": "M\u00e9moire Limite",
+          "label": "Mémoire Limite",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
-          "label": "R\u00e9pertoire de donn\u00e9es (Coordinateur)",
+          "label": "Répertoire de données (Coordinateur)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1715,13 +2017,13 @@
         },
         {
           "name": "worker.resources.requests.cpu",
-          "label": "CPU Demand\u00e9 / Worker",
+          "label": "CPU Demandé / Worker",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "worker.resources.requests.memory",
-          "label": "M\u00e9moire Demand\u00e9e / Worker",
+          "label": "Mémoire Demandée / Worker",
           "type": "string",
           "defaultValue": "4Gi"
         },
@@ -1733,13 +2035,13 @@
         },
         {
           "name": "worker.resources.limits.memory",
-          "label": "M\u00e9moire Limite / Worker",
+          "label": "Mémoire Limite / Worker",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "worker.config.nodeProperties.node\\.data-dir",
-          "label": "R\u00e9pertoire de donn\u00e9es (Worker)",
+          "label": "Répertoire de données (Worker)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -1752,7 +2054,7 @@
       "fields": [
         {
           "name": "requiredWorkers.window",
-          "label": "Fen\u00eatre (required workers)",
+          "label": "Fenêtre (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
@@ -1827,7 +2129,7 @@
     },
     {
       "name": "hadoopIntegration",
-      "label": "Int\u00e9gration Hadoop",
+      "label": "Intégration Hadoop",
       "type": "group",
       "fields": [
         {
@@ -1836,17 +2138,26 @@
           "type": "service-select",
           "serviceType": "HIVE_METASTORE",
           "excludeFromValues": true,
-          "help": "S\u00e9lectionnez un service Hive Metastore existant pour cr\u00e9er un catalogue."
+          "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
         },
         {
           "name": "ui_hive_metastore_uri_override",
-          "label": "URI Hive Metastore personnalis\u00e9",
+          "label": "URI Hive Metastore personnalisé",
           "type": "string",
           "defaultValue": "",
-          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseign\u00e9, remplace la valeur d\u00e9couverte."
+          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseigné, remplace la valeur découverte."
         }
       ]
     }
   ],
-  "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale."
+  "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
+  "valueAliases": {
+    "ingress.ingressClassName": "ingress.className"
+  },
+  "requiredChartVersion": ">=1.42.1",
+  "securityCoupling": {
+    "requireIngress": true,
+    "minTlsMode": "signedByAmbariCA",
+    "tlsProvisioning": "k8s-view"
+  }
 }

@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { Form, Input, Typography, Divider, Select, Radio, Card } from 'antd';
+import { Alert, Form, Input, Typography, Divider, Select, Radio, Card } from 'antd';
 import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 
@@ -226,6 +226,37 @@ const InstallStep: React.FC<InstallStepProps> = ({
         ) : (
           <>
             <Typography.Title level={4}>Chart Configuration</Typography.Title>
+            {data?.securityProfile && (() => {
+              const coupling: any = (definition as any)?.securityCoupling || {};
+              const requireIngress = coupling.requireIngress !== false;
+              const tlsProvisioning = String(coupling.tlsProvisioning
+                ?? (coupling.requireTls === false ? 'chart-managed' : 'k8s-view'));
+              const viewOwnsTls = tlsProvisioning === 'k8s-view';
+              if (!requireIngress && !viewOwnsTls) return null;
+              const minTlsMode = coupling.minTlsMode || 'signedByAmbariCA';
+              const tlsLabel: Record<string, string> = {
+                signedByAmbariCA: 'Sign with Ambari Internal CA',
+                signedByCompanyCA: 'Sign with Company CA',
+                bringYourOwn: 'Bring your own Secret',
+                uploadLeaf: 'Upload cert + key',
+              };
+              return (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={`Authentication enforced via security profile "${data.securityProfile}" — TLS is mandatory.`}
+                  description={
+                    <span>
+                      OAuth callbacks reject <code>http://</code> redirect URIs and session cookies need the <code>Secure</code> flag,
+                      so the wizard has pre-selected <strong>Enable Ingress</strong> and TLS mode <strong>{tlsLabel[minTlsMode] || minTlsMode}</strong>.
+                      You can pick a different TLS mode below (<em>Bring your own Secret</em>, <em>Upload cert + key</em>,
+                      or <em>Sign with Company CA</em>), but <em>None</em> is not a valid choice with this profile.
+                    </span>
+                  }
+                />
+              );
+            })()}
             {chartFields.length === 0 ? (
               <Typography.Text type="secondary">No chart fields defined.</Typography.Text>
             ) : (

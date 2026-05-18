@@ -56,8 +56,16 @@ public class FormField {
     // Simple condition support: { field, value }
     public Map<String, Object> condition;
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
         public String label;
         public String value;
+        /**
+         * Optional capability gate read by the UI. Values today: "certManager",
+         * "externalSecrets". When set, the wizard hides this option unless the
+         * cluster's /cluster/capabilities probe reports the capability installed.
+         * Backend ignores this field (Jackson tolerates it via @JsonIgnoreProperties).
+         */
+        public String capability;
     }
 }

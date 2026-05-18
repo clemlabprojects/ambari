@@ -106,4 +106,38 @@ public enum CommandType {
 
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
+
+    /**
+     * Mints an ingress TLS leaf certificate (PEM cert + key) and writes it into a
+     * {@code kubernetes.io/tls} Secret, so the Helm install step can reference it via
+     * {@code ingress.tls[].secretName}. Step params carry the signing-CA selection:
+     * {@code "ca": "ambariInternal"} reuses Ambari's internal CA (testing),
+     * {@code "ca": "companyUploaded"} loads a CA from the {@link
+     * org.apache.ambari.view.k8s.service.CaRegistryService} by name.
+     */
+    INGRESS_TLS_SELFSIGN,
+
+    /**
+     * Root command type for an operator-initiated TLS certificate renewal of a running release.
+     * Schedules one INGRESS_TLS_SELFSIGN sub-step per host whose Secret is k8s-view-managed,
+     * one cert-manager Certificate annotation patch per host managed by cert-manager, and an
+     * ExternalSecret refresh per host backed by external-secrets. Operator-managed Secrets
+     * (source=external) are skipped with an explanatory message.
+     */
+    TLS_RENEW,
+
+    /**
+     * Writes a cert-manager.io/v1 Certificate resource for an ingress, so cert-manager
+     * provisions (and auto-renews) the leaf Secret the chart references via
+     * {@code ingress.tls[].secretName}. Step params: {@code namespace}, {@code certName},
+     * {@code secretName}, {@code issuerName}, {@code issuerKind}, {@code dnsNames}.
+     */
+    INGRESS_TLS_CERTMANAGER,
+
+    /**
+     * Writes an external-secrets.io/v1 ExternalSecret referencing a SecretStore. Used to
+     * sync a TLS leaf (or any other secret bundle) from Vault PKI / AWS Secrets Manager / etc.
+     * into a K8s Secret the chart can mount.
+     */
+    INGRESS_TLS_EXTERNAL_SECRET,
 }

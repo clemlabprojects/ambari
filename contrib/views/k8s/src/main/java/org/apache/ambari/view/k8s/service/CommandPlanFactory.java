@@ -686,6 +686,69 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Append an {@link CommandType#INGRESS_TLS_SELFSIGN} pre-deploy step that mints
+     * a TLS leaf cert into a {@code kubernetes.io/tls} Secret for the ingress.
+     * Runs before {@code HELM_DEPLOY_DRY_RUN} so the chart's {@code ingress.tls[].secretName}
+     * reference resolves.
+     *
+     * @param cmd          root command entity
+     * @param releaseName  release name (used as the cert label and for log lines)
+     * @param namespace    target namespace where the chart will be installed
+     * @param secretName   K8s Secret name to create (typically {@code <release>-ingress-tls})
+     * @param ingressHost  primary DNS name (CN + first SAN)
+     * @param extraSans    additional DNS SANs (cluster service name etc.)
+     * @param caMode       {@code ambariInternal} or {@code companyUploaded}
+     * @param caName       registry name when {@code caMode = companyUploaded}, otherwise null
+     * @param validityDays validity in days (null = service default, capped at 825)
+     * @return generated step id (added to the caller's child-list)
+     */
+    public String appendIngressTlsSelfSignStep(CommandEntity cmd,
+                                               String releaseName,
+                                               String namespace,
+                                               String secretName,
+                                               String ingressHost,
+                                               java.util.List<String> extraSans,
+                                               String caMode,
+                                               String caName,
+                                               Integer validityDays) {
+        String subId = UUID.randomUUID().toString();
+        String id = cmd.getId() + "-tls-" + subId;
+        final String now = Instant.now().toString();
+        CommandEntity step = new CommandEntity();
+        step.setId(id);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setType(CommandType.INGRESS_TLS_SELFSIGN.name());
+        step.setTitle("TLS: mint ingress cert " + secretName);
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("releaseName", releaseName);
+        params.put("namespace", namespace);
+        params.put("secretName", secretName);
+        params.put("ingressHost", ingressHost);
+        params.put("extraSans", extraSans != null ? extraSans : java.util.Collections.emptyList());
+        params.put("ca", caMode);
+        if (caName != null) params.put("caName", caName);
+        if (validityDays != null) params.put("validityDays", validityDays);
+        step.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setViewInstance(ctx.getInstanceName());
+        status.setCreatedBy(ctx.getUsername());
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        status.setAttempt(0);
+        step.setCommandStatusId(status.getId());
+
+        store(status);
+        store(step);
+        LOG.info("INGRESS_TLS_SELFSIGN planned id={} secret={}/{} host={} caMode={} caName={}",
+                id, namespace, secretName, ingressHost, caMode, caName);
+        return id;
+    }
+
+    /**
      * Creates a post-deploy step that provisions (or updates) an Ambari view instance
      * for the just-deployed Helm release.  The step is appended to the root command's
      * child list after the main HELM_DEPLOY command, so it only runs once the chart is
