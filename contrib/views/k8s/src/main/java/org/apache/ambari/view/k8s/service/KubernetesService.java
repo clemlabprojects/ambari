@@ -2987,6 +2987,14 @@ public class KubernetesService {
     /**
      * Patch a Certificate by merging the supplied map (typically annotations) into its metadata.
      * Used by the renew flow to force re-issue.
+     *
+     * <p>Implementation note: we cannot stuff a {@code metadata} key into the CR's
+     * {@code additionalProperties}, because for a {@link io.fabric8.kubernetes.api.model.GenericKubernetesResource}
+     * {@code metadata} is a typed top-level field (the resource implements
+     * {@code HasMetadata}). Doing so produces a patch body where the API server
+     * cannot determine the resource name → HTTP 400 "name must be provided".
+     * Instead we update the typed metadata directly and let fabric8 send a
+     * proper patch against it.
      */
     public void patchCertManagerCertificate(String namespace, String certName, Map<String, Object> patch) {
         checkConfiguration();
@@ -2997,11 +3005,41 @@ public class KubernetesService {
         if (existing == null) {
             throw new IllegalArgumentException("Certificate " + namespace + "/" + certName + " not found");
         }
-        // Shallow-merge the patch into existing.additionalProperties (single nesting level).
-        mergeAdditionalProperties(existing.getAdditionalProperties(), patch);
+        // Special-case the common shape {metadata: {annotations: {...}, labels: {...}}}.
+        // This is the only shape callers use today and it's what hits the typed
+        // metadata path correctly.
+        Object metaIncoming = patch.get("metadata");
+        if (metaIncoming instanceof Map<?, ?> metaMap) {
+            io.fabric8.kubernetes.api.model.ObjectMeta meta = existing.getMetadata();
+            if (meta == null) {
+                meta = new io.fabric8.kubernetes.api.model.ObjectMetaBuilder().build();
+                existing.setMetadata(meta);
+            }
+            Object annIncoming = metaMap.get("annotations");
+            if (annIncoming instanceof Map<?, ?> annMap) {
+                Map<String, String> ann = meta.getAnnotations() != null
+                        ? new LinkedHashMap<>(meta.getAnnotations()) : new LinkedHashMap<>();
+                annMap.forEach((k, v) -> { if (k != null && v != null) ann.put(String.valueOf(k), String.valueOf(v)); });
+                meta.setAnnotations(ann);
+            }
+            Object lblIncoming = metaMap.get("labels");
+            if (lblIncoming instanceof Map<?, ?> lblMap) {
+                Map<String, String> lbl = meta.getLabels() != null
+                        ? new LinkedHashMap<>(meta.getLabels()) : new LinkedHashMap<>();
+                lblMap.forEach((k, v) -> { if (k != null && v != null) lbl.put(String.valueOf(k), String.valueOf(v)); });
+                meta.setLabels(lbl);
+            }
+        }
+        // Anything else (e.g. spec tweaks) is still expected as additionalProperties.
+        Map<String, Object> rest = new LinkedHashMap<>(patch);
+        rest.remove("metadata");
+        if (!rest.isEmpty()) {
+            mergeAdditionalProperties(existing.getAdditionalProperties(), rest);
+        }
         gkr.patch(existing);
         LOG.info("cert-manager.Certificate {}/{} patched", namespace, certName);
     }
+
 
     /**
      * Apply an external-secrets.io/v1 ExternalSecret. Creates or updates by name.

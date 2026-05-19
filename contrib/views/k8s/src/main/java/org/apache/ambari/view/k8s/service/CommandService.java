@@ -5986,23 +5986,38 @@ public class CommandService {
                     // Two operations supported via the `operation` param:
                     //  - "create": create or update a cert-manager.io/v1 Certificate CR (Day 4 path,
                     //    invoked from the install pipeline).
-                    //  - "renew":  patch an existing Certificate to force re-issue (Day 3 path,
-                    //    invoked from the TLS_RENEW root command).
+                    //  - "renew":  force cert-manager to re-issue an existing Certificate (Day 3
+                    //    path, invoked from the TLS_RENEW root command). We do this by deleting
+                    //    the leaf Secret — the cert-manager controller observes the missing
+                    //    Secret and mints a fresh one against the same Certificate spec. This
+                    //    is the only force-renew trigger that works across every cert-manager
+                    //    version we ship (earlier code annotated `issue-temporary-certificate`
+                    //    which is for *initial* issuance, not renewal — pure no-op for an
+                    //    already-issued cert).
                     String namespace = (String) childParams.get("namespace");
                     String operation = String.valueOf(childParams.getOrDefault("operation", "create"));
                     if ("renew".equals(operation)) {
                         String secretName = (String) childParams.get("secretName");
-                        // The Certificate name we use is "<secretName>" (one Certificate per
-                        // Secret). Patch it with the standard force-renew trigger.
                         try {
-                            this.kubernetesService.patchCertManagerCertificate(namespace, secretName,
-                                    Map.of("metadata", Map.of("annotations",
-                                            Map.of("cert-manager.io/issue-temporary-certificate", "true",
-                                                   "ambari.clemlab.com/renew-requested-at", Instant.now().toString()))));
-                            appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: annotated Certificate "
-                                    + namespace + "/" + secretName + " to force re-issue");
+                            // Drop a marker annotation on the Certificate first so an operator
+                            // can correlate the renew in audit logs / kubectl describe. Done
+                            // before delete so the marker is on the surviving CR. Best-effort —
+                            // if the patch fails we still want the delete to happen.
+                            try {
+                                this.kubernetesService.patchCertManagerCertificate(namespace, secretName,
+                                        Map.of("metadata", Map.of("annotations",
+                                                Map.of("ambari.clemlab.com/renew-requested-at", Instant.now().toString()))));
+                            } catch (Exception annotateEx) {
+                                LOG.warn("INGRESS_TLS_CERTMANAGER renew: annotate failed (continuing with secret delete): {}", annotateEx.toString());
+                            }
+                            boolean existed = this.kubernetesService.getSecret(namespace, secretName) != null;
+                            this.kubernetesService.deleteSecret(namespace, secretName);
+                            appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: " +
+                                    (existed
+                                            ? "deleted Secret " + namespace + "/" + secretName + "; cert-manager will re-issue"
+                                            : "Secret " + namespace + "/" + secretName + " was already absent; cert-manager will create it on next reconcile"));
                         } catch (Exception ex) {
-                            throw new IllegalStateException("Failed to annotate Certificate "
+                            throw new IllegalStateException("Failed to force renew Certificate "
                                     + namespace + "/" + secretName + ": " + ex.getMessage(), ex);
                         }
                     } else {
