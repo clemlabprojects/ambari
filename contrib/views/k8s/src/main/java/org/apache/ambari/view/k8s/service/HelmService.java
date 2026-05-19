@@ -740,6 +740,88 @@ public class HelmService {
         }
     }
 
+    /** In-memory cache of {chart, version, repoId} -> appVersion. Helm show chart is
+     *  slow (OCI / HTTP fetch) so we cache aggressively. TTL is generous because chart
+     *  metadata only changes when the operator pushes a new chart. */
+    private static final Map<String, AppVersionCacheEntry> APP_VERSION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long APP_VERSION_TTL_MS = 10 * 60 * 1000L; // 10 min
+
+    private static class AppVersionCacheEntry {
+        final String value;
+        final long expiresAt;
+        AppVersionCacheEntry(String value, long expiresAt) { this.value = value; this.expiresAt = expiresAt; }
+    }
+
+    /**
+     * Resolve a chart's {@code appVersion} (the component version of what's
+     * actually deployed — e.g. GitLab 17.11.2 inside chart 8.11.2) using
+     * {@code helm show chart}. Result is cached for {@link #APP_VERSION_TTL_MS}
+     * ms because the underlying CLI call is slow. Best-effort: returns null
+     * on any failure (network, missing repo login, missing chart, …).
+     *
+     * @param chartName chart name as declared in service.json (e.g. "gitlab")
+     * @param repoIdOpt optional repository id; resolves the OCI/HTTP prefix
+     * @param versionOpt optional chart version pin
+     */
+    public String resolveChartAppVersion(String chartName, String repoIdOpt, String versionOpt) {
+        if (chartName == null || chartName.isBlank()) return null;
+        String cacheKey = chartName + "|" + (repoIdOpt == null ? "" : repoIdOpt) + "|" + (versionOpt == null ? "" : versionOpt);
+        long now = System.currentTimeMillis();
+        AppVersionCacheEntry cached = APP_VERSION_CACHE.get(cacheKey);
+        if (cached != null && cached.expiresAt > now) {
+            return cached.value;
+        }
+        // Build a list of candidate repo IDs to try in order: the declared
+        // defaultRepo first, then every other repo we know about. Some catalogs
+        // declare a defaultRepo string that doesn't match the actual stored
+        // repo id (legacy entries), so falling back to "try them all" lets
+        // appVersion resolve anyway.
+        List<String> repoCandidates = new ArrayList<>();
+        if (repoIdOpt != null && !repoIdOpt.isBlank()) repoCandidates.add(repoIdOpt);
+        try {
+            for (HelmRepoEntity r : repositoryService.list()) {
+                if (r.getId() != null && !repoCandidates.contains(r.getId())) {
+                    repoCandidates.add(r.getId());
+                }
+            }
+        } catch (Exception ignore) {
+            // continue with whatever we have
+        }
+        // Try chart name as-is plus, if it contains '/', the bare last segment.
+        // service.json values like "trinodb/trino" or "apache/superset" prefix
+        // an HTTP-repo-style vendor that doesn't apply to an OCI repo — but
+        // the bare "trino"/"superset" usually still resolves there.
+        List<String> chartCandidates = new ArrayList<>();
+        chartCandidates.add(chartName);
+        int slash = chartName.lastIndexOf('/');
+        if (slash >= 0 && slash + 1 < chartName.length()) {
+            String bare = chartName.substring(slash + 1);
+            if (!chartCandidates.contains(bare)) chartCandidates.add(bare);
+        }
+        String appVersion = null;
+        outer:
+        for (String chart : chartCandidates) {
+            for (String repoId : repoCandidates) {
+                try {
+                    RepoResolution rr = resolveChartRef(chart, repoId);
+                    String yaml = helmClient.showChart(rr.chartRef, versionOpt, pathConfiguration.repositoriesConfig());
+                    if (yaml != null && !yaml.isBlank()) {
+                        Map<String, Object> parsed = new ObjectMapper(new YAMLFactory()).readValue(yaml, Map.class);
+                        Object v = parsed.get("appVersion");
+                        if (v != null) {
+                            appVersion = String.valueOf(v);
+                            break outer;
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.debug("appVersion lookup miss for {} via repo {}: {}", chart, repoId, e.toString());
+                }
+            }
+        }
+        APP_VERSION_CACHE.put(cacheKey, new AppVersionCacheEntry(appVersion, now + APP_VERSION_TTL_MS));
+        return appVersion;
+    }
+
     /** Turn a URL like https://registry.clemlab.com/whatever into 'registry.clemlab.com' */
     private static String normalizeRegistryServer(String url) {
         if (url == null) return "";

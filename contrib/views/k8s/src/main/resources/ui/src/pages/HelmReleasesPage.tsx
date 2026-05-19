@@ -857,7 +857,7 @@ const HelmReleasesPage: React.FC = () => {
     return (
         <div style={{ minHeight: '720px' }}>
             <div className="page-header">
-                <Title level={2}>Helm Charts</Title>
+                <Title level={2}>Releases</Title>
                 <Space wrap>
                     <Search placeholder="Search for a release..." style={{ width: 250 }} />
                     <Space>

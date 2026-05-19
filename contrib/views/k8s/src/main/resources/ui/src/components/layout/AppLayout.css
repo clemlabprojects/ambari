@@ -20,7 +20,10 @@
 
 :root {
   --surface-muted: #f5f7fa;
+  --surface-sidebar: #fafbfd;
+  --surface-sidebar-active: #eaf2ff;
   --border: #e8e8e8;
+  --accent: #1677ff;
 }
 
 /* Fill the iframe body height — contribview pins the container to viewport height */
@@ -34,11 +37,12 @@
 }
 
 .app-layout {
-  --header-height: 64px;
-  height: 100%;           /* fill whatever height Ambari gives the iframe */
-  background-color: #f0f2f5;
+  --header-height: 56px;
+  --sider-width: 232px;
+  --sider-collapsed-width: 64px;
+  height: 100%;
+  background-color: #f5f7fa;
   display: flex;
-  flex-direction: column;
   overflow: hidden;
   min-width: 1024px;
 }
@@ -50,63 +54,176 @@
   height: 100vh;
 }
 
-.app-header {
+/* Sidebar */
+.app-sider {
+  background: var(--surface-sidebar) !important;
+  border-right: 1px solid var(--border);
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
+.app-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-sider-brand {
+  display: flex;
   align-items: center;
-  background: #fff !important;
-  border-bottom: 1px solid #f0f0f0;
-  padding: 0 16px !important;
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  border-radius: 8px;
+  gap: 10px;
+  padding: 16px 18px 14px 18px;
+  border-bottom: 1px solid var(--border);
+  height: var(--header-height);
+  box-sizing: border-box;
+}
+
+.app-sider-brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #1677ff, #6cb9ff);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
   flex-shrink: 0;
 }
 
-.header-left, .header-right {
+.app-sider-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  overflow: hidden;
+}
+
+.app-sider-brand-text .brand-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a1a1a;
+  white-space: nowrap;
+}
+
+.app-sider-brand-text .brand-subtitle {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.app-sider-menu-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0;
+}
+
+.app-sider-menu-wrap .ant-menu {
+  background: transparent !important;
+  border-inline-end: none !important;
+}
+
+.app-sider-menu-wrap .ant-menu-item-selected {
+  background-color: var(--surface-sidebar-active) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+.app-sider-menu-wrap .ant-menu-item-selected::after {
+  border-right-color: var(--accent) !important;
+}
+
+.app-sider-menu-wrap .ant-menu-submenu-title,
+.app-sider-menu-wrap .ant-menu-item {
+  border-radius: 6px;
+  margin: 2px 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+.app-sider-footer {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: #94a3b8;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+/* Main column (header + content) */
+.app-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: #f5f7fa;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  height: var(--header-height);
+  flex-shrink: 0;
   gap: 16px;
 }
 
-.logo {
+.header-left {
   display: flex;
   align-items: center;
-  margin-right: 32px;
+  gap: 12px;
+  min-width: 0;
 }
 
-.logo h1 {
-  margin: 0 0 0 12px;
-  font-size: 20px;
-  font-weight: 600;
-  color: #1a1a1a;
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.header-menu {
-  border-bottom: none !important;
-  line-height: 62px !important;
+.header-collapse-btn {
+  border: none !important;
+  box-shadow: none !important;
+  font-size: 16px;
+  color: #4b5563 !important;
 }
 
+.header-collapse-btn:hover {
+  color: var(--accent) !important;
+  background: var(--surface-sidebar-active) !important;
+}
+
+.app-breadcrumb {
+  font-size: 13px;
+}
+
+.app-breadcrumb a {
+  color: #6b7280;
+}
+
+.app-breadcrumb a:hover {
+  color: var(--accent);
+}
+
+/* Content area */
 .app-content {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 6px 6px 8px 6px;
-}
-
-.stats-bar {
-  /* Ensure stats bar doesn't overlap menu */
-  position: relative;
-  z-index: 10;
-  border-radius: 8px;
-}
-
-.content-shell {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
+  padding: 12px 16px 16px 16px;
+  overflow: hidden;
 }
 
 .main-scroll {
@@ -115,50 +232,46 @@
   height: 100%;
   overflow: auto;
   overscroll-behavior: contain;
-  padding-top: 1px;
-  padding-bottom: 12px;
+  /* Ambari's outer iframe sits on top of a Bootstrap-style "Licensed under
+     Apache License" footer that overlays the bottom ~40px of the view's
+     viewport. Without this padding, content tucks under the footer and the
+     operator has to scroll an extra screen to see it. Tuned with the Ambari
+     2.8 host shell on master21. */
+  padding-bottom: 56px;
 }
 
-.app-breadcrumb {
-  margin: 6px 0 10px 0;
-}
-
-.stats-aside {
-  display: none;
-}
-
-.stat-card {
-  min-height: 48px;
-  padding: 6px 8px !important;
-}
-
-.stat-card-header {
+.catalog-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2px;
+  flex-direction: column;
+  height: 100%;
 }
 
-.stat-card-label {
-  font-weight: 600;
-  color: #333;
-}
-
-.stat-card-value {
-  margin-top: 2px;
-  font-size: 10px;
-  color: #666;
+.catalog-card .ant-card-head-title {
+  padding: 6px 0;
 }
 
 .page-content {
   background: #fff;
-  padding: 16px;
-  border-radius: 8px;
+  padding: 20px;
+  border-radius: 10px;
   min-height: 100%;
   width: 100%;
-  max-width: none;
   margin: 0 auto;
   box-sizing: border-box;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* Topbar pieces */
+.topbar-badge {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 16px;
+  margin-left: 6px;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 /* Shared action button styling (compact, rounded) */
@@ -172,7 +285,28 @@
   font-weight: 500;
 }
 .action-button:hover {
-  border-color: #1677ff !important;
-  color: #1677ff !important;
-  background: #f5f8ff !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: var(--surface-sidebar-active) !important;
+}
+
+/* Compact dashboard stats card (used inside DashboardPage now, not in topbar) */
+.stat-card {
+  min-height: 48px;
+  padding: 8px 12px !important;
+}
+.stat-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.stat-card-label {
+  font-weight: 600;
+  color: #333;
+}
+.stat-card-value {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6b7280;
 }

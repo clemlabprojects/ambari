@@ -2288,6 +2288,270 @@ public class KubernetesService {
     }
 
     /**
+     * Browse-view list of Deployments. Returns one row per Deployment with the
+     * shape the workloads tab expects: name, ready replicas, desired replicas,
+     * image, and age. Cluster-wide when {@code namespace} is null/blank.
+     */
+    public List<Map<String, Object>> listDeployments(String namespace) {
+        try {
+            checkConfiguration();
+            var deployList = (namespace != null && !namespace.isBlank())
+                    ? client.apps().deployments().inNamespace(namespace).list().getItems()
+                    : client.apps().deployments().inAnyNamespace().list().getItems();
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var d : deployList) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("namespace", d.getMetadata() != null ? d.getMetadata().getNamespace() : null);
+                r.put("name", d.getMetadata() != null ? d.getMetadata().getName() : null);
+                r.put("replicas", d.getSpec() != null ? d.getSpec().getReplicas() : null);
+                r.put("readyReplicas", d.getStatus() != null ? d.getStatus().getReadyReplicas() : null);
+                r.put("availableReplicas", d.getStatus() != null ? d.getStatus().getAvailableReplicas() : null);
+                String image = null;
+                if (d.getSpec() != null && d.getSpec().getTemplate() != null
+                        && d.getSpec().getTemplate().getSpec() != null
+                        && d.getSpec().getTemplate().getSpec().getContainers() != null
+                        && !d.getSpec().getTemplate().getSpec().getContainers().isEmpty()) {
+                    image = d.getSpec().getTemplate().getSpec().getContainers().get(0).getImage();
+                }
+                r.put("image", image);
+                r.put("creationTimestamp", d.getMetadata() != null ? d.getMetadata().getCreationTimestamp() : null);
+                out.add(r);
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.warn("listDeployments failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Browse-view list of ConfigMaps. Includes a small summary (key count, total
+     * byte size of all values) rather than the values themselves so the wire is
+     * compact for a 100-row listing.
+     */
+    public List<Map<String, Object>> listConfigMaps(String namespace) {
+        try {
+            checkConfiguration();
+            var cms = (namespace != null && !namespace.isBlank())
+                    ? client.configMaps().inNamespace(namespace).list().getItems()
+                    : client.configMaps().inAnyNamespace().list().getItems();
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var cm : cms) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("namespace", cm.getMetadata() != null ? cm.getMetadata().getNamespace() : null);
+                r.put("name", cm.getMetadata() != null ? cm.getMetadata().getName() : null);
+                int keys = cm.getData() == null ? 0 : cm.getData().size();
+                long bytes = cm.getData() == null ? 0L :
+                        cm.getData().values().stream().mapToLong(v -> v == null ? 0 : v.length()).sum();
+                r.put("keys", keys);
+                r.put("bytes", bytes);
+                r.put("creationTimestamp", cm.getMetadata() != null ? cm.getMetadata().getCreationTimestamp() : null);
+                out.add(r);
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.warn("listConfigMaps failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Browse-view list of Ingresses. Returns one row per Ingress with host(s),
+     * tls-secret count, ingress class, and address. Used by the Networking tab.
+     */
+    public List<Map<String, Object>> listIngresses(String namespace) {
+        try {
+            checkConfiguration();
+            var items = (namespace != null && !namespace.isBlank())
+                    ? client.network().v1().ingresses().inNamespace(namespace).list().getItems()
+                    : client.network().v1().ingresses().inAnyNamespace().list().getItems();
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var ing : items) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("namespace", ing.getMetadata() != null ? ing.getMetadata().getNamespace() : null);
+                r.put("name", ing.getMetadata() != null ? ing.getMetadata().getName() : null);
+                String cls = null;
+                if (ing.getSpec() != null) {
+                    cls = ing.getSpec().getIngressClassName();
+                }
+                r.put("ingressClass", cls);
+                List<String> hosts = new ArrayList<>();
+                if (ing.getSpec() != null && ing.getSpec().getRules() != null) {
+                    for (var rule : ing.getSpec().getRules()) {
+                        if (rule.getHost() != null) hosts.add(rule.getHost());
+                    }
+                }
+                r.put("hosts", hosts);
+                int tlsCount = ing.getSpec() != null && ing.getSpec().getTls() != null ? ing.getSpec().getTls().size() : 0;
+                r.put("tlsSecrets", tlsCount);
+                String address = null;
+                if (ing.getStatus() != null && ing.getStatus().getLoadBalancer() != null
+                        && ing.getStatus().getLoadBalancer().getIngress() != null
+                        && !ing.getStatus().getLoadBalancer().getIngress().isEmpty()) {
+                    var lb = ing.getStatus().getLoadBalancer().getIngress().get(0);
+                    address = lb.getHostname() != null ? lb.getHostname() : lb.getIp();
+                }
+                r.put("address", address);
+                r.put("creationTimestamp", ing.getMetadata() != null ? ing.getMetadata().getCreationTimestamp() : null);
+                out.add(r);
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.warn("listIngresses failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Lightweight snapshot of a CustomResourceDefinition for the Operators UI.
+     * Carries just enough to render a row and a tooltip: name, group, kind, the
+     * served versions, and whether the CRD is established yet. We deliberately
+     * do NOT return the full schema (kB of openAPIV3Schema) because the
+     * Operators page renders 50+ rows and the wire size matters.
+     */
+    public static class CrdSummary {
+        public String name;
+        public String group;
+        public String kind;
+        public String scope;
+        public List<String> versions;
+        public boolean established;
+    }
+
+    /**
+     * List every CRD currently registered on the cluster. Used by the Operators
+     * page to show "what extra CRDs is the operator providing" alongside the
+     * curated capability probe. Returns an empty list rather than throwing
+     * when the cluster client can't reach the API (the UI will show an empty
+     * state instead of a stack trace).
+     */
+    public List<CrdSummary> listCrds() {
+        try {
+            checkConfiguration();
+            return client.apiextensions().v1().customResourceDefinitions().list().getItems().stream()
+                    .map(c -> {
+                        CrdSummary s = new CrdSummary();
+                        s.name = c.getMetadata() != null ? c.getMetadata().getName() : null;
+                        s.group = c.getSpec() != null ? c.getSpec().getGroup() : null;
+                        if (c.getSpec() != null && c.getSpec().getNames() != null) {
+                            s.kind = c.getSpec().getNames().getKind();
+                        }
+                        s.scope = c.getSpec() != null ? c.getSpec().getScope() : null;
+                        if (c.getSpec() != null && c.getSpec().getVersions() != null) {
+                            s.versions = c.getSpec().getVersions().stream()
+                                    .filter(v -> Boolean.TRUE.equals(v.getServed()))
+                                    .map(v -> v.getName())
+                                    .toList();
+                        } else {
+                            s.versions = java.util.Collections.emptyList();
+                        }
+                        if (c.getStatus() != null && c.getStatus().getConditions() != null) {
+                            s.established = c.getStatus().getConditions().stream()
+                                    .anyMatch(cond -> "Established".equals(cond.getType()) && "True".equals(cond.getStatus()));
+                        }
+                        return s;
+                    })
+                    .filter(s -> s.name != null)
+                    .sorted(java.util.Comparator
+                            .comparing((CrdSummary x) -> x.group == null ? "" : x.group)
+                            .thenComparing(x -> x.name == null ? "" : x.name))
+                    .toList();
+        } catch (Exception e) {
+            LOG.warn("listCrds failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Snapshot of a single Secret used as an outbound truststore. The Operators
+     * tab and Truststores page both render this. Includes a per-cert summary
+     * (subject, issuer, notAfter, daysUntilExpiry) so the operator can spot a
+     * CA that's about to expire without opening kubectl.
+     */
+    public static class TruststoreSummary {
+        public String namespace;
+        public String name;
+        /** Owning Helm release name, derived from the trailing `-truststore` suffix. */
+        public String releaseName;
+        /** Number of PEM cert blocks found in {@code ca.crt}. */
+        public int caCount;
+        /** Has both {@code truststore.jks} and {@code truststore.password}. */
+        public boolean jvmReady;
+        /** Has {@code ca.crt} (PEM bundle). */
+        public boolean pemReady;
+        /** Parsed certs in {@code ca.crt}; one entry per cert block. */
+        public List<Map<String, Object>> certificates;
+    }
+
+    /**
+     * Enumerate Secrets matching the {@code *-truststore} convention used by
+     * the security-profile step in CommandService. Each matching Secret is
+     * inspected: the {@code ca.crt} PEM bundle is parsed into per-cert
+     * summaries (subject, issuer, notAfter, daysUntilExpiry) so operators
+     * can see "which CAs are we trusting per release."
+     *
+     * @param namespace optional namespace filter; null/blank = cluster-wide
+     */
+    public List<TruststoreSummary> listTruststores(String namespace) {
+        try {
+            checkConfiguration();
+            List<Secret> secrets;
+            if (namespace != null && !namespace.isBlank()) {
+                secrets = client.secrets().inNamespace(namespace).list().getItems();
+            } else {
+                secrets = client.secrets().inAnyNamespace().list().getItems();
+            }
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            Instant now = Instant.now();
+            List<TruststoreSummary> out = new ArrayList<>();
+            for (Secret s : secrets) {
+                if (s.getMetadata() == null || s.getMetadata().getName() == null) continue;
+                String name = s.getMetadata().getName();
+                if (!name.endsWith("-truststore")) continue;
+                TruststoreSummary ts = new TruststoreSummary();
+                ts.namespace = s.getMetadata().getNamespace();
+                ts.name = name;
+                ts.releaseName = name.substring(0, name.length() - "-truststore".length());
+                Map<String, String> data = s.getData() != null ? s.getData() : java.util.Collections.emptyMap();
+                ts.jvmReady = data.containsKey("truststore.jks") && data.containsKey("truststore.password");
+                ts.pemReady = data.containsKey("ca.crt");
+                List<Map<String, Object>> certs = new ArrayList<>();
+                if (ts.pemReady) {
+                    byte[] pemBytes = getDecoder().decode(data.get("ca.crt"));
+                    try {
+                        Collection<? extends java.security.cert.Certificate> parsed =
+                                cf.generateCertificates(new ByteArrayInputStream(pemBytes));
+                        for (java.security.cert.Certificate cert : parsed) {
+                            if (!(cert instanceof X509Certificate x509)) continue;
+                            Map<String, Object> c = new LinkedHashMap<>();
+                            c.put("subject", x509.getSubjectX500Principal().getName());
+                            c.put("issuer", x509.getIssuerX500Principal().getName());
+                            Instant notAfter = x509.getNotAfter().toInstant();
+                            c.put("notAfter", notAfter.toString());
+                            c.put("daysUntilExpiry", Duration.between(now, notAfter).toDays());
+                            c.put("serialNumber", x509.getSerialNumber().toString(16));
+                            c.put("isCa", x509.getBasicConstraints() >= 0);
+                            certs.add(c);
+                        }
+                    } catch (Exception parseEx) {
+                        LOG.warn("listTruststores: failed to parse ca.crt in {}/{}: {}", ts.namespace, ts.name, parseEx.toString());
+                    }
+                }
+                ts.certificates = certs;
+                ts.caCount = certs.size();
+                out.add(ts);
+            }
+            out.sort(java.util.Comparator
+                    .comparing((TruststoreSummary x) -> x.namespace == null ? "" : x.namespace)
+                    .thenComparing(x -> x.name == null ? "" : x.name));
+            return out;
+        } catch (Exception e) {
+            LOG.warn("listTruststores failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
      * Check if a CRD does exists in the kubernetes cluster
      */
     public boolean crdExists(String crdName) {

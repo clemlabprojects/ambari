@@ -34,6 +34,7 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Lightweight endpoints to browse cluster workloads (namespaces, pods, services, logs).
@@ -122,5 +123,49 @@ public class WorkloadsResource {
                             @QueryParam("container") String container,
                             @QueryParam("tailLines") Integer tailLines) {
         return kube().tailPodLog(namespace, pod, container, tailLines == null ? 200 : tailLines);
+    }
+
+    // ---- browse-view listings used by the Workloads & Networking tabs ----
+
+    /**
+     * Cluster- or namespace-scoped Deployment list. When the special namespace
+     * {@code _all} is given, returns deployments across every namespace —
+     * cheaper than asking the UI to fan out one call per namespace and
+     * matches the namespace selector's "All namespaces" choice.
+     */
+    @GET
+    @Path("/deployments")
+    public List<Map<String, Object>> listDeployments(@QueryParam("namespace") String namespace) {
+        return kube().listDeployments(unscope(namespace));
+    }
+
+    /**
+     * ConfigMap browse list. Only name + key count + total bytes (not values)
+     * to keep the response slim for namespaces with hundreds of ConfigMaps.
+     */
+    @GET
+    @Path("/configmaps")
+    public List<Map<String, Object>> listConfigMaps(@QueryParam("namespace") String namespace) {
+        return kube().listConfigMaps(unscope(namespace));
+    }
+
+    /**
+     * Ingress browse list. One row per Ingress with hosts[], ingressClass,
+     * tlsSecrets count, and address. Used by the Networking tab.
+     */
+    @GET
+    @Path("/ingresses")
+    public List<Map<String, Object>> listIngresses(@QueryParam("namespace") String namespace) {
+        return kube().listIngresses(unscope(namespace));
+    }
+
+    /**
+     * Normalize the UI's "all namespaces" marker ("*") and empty strings into
+     * null so the service-layer helpers do a cluster-wide list. Keeps the URL
+     * shape clean (?namespace=* is more readable than omitting the param).
+     */
+    private String unscope(String ns) {
+        if (ns == null || ns.isBlank() || "*".equals(ns)) return null;
+        return ns;
     }
 }

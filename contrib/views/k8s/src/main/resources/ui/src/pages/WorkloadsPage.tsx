@@ -30,9 +30,16 @@ import {
   describePod,
   describeService,
   deletePod,
-  restartPod
+  restartPod,
+  listDeployments,
+  listConfigMaps,
+  listIngresses,
+  type DeploymentRow,
+  type ConfigMapRow,
+  type IngressRow,
 } from '../api/client';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
+import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
 import { DownloadOutlined } from '@ant-design/icons';
 import { ReloadOutlined } from '@ant-design/icons';
 
@@ -70,6 +77,19 @@ const WorkloadsPage: React.FC = () => {
   const [podEventsFor, setPodEventsFor] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<string>('pods');
   const [autoRefreshWorkloads, setAutoRefreshWorkloads] = useState(true);
+  // Sync the page-level namespace with the topbar global selector so changing
+  // it once (in the topbar) updates every namespace-scoped page including
+  // this one. The page keeps its own state because the user can still drill
+  // into a single namespace from the in-page Select for ad-hoc queries.
+  const { namespace: globalNamespace } = useNamespace();
+  // Tab data sets fetched lazily; we only call the listing endpoint when the
+  // operator actually opens the tab (avoids cluster-wide list spam on first paint).
+  const [deployments, setDeployments] = useState<DeploymentRow[]>([]);
+  const [deploymentsLoading, setDeploymentsLoading] = useState(false);
+  const [configMaps, setConfigMaps] = useState<ConfigMapRow[]>([]);
+  const [configMapsLoading, setConfigMapsLoading] = useState(false);
+  const [ingresses, setIngresses] = useState<IngressRow[]>([]);
+  const [ingressesLoading, setIngressesLoading] = useState(false);
 
   useEffect(() => {
     // Initial namespace fetch and default selection (prefer nav state/query when present)
@@ -303,6 +323,76 @@ const WorkloadsPage: React.FC = () => {
     { title: 'Status', dataIndex: 'phase' },
   ];
 
+  // Lazy-load the new browse tabs only when they're opened or the namespace
+  // changes. The backend supports cluster-wide listing (?namespace=* / blank)
+  // but for performance reasons we still pass the chosen namespace when one
+  // is set in the page-level Select.
+  const namespaceForList = namespace || (globalNamespace !== ALL_NAMESPACES ? globalNamespace : undefined);
+
+  useEffect(() => {
+    if (activeTab !== 'deployments') return;
+    setDeploymentsLoading(true);
+    listDeployments(namespaceForList).then(setDeployments).catch(() => setDeployments([])).finally(() => setDeploymentsLoading(false));
+  }, [activeTab, namespaceForList]);
+
+  useEffect(() => {
+    if (activeTab !== 'configmaps') return;
+    setConfigMapsLoading(true);
+    listConfigMaps(namespaceForList).then(setConfigMaps).catch(() => setConfigMaps([])).finally(() => setConfigMapsLoading(false));
+  }, [activeTab, namespaceForList]);
+
+  useEffect(() => {
+    if (activeTab !== 'ingresses') return;
+    setIngressesLoading(true);
+    listIngresses(namespaceForList).then(setIngresses).catch(() => setIngresses([])).finally(() => setIngressesLoading(false));
+  }, [activeTab, namespaceForList]);
+
+  const deploymentColumns = [
+    { title: 'Namespace', dataIndex: 'namespace', sorter: (a: DeploymentRow, b: DeploymentRow) => (a.namespace || '').localeCompare(b.namespace || '') },
+    { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+    {
+      title: 'Ready',
+      key: 'ready',
+      width: 100,
+      render: (_: any, row: DeploymentRow) => {
+        const ready = row.readyReplicas ?? 0;
+        const total = row.replicas ?? 0;
+        const ok = ready === total && total > 0;
+        return <Tag color={ok ? 'green' : ready === 0 ? 'red' : 'orange'} style={{ margin: 0 }}>{`${ready}/${total}`}</Tag>;
+      },
+    },
+    { title: 'Image', dataIndex: 'image', ellipsis: true, render: (v: string) => v ? <Typography.Text style={{ fontSize: 11 }}>{v}</Typography.Text> : null },
+    { title: 'Age', dataIndex: 'creationTimestamp', render: (v: string) => v ? new Date(v).toLocaleString() : null },
+  ];
+
+  const configMapColumns = [
+    { title: 'Namespace', dataIndex: 'namespace', sorter: (a: ConfigMapRow, b: ConfigMapRow) => (a.namespace || '').localeCompare(b.namespace || '') },
+    { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+    { title: 'Keys', dataIndex: 'keys', width: 80 },
+    { title: 'Bytes', dataIndex: 'bytes', width: 100, render: (n: number) => n > 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${n} B` },
+    { title: 'Age', dataIndex: 'creationTimestamp', render: (v: string) => v ? new Date(v).toLocaleString() : null },
+  ];
+
+  const ingressColumns = [
+    { title: 'Namespace', dataIndex: 'namespace', sorter: (a: IngressRow, b: IngressRow) => (a.namespace || '').localeCompare(b.namespace || '') },
+    { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+    { title: 'Class', dataIndex: 'ingressClass', width: 100, render: (v: string) => v ? <Tag color="blue" style={{ margin: 0 }}>{v}</Tag> : null },
+    {
+      title: 'Hosts',
+      dataIndex: 'hosts',
+      render: (hs: string[]) => (hs || []).map(h => (
+        <a key={h} href={`https://${h}`} target="_blank" rel="noreferrer" style={{ marginRight: 8 }}>{h}</a>
+      )),
+    },
+    { title: 'TLS Secrets', dataIndex: 'tlsSecrets', width: 110, render: (n: number) => <Tag color={n > 0 ? 'green' : 'default'} style={{ margin: 0 }}>{n}</Tag> },
+    { title: 'Address', dataIndex: 'address', render: (v: string) => v ? <Typography.Text code style={{ fontSize: 11 }}>{v}</Typography.Text> : null },
+  ];
+
+  // Tab order is intentional: most-used (Pods, Deployments) first; networking
+  // group (Services, Ingresses) next; supporting data (ConfigMaps, Events) after;
+  // Namespaces last as a global drill-down. Keeps Ingresses in the visible
+  // tab strip even on narrower screens — previously it was 6th and overflowed
+  // into the antd "more" menu where operators didn't notice it.
   const tabItems = [
     {
       key: 'pods',
@@ -321,6 +411,20 @@ const WorkloadsPage: React.FC = () => {
         )
     },
     {
+      key: 'deployments',
+      label: <Space size={4}>Deployments <Tag color="geekblue">{deployments.length}</Tag></Space>,
+      children: (
+        <Table<DeploymentRow>
+          rowKey={(r) => `${r.namespace}/${r.name}`}
+          size="small"
+          loading={deploymentsLoading}
+          dataSource={deployments}
+          columns={deploymentColumns as any}
+          pagination={{ pageSize: 25, size: 'small' }}
+        />
+      ),
+    },
+    {
       key: 'services',
       label: <Space size={4}>Services <Tag color="geekblue">{services.length}</Tag></Space>,
         children: (
@@ -337,8 +441,36 @@ const WorkloadsPage: React.FC = () => {
         )
     },
     {
+      key: 'ingresses',
+      label: <Space size={4}>Ingresses <Tag color="geekblue">{ingresses.length}</Tag></Space>,
+      children: (
+        <Table<IngressRow>
+          rowKey={(r) => `${r.namespace}/${r.name}`}
+          size="small"
+          loading={ingressesLoading}
+          dataSource={ingresses}
+          columns={ingressColumns as any}
+          pagination={{ pageSize: 25, size: 'small' }}
+        />
+      ),
+    },
+    {
+      key: 'configmaps',
+      label: <Space size={4}>ConfigMaps <Tag color="geekblue">{configMaps.length}</Tag></Space>,
+      children: (
+        <Table<ConfigMapRow>
+          rowKey={(r) => `${r.namespace}/${r.name}`}
+          size="small"
+          loading={configMapsLoading}
+          dataSource={configMaps}
+          columns={configMapColumns as any}
+          pagination={{ pageSize: 25, size: 'small' }}
+        />
+      ),
+    },
+    {
       key: 'events',
-      label: <Space size={4}>Namespace Events <Tag color="geekblue">{namespaceEvents.length}</Tag></Space>,
+      label: <Space size={4}>Events <Tag color="geekblue">{namespaceEvents.length}</Tag></Space>,
         children: (
           <Table<KubeEvent>
             rowKey={(row) => `${row.involvedName}-${row.lastTimestamp}-${row.reason}`}
@@ -409,10 +541,12 @@ const WorkloadsPage: React.FC = () => {
         onChange={setActiveTab}
         items={tabItems}
         type="card"
+        size="small"
+        tabBarGutter={4}
         tabBarExtraContent={
           <Space align="center" size="small">
             <Switch size="small" checked={autoRefreshWorkloads} onChange={setAutoRefreshWorkloads} />
-            <span>Auto refresh</span>
+            <span style={{ fontSize: 12 }}>Auto refresh</span>
             <Button onClick={refreshAll} size="small" icon={<ReloadOutlined />}>Refresh</Button>
           </Space>
         }

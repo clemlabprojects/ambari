@@ -31,13 +31,14 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
+import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 
-import java.util.Map;
+import java.util.List;
 import java.util.Map;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.slf4j.Logger;
@@ -353,6 +354,90 @@ public class KubeService {
     @Path("/pki/cas")
     public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry() {
         return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService());
+    }
+
+    /**
+     * Resolve {@code appVersion} (the component's own version — e.g. GitLab
+     * 17.11.2 inside chart 8.11.2) for every catalog service in parallel and
+     * return a {@code serviceName -> appVersion} map. Best-effort: a service
+     * whose chart cannot be reached just gets {@code null} so the UI can show
+     * a dash for that card without the whole page failing.
+     *
+     * Cached for 10 min inside HelmService so subsequent page navigations are
+     * instant. Slow on cold start (one {@code helm show chart} per service).
+     */
+    @GET
+    @Path("/catalog/app-versions")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response catalogAppVersions() {
+        try {
+            Map<String, StackServiceDef> defs = getStackDefinitionService().listServiceDefinitions();
+            org.apache.ambari.view.k8s.service.HelmService helmService =
+                    new org.apache.ambari.view.k8s.service.HelmService(viewContext);
+            // Parallel resolve. Pool size capped so a 30-service catalog doesn't fan out
+            // to a thread per service. Each task is a 'helm show chart' invocation.
+            java.util.concurrent.ExecutorService pool =
+                    java.util.concurrent.Executors.newFixedThreadPool(Math.min(8, Math.max(1, defs.size())));
+            try {
+                List<java.util.concurrent.Future<Map.Entry<String, String>>> futures = new java.util.ArrayList<>();
+                for (Map.Entry<String, StackServiceDef> e : defs.entrySet()) {
+                    final String svcName = e.getKey();
+                    final StackServiceDef def = e.getValue();
+                    if (def == null || def.chart == null || def.chart.isBlank()) {
+                        futures.add(java.util.concurrent.CompletableFuture.completedFuture(Map.entry(svcName, "")));
+                        continue;
+                    }
+                    futures.add(pool.submit(() -> {
+                        String av = helmService.resolveChartAppVersion(def.chart, def.defaultRepo, def.version);
+                        return Map.entry(svcName, av == null ? "" : av);
+                    }));
+                }
+                Map<String, String> result = new java.util.LinkedHashMap<>();
+                for (var f : futures) {
+                    try {
+                        Map.Entry<String, String> entry = f.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                        result.put(entry.getKey(), entry.getValue());
+                    } catch (Exception ex) {
+                        // skip; client will render a dash
+                    }
+                }
+                return Response.ok(result).build();
+            } finally {
+                pool.shutdownNow();
+            }
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /**
+     * Cluster-wide CRD listing. Used by the Operators page to render
+     * "extra CRDs the operator brings" alongside the curated capability probe.
+     */
+    @GET
+    @Path("/crds")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listCrds() {
+        try {
+            return Response.ok(getKubernetesService().listCrds()).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /**
+     * Lists Secrets matching the {@code *-truststore} convention with parsed
+     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide.
+     */
+    @GET
+    @Path("/truststores")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listTruststores(@javax.ws.rs.QueryParam("namespace") String namespace) {
+        try {
+            return Response.ok(getKubernetesService().listTruststores(namespace)).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
     }
 
     @GET

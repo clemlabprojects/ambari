@@ -31,6 +31,11 @@ public class StackServiceDef {
     public String chart;         // "apache/superset"
     public String description;
     public String version;
+    /** Default Helm repo id this catalog entry expects the chart to come from.
+     *  Read by the /catalog/app-versions endpoint to construct an OCI/HTTP
+     *  chartRef for `helm show chart`. Optional — when null the resolver tries
+     *  the raw chart name (works if helm has it cached locally). */
+    public String defaultRepo;
     public List<FormField> form; // Reuses your existing dynamic form definitions
 
     // Additional fields used by bindings/variables/etc.

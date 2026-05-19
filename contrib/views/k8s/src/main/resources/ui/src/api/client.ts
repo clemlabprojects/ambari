@@ -140,6 +140,55 @@ export const getServices = async (ns: string, labelSelector?: string): Promise<K
   return handleApiResponse(res);
 };
 
+/** Row shape from /workloads/deployments — kept loose because the UI shows
+ *  raw fields. Backend fills the same keys for both namespace-scoped and
+ *  cluster-wide lists. */
+export interface DeploymentRow {
+  namespace: string;
+  name: string;
+  replicas: number | null;
+  readyReplicas: number | null;
+  availableReplicas: number | null;
+  image: string | null;
+  creationTimestamp: string | null;
+}
+
+export const listDeployments = async (namespace?: string): Promise<DeploymentRow[]> => {
+  const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  const res = await fetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export interface ConfigMapRow {
+  namespace: string;
+  name: string;
+  keys: number;
+  bytes: number;
+  creationTimestamp: string | null;
+}
+
+export const listConfigMaps = async (namespace?: string): Promise<ConfigMapRow[]> => {
+  const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  const res = await fetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
+export interface IngressRow {
+  namespace: string;
+  name: string;
+  ingressClass: string | null;
+  hosts: string[];
+  tlsSecrets: number;
+  address: string | null;
+  creationTimestamp: string | null;
+}
+
+export const listIngresses = async (namespace?: string): Promise<IngressRow[]> => {
+  const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  const res = await fetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
 export const getPodLogs = async (ns: string, pod: string, container?: string, tailLines?: number): Promise<string> => {
   const params = new URLSearchParams();
   if (container) params.set('container', container);
@@ -1000,3 +1049,52 @@ export const getAvailableServices = async () => {
   const response = await fetch(`${API_BASE_URL}/services`, { headers: { 'X-Requested-By': 'ambari' } });
   return handleApiResponse(response);
 }
+
+/** One CRD as exposed by GET /crds. Shape mirrors KubernetesService.CrdSummary. */
+export interface CrdSummary {
+  name: string;
+  group: string | null;
+  kind: string | null;
+  scope: string | null;
+  versions: string[];
+  established: boolean;
+}
+
+/** List every CRD registered on the cluster. Used by the Operators page. */
+export const listCrds = async (): Promise<CrdSummary[]> => {
+  return fetchJson<CrdSummary[]>('/crds');
+};
+
+/** {serviceName -> appVersion} for every catalog entry. Backend resolves via
+ *  helm show chart in parallel and caches; first call is slow, subsequent are
+ *  instant. Empty string for services whose chart couldn't be probed. */
+export const getCatalogAppVersions = async (): Promise<Record<string, string>> => {
+  return fetchJson<Record<string, string>>('/catalog/app-versions');
+};
+
+/** One parsed certificate inside a truststore's ca.crt PEM bundle. */
+export interface TruststoreCert {
+  subject: string;
+  issuer: string;
+  notAfter: string;
+  daysUntilExpiry: number;
+  serialNumber: string;
+  isCa: boolean;
+}
+
+/** Snapshot of one <release>-truststore Secret. */
+export interface TruststoreSummary {
+  namespace: string;
+  name: string;
+  releaseName: string;
+  caCount: number;
+  jvmReady: boolean;
+  pemReady: boolean;
+  certificates: TruststoreCert[];
+}
+
+/** List Secrets matching {@code *-truststore} with parsed ca.crt summaries. */
+export const listTruststores = async (namespace?: string): Promise<TruststoreSummary[]> => {
+  const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  return fetchJson<TruststoreSummary[]>(`/truststores${qs}`);
+};
