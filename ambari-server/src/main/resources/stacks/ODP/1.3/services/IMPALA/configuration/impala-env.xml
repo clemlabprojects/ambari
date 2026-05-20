@@ -1061,8 +1061,8 @@
     </property>
     <property>
         <name>lineage_event_log_dir</name>
-        <value></value>
-        <description>The directory in which lineage event log files are written. Setting this flag with enable lineage logging.</description>
+        <value>/var/log/impala/lineage</value>
+        <description>The directory in which lineage event log files are written. Setting this flag enables lineage logging. The IMPALA_ATLAS_EXTRACTOR component polls this directory and forwards events to Atlas via Kafka.</description>
         <value-attributes>
             <type>string</type>
             <empty-value-valid>true</empty-value-valid>
