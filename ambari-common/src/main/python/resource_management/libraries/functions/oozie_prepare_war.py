@@ -40,12 +40,15 @@ def prepare_war(params):
 
   # DON'T CHANGE THE VALUE SINCE IT'S USED TO DETERMINE WHETHER TO RUN THE COMMAND OR NOT BY READING THE MARKER FILE.
   # Oozie tmp dir should be /var/tmp/oozie and is already created by a function above.
-  prepare_war_args = "prepare-war"
-  if getattr(params, "security_enabled", False):
-    prepare_war_args = f"{prepare_war_args} -secure"
-  command = format("cd {oozie_tmp_dir} && {oozie_setup_sh} " + prepare_war_args).strip()
+  # NOTE (clemlab AMBARI-7): Bigtop's Jetty-based Oozie 5.x oozie-setup.sh does not implement
+  # `prepare-war` — that subcommand belongs to the old Tomcat WAR-repack flow.  Invoking the
+  # script with no args lets it fall through to log_ready_to_start() which prints the success
+  # marker we look for below.  A short-lived regression (AMBARI-313, 2026-02) re-added the
+  # `prepare-war` arg and broke ODP 1.3 deploys; do not put it back without also changing the
+  # Bigtop oozie-setup.sh.
+  command = format("cd {oozie_tmp_dir} && {oozie_setup_sh}").strip()
   # oozie_setup_sh and oozie_setup_sh_current are different during Ambaripreupload
-  command_to_file = format("cd {oozie_tmp_dir} && {oozie_setup_sh_current} " + prepare_war_args).strip()
+  command_to_file = format("cd {oozie_tmp_dir} && {oozie_setup_sh_current}").strip()
 
   run_prepare_war = False
   if os.path.exists(prepare_war_cmd_file):
