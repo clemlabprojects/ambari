@@ -311,7 +311,7 @@ class TestOozieServer(RMFTestCase):
     )
 
     self.assertResourceCalled('File', '/usr/lib/oozie/.prepare_war_cmd',
-                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh prepare-war',
+                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh',
                               mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/lib/oozie/.war_libext_content',
@@ -540,7 +540,7 @@ class TestOozieServer(RMFTestCase):
                               not_if = "ambari-sudo.sh su oozie -l -s /bin/bash -c '[RMF_EXPORT_PLACEHOLDER]ls /var/run/oozie/oozie.pid >/dev/null 2>&1 && ps -p `cat /var/run/oozie/oozie.pid` >/dev/null 2>&1'",
                               )
     self.assertResourceCalled('File', '/usr/lib/oozie/.prepare_war_cmd',
-                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh prepare-war',
+                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh',
                               mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/lib/oozie/.war_libext_content',
@@ -969,7 +969,7 @@ class TestOozieServer(RMFTestCase):
     )
 
     self.assertResourceCalled('File', '/usr/lib/oozie/.prepare_war_cmd',
-                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh prepare-war',
+                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh',
                               mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/lib/oozie/.war_libext_content',
@@ -1168,7 +1168,7 @@ class TestOozieServer(RMFTestCase):
     )
 
     self.assertResourceCalled('File', '/usr/lib/oozie/.prepare_war_cmd',
-                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh prepare-war -secure',
+                              content = 'cd /var/tmp/oozie && /usr/lib/oozie/bin/oozie-setup.sh',
                               mode = 0o644,
     )
     self.assertResourceCalled('File', '/usr/lib/oozie/.war_libext_content',
