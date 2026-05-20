@@ -970,6 +970,21 @@ public class CommandService {
                 // 1. Try params directly (flat or nested)
                 Object value = getByPath(params, field);
                 if (value == null) value = params.get(field);
+                // 1b. Fall back to params.formValues — the wizard's snapshot of the raw form state
+                // (with envelope keys stripped). This is the only way the server can see
+                // excludeFromValues form fields like jupyterHost: they're stripped from the chart
+                // values by buildFinalValues and never appear at the top level of the request body,
+                // but they ARE needed here to render OIDC redirectUriTemplate and other server-side
+                // templates that reference {{jupyterHost}}.
+                if (value == null) {
+                    Object formValuesObj = params.get("formValues");
+                    if (formValuesObj instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> fv = (Map<String, Object>) formValuesObj;
+                        value = getByPath(fv, field);
+                        if (value == null) value = fv.get(field);
+                    }
+                }
                 // 2. Fall back to chart values file (covers excludeFromValues fields resolved via bindings)
                 if (value == null && chartValues != null) {
                     value = getByPath(chartValues, field);
@@ -3483,6 +3498,15 @@ public class CommandService {
         params.put("chart", request.getChart());
         params.put("releaseName", request.getReleaseName());
         params.put("namespace", request.getNamespace());
+        if (request.getFormValues() != null && !request.getFormValues().isEmpty()) {
+            // Carry the wizard's form-state snapshot through to OIDC step planning.
+            // resolveServiceVariablesFromParams reads this as a fallback when a variable's
+            // form.field is excludeFromValues (and therefore absent from both top-level
+            // params and the chart values file). Without this, {{jupyterHost}} in
+            // JupyterHub's redirectUriTemplate would render empty and Keycloak rejects
+            // the client registration with 400 invalid_input "A redirect URI is not a valid URI".
+            params.put("formValues", request.getFormValues());
+        }
         if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
             params.put("serviceKey", request.getServiceKey());
             try {
@@ -7091,6 +7115,16 @@ public class CommandService {
                     LOG.warn("Empty helm path in token '{}', skipping", token);
                     continue;
                 }
+                // Optional path-suffix syntax: "TOKEN[/sub/path]:helm.path" — strip the
+                // bracketed suffix off the source key so DYNAMIC_SOURCE_MAP lookup hits,
+                // and remember it to append to the resolved value below. Mirrors the
+                // sister parser in CommandPlanFactory; keeping both in sync.
+                String suffix = "";
+                int lb = sourceKey.indexOf('[');
+                if (lb > 0 && sourceKey.endsWith("]")) {
+                    suffix = sourceKey.substring(lb + 1, sourceKey.length() - 1);
+                    sourceKey = sourceKey.substring(0, lb);
+                }
                 AmbariConfigRef ref = CommandUtils.DYNAMIC_SOURCE_MAP.get(sourceKey);
                 if (ref == null) {
                     LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
@@ -7098,12 +7132,21 @@ public class CommandService {
                 }
                 try {
                     String value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                    // AMBARI_OIDC_ISSUER_URL fallback: in many clusters oidc-env.oidc_issuer_url
+                    // is left blank because operators only set oidc_admin_url + oidc_realm.
+                    // resolveOidcIssuerUrl() composes admin_url + "/realms/" + realm; reuse it
+                    // so services that map this token (Jupyter, etc.) don't render an empty value.
+                    if ((value == null || value.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(sourceKey)) {
+                        value = resolveOidcIssuerUrl(ambariActionClient, cluster);
+                    }
                     if (value == null || value.isBlank()) {
                         LOG.warn("Resolved empty value for token '{}' (type={}, key={})", token, ref.type, ref.key);
                         continue;
                     }
-                    resolved.put(helmPath, value);
-                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, value);
+                    String resolvedValue = suffix.isEmpty() ? value
+                            : (value.endsWith("/") ? value.substring(0, value.length() - 1) : value) + suffix;
+                    resolved.put(helmPath, resolvedValue);
+                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolvedValue);
                 } catch (Exception ex) {
                     LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
                 }

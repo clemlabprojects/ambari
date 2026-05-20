@@ -110,6 +110,15 @@ public class HelmDeployRequest {
     //   refreshInterval  ESO refresh cadence (default "1h")
     private Map<String, Object> ingressTlsExternalSecret;
 
+    // Snapshot of the wizard's raw form state with envelope keys stripped. Needed so the
+    // server can read form fields that were declared excludeFromValues — e.g. JupyterHub's
+    // jupyterHost. Those fields are stripped from request.values by the wizard before
+    // submit (otherwise strict chart schemas like Z2JH reject the unknown property), but
+    // server-side OIDC client registration still needs the hostname to render
+    // redirectUriTemplate "{{jupyterHost}}". Without this map renderOidcTemplate produces
+    // "https:///hub/oauth_callback" and Keycloak rejects with 400 invalid_input.
+    private Map<String, Object> formValues;
+
     public static class GitOptions {
         private String repoUrl;
         private String baseBranch;
@@ -497,6 +506,22 @@ public class HelmDeployRequest {
                 this.ingressTlsExternalSecret = s.isBlank() ? null : OM.readValue(s, Map.class);
             }
         } catch (Exception ignore) { this.ingressTlsExternalSecret = null; }
+    }
+
+    /** @see #formValues */
+    public Map<String, Object> getFormValues() {
+        return formValues;
+    }
+    @JsonSetter("formValues")
+    public void setFormValues(Object raw) {
+        try {
+            if (raw == null) this.formValues = null;
+            else if (raw instanceof Map) { //noinspection unchecked
+                this.formValues = (Map<String, Object>) raw;
+            } else if (raw instanceof String s) {
+                this.formValues = s.isBlank() ? null : OM.readValue(s, Map.class);
+            }
+        } catch (Exception ignore) { this.formValues = null; }
     }
 
     // ----------------- global config management --------------

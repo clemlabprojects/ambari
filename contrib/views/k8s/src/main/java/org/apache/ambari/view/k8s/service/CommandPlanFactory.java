@@ -139,6 +139,16 @@ public class CommandPlanFactory {
                         LOG.warn("Empty helm path in token '{}', skipping", dynamic);
                         continue;
                     }
+                    // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
+                    // the suffix to the resolved value. Lets one Ambari property feed
+                    // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
+                    // userinfo endpoints, each one needing a different sub-path).
+                    String suffix = "";
+                    int lbracket = token.indexOf('[');
+                    if (lbracket > 0 && token.endsWith("]")) {
+                        suffix = token.substring(lbracket + 1, token.length() - 1);
+                        token = token.substring(0, lbracket);
+                    }
                     AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
                     if (ref == null) {
                         LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
@@ -150,8 +160,12 @@ public class CommandPlanFactory {
                             LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
                             continue;
                         }
-                        resolvedDynamicOverrides.put(helmPath, v);
-                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, v);
+                        // Strip any trailing slash on the issuer URL before appending,
+                        // so "https://issuer/" + "/path" doesn't double-slash.
+                        String resolved = suffix.isEmpty() ? v
+                                : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
+                        resolvedDynamicOverrides.put(helmPath, resolved);
+                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
                     } catch (Exception ex) {
                         LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
                     }
@@ -454,6 +468,16 @@ public class CommandPlanFactory {
                         LOG.warn("Empty helm path in token '{}', skipping", dynamic);
                         continue;
                     }
+                    // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
+                    // the suffix to the resolved value. Lets one Ambari property feed
+                    // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
+                    // userinfo endpoints, each one needing a different sub-path).
+                    String suffix = "";
+                    int lbracket = token.indexOf('[');
+                    if (lbracket > 0 && token.endsWith("]")) {
+                        suffix = token.substring(lbracket + 1, token.length() - 1);
+                        token = token.substring(0, lbracket);
+                    }
                     AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
                     if (ref == null) {
                         LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
@@ -465,8 +489,12 @@ public class CommandPlanFactory {
                             LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
                             continue;
                         }
-                        resolvedDynamicOverrides.put(helmPath, v);
-                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, v);
+                        // Strip any trailing slash on the issuer URL before appending,
+                        // so "https://issuer/" + "/path" doesn't double-slash.
+                        String resolved = suffix.isEmpty() ? v
+                                : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
+                        resolvedDynamicOverrides.put(helmPath, resolved);
+                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
                     } catch (Exception ex) {
                         LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
                     }

@@ -349,6 +349,13 @@ const ServiceWizardPage: React.FC = () => {
       if (Array.isArray(def.form)) {
         getExcludedPaths(def.form).forEach(p => deleteAtStr(merged, p));
       }
+      // Mirror buildFinalValues' envelope-key strip so the preview shows what
+      // the chart will actually receive (otherwise users see top-level
+      // releaseName/namespace/etc that wouldn't actually be sent).
+      ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
+       'releaseName','namespace','securityProfile','deploymentMode','git'].forEach(k => {
+         delete (merged as any)[k];
+       });
 
       return yaml.stringify(merged, { aliasDuplicateObjects: false });
     } catch (e) {
@@ -389,6 +396,16 @@ const ServiceWizardPage: React.FC = () => {
     if (Array.isArray(def?.form)) {
       getExcludedPaths(def.form).forEach(p => deleteAtStr(base, p));
     }
+
+    // Drop wizard envelope keys — these are wizard state / request meta and
+    // get sent as top-level fields on the submitHelmDeploy payload. Strict
+    // chart schemas (Z2JH/JupyterHub, future) reject any additionalProperties
+    // at the root of values.yaml, so anything left here would fail the
+    // helm dry-run with errors like "Additional property releaseName is not allowed".
+    ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
+     'releaseName','namespace','securityProfile','deploymentMode','git'].forEach(k => {
+       delete (base as any)[k];
+     });
 
     // If YAML editor overrides are present and valid, merge them in
     if (editMode && parsedRef.current && !parseError) {
@@ -542,6 +559,16 @@ const ServiceWizardPage: React.FC = () => {
               securityProfile: (installValues as any)?.securityProfile || undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
+              // Snapshot of raw form state (envelope keys stripped) so backend can read
+              // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
+              // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
+              // Keycloak rejects the client registration with HTTP 400 invalid_input.
+              formValues: ((): Record<string, any> => {
+                const snap = JSON.parse(JSON.stringify(installValues || {}));
+                ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
+                 'deploymentMode','git'].forEach(k => { delete snap[k]; });
+                return snap;
+              })(),
           }, params);
       message.success('Deployment request submitted');
       setLastCommandId(id);

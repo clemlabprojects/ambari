@@ -857,6 +857,10 @@ export async function submitHelmDeploy(payload: {
   ranger?: any;
   requiredConfigMaps?: any;
   dynamicValues?: any;
+  // Snapshot of the wizard's raw form state (envelope keys stripped) so the backend can
+  // read excludeFromValues form fields when resolving service-definition variables like
+  // {{jupyterHost}} in OIDC redirectUriTemplate. See HelmDeployRequest.formValues.
+  formValues?: Record<string, any>;
 }, params: URLSearchParams = new URLSearchParams()) {
   // always propagate repoId as a query param to help the backend resolve the repository deterministically
   if (payload.repoId && !params.has('repoId')) {

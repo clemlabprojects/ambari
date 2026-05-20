@@ -452,13 +452,22 @@ const handleServiceChange = (value: string) => {
       // 2. Apply Bindings
       applyBindingTargets(mergedValues, bindings, mounts, raw, raw.releaseName || '', varCtx);
       
-      // 3. Remove standard internal keys
+      // 3. Remove standard internal keys. These are envelope fields (wizard
+      //    state or request meta) that get sent as top-level request props on
+      //    the deploy payload — they MUST NOT leak into `values` because
+      //    strict Helm chart schemas (e.g. Z2JH/JupyterHub) reject any
+      //    additionalProperties at the root and fail the dry-run.
       delete mergedValues.installMode;
       delete mergedValues.chartDirect;
       delete mergedValues.chartOverride;
       delete mergedValues.repoId;
       delete mergedValues.version;
       delete mergedValues.svcKey;
+      delete mergedValues.releaseName;
+      delete mergedValues.namespace;
+      delete mergedValues.securityProfile;
+      delete mergedValues.deploymentMode;
+      delete mergedValues.git;
 
       // 4. Remove fields marked as excludeFromValues in charts.json
       if (svcAny?.form) {
@@ -788,6 +797,20 @@ const handleServiceChange = (value: string) => {
             const excluded = getExcludedPaths(currentService.form);
             excluded.forEach(path => deleteAtStr(mergedValues, path));
         }
+        // Envelope keys (wizard meta / request top-levels) that strict chart
+        // schemas reject as additionalProperties. Kept in sync with the
+        // preview-time strip above. See comment near the preview strip.
+        delete mergedValues.installMode;
+        delete mergedValues.chartDirect;
+        delete mergedValues.chartOverride;
+        delete mergedValues.repoId;
+        delete mergedValues.version;
+        delete mergedValues.svcKey;
+        delete mergedValues.releaseName;
+        delete mergedValues.namespace;
+        delete mergedValues.securityProfile;
+        delete mergedValues.deploymentMode;
+        delete mergedValues.git;
 
         let tlsPayload: any = null;
         const tlsSpec = (currentService as any)?.tls || [];
