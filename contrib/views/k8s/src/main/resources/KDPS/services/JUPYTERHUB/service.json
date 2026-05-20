@@ -172,14 +172,6 @@
           "defaultValue": "jupyterhub",
           "excludeFromValues": true,
           "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<releaseName>@<realm>' (e.g. 'jupyterhub/jupyterhub@DEV21.HADOOP.CLEMLAB.COM'). MUST match jupyterhub_principal_name in the FreeIPA ansible role (~/ansible-role-freeipa/defaults/main.yml), and serviceName in the 'kerberos' section of this service.json. The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services."
-        },
-        {
-          "name": "krb5ConfConfigMap",
-          "label": "krb5.conf ConfigMap name",
-          "type": "string",
-          "defaultValue": "krb5-conf",
-          "excludeFromValues": true,
-          "help": "Name of a pre-existing ConfigMap in this namespace whose 'krb5.conf' key holds the cluster's Kerberos config. Mounted at /etc/krb5.conf in both the krb-renewer sidecar and the singleuser notebook container so they share KDC + realm config. Operator-provisioned (same model as the truststore secret used by the hub for the Clemlab CA)."
         }
       ]
     }
@@ -193,8 +185,7 @@
     },
     { "name": "jupyterTlsClusterIssuer", "from": { "type": "form", "field": "jupyterTlsClusterIssuer" } },
     { "name": "hubAdminUsersCsv",        "from": { "type": "form", "field": "hubAdminUsers" } },
-    { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } },
-    { "name": "krb5ConfConfigMap",       "from": { "type": "form", "field": "krb5ConfConfigMap" } }
+    { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } }
   ],
   "bindings": [
     {
@@ -333,7 +324,7 @@
         { "path": "singleuser.storage.extraVolumes[1].emptyDir.medium",            "from": { "type": "template", "template": "Memory" } },
         { "path": "singleuser.storage.extraVolumes[1].emptyDir.sizeLimit",         "from": { "type": "template", "template": "16Mi" } },
         { "path": "singleuser.storage.extraVolumes[2].name",                       "from": { "type": "template", "template": "krb5-conf" } },
-        { "path": "singleuser.storage.extraVolumes[2].configMap.name",             "from": { "type": "template", "template": "${krb5ConfConfigMap}" } },
+        { "path": "singleuser.storage.extraVolumes[2].configMap.name",             "from": { "type": "template", "template": "${releaseName}-krb5-conf" } },
         { "path": "singleuser.storage.extraVolumes[3].name",                       "from": { "type": "template", "template": "tmp" } },
         { "path": "singleuser.storage.extraVolumes[3].emptyDir.medium",            "from": { "type": "template", "template": "Memory" } },
         { "path": "singleuser.storage.extraVolumes[3].emptyDir.sizeLimit",         "from": { "type": "template", "template": "8Mi" } }
