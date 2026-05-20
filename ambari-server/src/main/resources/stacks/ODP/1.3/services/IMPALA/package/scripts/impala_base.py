@@ -452,31 +452,50 @@ class ImpalaBase(Script):
         output = stdout.decode("utf-8", "ignore") if hasattr(stdout, "decode") else stdout
         return [line.strip() for line in output.splitlines() if line.strip()]
 
-    def _wait_for_web_port_clear(self, service_name, timeout_seconds=15, poll_seconds=1):
+    def _wait_for_service_ports_clear(self, service_name, timeout_seconds=180, poll_seconds=2):
+        """Wait until every port this Impala daemon will bind is free of LISTEN,
+        ESTABLISHED, and TIME_WAIT sockets. We previously checked only the web
+        port, which let races on the StatestoreSubscriber (23020) and
+        catalog-service (26000) ports through; a fresh `catalogd` would die on
+        first bind with `Could not bind: Address already in use` because a
+        prior aborted attempt left the socket in TIME_WAIT (~60s on Linux
+        defaults). Polling all configured ports across all socket states until
+        they clear eliminates the race for fresh installs and rapid
+        stop/start cycles.
+
+        TIME_WAIT typically lasts up to 60s; 180s is a comfortable upper bound
+        with poll_seconds=2 keeping CPU cost negligible."""
         meta = self._impala_service_meta(service_name)
-        web_port = meta.get("web_port")
-        if not web_port:
+        ports = [p for p in meta.get("ports", []) if p]
+        if not ports:
             return
 
-        lingering_lines = self._port_probe_lines([web_port], listen_only=False)
+        lingering_lines = self._port_probe_lines(ports, listen_only=False)
         if not lingering_lines:
             return
 
         Logger.info(
-            "Waiting for port {0} to clear before starting {1}".format(web_port, service_name)
+            "Waiting up to {0}s for Impala {1} ports {2} to clear (current sockets: {3} entries)".format(
+                timeout_seconds, service_name, ports, len(lingering_lines)
+            )
         )
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
             time.sleep(poll_seconds)
-            lingering_lines = self._port_probe_lines([web_port], listen_only=False)
+            lingering_lines = self._port_probe_lines(ports, listen_only=False)
             if not lingering_lines:
                 return
 
         raise Fail(
-            "Port {0} is still busy before starting {1}. Socket state:\n{2}".format(
-                web_port, service_name, "\n".join(lingering_lines)
+            "Impala {0}: one or more configured ports {1} are still busy after {2}s. "
+            "This usually means a prior daemon left the socket in TIME_WAIT, or another "
+            "process is holding it. Socket state:\n{3}".format(
+                service_name, ports, timeout_seconds, "\n".join(lingering_lines)
             )
         )
+
+    # Backward-compat alias for any external caller still using the old name.
+    _wait_for_web_port_clear = _wait_for_service_ports_clear
 
     def _source_java_home(self, source_file):
         if not source_file or not os.path.isfile(source_file):
@@ -623,11 +642,25 @@ class ImpalaBase(Script):
                     service_name, "\n".join(listening_lines)
                 )
             )
-        self._wait_for_web_port_clear(service_name)
+        # Wait for ALL configured ports (not just the web port) to be clear of
+        # any socket state. This handles the install-time race where parallel
+        # catalogd starts across master01/master02 can leave their respective
+        # local StatestoreSubscriber port (23020) briefly bound or in TIME_WAIT
+        # from an aborted attempt, which the daemon's `bind()` reports as
+        # "Address already in use".
+        self._wait_for_service_ports_clear(service_name)
 
         env = self._impala_runtime_env(service_name)
         cmd = self._impala_cmd("start", service_name, extra_args=extra_args)
-        Execute(cmd, environment=env, user=params.impala_user, logoutput=True)
+        # tries=2 / try_sleep=30 catches the remaining failure shape where the
+        # daemon survives its own bind but dies during downstream init (HMS
+        # client pool warmup, statestored registration, etc.) right after the
+        # port-clear check passed. The wrapper `impala.sh` exits non-zero
+        # when the daemon process disappears, so Execute observes the failure
+        # and retries once after 30s. The retry is safe because the daemon
+        # owns no shared state until it successfully advances past init.
+        Execute(cmd, environment=env, user=params.impala_user, logoutput=True,
+                tries=2, try_sleep=30)
 
     def stop_impala_service(self, service_name):
         import params

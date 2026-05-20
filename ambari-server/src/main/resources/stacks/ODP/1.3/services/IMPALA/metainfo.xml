@@ -99,6 +99,38 @@
                   </commandScript>
                 </component>
 
+                <!--
+                  Atlas lineage extractor: a long-running daemon co-located with
+                  IMPALA_DAEMON that polls the impalad lineage log directory and
+                  publishes lineage events to Kafka via the atlas-impala-bridge
+                  JARs (org.apache.atlas.impala.ImpalaLineageTool).  Mirrors
+                  Cloudera's atlas-impala-extractor service.  Auto-deploys
+                  alongside every IMPALA_DAEMON so any host that runs impalad
+                  also exports its lineage; the impalad's -lineage_event_log_dir
+                  flag is wired by impala-env when Atlas is in the cluster.
+                -->
+                <component>
+                  <name>IMPALA_ATLAS_EXTRACTOR</name>
+                  <displayName>Impala Atlas Extractor</displayName>
+                  <category>SLAVE</category>
+                  <cardinality>0+</cardinality>
+                  <versionAdvertised>true</versionAdvertised>
+                  <dependencies>
+                    <dependency>
+                      <name>IMPALA/IMPALA_DAEMON</name>
+                      <scope>host</scope>
+                      <auto-deploy>
+                        <enabled>true</enabled>
+                      </auto-deploy>
+                    </dependency>
+                  </dependencies>
+                  <commandScript>
+                    <script>scripts/impala_atlas_extractor.py</script>
+                    <scriptType>PYTHON</scriptType>
+                    <timeout>1200</timeout>
+                  </commandScript>
+                </component>
+
                 <component>
                     <name>IMPALA_CLIENT</name>
                     <displayName>Impala Client</displayName>

@@ -249,3 +249,16 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
         # Toggle integrations based on installed services.
         putImpalaEnvProperty("impala_disable_kudu", "false" if "KUDU" in services_list else "true")
         putImpalaEnvProperty("enable_ranger", "true" if "RANGER" in services_list else "false")
+
+        # When Atlas is in the cluster, enable Impala lineage emission so the
+        # IMPALA_ATLAS_EXTRACTOR component has files to forward to Kafka.  The
+        # C++ impalad writes lineage JSON to this dir; the extractor daemon
+        # polls it and feeds org.apache.atlas.impala.ImpalaLineageTool.  Only
+        # seed the default when the operator hasn't explicitly set a path so
+        # we don't overwrite a custom location.
+        if "ATLAS" in services_list:
+            current_lineage_dir = str(
+                getServiceConfigProperty("impala-env", "lineage_event_log_dir", "")
+            ).strip()
+            if not current_lineage_dir:
+                putImpalaEnvProperty("lineage_event_log_dir", "/var/log/impala/lineage")

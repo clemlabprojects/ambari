@@ -223,6 +223,25 @@ disk_spill_encryption = default("/configurations/impala-env/disk_spill_encryptio
 abort_on_failed_audit_event = _as_bool(default("/configurations/impala-env/abort_on_failed_audit_event", False))
 lineage_event_log_dir = default("/configurations/impala-env/lineage_event_log_dir", os.path.join(impala_log_dir, "lineage"))
 max_lineage_log_file_size = default("/configurations/impala-env/max_lineage_log_file_size", 100 * 1024 * 1024)
+
+# Atlas-impala bridge wiring (consumed by impala_atlas_extractor.py).
+# atlas_in_cluster gates whether the daemon actually spawns; the component is
+# always co-deployed with IMPALA_DAEMON (auto-deploy in metainfo), but when
+# Atlas is absent the daemon becomes a no-op so we don't break clusters that
+# don't run Atlas.
+atlas_server_hosts = default("/clusterHostInfo/atlas_server_hosts", [])
+atlas_in_cluster = len(atlas_server_hosts) > 0
+impala_lineage_event_log_dir = lineage_event_log_dir
+impala_atlas_extractor_poll_seconds = default(
+    "/configurations/impala-env/atlas_extractor_poll_seconds", 5
+)
+impala_lineage_log_prefix = default(
+    "/configurations/impala-env/atlas_extractor_lineage_prefix", "impala_lineage"
+)
+atlas_conf_dir = "/etc/atlas/conf"
+# Use the version-pinned /usr/odp/current root for jar globs so an in-place
+# stack upgrade lands the new jars without an Ambari restart of this component.
+stack_version_root = os.path.join(stack_root, "current")
 is_coordinator = current_host_name in impala_daemon_hosts
 is_executor = current_host_name in impala_daemon_hosts
 local_library_dir = default("/configurations/impala-env/local_library_dir", "/usr/lib/impala/lib")
