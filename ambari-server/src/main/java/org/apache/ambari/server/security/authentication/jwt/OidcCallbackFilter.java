@@ -498,7 +498,15 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
     if (!"GET".equalsIgnoreCase(request.getMethod())) {
       return false;
     }
-    String path = request.getServletPath();
+    // Use getRequestURI() rather than getServletPath() because Ambari Views are
+    // deployed as their own Jetty WebAppContexts whose contextPath already
+    // includes "/views/<NAME>/<VERSION>/<INSTANCE>".  Inside such a context,
+    // getServletPath() returns the path RELATIVE to that mount point (e.g. "/"
+    // or "/index.html") and the "/views/" exclusion silently fails, causing the
+    // filter to redirect view loads to Keycloak even when an Ambari session is
+    // already authenticated.  getRequestURI() is always the absolute request
+    // path.
+    String path = request.getRequestURI();
     if (path != null && (path.startsWith("/api/") || path.startsWith("/views/"))) {
       return false;
     }
@@ -595,7 +603,10 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
       }
     }
 
-    String path = request.getServletPath();
+    // Same WebAppContext caveat as in isBrowserGetRequest: getServletPath() is
+    // relative to the view's mount point, so use getRequestURI() to capture
+    // the absolute path the user was actually trying to reach.
+    String path = request.getRequestURI();
     if (StringUtils.isEmpty(path) || path.startsWith("/oidc/")) {
       return "/";
     }
