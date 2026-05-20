@@ -7250,14 +7250,40 @@ public class CommandService {
      * Fetch a nested value from a Map using dotted path (e.g., "ldap.bindDn").
      */
     @SuppressWarnings("unchecked")
+    /** Path segment regex matching {@code key} or {@code key[idx]}.
+     *  See HelmService.LIST_SEGMENT — same shape, kept here to avoid a cross-file
+     *  dependency just for one constant. */
+    private static final java.util.regex.Pattern PATH_LIST_SEG =
+            java.util.regex.Pattern.compile("^(?<key>[^\\[\\]]+)(\\[(?<idx>\\d+)])?$");
+
+    /**
+     * Navigate a nested {@code Map<String,Object>} tree by a dotted path,
+     * honoring Helm-style list indices in each segment (e.g. {@code ingress.hosts[0]}).
+     *
+     * <p>This used to do a naive {@code split(".")} which treated
+     * {@code ingress.hosts[0]} as a literal map key {@code hosts[0]} and returned
+     * null — same family of bug as HelmService.insertNested and bindings.ts'
+     * pathToParts before they were fixed. Kept aligned with those.
+     */
     private Object getByPath(Map<String, Object> root, String path) {
         if (root == null || path == null || path.isBlank()) return null;
         String[] parts = path.split("\\.");
         Object current = root;
         for (String p : parts) {
-            if (!(current instanceof Map)) return null;
-            current = ((Map<String, Object>) current).get(p);
             if (current == null) return null;
+            java.util.regex.Matcher m = PATH_LIST_SEG.matcher(p);
+            if (!m.matches()) return null;
+            String key = m.group("key");
+            String idxStr = m.group("idx");
+            if (!(current instanceof Map)) return null;
+            current = ((Map<String, Object>) current).get(key);
+            if (idxStr != null) {
+                int idx = Integer.parseInt(idxStr);
+                if (!(current instanceof List)) return null;
+                List<Object> list = (List<Object>) current;
+                if (idx < 0 || idx >= list.size()) return null;
+                current = list.get(idx);
+            }
         }
         return current;
     }
