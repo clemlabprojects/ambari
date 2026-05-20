@@ -1,0 +1,390 @@
+{
+  "label": "JupyterHub",
+  "description": "Multi-user JupyterHub on Kubernetes (Z2JH). Spawns a per-user JupyterLab pod on login. SSO via Keycloak (OIDC). Single-user image is the Clemlab wrap of jupyter/datascience-notebook with Trino + PySpark preinstalled and the company CAs in the trust store.",
+  "chart": "jupyterhub",
+  "version": "4.3.5",
+  "defaultRepo": "clemlab",
+  "secretName": "registry-credentials",
+  "pattern": "jupyter-.*",
+  "dynamicValues": [
+    "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/auth]:hub.config.GenericOAuthenticator.authorize_url",
+    "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/token]:hub.config.GenericOAuthenticator.token_url",
+    "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/userinfo]:hub.config.GenericOAuthenticator.userdata_url",
+    "AMBARI_KERBEROS_REALM:singleuser.extraContainers[0].env[2].value"
+  ],
+  "kerberos": [
+    {
+      "_description": "Single service principal jupyterhub/<release>@REALM used by the krb-renewer sidecar for S4U2Self impersonation. Provisioned by the C1 constrained-delegation FreeIPA setup (~/ansible-role-freeipa, tasks/jupyterhub_delegation.yml). The KEYTAB ONLY ever lives in the renewer sidecar — the notebook container reads the resulting ccache from a shared emptyDir, never the keytab. If you change kerberosPrincipalName in the form, also update jupyterhub_principal_name in the ansible role and edit serviceName below + rebuild the jar.",
+      "key": "service",
+      "serviceName": "jupyterhub",
+      "principalTemplate": "{{service}}/{{releaseName}}@{{realm}}",
+      "secretNameTemplate": "{{releaseName}}-jupyterhub-keytab",
+      "keyNameInSecret": "jupyterhub.keytab",
+      "mountPath": "/etc/security/keytabs"
+    }
+  ],
+  "oidc": [
+    {
+      "key": "jupyterhub",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "https://{{jupyterHost}}/hub/oauth_callback",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
+  ],
+  "form": [
+    {
+      "name": "releaseName",
+      "label": "Release Name",
+      "type": "string",
+      "required": true,
+      "defaultValue": "jupyterhub",
+      "help": "Helm release name. Used as the prefix for every resource the chart creates and as the OIDC client id."
+    },
+    {
+      "name": "namespace",
+      "label": "Namespace",
+      "type": "string",
+      "required": true,
+      "defaultValue": "jupyterhub",
+      "help": "Kubernetes namespace to install JupyterHub into. Created if it doesn't exist."
+    },
+    {
+      "name": "jupyterHost",
+      "label": "Hostname",
+      "type": "string",
+      "required": true,
+      "excludeFromValues": true,
+      "placeholder": "jupyter.dev21.hadoop.clemlab.com",
+      "help": "Fully-qualified hostname exposed on the Ingress. JupyterHub will be reachable at https://<this-host>. Must resolve to the ingress controller's external IP."
+    },
+    {
+      "name": "jupyterTlsClusterIssuer",
+      "label": "Ingress TLS ClusterIssuer (cert-manager)",
+      "type": "cluster-issuer-discovery",
+      "excludeFromValues": true,
+      "help": "Pick a cert-manager ClusterIssuer. When set the chart's Ingress gets the cert-manager.io/cluster-issuer annotation so cert-manager auto-issues a Certificate and populates spec.tls[]. Required for HTTPS to work end-to-end."
+    },
+    {
+      "name": "hubAdminUsers",
+      "label": "Admin users (comma-separated)",
+      "type": "string",
+      "excludeFromValues": true,
+      "placeholder": "alice,bob",
+      "help": "Comma-separated Keycloak usernames that should have JupyterHub admin rights (manage user list, stop other users' servers, view all activity). Empty = no admins beyond what Keycloak claims include."
+    },
+    {
+      "name": "singleuserConfig",
+      "label": "Per-user server",
+      "type": "group",
+      "fields": [
+        {
+          "name": "singleuser.image.name",
+          "label": "Single-user image",
+          "type": "string",
+          "defaultValue": "registry.clemlab.com/clemlabprojects/jupyterhub/singleuser",
+          "help": "Container image users get when they spawn a notebook. Default is the Clemlab wrap (datascience-notebook + Trino + PySpark + Clemlab CA in trust store). Replace with your own image to add libs."
+        },
+        {
+          "name": "hub.image.name",
+          "label": "Hub image",
+          "type": "string",
+          "defaultValue": "registry.clemlab.com/clemlabprojects/jupyterhub/hub",
+          "help": "JupyterHub hub container image. Default is the Clemlab wrap of quay.io/jupyterhub/k8s-hub that downgrades the cryptography Python package from the upstream's broken 48.0.0 (SIGILLs on armv8) to a known-good 45.x and adds the company CA bundle to the trust store. Override only if you've built your own."
+        },
+        {
+          "name": "hub.image.tag",
+          "label": "Hub image tag",
+          "type": "string",
+          "defaultValue": "1.0.0"
+        },
+        {
+          "name": "singleuser.image.tag",
+          "label": "Single-user image tag",
+          "type": "string",
+          "defaultValue": "1.0.0",
+          "help": "Tag of the single-user image. Bump this whenever you rebuild the Dockerfile (clemlab-internal CA refresh, new pinned libs)."
+        },
+        {
+          "name": "singleuser.storage.capacity",
+          "label": "Per-user PVC size",
+          "type": "string",
+          "defaultValue": "10Gi",
+          "help": "PVC size attached to each user's home directory ($HOME = /home/jovyan). The chart creates one PVC per user on first login; storage class is the cluster default unless overridden below."
+        },
+        {
+          "name": "singleuser.storage.dynamic.storageClass",
+          "label": "Storage class (optional)",
+          "type": "string",
+          "placeholder": "(cluster default)",
+          "help": "Override the storage class for per-user PVCs. Leave blank to use the cluster's default class."
+        },
+        {
+          "name": "singleuser.memory.limit",
+          "label": "Memory limit per user",
+          "type": "string",
+          "defaultValue": "4G",
+          "help": "K8s memory limit for each user's notebook pod. Set higher (8G+) if users will run PySpark workloads locally."
+        },
+        {
+          "name": "singleuser.cpu.limit",
+          "label": "CPU limit per user",
+          "type": "number",
+          "defaultValue": 2,
+          "help": "CPU limit (cores) for each user's pod."
+        }
+      ]
+    },
+    {
+      "name": "hubInfra",
+      "label": "Hub infrastructure (advanced)",
+      "type": "group",
+      "collapsed": true,
+      "fields": [
+        {
+          "name": "hub.db.pvc.storage",
+          "label": "Hub DB PVC size",
+          "type": "string",
+          "defaultValue": "1Gi",
+          "help": "PVC for the SQLite-backed JupyterHub user/state database. Tiny; rarely needs changing."
+        },
+        {
+          "name": "proxy.chp.networkPolicy.enabled",
+          "label": "Enable proxy NetworkPolicy",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Whether the chart installs NetworkPolicies isolating hub/proxy/user pods."
+        }
+      ]
+    },
+    {
+      "name": "hadoopIntegration",
+      "label": "Hadoop integration (Kerberos S4U2Self)",
+      "type": "group",
+      "collapsed": true,
+      "fields": [
+        {
+          "name": "kerberosPrincipalName",
+          "label": "JupyterHub service principal name",
+          "type": "string",
+          "defaultValue": "jupyterhub",
+          "excludeFromValues": true,
+          "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<releaseName>@<realm>' (e.g. 'jupyterhub/jupyterhub@DEV21.HADOOP.CLEMLAB.COM'). MUST match jupyterhub_principal_name in the FreeIPA ansible role (~/ansible-role-freeipa/defaults/main.yml), and serviceName in the 'kerberos' section of this service.json. The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services."
+        },
+        {
+          "name": "krb5ConfConfigMap",
+          "label": "krb5.conf ConfigMap name",
+          "type": "string",
+          "defaultValue": "krb5-conf",
+          "excludeFromValues": true,
+          "help": "Name of a pre-existing ConfigMap in this namespace whose 'krb5.conf' key holds the cluster's Kerberos config. Mounted at /etc/krb5.conf in both the krb-renewer sidecar and the singleuser notebook container so they share KDC + realm config. Operator-provisioned (same model as the truststore secret used by the hub for the Clemlab CA)."
+        }
+      ]
+    }
+  ],
+  "variables": [
+    { "name": "releaseName",             "from": { "type": "form", "field": "releaseName" } },
+    { "name": "namespace",               "from": { "type": "form", "field": "namespace" } },
+    {
+      "_description": "Read jupyterHost straight from the form field. buildVarContext runs BEFORE bindings, so reading the binding's output (ingress.hosts[0]) returns empty. excludeFromValues on the form field only strips from the final chart values; the form state still carries the user's typed hostname, which is what we want here.",
+      "name": "jupyterHost",             "from": { "type": "form", "field": "jupyterHost" }
+    },
+    { "name": "jupyterTlsClusterIssuer", "from": { "type": "form", "field": "jupyterTlsClusterIssuer" } },
+    { "name": "hubAdminUsersCsv",        "from": { "type": "form", "field": "hubAdminUsers" } },
+    { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } },
+    { "name": "krb5ConfConfigMap",       "from": { "type": "form", "field": "krb5ConfConfigMap" } }
+  ],
+  "bindings": [
+    {
+      "name": "authenticator",
+      "_description": "Tell JupyterHub to use the upstream GenericOAuthenticator (a generic OIDC) and enable admin_access so the wizard-provisioned admin can override individual user spawn behaviour.",
+      "targets": [
+        { "path": "hub.config.JupyterHub.authenticator_class", "from": { "type": "template", "template": "generic-oauth" } },
+        { "path": "hub.config.JupyterHub.admin_access",        "from": { "type": "template", "template": "true" } }
+      ]
+    },
+    {
+      "name": "oidc-static-config",
+      "_description": "Static-known OIDC config: callback URL (matches what the wizard registered with Keycloak), scopes, claim used as the Hub username. issuer/token/userdata URLs are filled in by the AMBARI_OIDC_ISSUER_URL dynamicValues directive at deploy time.",
+      "targets": [
+        { "path": "hub.config.GenericOAuthenticator.oauth_callback_url", "from": { "type": "template", "template": "https://${jupyterHost}/hub/oauth_callback" } },
+        { "path": "hub.config.GenericOAuthenticator.login_service",      "from": { "type": "template", "template": "Keycloak" } },
+        { "path": "hub.config.GenericOAuthenticator.username_claim",     "from": { "type": "template", "template": "preferred_username" } },
+        { "path": "hub.config.GenericOAuthenticator.scope[0]",           "from": { "type": "template", "template": "openid" } },
+        { "path": "hub.config.GenericOAuthenticator.scope[1]",           "from": { "type": "template", "template": "email" } },
+        { "path": "hub.config.GenericOAuthenticator.scope[2]",           "from": { "type": "template", "template": "profile" } }
+      ]
+    },
+    {
+      "name": "oidc-credentials-from-secret",
+      "_description": "Pull client_id + client_secret out of the wizard-created OIDC Secret '<releaseName>-oidc-client' as env vars, then bind them to the GenericOAuthenticator config in hub.extraConfig. We do this via env instead of plain hub.config because we'd otherwise have to put the secret in plaintext in the rendered values.yaml.",
+      "targets": [
+        { "path": "hub.extraEnv[0].name",  "from": { "type": "template", "template": "OAUTH_CLIENT_ID" } },
+        { "path": "hub.extraEnv[0].valueFrom.secretKeyRef.name", "from": { "type": "template", "template": "${releaseName}-oidc-client" } },
+        { "path": "hub.extraEnv[0].valueFrom.secretKeyRef.key",  "from": { "type": "template", "template": "client_id" } },
+        { "path": "hub.extraEnv[1].name",  "from": { "type": "template", "template": "OAUTH_CLIENT_SECRET" } },
+        { "path": "hub.extraEnv[1].valueFrom.secretKeyRef.name", "from": { "type": "template", "template": "${releaseName}-oidc-client" } },
+        { "path": "hub.extraEnv[1].valueFrom.secretKeyRef.key",  "from": { "type": "template", "template": "client_secret" } },
+        {
+          "path": "hub.extraConfig.10-clemlab-oauth",
+          "_description": "Python snippet evaluated by the Hub at startup. Bridges the env vars (set above) into the OAuthenticator traitlets. Z2JH's extraConfig is the supported escape hatch for runtime-only config.",
+          "from": { "type": "template", "template": "import os\nc.GenericOAuthenticator.client_id = os.environ['OAUTH_CLIENT_ID']\nc.GenericOAuthenticator.client_secret = os.environ['OAUTH_CLIENT_SECRET']\n" }
+        }
+      ]
+    },
+    {
+      "name": "hub-trust-clemlab-ca",
+      "_description": "Mount the merged <release>-truststore Secret's ca.crt into the hub pod and point Python's requests/urllib at it. The Hub itself is upstream Z2JH (not our wrap) and so doesn't trust Clemlab Internal CA by default — without this the Hub fails the OIDC discovery / token / JWKS calls to Keycloak when those endpoints use the company CA.",
+      "targets": [
+        { "path": "hub.extraVolumes[0].name",                     "from": { "type": "template", "template": "clemlab-ca" } },
+        { "path": "hub.extraVolumes[0].secret.secretName",        "from": { "type": "template", "template": "${releaseName}-truststore" } },
+        { "path": "hub.extraVolumes[0].secret.items[0].key",      "from": { "type": "template", "template": "ca.crt" } },
+        { "path": "hub.extraVolumes[0].secret.items[0].path",     "from": { "type": "template", "template": "ca.crt" } },
+        { "path": "hub.extraVolumeMounts[0].name",                "from": { "type": "template", "template": "clemlab-ca" } },
+        { "path": "hub.extraVolumeMounts[0].mountPath",           "from": { "type": "template", "template": "/etc/ssl/clemlab" } },
+        { "path": "hub.extraVolumeMounts[0].readOnly",            "from": { "type": "template", "template": "true" } },
+        { "path": "hub.extraEnv[2].name",                         "from": { "type": "template", "template": "REQUESTS_CA_BUNDLE" } },
+        { "path": "hub.extraEnv[2].value",                        "from": { "type": "template", "template": "/etc/ssl/clemlab/ca.crt" } },
+        { "path": "hub.extraEnv[3].name",                         "from": { "type": "template", "template": "SSL_CERT_FILE" } },
+        { "path": "hub.extraEnv[3].value",                        "from": { "type": "template", "template": "/etc/ssl/clemlab/ca.crt" } },
+        { "path": "hub.extraEnv[4].name",                         "from": { "type": "template", "template": "CURL_CA_BUNDLE" } },
+        { "path": "hub.extraEnv[4].value",                        "from": { "type": "template", "template": "/etc/ssl/clemlab/ca.crt" } }
+      ]
+    },
+    {
+      "name": "admin-users",
+      "_description": "Pass comma-separated admins from the form to JupyterHub. Skipped silently when the field is empty.",
+      "targets": [
+        {
+          "path": "hub.extraConfig.20-clemlab-admins",
+          "skipIfVarEmpty": "hubAdminUsersCsv",
+          "from": { "type": "template", "template": "c.Authenticator.admin_users = { u.strip() for u in '${hubAdminUsersCsv}'.split(',') if u.strip() }\n" }
+        }
+      ]
+    },
+    {
+      "name": "disable-cloud-metadata-block",
+      "_description": "Z2JH ships singleuser.cloudMetadata.blockWithIptables=true by default — a network-tools init container that runs iptables rules blocking the user pod from reaching the cloud provider metadata IP 169.254.169.254. On on-prem / bare-metal clusters (Vagrant, etc.) there is no metadata server and the init container's iptables call often fails (CRI-O / lockdown / missing NET_ADMIN), putting the user pod into CrashLoopBackOff before the notebook starts. Always disable on KDPS clusters.",
+      "targets": [
+        { "path": "singleuser.cloudMetadata.blockWithIptables", "from": { "type": "template", "template": "false" } }
+      ]
+    },
+    {
+      "name": "krb-renewer-sidecar",
+      "_description": "Inject the krb-renewer sidecar into every spawned user pod. The sidecar (1) holds the jupyterhub service keytab as a Secret-mounted file (NOT exposed to the notebook container), (2) does S4U2Self every RENEW_INTERVAL_SEC to mint an impersonated TGT for the OIDC-authenticated user identified by the hub.jupyter.org/username pod label, (3) writes the resulting ccache to a tmpfs-backed emptyDir shared with the notebook. env[2].value=REALM is left empty here and populated server-side by the AMBARI_KERBEROS_REALM dynamicValues directive (see top of file). env[3] uses fieldRef on the pod label KubeSpawner sets at spawn time — the renewer never needs the hub to push the user identity in a separate channel.",
+      "targets": [
+        { "path": "singleuser.extraContainers[0].name",       "from": { "type": "template", "template": "krb-renewer" } },
+        { "path": "singleuser.extraContainers[0].image",      "from": { "type": "template", "template": "registry.clemlab.com/clemlabprojects/jupyterhub/krb-renewer:1.0.0" } },
+        { "path": "singleuser.extraContainers[0].imagePullPolicy", "from": { "type": "template", "template": "IfNotPresent" } },
+        { "path": "singleuser.extraContainers[0].env[0].name",  "from": { "type": "template", "template": "PRINCIPAL_NAME" } },
+        { "path": "singleuser.extraContainers[0].env[0].value", "from": { "type": "template", "template": "${kerberosPrincipalName}" } },
+        { "path": "singleuser.extraContainers[0].env[1].name",  "from": { "type": "template", "template": "SERVICE_HOST" } },
+        { "path": "singleuser.extraContainers[0].env[1].value", "from": { "type": "template", "template": "${releaseName}" } },
+        { "path": "singleuser.extraContainers[0].env[2].name",  "from": { "type": "template", "template": "REALM" } },
+        { "path": "singleuser.extraContainers[0].env[2].value", "from": { "type": "template", "template": "" } },
+        { "path": "singleuser.extraContainers[0].env[3].name",  "from": { "type": "template", "template": "TARGET_USER" } },
+        { "path": "singleuser.extraContainers[0].env[3].valueFrom.fieldRef.fieldPath", "from": { "type": "template", "template": "metadata.labels['hub.jupyter.org/username']" } },
+        { "path": "singleuser.extraContainers[0].env[4].name",  "from": { "type": "template", "template": "SERVICE_PRINCIPAL" } },
+        { "path": "singleuser.extraContainers[0].env[4].value", "from": { "type": "template", "template": "${kerberosPrincipalName}/${releaseName}" } },
+        { "path": "singleuser.extraContainers[0].env[5].name",  "from": { "type": "template", "template": "RENEW_INTERVAL_SEC" } },
+        { "path": "singleuser.extraContainers[0].env[5].value", "from": { "type": "template", "template": "1800" } },
+        { "path": "singleuser.extraContainers[0].securityContext.runAsUser",     "from": { "type": "template", "template": "0" } },
+        { "path": "singleuser.extraContainers[0].securityContext.runAsNonRoot",  "from": { "type": "template", "template": "false" } },
+        { "path": "singleuser.extraContainers[0].securityContext.readOnlyRootFilesystem", "from": { "type": "template", "template": "true" } },
+        { "path": "singleuser.extraContainers[0].securityContext.allowPrivilegeEscalation", "from": { "type": "template", "template": "false" } },
+        { "path": "singleuser.extraContainers[0].securityContext.capabilities.drop[0]",   "from": { "type": "template", "template": "ALL" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[0].name",       "from": { "type": "template", "template": "jupyterhub-keytab" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[0].mountPath",  "from": { "type": "template", "template": "/etc/security/keytabs" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[0].readOnly",   "from": { "type": "template", "template": "true" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[1].name",       "from": { "type": "template", "template": "krb-cc" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[1].mountPath",  "from": { "type": "template", "template": "/krb" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[2].name",       "from": { "type": "template", "template": "krb5-conf" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[2].mountPath",  "from": { "type": "template", "template": "/etc/krb5.conf" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[2].subPath",    "from": { "type": "template", "template": "krb5.conf" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[2].readOnly",   "from": { "type": "template", "template": "true" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[3].name",       "from": { "type": "template", "template": "tmp" } },
+        { "path": "singleuser.extraContainers[0].volumeMounts[3].mountPath",  "from": { "type": "template", "template": "/tmp" } }
+      ]
+    },
+    {
+      "name": "krb-cc-to-notebook",
+      "_description": "Mount the shared ccache emptyDir AND the krb5.conf ConfigMap into the singleuser notebook container, and export KRB5CCNAME so Hadoop client libraries (hdfs CLI, PyHive, impyla, PySpark) automatically use the impersonated ticket. The notebook container does NOT mount the keytab — only the renewer sidecar has it. HADOOP_USER_NAME is unset so Kerberos auth stays authoritative; otherwise the env var would override the Kerberos principal and undo the whole impersonation flow.",
+      "targets": [
+        { "path": "singleuser.storage.extraVolumeMounts[0].name",      "from": { "type": "template", "template": "krb-cc" } },
+        { "path": "singleuser.storage.extraVolumeMounts[0].mountPath", "from": { "type": "template", "template": "/krb" } },
+        { "path": "singleuser.storage.extraVolumeMounts[0].readOnly",  "from": { "type": "template", "template": "true" } },
+        { "path": "singleuser.storage.extraVolumeMounts[1].name",      "from": { "type": "template", "template": "krb5-conf" } },
+        { "path": "singleuser.storage.extraVolumeMounts[1].mountPath", "from": { "type": "template", "template": "/etc/krb5.conf" } },
+        { "path": "singleuser.storage.extraVolumeMounts[1].subPath",   "from": { "type": "template", "template": "krb5.conf" } },
+        { "path": "singleuser.storage.extraVolumeMounts[1].readOnly",  "from": { "type": "template", "template": "true" } },
+        { "path": "singleuser.extraEnv.KRB5CCNAME",                    "from": { "type": "template", "template": "FILE:/krb/cc" } }
+      ]
+    },
+    {
+      "name": "krb-pod-volumes",
+      "_description": "Declare the three pod-level volumes the renewer sidecar + notebook share: (1) jupyterhub-keytab Secret (the pre-provisioned service keytab from kerberos[0].secretNameTemplate, mounted only into the renewer), (2) krb-cc emptyDir on tmpfs (Memory medium = no disk persistence; ccache only lives as long as the pod), (3) krb5-conf ConfigMap (operator-provisioned, name from form field krb5ConfConfigMap). tmp emptyDir is needed because the renewer container has readOnlyRootFilesystem=true.",
+      "targets": [
+        { "path": "singleuser.storage.extraVolumes[0].name",                       "from": { "type": "template", "template": "jupyterhub-keytab" } },
+        { "path": "singleuser.storage.extraVolumes[0].secret.secretName",          "from": { "type": "template", "template": "${releaseName}-jupyterhub-keytab" } },
+        { "path": "singleuser.storage.extraVolumes[0].secret.defaultMode",         "from": { "type": "template", "template": "256" } },
+        { "path": "singleuser.storage.extraVolumes[1].name",                       "from": { "type": "template", "template": "krb-cc" } },
+        { "path": "singleuser.storage.extraVolumes[1].emptyDir.medium",            "from": { "type": "template", "template": "Memory" } },
+        { "path": "singleuser.storage.extraVolumes[1].emptyDir.sizeLimit",         "from": { "type": "template", "template": "16Mi" } },
+        { "path": "singleuser.storage.extraVolumes[2].name",                       "from": { "type": "template", "template": "krb5-conf" } },
+        { "path": "singleuser.storage.extraVolumes[2].configMap.name",             "from": { "type": "template", "template": "${krb5ConfConfigMap}" } },
+        { "path": "singleuser.storage.extraVolumes[3].name",                       "from": { "type": "template", "template": "tmp" } },
+        { "path": "singleuser.storage.extraVolumes[3].emptyDir.medium",            "from": { "type": "template", "template": "Memory" } },
+        { "path": "singleuser.storage.extraVolumes[3].emptyDir.sizeLimit",         "from": { "type": "template", "template": "8Mi" } }
+      ]
+    },
+    {
+      "name": "image-pull-secrets",
+      "_description": "Z2JH's chart-managed images live on the public quay.io (hub, proxy, image-puller) AND the singleuser image lives on the private registry.clemlab.com. The chart distinguishes per-image pullSecrets — set them on all of them so the image-puller DaemonSet (which pre-pulls singleuser to every node) doesn't ImagePullBackOff. The Secret name matches the catalog-level secretName the view auto-provisions in the install namespace.",
+      "targets": [
+        { "path": "singleuser.image.pullSecrets[0]",                "from": { "type": "template", "template": "registry-credentials" } },
+        { "path": "hub.image.pullSecrets[0]",                       "from": { "type": "template", "template": "registry-credentials" } },
+        { "path": "proxy.chp.image.pullSecrets[0]",                 "from": { "type": "template", "template": "registry-credentials" } },
+        { "path": "prePuller.hook.image.pullSecrets[0]",            "from": { "type": "template", "template": "registry-credentials" } },
+        { "path": "scheduling.userScheduler.image.pullSecrets[0]",  "from": { "type": "template", "template": "registry-credentials" } },
+        { "path": "scheduling.userPlaceholder.image.pullSecrets[0]", "from": { "type": "template", "template": "registry-credentials" } }
+      ]
+    },
+    {
+      "name": "ingress",
+      "_description": "Enable the chart's Ingress, set the host from the form, and wire cert-manager via the ClusterIssuer annotation when the user picked one. The chart's templates fill spec.tls[] automatically when both ingress.tls and the cert-manager annotation are set. service-upstream tells nginx-ingress to use the proxy-public Service ClusterIP as its upstream instead of dialing pod IPs directly — needed on clusters where the CNI's pod-to-pod overlay is flaky between specific source/target pairs (e.g. weave-net on master21), which would otherwise produce 504s only for the in-cluster nginx controller path.",
+      "targets": [
+        { "path": "ingress.enabled",                                                                            "from": { "type": "template", "template": "true" } },
+        { "path": "ingress.ingressClassName",                                                                   "from": { "type": "template", "template": "nginx" } },
+        { "path": "ingress.hosts[0]",                                                                           "from": { "type": "template", "template": "${jupyterHost}" } },
+        { "path": "ingress.tls[0].secretName",                                                                  "from": { "type": "template", "template": "${releaseName}-ingress-tls" } },
+        { "path": "ingress.tls[0].hosts[0]",                                                                    "from": { "type": "template", "template": "${jupyterHost}" } },
+        { "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/force-ssl-redirect",                    "from": { "type": "template", "template": "\"true\"" } },
+        { "path": "ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/service-upstream",                      "from": { "type": "template", "template": "\"true\"" } },
+        { "path": "ingress.annotations.cert-manager\\.io/cluster-issuer",
+          "skipIfVarEmpty": "jupyterTlsClusterIssuer",
+          "from": { "type": "template", "template": "${jupyterTlsClusterIssuer}" } }
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "ui",
+      "label": "JupyterHub Web UI",
+      "type": "template",
+      "template": "https://{{host}}",
+      "properties": {
+        "host": { "source": "helm", "type": "string", "path": "ingress.hosts[0]" }
+      }
+    }
+  ],
+  "requiredChartVersion": ">=4.3.0",
+  "securityCoupling": {
+    "requireIngress": true,
+    "requireTls": true,
+    "minTlsMode": "signedByClusterIssuer",
+    "tlsProvisioning": "chart-managed"
+  },
+  "valueAliases": {}
+}

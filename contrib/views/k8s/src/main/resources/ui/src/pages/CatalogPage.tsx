@@ -160,7 +160,7 @@ const CatalogPage: React.FC = () => {
                   size="small"
                   hoverable
                   onClick={() => navigate(`/services/${name}`)}
-                  className="catalog-card"
+                  className="kdps-catalog-card"
                   style={{ width: '100%' }}
                   styles={{ body: { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 220 } }}
                   title={

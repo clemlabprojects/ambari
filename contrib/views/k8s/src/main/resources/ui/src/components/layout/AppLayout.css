@@ -240,13 +240,16 @@
   padding-bottom: 56px;
 }
 
-.catalog-card {
+/* Scoped to the new /catalog page only. The legacy install-picker modal in
+   HelmReleasesPage uses its own .catalog-card class with row-flex semantics
+   (icon left, text right); naming this kdps- avoids stomping on it. */
+.kdps-catalog-card {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.catalog-card .ant-card-head-title {
+.kdps-catalog-card .ant-card-head-title {
   padding: 6px 0;
 }
 
