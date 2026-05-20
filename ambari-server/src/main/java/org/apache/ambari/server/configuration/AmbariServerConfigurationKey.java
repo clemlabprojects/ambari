@@ -140,6 +140,20 @@ public enum AmbariServerConfigurationKey {
   SSO_OIDC_ADMIN_GROUPS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.admin.groups", PLAINTEXT, "", "Comma-separated list of group names.  At login, the JIT provider: (1) ensures each group exists with GroupType.JWT, (2) ensures AMBARI.ADMINISTRATOR is granted to the group (idempotent — re-asserted on every login as a security guarantee, so manual revocation requires removing the group name from this property), (3) normal group sync joins members in via the JWT 'groups' claim.  Users inherit admin transitively; revocation in Keycloak (via membership removal) propagates on next login.", false),
   SSO_OIDC_ALLOWED_GROUPS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.oidc.allowed.groups", PLAINTEXT, "", "Comma-separated list of group names.  When NON-EMPTY, login is rejected unless either: (a) the JWT subject is listed in ambari.sso.oidc.admin.users, OR (b) the JWT 'groups' claim intersects this list or ambari.sso.oidc.admin.groups (admin groups are implicitly allowed).  Closes the 'any authenticated OIDC user can log in' risk.  When EMPTY (default), all OIDC users are allowed in (legacy behavior).  Local-password users bypass this gate — they authenticate through AmbariLocalAuthenticationProvider, not JwtAuthenticationProvider.", false),
 
+  /* --- AMBARI-433: server-issued session JWT (decouples Ambari UI session from OIDC access-token TTL) ---
+   * After a successful OIDC handshake, OidcCallbackFilter mints a *new* HS256 JWT signed by
+   * Ambari itself and writes it as the hadoop-jwt cookie.  Subsequent requests are authenticated
+   * by verifying that HS256 token, not by re-validating the Keycloak access token.  This lets
+   * the UI session live for hours (configurable via sessionTokenLifespanSeconds) while Keycloak's
+   * access-token lifespan remains short (5 min) for service-to-service flows.
+   *
+   * The pre-AMBARI-433 behavior (storing the Keycloak access token directly in the cookie)
+   * meant the UI session died whenever the access token expired, forcing users back through
+   * Keycloak every 5 minutes.  These properties control the new server-issued cookie.
+   */
+  SSO_SESSION_TOKEN_LIFESPAN_SECONDS(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.session.token.lifespan.seconds", PLAINTEXT, "28800", "Lifespan (in seconds) of the Ambari-signed session JWT minted after a successful OIDC handshake.  Default 28800 = 8 hours.  Independent of the Keycloak access-token TTL; bump this to extend the UI session without weakening OIDC token security.  Effective max-age of the hadoop-jwt cookie equals this value.", false),
+  SSO_SESSION_SIGNING_KEY(AmbariServerConfigurationCategory.SSO_CONFIGURATION, "ambari.sso.session.signing.key", PASSWORD, "", "Optional explicit HMAC-SHA256 signing key for session JWTs (any string >=32 chars).  When empty (default), the key is derived from ambari.sso.oidc.clientSecret using HKDF — adequate for single-node Ambari deployments since the client secret is already a server-side secret.  Set explicitly when running multi-node Ambari (all nodes MUST share the same key) or when you want session-token revocation independent of the OIDC client secret rotation.", false),
+
   /* ********************************************************
    * Trusted Proxy Configuration Keys
    * ******************************************************** */

@@ -51,6 +51,10 @@ import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jwt.SignedJWT;
+
+import java.text.ParseException;
 
 /**
  * OidcCallbackFilter implements the server-side OIDC authorization-code flow for Ambari JWT SSO.
@@ -256,8 +260,15 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
 
   /**
    * Handles the Keycloak authorization callback: validates the {@code state} HMAC, exchanges
-   * the authorization code for a JWT, writes the token as an {@code HttpOnly} cookie, and
-   * redirects the browser to the original URL.
+   * the authorization code for a Keycloak access token, extracts the user identity from that
+   * token, mints a fresh Ambari-signed session JWT, writes it as an {@code HttpOnly} cookie,
+   * and redirects the browser to the original URL.
+   *
+   * <p>AMBARI-433: The Keycloak access token is used <em>only</em> to prove identity at
+   * login.  It is not stored in the cookie (that was the pre-AMBARI-433 behavior that caused
+   * the 5-minute Keycloak bounce loop).  The cookie value is an HS256-signed Ambari token
+   * with the configurable session lifespan ({@code ambari.sso.session.token.lifespan.seconds},
+   * default 8 h).
    *
    * @param request  the callback request carrying {@code code} and {@code state}
    * @param response the response to write the cookie and redirect into
@@ -294,12 +305,125 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
       return;
     }
 
-    writeJwtCookie(response, props.getCookieName(), tokenResponse.accessToken,
-        tokenResponse.expiresIn);
+    // AMBARI-433: parse the upstream Keycloak access token once so we can both (a) extract
+    // identity and (b) forward operator-relevant claims (groups, custom username claim) into
+    // our session token.  The access token itself is NEVER stored or returned to the browser.
+    SignedJWT upstreamAccessToken;
+    try {
+      upstreamAccessToken = SignedJWT.parse(tokenResponse.accessToken);
+    } catch (ParseException e) {
+      LOG.warn("Keycloak access token is not a parseable JWT: {}", e.getMessage());
+      response.sendError(HttpServletResponse.SC_BAD_GATEWAY, "Malformed access token");
+      return;
+    }
+
+    String username;
+    try {
+      username = AmbariSessionTokenService.resolveUsername(upstreamAccessToken, props);
+    } catch (ParseException e) {
+      LOG.warn("Keycloak access token claim set is malformed: {}", e.getMessage());
+      response.sendError(HttpServletResponse.SC_BAD_GATEWAY, "Malformed access token claims");
+      return;
+    }
+    if (StringUtils.isEmpty(username)) {
+      String configuredClaim = props.getJwtUsernameClaim();
+      LOG.warn("Keycloak access token did not yield a username "
+              + "(configured claim '{}' missing, no preferred_username, no sub)",
+          StringUtils.isEmpty(configuredClaim) ? "<default fallback chain>" : configuredClaim);
+      response.sendError(HttpServletResponse.SC_BAD_GATEWAY, "Access token missing username claim");
+      return;
+    }
+
+    byte[] signingKey = AmbariSessionTokenService.resolveSigningKey(props);
+    if (signingKey == null) {
+      LOG.error("Cannot mint session token: no signing key available "
+          + "(neither ambari.sso.session.signing.key nor a usable oidc.clientSecret).");
+      response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Session-token signing key unavailable");
+      return;
+    }
+
+    // Build the set of claims we propagate into our session token.  Only forward what
+    // downstream code is documented to read — see AmbariJwtAuthenticationProvider:
+    //   * groups claim (ambari.sso.oidc.groups.claim) — drives the AMBARI-423 allowed-groups
+    //     gate AND the AMBARI-419 group-membership sync.  Without this the user's group
+    //     memberships go AWOL on every request and login is rejected as if they were in no
+    //     groups.
+    //   * username claim (ambari.sso.jwt.usernameClaim) — when set to a non-default value,
+    //     ensures resolveUsername(session-token) finds the username under that key.
+    java.util.Map<String, Object> additionalClaims = new java.util.LinkedHashMap<>();
+    String groupsClaim = (props.getOidcGroupsClaim() == null) ? "" : props.getOidcGroupsClaim().trim();
+    if (!groupsClaim.isEmpty()) {
+      try {
+        Object groupsValue = upstreamAccessToken.getJWTClaimsSet().getClaim(groupsClaim);
+        if (groupsValue != null) {
+          additionalClaims.put(groupsClaim, groupsValue);
+        }
+      } catch (ParseException e) {
+        LOG.warn("Failed to read groups claim '{}' from Keycloak access token: {}",
+            groupsClaim, e.getMessage());
+      }
+    }
+    String userClaim = (props.getJwtUsernameClaim() == null) ? "" : props.getJwtUsernameClaim().trim();
+    if (!userClaim.isEmpty() && !"sub".equals(userClaim) && !"preferred_username".equals(userClaim)) {
+      additionalClaims.put(userClaim, username);
+    }
+
+    long lifespanSeconds = props.getSessionTokenLifespanSeconds();
+    String sessionToken;
+    try {
+      sessionToken = AmbariSessionTokenService.mint(
+          username, lifespanSeconds, signingKey, additionalClaims);
+    } catch (JOSEException e) {
+      LOG.error("Failed to sign Ambari session JWT", e);
+      response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Session-token signing failed");
+      return;
+    }
+
+    // Cookie Max-Age tracks the JWT's own exp; the two MUST agree or the browser will keep
+    // sending a JWT the server has already rejected (or vice versa).
+    writeJwtCookie(response, props.getCookieName(), sessionToken, (int) Math.min(lifespanSeconds, Integer.MAX_VALUE));
 
     String redirectTarget = buildRedirectTarget(request, originalPath);
-    LOG.debug("OIDC callback succeeded; redirecting to {}", redirectTarget);
+    LOG.debug("OIDC callback succeeded for user {} (session ttl={}s); redirecting to {}",
+        username, lifespanSeconds, redirectTarget);
     response.sendRedirect(redirectTarget);
+  }
+
+  /**
+   * Extracts the username from the Keycloak access token, honoring the operator-configured
+   * {@code ambari.sso.jwt.usernameClaim} property via
+   * {@link AmbariSessionTokenService#resolveUsername(SignedJWT, JwtAuthenticationProperties)}.
+   *
+   * <p>This is a pure parse: it does NOT verify the token signature.  We trust the access token
+   * because it was just returned over TLS from a server-to-server POST to the Keycloak token
+   * endpoint authenticated with our client secret — there is no opportunity for tampering.
+   *
+   * <p>Resolution order (same as {@link AmbariJwtAuthenticationFilter}'s request-time path):
+   * <ol>
+   *   <li>If {@code ambari.sso.jwt.usernameClaim} is configured non-empty, use that claim
+   *       (no fallback — a misconfigured claim should surface as an obvious 502 rather
+   *       than silently mis-identifying the user).</li>
+   *   <li>Otherwise {@code preferred_username}, then {@code sub}.</li>
+   * </ol>
+   *
+   * @param accessTokenSerialized the raw JWT string from {@code access_token}
+   * @param props                 the JWT/OIDC properties (carries the username claim config)
+   * @return the resolved username, or {@code null} if the inspected claim(s) are absent
+   * @throws ParseException if {@code accessTokenSerialized} is not a parseable JWT
+   */
+  String extractUsernameFromAccessToken(String accessTokenSerialized,
+                                         JwtAuthenticationProperties props) throws ParseException {
+    SignedJWT jwt = SignedJWT.parse(accessTokenSerialized);
+    return AmbariSessionTokenService.resolveUsername(jwt, props);
+  }
+
+  /**
+   * Backwards-compatible single-arg overload kept for {@link OidcCallbackFilterTest}'s legacy
+   * cases (which exercise the default fallback chain).  Equivalent to
+   * {@code extractUsernameFromAccessToken(token, null)} — i.e. no configured custom claim.
+   */
+  String extractUsernameFromAccessToken(String accessTokenSerialized) throws ParseException {
+    return extractUsernameFromAccessToken(accessTokenSerialized, null);
   }
 
   // ── State token ───────────────────────────────────────────────────────────
@@ -405,8 +529,11 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
    * @return a {@link TokenResponse} containing the access token and its lifetime
    * @throws IOException if the token endpoint is unreachable or returns an error
    */
-  private TokenResponse exchangeCodeForToken(String code, String callbackUrl,
-                                              JwtAuthenticationProperties props) throws IOException {
+  // Package-private (rather than private) so tests in the same package can override the
+  // network call without spinning up a real Keycloak.  Production callers should always go
+  // through this single implementation.
+  TokenResponse exchangeCodeForToken(String code, String callbackUrl,
+                                      JwtAuthenticationProperties props) throws IOException {
     String tokenEndpoint = props.getOidcTokenEndpoint();
     String requestBody = "grant_type=authorization_code"
         + "&code="          + urlEncode(code)
@@ -698,8 +825,12 @@ public class OidcCallbackFilter implements AmbariAuthenticationFilter {
 
   // ── Inner types ───────────────────────────────────────────────────────────
 
-  /** Value object carrying the fields extracted from the Keycloak token endpoint response. */
-  private static final class TokenResponse {
+  /**
+   * Value object carrying the fields extracted from the Keycloak token endpoint response.
+   * Package-private so tests can construct one directly when overriding
+   * {@link #exchangeCodeForToken}.
+   */
+  static final class TokenResponse {
     final String accessToken;
     final int    expiresIn;
 

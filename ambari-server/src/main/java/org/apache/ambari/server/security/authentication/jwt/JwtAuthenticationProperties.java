@@ -42,6 +42,8 @@ import static org.apache.ambari.server.configuration.AmbariServerConfigurationKe
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_ORIGINAL_URL_PARAM_NAME;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_PROVIDER_URL;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_SESSION_SIGNING_KEY;
+import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_SESSION_TOKEN_LIFESPAN_SECONDS;
 
 import java.io.UnsupportedEncodingException;
 import java.security.cert.CertificateException;
@@ -168,6 +170,25 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
    */
   private List<String> oidcAllowedGroups = Collections.emptyList();
 
+  // ---------------------------------------------------------------------------
+  // AMBARI-433: server-issued session JWT (decouples UI session from OIDC token TTL)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Lifespan in seconds of the Ambari-signed session JWT minted after a successful OIDC
+   * handshake.  Default 8 hours.  Drives both the JWT {@code exp} claim and the cookie
+   * {@code Max-Age}.  Independent of the Keycloak access token's {@code expires_in}.
+   */
+  private long sessionTokenLifespanSeconds = 28_800L;
+
+  /**
+   * Optional explicit HMAC signing key for session JWTs.  When empty, the effective key is
+   * derived from {@link #oidcClientSecret} via HKDF (see {@code AmbariSessionTokenService}).
+   * Set to a long random secret when running multi-node Ambari or when you want session-token
+   * invalidation to be decoupled from the OIDC client secret rotation.
+   */
+  private String sessionSigningKey = "";
+
   JwtAuthenticationProperties(Map<String, String> configurationMap) {
     setEnabledForAmbari(Boolean.valueOf(getValue(SSO_AUTHENTICATION_ENABLED, configurationMap)));
     setAudiencesString(getValue(SSO_JWT_AUDIENCES, configurationMap));
@@ -198,6 +219,10 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setOidcAdminUsers(getValue(SSO_OIDC_ADMIN_USERS, configurationMap));
     setOidcAdminGroups(getValue(SSO_OIDC_ADMIN_GROUPS, configurationMap));
     setOidcAllowedGroups(getValue(SSO_OIDC_ALLOWED_GROUPS, configurationMap));
+
+    // AMBARI-433 server-issued session JWT.
+    setSessionTokenLifespanSeconds(getValue(SSO_SESSION_TOKEN_LIFESPAN_SECONDS, configurationMap));
+    setSessionSigningKey(getValue(SSO_SESSION_SIGNING_KEY, configurationMap));
   }
 
   public String getAuthenticationProviderUrl() {
@@ -537,6 +562,46 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
 
   public void setOidcAllowedGroups(String csv) {
     this.oidcAllowedGroups = parseCommaDelimited(csv);
+  }
+
+  // --- AMBARI-433: session-token getters / setters ---
+
+  public long getSessionTokenLifespanSeconds() {
+    return sessionTokenLifespanSeconds;
+  }
+
+  public void setSessionTokenLifespanSeconds(long sessionTokenLifespanSeconds) {
+    this.sessionTokenLifespanSeconds = sessionTokenLifespanSeconds;
+  }
+
+  /**
+   * Parses the property value, falling back to the default (8h) on any error.  Negative or
+   * zero values are coerced to the default — a session token with no expiry would be a
+   * security regression compared to the pre-AMBARI-433 5-minute behavior.
+   */
+  public void setSessionTokenLifespanSeconds(String raw) {
+    if (StringUtils.isEmpty(raw)) {
+      this.sessionTokenLifespanSeconds = 28_800L;
+      return;
+    }
+    try {
+      long parsed = Long.parseLong(raw.trim());
+      this.sessionTokenLifespanSeconds = (parsed > 0L) ? parsed : 28_800L;
+      if (parsed <= 0L) {
+        LOG.warn("ambari.sso.session.token.lifespan.seconds must be > 0; falling back to default 28800");
+      }
+    } catch (NumberFormatException e) {
+      LOG.warn("ambari.sso.session.token.lifespan.seconds is not a valid long ('{}'); falling back to default 28800", raw);
+      this.sessionTokenLifespanSeconds = 28_800L;
+    }
+  }
+
+  public String getSessionSigningKey() {
+    return sessionSigningKey;
+  }
+
+  public void setSessionSigningKey(String sessionSigningKey) {
+    this.sessionSigningKey = (sessionSigningKey == null) ? "" : sessionSigningKey;
   }
 
   /**

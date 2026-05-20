@@ -223,24 +223,12 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
 
   /**
    * Extracts the Ambari username from the JWT claims according to the configured
-   * {@code ambari.sso.jwt.usernameClaim} property.
-   *
-   * <ul>
-   *   <li>If {@code ambari.sso.jwt.usernameClaim} is set to a non-empty value, that claim is used
-   *       directly (e.g. {@code sub} for Knox SSO legacy behavior).</li>
-   *   <li>If the property is empty (the default), {@code preferred_username} is tried first and
-   *       {@code sub} is used as fallback — the correct behavior for Keycloak-issued tokens.</li>
-   * </ul>
+   * {@code ambari.sso.jwt.usernameClaim} property.  Delegates to
+   * {@link AmbariSessionTokenService#resolveUsername(SignedJWT, JwtAuthenticationProperties)}
+   * so this code path and the OIDC-callback code path stay in lock-step.
    */
   private String resolveUsername(SignedJWT jwtToken, JwtAuthenticationProperties props) throws ParseException {
-    String configuredClaim = (props == null) ? "" : props.getJwtUsernameClaim();
-    if (!StringUtils.isEmpty(configuredClaim)) {
-      return jwtToken.getJWTClaimsSet().getStringClaim(configuredClaim);
-    }
-    String preferredUsername = jwtToken.getJWTClaimsSet().getStringClaim("preferred_username");
-    return (preferredUsername != null && !preferredUsername.isEmpty())
-        ? preferredUsername
-        : jwtToken.getJWTClaimsSet().getSubject();
+    return AmbariSessionTokenService.resolveUsername(jwtToken, props);
   }
 
   /**
@@ -294,15 +282,40 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
   }
 
   /**
-   * This method provides a single method for validating the JWT for use in
-   * request processing. It provides for the override of specific aspects of
-   * this implementation through submethods used within but also allows for the
-   * override of the entire token validation algorithm.
+   * Validates a JWT pulled from the {@code hadoop-jwt} cookie.
+   *
+   * <p>Two issuer paths are supported:
+   * <ol>
+   *   <li><b>Ambari session JWT (AMBARI-433)</b> — HS256, issuer {@code "ambari"}.  These are
+   *       minted by {@link OidcCallbackFilter#handleOidcCallback} after a successful OIDC
+   *       handshake and back the browser session for the configured lifespan (default 8 h).
+   *       Verified via {@link AmbariSessionTokenService#verify}, which checks both HMAC
+   *       signature and {@code exp}.  Audience validation is intentionally skipped — these
+   *       tokens are server-internal, never crossing a trust boundary.</li>
+   *   <li><b>Upstream JWT (Knox SSO or legacy direct-Keycloak)</b> — RS256, issued by an
+   *       external identity provider.  Verified against the configured public key(s) via
+   *       {@link #validateSignature}, with audience and expiration checked separately.</li>
+   * </ol>
+   *
+   * <p>The branch is selected by {@link AmbariSessionTokenService#isAmbariSessionToken},
+   * which inspects the {@code iss} claim and {@code alg} header.  Mismatched issuer/alg
+   * combinations (e.g. an HS256 token claiming a different issuer) fall to the RSA path
+   * and will fail signature verification there — there is no algorithm-confusion path.
    *
    * @param jwtToken the token to validate
    * @return true if valid
    */
   private boolean validateToken(SignedJWT jwtToken) {
+    if (AmbariSessionTokenService.isAmbariSessionToken(jwtToken)) {
+      JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
+      byte[] signingKey = AmbariSessionTokenService.resolveSigningKey(jwtProperties);
+      if (signingKey == null) {
+        LOG.warn("Ambari session token presented but no signing key is configured");
+        return false;
+      }
+      return AmbariSessionTokenService.verify(jwtToken, signingKey);
+    }
+
     boolean sigValid = validateSignature(jwtToken);
     if (!sigValid) {
       LOG.warn("Signature could not be verified");

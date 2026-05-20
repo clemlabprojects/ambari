@@ -36,6 +36,11 @@ Ambari Single Sign-on Configuration
     - [Example](#implementation-details-stack-advisor-example)
 
 <a name="introduction"></a>
+> **Looking for the OIDC (Keycloak) integration?**  This document covers the
+> Knox-SSO path.  For the clemlab fork's direct-OIDC implementation (JIT user
+> provisioning, group-based admin grants, server-issued session JWT), see
+> [`oidc.md`](./oidc.md).
+
 ## Introduction
 
 Ambari has a feature to integrate with [Apache Knox](https://knox.apache.org/) to 

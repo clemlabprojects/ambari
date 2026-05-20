@@ -441,6 +441,260 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
   }
 
 
+  // ───────────────────────────────────────────────────────────────────────
+  // AMBARI-433: server-issued HS256 session token branch
+  // ───────────────────────────────────────────────────────────────────────
+
+  /** Build a properties object with a client secret long enough to drive HKDF key derivation. */
+  private JwtAuthenticationProperties sessionEnabledProperties() {
+    JwtAuthenticationProperties props = createTestProperties();
+    // Use a client secret that resolveSigningKey will accept (HKDF derives a 32B key from it).
+    props.setOidcClientSecret("client-secret-of-sufficient-length-for-hkdf");
+    return props;
+  }
+
+  /** Mints an HS256 session token signed with the same key the filter will resolve. */
+  private SignedJWT mintSessionTokenFor(String username, long lifespanSeconds,
+                                         JwtAuthenticationProperties props) throws Exception {
+    byte[] key = AmbariSessionTokenService.resolveSigningKey(props);
+    String serialized = AmbariSessionTokenService.mint(username, lifespanSeconds, key);
+    return SignedJWT.parse(serialized);
+  }
+
+  @Test
+  public void doFilter_acceptsAmbariSessionToken_andCallsChainDoFilter() throws Exception {
+    Capture<? extends AmbariAuthenticationFilter> captureFilter = newCapture(CaptureType.ALL);
+
+    JwtAuthenticationProperties props = sessionEnabledProperties();
+    SignedJWT sessionToken = mintSessionTokenFor("alice", 3600L, props);
+
+    JwtAuthenticationPropertiesProvider jwtAuthenticationPropertiesProvider = createMock(JwtAuthenticationPropertiesProvider.class);
+    expect(jwtAuthenticationPropertiesProvider.get()).andReturn(props).anyTimes();
+
+    Configuration configuration = createNiceMock(Configuration.class);
+    expect(configuration.getMaxAuthenticationFailures()).andReturn(10).anyTimes();
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    FilterChain filterChain = createMock(FilterChain.class);
+
+    Cookie cookie = createMock(Cookie.class);
+    expect(cookie.getName()).andReturn("non-default").once();
+    expect(cookie.getValue()).andReturn(sessionToken.serialize()).once();
+
+    expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
+
+    UserAuthenticationEntity userAuthenticationEntity = createMock(UserAuthenticationEntity.class);
+    expect(userAuthenticationEntity.getAuthenticationType()).andReturn(UserAuthenticationType.JWT).anyTimes();
+    expect(userAuthenticationEntity.getAuthenticationKey()).andReturn("").anyTimes();
+
+    UserEntity userEntity = createMock(UserEntity.class);
+    expect(userEntity.getAuthenticationEntities())
+        .andReturn(Collections.singletonList(userAuthenticationEntity)).atLeastOnce();
+
+    User user = createMock(User.class);
+
+    Users users = createMock(Users.class);
+    expect(users.getUserEntity("alice")).andReturn(userEntity).once();
+    expect(users.getUser(userEntity)).andReturn(user).once();
+    expect(user.getUserName()).andReturn("alice").atLeastOnce();
+    expect(users.getUserAuthorities(userEntity)).andReturn(Collections.emptyList()).once();
+    users.validateLogin(userEntity, "alice");
+    expectLastCall().once();
+
+    AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
+    eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
+    expectLastCall().once();
+    eventHandler.onSuccessfulAuthentication(capture(captureFilter), eq(request), eq(response),
+        anyObject(Authentication.class));
+    expectLastCall().once();
+
+    filterChain.doFilter(request, response);
+    expectLastCall().once();
+
+    AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
+
+    replayAll();
+
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(
+        users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
+    AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(
+        entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
+    filter.doFilter(request, response, filterChain);
+
+    verifyAll();
+  }
+
+  @Test
+  public void doFilter_rejectsSessionToken_signedWithWrongKey() throws Exception {
+    Capture<? extends AmbariAuthenticationFilter> captureFilter = newCapture(CaptureType.ALL);
+
+    // Mint a token with one client secret, then swap to a different one — verification must fail.
+    JwtAuthenticationProperties propsA = sessionEnabledProperties();
+    SignedJWT sessionToken = mintSessionTokenFor("alice", 3600L, propsA);
+
+    JwtAuthenticationProperties propsB = createTestProperties();
+    propsB.setOidcClientSecret("DIFFERENT-client-secret-of-sufficient-length");
+
+    JwtAuthenticationPropertiesProvider jwtAuthenticationPropertiesProvider = createMock(JwtAuthenticationPropertiesProvider.class);
+    expect(jwtAuthenticationPropertiesProvider.get()).andReturn(propsB).anyTimes();
+
+    Configuration configuration = createMock(Configuration.class);
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    FilterChain filterChain = createMock(FilterChain.class);
+
+    Cookie cookie = createMock(Cookie.class);
+    expect(cookie.getName()).andReturn("non-default").once();
+    expect(cookie.getValue()).andReturn(sessionToken.serialize()).once();
+    expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
+
+    AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
+    eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
+    expectLastCall().once();
+    eventHandler.onUnsuccessfulAuthentication(capture(captureFilter), eq(request), eq(response),
+        anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
+    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    Users users = createMock(Users.class);
+
+    replayAll();
+
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(
+        users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
+    AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(
+        entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
+    filter.doFilter(request, response, filterChain);
+
+    verifyAll();
+  }
+
+  @Test
+  public void doFilter_rejectsExpiredSessionToken() throws Exception {
+    Capture<? extends AmbariAuthenticationFilter> captureFilter = newCapture(CaptureType.ALL);
+
+    JwtAuthenticationProperties props = sessionEnabledProperties();
+
+    // Manually craft an HS256 token whose exp is in the past.  We bypass mint() because mint
+    // refuses non-positive lifespans by contract.
+    byte[] key = AmbariSessionTokenService.resolveSigningKey(props);
+    long pastMillis = System.currentTimeMillis() - 60_000L;
+    JWTClaimsSet expiredClaims = new JWTClaimsSet.Builder()
+        .issuer(AmbariSessionTokenService.ISSUER)
+        .subject("alice")
+        .claim("preferred_username", "alice")
+        .issueTime(new Date(pastMillis - 10_000L))
+        .expirationTime(new Date(pastMillis))
+        .build();
+    SignedJWT expiredToken = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), expiredClaims);
+    expiredToken.sign(new com.nimbusds.jose.crypto.MACSigner(key));
+
+    JwtAuthenticationPropertiesProvider jwtAuthenticationPropertiesProvider = createMock(JwtAuthenticationPropertiesProvider.class);
+    expect(jwtAuthenticationPropertiesProvider.get()).andReturn(props).anyTimes();
+
+    Configuration configuration = createMock(Configuration.class);
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    FilterChain filterChain = createMock(FilterChain.class);
+
+    Cookie cookie = createMock(Cookie.class);
+    expect(cookie.getName()).andReturn("non-default").once();
+    expect(cookie.getValue()).andReturn(expiredToken.serialize()).once();
+    expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
+
+    AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
+    eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
+    expectLastCall().once();
+    eventHandler.onUnsuccessfulAuthentication(capture(captureFilter), eq(request), eq(response),
+        anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
+    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    Users users = createMock(Users.class);
+
+    replayAll();
+
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(
+        users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
+    AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(
+        entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
+    filter.doFilter(request, response, filterChain);
+
+    verifyAll();
+  }
+
+  /**
+   * Defense-in-depth: an HS256 token whose {@code iss} claim is NOT "ambari" must NOT take
+   * the session-token branch (otherwise an attacker could forge an arbitrary HS256 token
+   * with the same HMAC key and bypass the RSA validation entirely).
+   */
+  @Test
+  public void doFilter_hs256TokenWithForeignIssuer_takesRsaBranchAndFails() throws Exception {
+    Capture<? extends AmbariAuthenticationFilter> captureFilter = newCapture(CaptureType.ALL);
+
+    JwtAuthenticationProperties props = sessionEnabledProperties();
+    byte[] key = AmbariSessionTokenService.resolveSigningKey(props);
+    // HS256 token but issuer "evil" — must NOT route through session-token verifier.
+    JWTClaimsSet evilClaims = new JWTClaimsSet.Builder()
+        .issuer("evil")
+        .subject("alice")
+        .issueTime(new Date())
+        .expirationTime(new Date(System.currentTimeMillis() + 3_600_000L))
+        .build();
+    SignedJWT evilToken = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), evilClaims);
+    evilToken.sign(new com.nimbusds.jose.crypto.MACSigner(key));
+
+    JwtAuthenticationPropertiesProvider jwtAuthenticationPropertiesProvider = createMock(JwtAuthenticationPropertiesProvider.class);
+    expect(jwtAuthenticationPropertiesProvider.get()).andReturn(props).anyTimes();
+
+    Configuration configuration = createMock(Configuration.class);
+
+    HttpServletRequest request = createMock(HttpServletRequest.class);
+    HttpServletResponse response = createMock(HttpServletResponse.class);
+    FilterChain filterChain = createMock(FilterChain.class);
+
+    Cookie cookie = createMock(Cookie.class);
+    expect(cookie.getName()).andReturn("non-default").once();
+    expect(cookie.getValue()).andReturn(evilToken.serialize()).once();
+    expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
+
+    AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
+    eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
+    expectLastCall().once();
+    eventHandler.onUnsuccessfulAuthentication(capture(captureFilter), eq(request), eq(response),
+        anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
+    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
+    expectLastCall().once();
+
+    Users users = createMock(Users.class);
+
+    replayAll();
+
+    AmbariJwtAuthenticationProvider provider = new AmbariJwtAuthenticationProvider(
+        users, configuration, jwtAuthenticationPropertiesProvider,
+        com.google.inject.util.Providers.<org.apache.ambari.server.state.Clusters>of(null));
+    AmbariJwtAuthenticationFilter filter = new AmbariJwtAuthenticationFilter(
+        entryPoint, jwtAuthenticationPropertiesProvider, provider, eventHandler);
+    filter.doFilter(request, response, filterChain);
+
+    verifyAll();
+  }
+
   @Test
   public void testDoFilterUnsuccessful() throws Exception {
     Capture<? extends AmbariAuthenticationFilter> captureFilter = newCapture(CaptureType.ALL);
