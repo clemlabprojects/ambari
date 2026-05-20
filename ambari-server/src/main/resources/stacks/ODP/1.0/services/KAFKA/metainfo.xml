@@ -64,6 +64,30 @@
                         </log>
                     </logs>
                 </component>
+                <component>
+                    <name>KAFKA_CLIENT</name>
+                    <displayName>Kafka Client</displayName>
+                    <category>CLIENT</category>
+                    <cardinality>1+</cardinality>
+                    <versionAdvertised>true</versionAdvertised>
+                    <commandScript>
+                        <script>scripts/kafka_client.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>600</timeout>
+                    </commandScript>
+                    <configFiles>
+                        <configFile>
+                            <type>env</type>
+                            <fileName>kafka-env.sh</fileName>
+                            <dictionaryName>kafka-env</dictionaryName>
+                        </configFile>
+                        <configFile>
+                            <type>env</type>
+                            <fileName>kafka_client_jaas.conf</fileName>
+                            <dictionaryName>kafka_client_jaas_conf</dictionaryName>
+                        </configFile>
+                    </configFiles>
+                </component>
             </components>
             <commandScript>
                 <script>scripts/service_check.py</script>
