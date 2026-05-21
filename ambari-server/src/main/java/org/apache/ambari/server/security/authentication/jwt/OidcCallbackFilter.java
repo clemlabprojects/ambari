@@ -28,6 +28,7 @@ import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.text.ParseException;
 import java.util.Base64;
 
 import javax.crypto.Mac;
@@ -53,8 +54,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jwt.SignedJWT;
-
-import java.text.ParseException;
 
 /**
  * OidcCallbackFilter implements the server-side OIDC authorization-code flow for Ambari JWT SSO.

@@ -28,13 +28,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Date;
 
+import org.junit.Test;
+
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import org.junit.Test;
 
 /**
  * Unit tests for {@link AmbariSessionTokenService}.  Covers the mint/verify happy path, all
@@ -119,12 +120,19 @@ public class AmbariSessionTokenServiceTest {
   @Test
   public void verify_returnsFalseForTamperedSignature() throws Exception {
     String token = AmbariSessionTokenService.mint("alice", 3600L, KEY_32);
-    // Flip the last character of the signature — base64url table is small enough that a
-    // single-char swap reliably keeps it parseable but breaks the HMAC.
-    String tampered = token.substring(0, token.length() - 1)
-        + (token.charAt(token.length() - 1) == 'A' ? 'B' : 'A');
+    // Mutate a char SOMEWHERE IN THE MIDDLE of the signature segment.  Avoid the very last
+    // base64url char: for a 32-byte HMAC encoded as 43 chars without padding, the bottom 2
+    // bits of the final char are padding bits ignored during base64 decoding — flipping them
+    // doesn't actually change the decoded HMAC bytes, so the token would still verify.
+    int sigStart = token.lastIndexOf('.') + 1;
+    int mutateAt = sigStart + 4; // safely inside the signature, well away from the padding tail
+    char orig = token.charAt(mutateAt);
+    // Pick a deterministic replacement that differs in more than just padding bits.
+    char replacement = (orig == 'M' ? 'X' : 'M');
+    String tampered = token.substring(0, mutateAt) + replacement + token.substring(mutateAt + 1);
     SignedJWT parsed = SignedJWT.parse(tampered);
-    assertFalse(AmbariSessionTokenService.verify(parsed, KEY_32));
+    assertFalse("Mutating a middle byte of the signature must break HMAC verification",
+        AmbariSessionTokenService.verify(parsed, KEY_32));
   }
 
   @Test
