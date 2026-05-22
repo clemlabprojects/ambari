@@ -353,7 +353,8 @@ const ServiceWizardPage: React.FC = () => {
       // the chart will actually receive (otherwise users see top-level
       // releaseName/namespace/etc that wouldn't actually be sent).
       ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-       'releaseName','namespace','securityProfile','deploymentMode','git'].forEach(k => {
+       'releaseName','namespace','securityProfile','deploymentMode','git',
+       'kerberos','tls','oidc'].forEach(k => {
          delete (merged as any)[k];
        });
 
@@ -402,8 +403,15 @@ const ServiceWizardPage: React.FC = () => {
     // chart schemas (Z2JH/JupyterHub, future) reject any additionalProperties
     // at the root of values.yaml, so anything left here would fail the
     // helm dry-run with errors like "Additional property releaseName is not allowed".
+    // kerberos/tls/oidc are seeded into installValues by the def-load effect
+    // (see line ~189) so they can be passed back as their own top-level request
+    // fields (request.kerberos / request.tls / request.oidc). They are NOT chart
+    // values — Z2JH/JupyterHub's strict schema rejects them at the root with
+    // "Additional property kerberos is not allowed". Strip them along with the
+    // other wizard envelope keys.
     ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-     'releaseName','namespace','securityProfile','deploymentMode','git'].forEach(k => {
+     'releaseName','namespace','securityProfile','deploymentMode','git',
+     'kerberos','tls','oidc'].forEach(k => {
        delete (base as any)[k];
      });
 
@@ -565,8 +573,13 @@ const ServiceWizardPage: React.FC = () => {
               // Keycloak rejects the client registration with HTTP 400 invalid_input.
               formValues: ((): Record<string, any> => {
                 const snap = JSON.parse(JSON.stringify(installValues || {}));
+                // Strip wizard envelope/meta keys + the def-seeded blocks that
+                // are passed in their own request fields. formValues is for
+                // server-side template rendering of form-field values; nested
+                // def-seeded objects (kerberos/tls/oidc) aren't form input.
                 ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-                 'deploymentMode','git'].forEach(k => { delete snap[k]; });
+                 'deploymentMode','git',
+                 'kerberos','tls','oidc'].forEach(k => { delete snap[k]; });
                 return snap;
               })(),
           }, params);

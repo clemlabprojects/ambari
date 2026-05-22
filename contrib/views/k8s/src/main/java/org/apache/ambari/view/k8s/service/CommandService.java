@@ -442,12 +442,34 @@ public class CommandService {
                                                    String namespace,
                                                    String releaseName,
                                                    String realm) {
+        return renderKerberosPrincipalTemplate(template, serviceName, namespace, releaseName, realm, null);
+    }
+
+    /**
+     * Same as the 5-arg version, but accepts an additional map of {{token}} → value
+     * substitutions. Used by the keytab pre-provisioning step in directHelmDeploy to
+     * make wizard form fields (e.g. kerberosHostFqdn) addressable from
+     * principalTemplate / secretNameTemplate. FreeIPA 4.12 enforces FQDN syntax on
+     * service principals, so the operator needs to supply the FQDN form via the
+     * wizard rather than us hardcoding a cluster suffix in service.json.
+     */
+    private String renderKerberosPrincipalTemplate(String template,
+                                                   String serviceName,
+                                                   String namespace,
+                                                   String releaseName,
+                                                   String realm,
+                                                   Map<String, String> extraTokens) {
         String templateValue = template == null ? "" : template;
         String resolvedValue = templateValue;
         resolvedValue = replaceTemplateToken(resolvedValue, "service", serviceName);
         resolvedValue = replaceTemplateToken(resolvedValue, "namespace", namespace);
         resolvedValue = replaceTemplateToken(resolvedValue, "releaseName", releaseName);
         resolvedValue = replaceTemplateToken(resolvedValue, "realm", realm);
+        if (extraTokens != null) {
+            for (Map.Entry<String, String> e : extraTokens.entrySet()) {
+                resolvedValue = replaceTemplateToken(resolvedValue, e.getKey(), e.getValue());
+            }
+        }
         return resolvedValue;
     }
 
@@ -4284,12 +4306,24 @@ public class CommandService {
                                     kerberosEntry.get("serviceName"), request.getReleaseName());
                             String principalTemplate = resolveStringValue(
                                     kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
+                            // Flatten formValues to <name,String> so principalTemplate can address
+                            // wizard form fields by name (e.g. {{kerberosHostFqdn}}). Required
+                            // because FreeIPA 4.12 rejects non-FQDN service host components and we
+                            // don't want to hardcode any cluster's DNS suffix in service.json.
+                            Map<String, String> kerberosExtraTokens = new LinkedHashMap<>();
+                            if (request.getFormValues() != null) {
+                                for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
+                                    Object v = e.getValue();
+                                    if (v != null) kerberosExtraTokens.put(e.getKey(), String.valueOf(v));
+                                }
+                            }
                             String principalFqdn = renderKerberosPrincipalTemplate(
                                     principalTemplate,
                                     serviceName,
                                     request.getNamespace(),
                                     request.getReleaseName(),
-                                    kerberosRealm
+                                    kerberosRealm,
+                                    kerberosExtraTokens
                             );
                             if (principalFqdn == null || principalFqdn.isBlank()) {
                                 LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);

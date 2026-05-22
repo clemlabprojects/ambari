@@ -36,24 +36,28 @@
 
 FROM alpine:3.20
 
-# krb5 + krb5-dev (headers, needed for gssapi wheel build), python + pip,
-# tini for clean PID 1 / signal handling. We need build tooling because
-# python-gssapi has a C extension; we drop the build tooling at the end
+# MIT krb5 client + tini. The S4U2Self step is implemented as a tiny C program
+# (s4u2self.c) compiled against libkrb5; we drop the build toolchain at the end
 # to keep the image small.
-RUN apk add --no-cache --virtual .build-deps \
-        gcc musl-dev python3-dev libffi-dev krb5-dev \
-    && apk add --no-cache \
-        krb5 python3 py3-pip tini \
-    && python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir "gssapi==1.9.0" \
+#
+# Why C and not Python:
+#   - python-gssapi.Credentials.impersonate() calls krb5_get_credentials_for_user
+#     with options=0 -> non-forwardable result -> MIT KDC refuses any downstream
+#     S4U2Proxy with "EVIDENCE_TKT_NOT_FORWARDABLE".
+#   - pykrb5 (the libkrb5 Python binding, 0.9.x) does not expose
+#     krb5_get_credentials_for_user in its public API.
+#   - Going through libkrb5 in C directly lets us pass KRB5_GC_FORWARDABLE
+#     explicitly and produce a forwardable evidence ticket.
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev krb5-dev \
+    && apk add --no-cache krb5 tini
+
+COPY s4u2self.c /tmp/s4u2self.c
+RUN gcc -O2 -Wall -o /usr/local/bin/s4u2self /tmp/s4u2self.c -lkrb5 \
+    && rm -f /tmp/s4u2self.c \
     && apk del .build-deps
 
-ENV PATH="/opt/venv/bin:${PATH}"
-
 COPY renew-loop.sh /usr/local/bin/renew-loop.sh
-COPY s4u2self.py /usr/local/bin/s4u2self.py
-RUN chmod 0755 /usr/local/bin/renew-loop.sh /usr/local/bin/s4u2self.py
+RUN chmod 0755 /usr/local/bin/renew-loop.sh /usr/local/bin/s4u2self
 
 # Defaults; the pod spec overrides any of these per-user.
 ENV RENEW_INTERVAL_SEC=1800

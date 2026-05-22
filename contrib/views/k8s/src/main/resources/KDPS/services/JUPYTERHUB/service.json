@@ -14,10 +14,10 @@
   ],
   "kerberos": [
     {
-      "_description": "Single service principal jupyterhub/<release>@REALM used by the krb-renewer sidecar for S4U2Self impersonation. Provisioned by the C1 constrained-delegation FreeIPA setup (~/ansible-role-freeipa, tasks/jupyterhub_delegation.yml). The KEYTAB ONLY ever lives in the renewer sidecar — the notebook container reads the resulting ccache from a shared emptyDir, never the keytab. If you change kerberosPrincipalName in the form, also update jupyterhub_principal_name in the ansible role and edit serviceName below + rebuild the jar.",
+      "_description": "Single service principal jupyterhub/<release>@REALM used by the krb-renewer sidecar for Kerberos S4U2Self impersonation. KDC-side constrained-delegation setup is required, must be performed by the KDC administrator, and is KDC-type-specific (the renewer + ccache layout is the same across all of them; only the KDC configuration differs). MIT KDC: in kdc.conf for the realm, set the jupyterhub service principal's flags to include +ok_as_delegate +ok_to_auth_as_delegate (both flags are required — ok_as_delegate alone yields a half-broken setup where S4U2Self works but S4U2Proxy fails with 'KDC can't fulfill requested option'). MIT does not have a native constrained-delegation rule object; the KDC will allow S4U2Proxy from jupyterhub to any target service that has +ok_as_delegate, so set that flag on each target Hadoop principal (HDFS NN, HS2, RM, etc.) as well. FreeIPA: the same flags are set with 'ipa service-mod <princ> --ok-as-delegate=true --ok-to-auth-as-delegate=true' on the jupyterhub principal AND each target. Additionally, FreeIPA enforces an explicit allow-list — create a servicedelegationtarget grouping the target Hadoop SPNs ('ipa servicedelegationtarget-add', then 'servicedelegationtarget-add-member' for each SPN) and a servicedelegationrule binding the jupyterhub principal to that target ('ipa servicedelegationrule-add', then 'servicedelegationrule-add-member' for jupyterhub and 'servicedelegationrule-add-target' for the target group). Active Directory (RBKCD, recommended for AD 2012+): set TRUSTED_TO_AUTH_FOR_DELEGATION on the jupyterhub AD account — this is msDS-UserAccountControl bit 0x1000000, also called T2A4D, set with PowerShell 'Set-ADAccountControl -Identity jupyterhub -TrustedToAuthForDelegation $true'. Then for each target Hadoop SPN, locate the AD account that holds that SPN and add the jupyterhub account to its msDS-AllowedToActOnBehalfOfOtherIdentity ('Set-ADUser <target> -PrincipalsAllowedToDelegateToAccount jupyterhub'). Classic constrained delegation (msDS-AllowedToDelegateTo on the jupyterhub account, with the target SPNs listed) also works but requires SeEnableDelegationPrivilege on the AD admin and is harder to maintain. The KEYTAB for jupyterhub ONLY ever lives in the renewer sidecar — the notebook container reads the resulting ccache from a shared emptyDir, never the keytab. If you change kerberosPrincipalName in the form, also update serviceName below + rebuild the jar.",
       "key": "service",
       "serviceName": "jupyterhub",
-      "principalTemplate": "{{service}}/{{releaseName}}@{{realm}}",
+      "principalTemplate": "{{service}}/{{kerberosHostFqdn}}@{{realm}}",
       "secretNameTemplate": "{{releaseName}}-jupyterhub-keytab",
       "keyNameInSecret": "jupyterhub.keytab",
       "mountPath": "/etc/security/keytabs"
@@ -171,7 +171,24 @@
           "type": "string",
           "defaultValue": "jupyterhub",
           "excludeFromValues": true,
-          "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<releaseName>@<realm>' (e.g. 'jupyterhub/jupyterhub@DEV21.HADOOP.CLEMLAB.COM'). MUST match jupyterhub_principal_name in the FreeIPA ansible role (~/ansible-role-freeipa/defaults/main.yml), and serviceName in the 'kerberos' section of this service.json. The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services."
+          "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<kerberosHostFqdn>@<realm>'. MUST match the principal name your KDC administrator provisioned for JupyterHub (the same name that appears in the 'kerberos' section of this service.json as serviceName). The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services."
+        },
+        {
+          "name": "kerberosHostFqdn",
+          "label": "JupyterHub principal host FQDN",
+          "type": "string",
+          "required": true,
+          "excludeFromValues": true,
+          "placeholder": "jupyterhub.dev21.hadoop.clemlab.com",
+          "help": "Host component of the JupyterHub service principal — fills the slash-host slot in '<principalName>/<this>@<realm>'. FreeIPA 4.12+ enforces FQDN syntax on service principals (short forms are rejected), so this must be a fully-qualified name. It is NOT used for DNS resolution: pick any FQDN you've provisioned in FreeIPA via ipa service-add (or via the jupyterhub_hosts setting of the ansible role). The renewer sidecar uses this as the host part of its kinit -k principal, and Ambari issues the keytab for the same name."
+        },
+        {
+          "name": "allowPrivateIpEgress",
+          "label": "Allow pod egress to private IPs (RFC1918)",
+          "type": "boolean",
+          "defaultValue": true,
+          "excludeFromValues": true,
+          "help": "Z2JH 4.x defaults networkPolicy.egressAllowRules.privateIPs=false. On a KDPS cluster the Keycloak / NameNode / HiveServer2 / Impala endpoints all live on RFC1918 IPs (10.0.0.0/8, 172.16/12, 192.168/16), so this flag controls whether the hub + singleuser + proxy pods can reach them at all. Default ON — that's what KDPS clusters need. Switch OFF for production-hardened installs where you want to whitelist specific egress destinations via custom NetworkPolicies applied out-of-band; in that case you must also provide your own NetworkPolicy or you'll lock JupyterHub out of its own Hadoop stack."
         }
       ]
     }
@@ -185,7 +202,9 @@
     },
     { "name": "jupyterTlsClusterIssuer", "from": { "type": "form", "field": "jupyterTlsClusterIssuer" } },
     { "name": "hubAdminUsersCsv",        "from": { "type": "form", "field": "hubAdminUsers" } },
-    { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } }
+    { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } },
+    { "name": "kerberosHostFqdn",        "from": { "type": "form", "field": "kerberosHostFqdn" } },
+    { "name": "allowPrivateIpEgress",    "from": { "type": "form", "field": "allowPrivateIpEgress" } }
   ],
   "bindings": [
     {
@@ -263,24 +282,33 @@
       ]
     },
     {
+      "name": "allow-private-ip-egress",
+      "_description": "Z2JH 4.x defaults networkPolicy.egressAllowRules.privateIPs=false on hub + singleuser + proxy — i.e. egress to any RFC1918 (10.0.0.0/8, 172.16/12, 192.168/16) target is BLOCKED. On a KDPS cluster the Keycloak / HDFS / Hive / Impala endpoints all live on private IPs, so the default makes the hub unable to fetch OIDC JWKS/token and the user notebook unable to talk to Hadoop. Driven by the allowPrivateIpEgress form field so operators can switch this OFF for production-hardened installs where they want to whitelist specific egress destinations via out-of-band NetworkPolicies.",
+      "targets": [
+        { "path": "hub.networkPolicy.egressAllowRules.privateIPs",        "from": { "type": "template", "template": "${allowPrivateIpEgress}" } },
+        { "path": "singleuser.networkPolicy.egressAllowRules.privateIPs", "from": { "type": "template", "template": "${allowPrivateIpEgress}" } },
+        { "path": "proxy.chp.networkPolicy.egressAllowRules.privateIPs",  "from": { "type": "template", "template": "${allowPrivateIpEgress}" } }
+      ]
+    },
+    {
       "name": "krb-renewer-sidecar",
       "_description": "Inject the krb-renewer sidecar into every spawned user pod. The sidecar (1) holds the jupyterhub service keytab as a Secret-mounted file (NOT exposed to the notebook container), (2) does S4U2Self every RENEW_INTERVAL_SEC to mint an impersonated TGT for the OIDC-authenticated user identified by the hub.jupyter.org/username pod label, (3) writes the resulting ccache to a tmpfs-backed emptyDir shared with the notebook. env[2].value=REALM is left empty here and populated server-side by the AMBARI_KERBEROS_REALM dynamicValues directive (see top of file). env[3] uses fieldRef on the pod label KubeSpawner sets at spawn time — the renewer never needs the hub to push the user identity in a separate channel.",
       "targets": [
         { "path": "singleuser.extraContainers[0].name",       "from": { "type": "template", "template": "krb-renewer" } },
-        { "path": "singleuser.extraContainers[0].image",      "from": { "type": "template", "template": "registry.clemlab.com/clemlabprojects/jupyterhub/krb-renewer:1.0.0" } },
+        { "path": "singleuser.extraContainers[0].image",      "from": { "type": "template", "template": "registry.clemlab.com/clemlabprojects/jupyterhub/krb-renewer:1.0.5" } },
         { "path": "singleuser.extraContainers[0].imagePullPolicy", "from": { "type": "template", "template": "IfNotPresent" } },
         { "path": "singleuser.extraContainers[0].env[0].name",  "from": { "type": "template", "template": "PRINCIPAL_NAME" } },
         { "path": "singleuser.extraContainers[0].env[0].value", "from": { "type": "template", "template": "${kerberosPrincipalName}" } },
         { "path": "singleuser.extraContainers[0].env[1].name",  "from": { "type": "template", "template": "SERVICE_HOST" } },
-        { "path": "singleuser.extraContainers[0].env[1].value", "from": { "type": "template", "template": "${releaseName}" } },
+        { "path": "singleuser.extraContainers[0].env[1].value", "from": { "type": "template", "template": "${kerberosHostFqdn}" } },
         { "path": "singleuser.extraContainers[0].env[2].name",  "from": { "type": "template", "template": "REALM" } },
         { "path": "singleuser.extraContainers[0].env[2].value", "from": { "type": "template", "template": "" } },
         { "path": "singleuser.extraContainers[0].env[3].name",  "from": { "type": "template", "template": "TARGET_USER" } },
         { "path": "singleuser.extraContainers[0].env[3].valueFrom.fieldRef.fieldPath", "from": { "type": "template", "template": "metadata.labels['hub.jupyter.org/username']" } },
         { "path": "singleuser.extraContainers[0].env[4].name",  "from": { "type": "template", "template": "SERVICE_PRINCIPAL" } },
-        { "path": "singleuser.extraContainers[0].env[4].value", "from": { "type": "template", "template": "${kerberosPrincipalName}/${releaseName}" } },
+        { "path": "singleuser.extraContainers[0].env[4].value", "from": { "type": "template", "template": "${kerberosPrincipalName}/${kerberosHostFqdn}" } },
         { "path": "singleuser.extraContainers[0].env[5].name",  "from": { "type": "template", "template": "RENEW_INTERVAL_SEC" } },
-        { "path": "singleuser.extraContainers[0].env[5].value", "from": { "type": "template", "template": "1800" } },
+        { "path": "singleuser.extraContainers[0].env[5].value", "from": { "type": "template", "template": "\"1800\"" } },
         { "path": "singleuser.extraContainers[0].securityContext.runAsUser",     "from": { "type": "template", "template": "0" } },
         { "path": "singleuser.extraContainers[0].securityContext.runAsNonRoot",  "from": { "type": "template", "template": "false" } },
         { "path": "singleuser.extraContainers[0].securityContext.readOnlyRootFilesystem", "from": { "type": "template", "template": "true" } },

@@ -156,6 +156,15 @@ public class CommandPlanFactory {
                     }
                     try {
                         String v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        // AMBARI_OIDC_ISSUER_URL fallback (matches the sister code in
+                        // CommandService.resolveDynamicOverrides): if oidc-env.oidc_issuer_url
+                        // is blank, compose it from oidc_admin_url + "/realms/" + oidc_realm.
+                        // Without this the plan factory silently skips and the rendered chart
+                        // ends up without authorize/token/userinfo URLs, producing a
+                        // self-referential redirect loop at /hub/oauth_login.
+                        if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
+                            v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
+                        }
                         if (v == null || v.isBlank()) {
                             LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
                             continue;
@@ -485,6 +494,10 @@ public class CommandPlanFactory {
                     }
                     try {
                         String v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        // AMBARI_OIDC_ISSUER_URL fallback — mirrors the sister loop above.
+                        if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
+                            v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
+                        }
                         if (v == null || v.isBlank()) {
                             LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
                             continue;
@@ -951,5 +964,31 @@ public class CommandPlanFactory {
         store(status);
         store(cmd);
         return id;
+    }
+
+    /**
+     * Fallback resolver for AMBARI_OIDC_ISSUER_URL. On many KDPS clusters the
+     * oidc-env.oidc_issuer_url config property is left blank because operators
+     * only set oidc_admin_url + oidc_realm; this composes the issuer URL the
+     * same way CommandService.resolveOidcIssuerUrl does so that downstream
+     * service.json dynamicValues directives like
+     *   "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/auth]:..."
+     * resolve to a usable Keycloak endpoint instead of skipping silently.
+     *
+     * <p>Kept as a static helper local to CommandPlanFactory to avoid pulling
+     * a CommandService instance into the plan factory just for one lookup.
+     */
+    private static String resolveOidcIssuerUrlFallback(AmbariActionClient client, String cluster) {
+        if (client == null || cluster == null || cluster.isBlank()) return null;
+        try {
+            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
+            if (adminUrl != null && !adminUrl.isBlank() && realm != null && !realm.isBlank()) {
+                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not compose OIDC issuer URL fallback (admin_url + /realms/ + realm) on cluster {}: {}", cluster, ex.toString());
+        }
+        return null;
     }
 }

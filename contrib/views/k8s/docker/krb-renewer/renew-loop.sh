@@ -20,9 +20,9 @@
 # ccache to $CC_PATH so the notebook container picks it up.
 #
 # Expected env (set by the pod spec):
-#   SERVICE_PRINCIPAL   e.g. jupyterhub/jupyter.dev21.example.com@REALM
-#   TARGET_USER         OIDC username, no realm  (e.g. lbakalian)
-#   REALM               Kerberos realm           (e.g. DEV21.HADOOP.CLEMLAB.COM)
+#   SERVICE_PRINCIPAL   e.g. jupyterhub/host.example.com@REALM
+#   TARGET_USER         OIDC username, no realm  (e.g. alice)
+#   REALM               Kerberos realm           (e.g. EXAMPLE.COM)
 #   KEYTAB_PATH         /etc/security/keytabs/jupyterhub.keytab (default)
 #   CC_PATH             /krb/cc                                  (default)
 #   RENEW_INTERVAL_SEC  1800                                     (default)
@@ -55,23 +55,17 @@ renew_once() {
     # Tmp ccache so a half-written file never gets read by the notebook.
     CC_TMP="${CC_PATH}.new.$$"
 
-    # The impersonator's own creds go to a separate ccache (we don't want the
-    # notebook to ever see those; only the impersonated user's ccache at CC_PATH).
-    SVC_CC="/tmp/svc.cc"
-
-    KRB5CCNAME="FILE:${SVC_CC}" kinit -k -t "$KEYTAB_PATH" "$SERVICE_PRINCIPAL" >&2
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        echo "[$(date -Iseconds)] kinit service principal failed (rc=$rc)" >&2
-        return $rc
-    fi
-
-    # S4U2Self via python-gssapi. Writes the impersonated TGT to $CC_TMP.
-    KRB5CCNAME="FILE:${SVC_CC}" \
-    /usr/local/bin/s4u2self.py \
-        --impersonator "$SERVICE_PRINCIPAL" \
-        --target-user "${TARGET_USER}@${REALM}" \
-        --output "$CC_TMP" >&2
+    # s4u2self is a tiny C program (see s4u2self.c) that calls
+    # krb5_get_credentials_for_user(KRB5_GC_FORWARDABLE) directly so the
+    # resulting evidence ticket is forwardable (required by MIT KDC for
+    # downstream S4U2Proxy). It does kinit + S4U2Self in one shot.
+    # Output ccache: default principal = TARGET_USER, with the impersonator's
+    # TGT + S4U2Self evidence inside.
+    /usr/local/bin/s4u2self \
+        "$SERVICE_PRINCIPAL" \
+        "${TARGET_USER}@${REALM}" \
+        "$KEYTAB_PATH" \
+        "$CC_TMP" >&2
     rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "[$(date -Iseconds)] s4u2self failed (rc=$rc)" >&2
@@ -86,11 +80,26 @@ renew_once() {
     return 0
 }
 
-# First iteration: hard fail.
-if ! renew_once; then
-    echo "[$(date -Iseconds)] FATAL: initial renewal failed; refusing to start" >&2
-    exit 1
-fi
+# First iteration: retry with backoff. When the user pod is scheduled right after
+# Ambari's KEYTAB_CREATE_SECRET step, kubelet's local Secret cache can lag the new
+# kvno by up to its sync interval (~60s). A naive single-shot kinit hits
+# "Preauthentication failed" against a stale keytab and the sidecar enters
+# CrashLoopBackOff — but the next iteration after a brief wait sees the freshly-
+# propagated key and succeeds. We retry 6× with 10s sleep (60s total) before
+# giving up, which covers the typical kubelet sync window without making genuine
+# misconfigurations linger forever.
+INITIAL_RETRIES=6
+INITIAL_BACKOFF=10
+attempt=1
+while ! renew_once; do
+    if [ "$attempt" -ge "$INITIAL_RETRIES" ]; then
+        echo "[$(date -Iseconds)] FATAL: initial renewal failed after ${INITIAL_RETRIES} attempts; refusing to start" >&2
+        exit 1
+    fi
+    echo "[$(date -Iseconds)] initial renewal attempt $attempt/$INITIAL_RETRIES failed; sleeping ${INITIAL_BACKOFF}s before retry (covers kubelet Secret-mount sync lag)" >&2
+    sleep "$INITIAL_BACKOFF"
+    attempt=$((attempt + 1))
+done
 
 # Steady-state loop.
 while true; do

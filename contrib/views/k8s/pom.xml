@@ -77,6 +77,17 @@ limitations under the License.
         <webhook.go.dir>${project.basedir}/src/main/go/webhooks/kerberos-keytab-mutating-webhook</webhook.go.dir>
         <webhook.k8s.dir>${project.basedir}/src/main/resources/webhooks/kerberos-keytab-mutating-webhook/k8s</webhook.k8s.dir>
 
+        <!-- === krb-renewer image (JupyterHub S4U2Self sidecar) === -->
+        <!-- Independent from the webhook image; its own opt-in skip flag so the two can be -->
+        <!-- built/pushed in isolation: -Dkrb-renewer.docker.skip=false. The image lives under -->
+        <!-- clemlabprojects/jupyterhub/ on registry.clemlab.com to keep the JupyterHub-specific -->
+        <!-- artifacts (hub wrap, singleuser wrap, krb-renewer) grouped under one namespace. -->
+        <krb-renewer.image.repo>clemlabprojects/jupyterhub</krb-renewer.image.repo>
+        <krb-renewer.image.name>krb-renewer</krb-renewer.image.name>
+        <krb-renewer.image.tag>1.0.5</krb-renewer.image.tag>
+        <krb-renewer.docker.dir>${project.basedir}/docker/krb-renewer</krb-renewer.docker.dir>
+        <krb-renewer.docker.skip>true</krb-renewer.docker.skip>
+
         <!-- Where we stage files before packaging -->
         <staged.dir>${project.build.directory}/webhook-package</staged.dir>
 
@@ -601,6 +612,41 @@ install -m 0755 "${POSTINST_SRC}" "${OUT_DIR}/postinst"
         "${webhook.go.dir}"
         ]]>
                         </argument>
+                        </arguments>
+                    </configuration>
+                    </execution>
+                    <execution>
+                    <!-- Build and push the krb-renewer multi-arch image used by the JupyterHub -->
+                    <!-- service (constrained-delegation S4U2Self sidecar). Independent skip flag -->
+                    <!-- (krb-renewer.docker.skip) so it can be rebuilt in isolation when the -->
+                    <!-- Python script or Dockerfile change, without re-publishing the webhook. -->
+                    <!-- Usage: mvn -DskipTests -Dkrb-renewer.docker.skip=false package -->
+                    <id>buildx-krb-renewer</id>
+                    <phase>package</phase>
+                    <goals><goal>exec</goal></goals>
+                    <configuration>
+                        <skip>${krb-renewer.docker.skip}</skip>
+                        <executable>bash</executable>
+                        <environmentVariables>
+                            <IMAGE>${docker.image.registry}/${krb-renewer.image.repo}/${krb-renewer.image.name}:${krb-renewer.image.tag}</IMAGE>
+                            <CTX>${krb-renewer.docker.dir}</CTX>
+                        </environmentVariables>
+                        <arguments>
+                            <argument>-euo</argument><argument>pipefail</argument>
+                            <argument>-c</argument>
+                            <argument>
+                                <![CDATA[
+        docker buildx use clem
+        docker buildx inspect --bootstrap >/dev/null
+
+        docker buildx build \
+            --builder clem \
+            --platform "${docker.platforms}" \
+            -t "${IMAGE}" \
+            --push \
+            "${CTX}"
+        ]]>
+                            </argument>
                         </arguments>
                     </configuration>
                     </execution>

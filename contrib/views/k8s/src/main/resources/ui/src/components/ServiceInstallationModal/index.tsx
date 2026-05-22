@@ -468,6 +468,10 @@ const handleServiceChange = (value: string) => {
       delete mergedValues.securityProfile;
       delete mergedValues.deploymentMode;
       delete mergedValues.git;
+      // def-seeded blocks that are passed as their own top-level request fields.
+      delete mergedValues.kerberos;
+      delete mergedValues.tls;
+      delete mergedValues.oidc;
 
       // 4. Remove fields marked as excludeFromValues in charts.json
       if (svcAny?.form) {
@@ -811,6 +815,9 @@ const handleServiceChange = (value: string) => {
         delete mergedValues.securityProfile;
         delete mergedValues.deploymentMode;
         delete mergedValues.git;
+        delete mergedValues.kerberos;
+        delete mergedValues.tls;
+        delete mergedValues.oidc;
 
         let tlsPayload: any = null;
         const tlsSpec = (currentService as any)?.tls || [];
