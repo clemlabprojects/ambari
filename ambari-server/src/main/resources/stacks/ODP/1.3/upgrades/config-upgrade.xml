@@ -59,6 +59,32 @@
             <replace  key="tez.am.launch.cmd-opts"   find="-XX:+UseParallelGC" replace-with="-XX:+UseG1GC"/>
             <replace  key="tez.task.launch.cmd-opts" find="-XX:+UseParallelGC" replace-with="-XX:+UseG1GC"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_tez_view_ats_v15" summary="Enable ATSV15HistoryLoggingService for Tez View DAG/vertex detail">
+            <type>tez-site</type>
+            <set key="yarn.timeline-service.enabled" value="true"/>
+            <set key="tez.am.history.logging.enabled" value="true"/>
+            <set key="tez.history.logging.service.class" value="org.apache.tez.dag.history.logging.ats.ATSV15HistoryLoggingService"/>
+            <set key="tez.runtime.convert.user-payload.to.history-text" value="true"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
+    <service name="YARN">
+      <component name="APP_TIMELINE_SERVER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_2_0_yarn_ats_v15_tez_plugin" summary="Wire ATS v1.5 EntityGroupFSTimelineStore + Tez plugin for Tez View">
+            <type>yarn-site</type>
+            <set key="yarn.timeline-service.enabled" value="true"/>
+            <set key="yarn.timeline-service.store-class" value="org.apache.hadoop.yarn.server.timeline.EntityGroupFSTimelineStore"/>
+            <!-- Append the Tez ATS plugin to the existing plugin-classes list (idempotent: skipped if already present). -->
+            <insert key="yarn.timeline-service.entity-group-fs-store.group-id-plugin-classes"
+                    value=",org.apache.tez.dag.history.logging.ats.TimelineCachePluginImpl"
+                    insert-type="append" newline-before="false" newline-after="false"/>
+            <!-- group-id-plugin-classpath default is empty on pre-1.3.2.0 clusters; <set> overwrites unconditionally. -->
+            <set key="yarn.timeline-service.entity-group-fs-store.group-id-plugin-classpath"
+                 value="/usr/odp/current/tez-client/*:/usr/odp/current/tez-client/lib/*"/>
+          </definition>
         </changes>
       </component>
     </service>
