@@ -104,6 +104,11 @@
           <message>Before continuing, please backup Zeppelin notebooks directory on the following host(s): {{hosts.all}}.</message>
         </task>
       </execute-stage>
+      <execute-stage service="NIFI" component="NIFI_MASTER" title="Pre Upgrade NiFi Backup">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the NiFi flow.xml.gz, flow.json.gz, the NiFi conf directory and the local state directory referenced by the NiFi Master service(s) located on the following host(s): {{hosts.all}}. NiFi 2 rewrites flow.json.gz on first start; rollback to NiFi 1 requires the pre-upgrade copy.</message>
+        </task>
+      </execute-stage>
     </group>
 
     <group name="ZOOKEEPER" title="ZooKeeper">
@@ -247,9 +252,14 @@
     <group name="HIVE" title="Hive">
       <skippable>true</skippable>
       <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <!--
+        HIVE_METASTORE first so its pre_upgrade_restart runs the Hive metastore schema
+        upgrade (Hive 3 -> Hive 4) BEFORE HiveServer2 instances boot against the new
+        schema. Reversing this order causes HS2 startup to fail with schema mismatch.
+      -->
       <service name="HIVE">
-        <component>HIVE_SERVER</component>
         <component>HIVE_METASTORE</component>
+        <component>HIVE_SERVER</component>
         <component>HIVE_SERVER_INTERACTIVE</component>
         <component>WEBHCAT_SERVER</component>
       </service>
@@ -467,6 +477,42 @@
       </service>
     </group>
 
+    <!--
+      KAFKA_PROTOCOL_BUMP is the Kafka rolling-upgrade "pass 2": all Kafka client
+      services (Ranger, HBase, Hive, Atlas) and Kafka brokers themselves have been
+      restarted on ODP 1.3.x by now, with brokers running 3.9 binaries but speaking
+      IBP=2.8. This group bumps inter.broker.protocol.version to 3.9 and triggers a
+      second rolling restart of brokers, leaving the cluster on the full 3.9 protocol.
+
+      Point of no return: per Apache Kafka 3.9 docs ("Once the brokers begin using
+      the latest protocol version, it will no longer be possible to downgrade the
+      cluster to an older version"), downgrade to ODP 1.2.x is impossible once
+      brokers have restarted with IBP=3.9.
+
+      Customer producer/consumer applications are NOT affected: IBP only governs
+      broker-to-broker traffic. Existing Kafka 2.x client jars continue to work
+      against an IBP=3.9 broker.
+    -->
+    <group name="KAFKA_PROTOCOL_BUMP" title="Kafka 3.9 Protocol Finalize" xsi:type="restart">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <direction>UPGRADE</direction>
+
+      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Confirm Kafka 3.9 protocol bump (point of no return)">
+        <task xsi:type="manual">
+          <message>Per the Apache Kafka 3.9 upgrade documentation: "Once the brokers begin using the latest protocol version, it will no longer be possible to downgrade the cluster to an older version." Confirm every Kafka client service (Atlas, Hive, HBase, Ranger, and NiFi if you restarted it manually) has been restarted on ODP 1.3.x before continuing. Customer producer/consumer applications stay compatible — IBP only affects broker-to-broker traffic and existing 2.x client jars continue to work against a 3.9 broker.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Bump Kafka inter.broker.protocol.version to 3.9">
+        <task xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9"/>
+      </execute-stage>
+
+      <service name="KAFKA">
+        <component>KAFKA_BROKER</component>
+      </service>
+    </group>
+
     <group xsi:type="cluster" name="FINALIZE_PRE_CHECK" title="Finalize {{direction.text.proper}} Pre-Check">
       <direction>UPGRADE</direction>
 
@@ -500,6 +546,35 @@
         <task xsi:type="execute" hosts="master">
           <script>scripts/namenode.py</script>
           <function>finalize_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
+      <!--
+        Ozone 1 -> 2 layout finalize. The python helper is named
+        finalize_non_rolling_upgrade but the underlying work
+        ('ozone admin scm/om finalizeupgrade') is the same regardless of upgrade
+        type: it bumps the on-disk layout version after every SCM/OM is on the
+        new binaries.
+      -->
+      <execute-stage service="OZONE" component="OZONE_STORAGE_CONTAINER_MANAGER" title="Wait for Ozone SCM Safemode">
+        <task xsi:type="execute" hosts="all">
+          <summary>Wait for Ozone Storage Container Manager to leave Safemode</summary>
+          <script>scripts/ozone_scm_server.py</script>
+          <function>wait_ozone_scm_safemode</function>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="OZONE" component="OZONE_STORAGE_CONTAINER_MANAGER" title="Execute Ozone SCM Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_scm_server.py</script>
+          <function>finalize_non_rolling_upgrade</function>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="OZONE" component="OZONE_MANAGER" title="Execute Ozone Manager Finalize">
+        <task xsi:type="execute" hosts="master">
+          <script>scripts/ozone_manager.py</script>
+          <function>finalize_non_rolling_upgrade</function>
         </task>
       </execute-stage>
 
@@ -606,6 +681,7 @@
     <service name="KAFKA">
       <component name="KAFKA_BROKER">
         <pre-upgrade>
+           <task xsi:type="configure" id="odp_1_3_2_0_kafka_pin_protocol_2_8" />
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction" />
         </pre-upgrade>
         <pre-downgrade/>

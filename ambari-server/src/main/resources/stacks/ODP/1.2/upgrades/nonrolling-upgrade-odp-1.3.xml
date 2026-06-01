@@ -154,9 +154,9 @@
         </task>
       </execute-stage>
 
-      <execute-stage service="NIFI" component="NIFI_MASTER" title="Backup NiFi Workflow xml/json">
+      <execute-stage service="NIFI" component="NIFI_MASTER" title="Pre Upgrade NiFi Backup">
         <task xsi:type="manual">
-          <message>Before continuing, please backup the NiFi Workflow xml.json referenced by the NiFi Master service(s) located on the following host(s): {{hosts.all}}.</message>
+          <message>Before continuing, please backup the NiFi flow.xml.gz, flow.json.gz, the NiFi conf directory and the local state directory referenced by the NiFi Master service(s) located on the following host(s): {{hosts.all}}. NiFi 2 rewrites flow.json.gz on first start; rollback to NiFi 1 requires the pre-upgrade copy.</message>
         </task>
       </execute-stage>
 
@@ -368,7 +368,13 @@
           <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
         </task>
       </execute-stage>
-      <!-- KAFKA -->
+      <!-- KAFKA: in a NON_ROLLING upgrade all brokers stop together, so the
+           two-pass IBP pin/bump dance from the rolling pack is unnecessary; set
+           inter.broker.protocol.version=3.9 directly. Downgrade-to-1.2 is
+           impossible once brokers boot with this value, per Apache Kafka 3.9 docs. -->
+      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Set Kafka inter.broker.protocol.version to 3.9 (point of no return)">
+        <task xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9"/>
+      </execute-stage>
       <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>
       </execute-stage>
