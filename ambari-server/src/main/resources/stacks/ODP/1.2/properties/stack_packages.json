@@ -315,6 +315,18 @@
           "STANDARD": [
             "kafka-broker"
           ]
+        },
+        "KAFKA_CLIENT": {
+          "STACK-SELECT-PACKAGE": "kafka-client",
+          "INSTALL": [
+            "kafka-client"
+          ],
+          "PATCH": [
+            "kafka-client"
+          ],
+          "STANDARD": [
+            "kafka-client"
+          ]
         }
       },
       "KNOX": {

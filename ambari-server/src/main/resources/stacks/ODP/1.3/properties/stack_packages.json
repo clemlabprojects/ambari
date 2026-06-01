@@ -337,6 +337,18 @@
           "STANDARD": [
             "impala-client"
           ]
+        },
+        "IMPALA_ATLAS_EXTRACTOR": {
+          "STACK-SELECT-PACKAGE": "impala-daemon",
+          "INSTALL": [
+            "impala-daemon"
+          ],
+          "PATCH": [
+            "impala-daemon"
+          ],
+          "STANDARD": [
+            "impala-daemon"
+          ]
         }
       },
       "KUDU": {
@@ -402,6 +414,18 @@
           ],
           "STANDARD": [
             "kafka-broker"
+          ]
+        },
+        "KAFKA_CLIENT": {
+          "STACK-SELECT-PACKAGE": "kafka-client",
+          "INSTALL": [
+            "kafka-client"
+          ],
+          "PATCH": [
+            "kafka-client"
+          ],
+          "STANDARD": [
+            "kafka-client"
           ]
         }
       },

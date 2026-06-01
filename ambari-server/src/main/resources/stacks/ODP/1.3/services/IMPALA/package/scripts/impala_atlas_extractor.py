@@ -19,6 +19,9 @@ from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
 
 
 class ImpalaAtlasExtractor(Script):
@@ -149,6 +152,14 @@ class ImpalaAtlasExtractor(Script):
 
     def status(self, env):
         check_process_status(self.PID_FILE)
+
+    def pre_upgrade_restart(self, env, upgrade_type=None):
+        import params
+        env.set_params(params)
+
+        if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
+            Logger.info("Executing Impala Atlas Extractor Stack Upgrade pre-restart")
+            stack_select.select_packages(params.version)
 
     # ------------------------------------------------------------------
     # internals

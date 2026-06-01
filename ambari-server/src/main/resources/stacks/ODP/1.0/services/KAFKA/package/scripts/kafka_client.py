@@ -19,6 +19,10 @@ limitations under the License.
 
 from resource_management.libraries.script.script import Script
 from resource_management.core.exceptions import ClientComponentHasNoStatus
+from resource_management.core.logger import Logger
+from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
 
 
 class KafkaClient(Script):
@@ -47,6 +51,14 @@ class KafkaClient(Script):
 
     def status(self, env):
         raise ClientComponentHasNoStatus()
+
+    def pre_upgrade_restart(self, env, upgrade_type=None):
+        import params
+        env.set_params(params)
+
+        if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
+            Logger.info("Executing Kafka Client Stack Upgrade pre-restart")
+            stack_select.select_packages(params.version)
 
 
 if __name__ == "__main__":
