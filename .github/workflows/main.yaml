@@ -107,7 +107,15 @@ jobs:
           export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
           echo "JAVA_HOME=$JAVA_HOME"
 
+          # Exclude ambari-metrics-assembly from this smoke build: it is a packaging-only
+          # module (no Java/Scala/Python sources of its own; nothing else in the reactor
+          # depends on it) whose generate-resources phase downloads + untars a ~700MB
+          # Hadoop tarball into target/embedded/ — together with the maven cache and dnf
+          # installs that fills the GitHub Actions runner's ~14GB free disk and the build
+          # dies with ENOSPC.  Release packaging (which DOES need this module to produce
+          # ambari-metrics RPM/DEBs) is handled out of band by the Jenkins pipeline.
           mvn -B clean install \
+            -pl '!ambari-metrics/ambari-metrics-assembly' \
             -DskipTests=true \
             -Dmaven.clover.skip=true \
             -Drat.ignoreErrors=true \
