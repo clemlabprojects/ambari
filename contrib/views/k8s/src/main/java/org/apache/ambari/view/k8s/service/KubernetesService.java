@@ -328,34 +328,7 @@ public class KubernetesService {
                     Config finalConfiguration = configurationBuilder.build();
 
                     if (certificateAuthorityData != null && !certificateAuthorityData.isEmpty()) {
-                        LOG.info("Found 'certificate-authority-data' in kubeconfig. Adding it to the JVM's default SSL context.");
-
-                        // Get the default JVM TrustManager
-                        TrustManagerFactory defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                        defaultTrustManagerFactory.init((KeyStore) null); // Loads default cacerts
-                        X509TrustManager defaultTrustManager = (X509TrustManager) defaultTrustManagerFactory.getTrustManagers()[0];
-
-                        // Create a custom TrustManager for the K8s CA
-                        byte[] decodedCertificateBytes = Base64.getDecoder().decode(certificateAuthorityData);
-                        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-                        X509Certificate caCertificate = (X509Certificate) certificateFactory.generateCertificate(new ByteArrayInputStream(decodedCertificateBytes));
-
-                        KeyStore customTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
-                        customTrustStore.load(null, null);
-                        customTrustStore.setCertificateEntry("k8s-ca", caCertificate);
-
-                        TrustManagerFactory customTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                        customTrustManagerFactory.init(customTrustStore);
-                        X509TrustManager customTrustManager = (X509TrustManager) customTrustManagerFactory.getTrustManagers()[0];
-
-                        // Combine them and set the new default SSLContext
-                        SSLContext sslContext = SSLContext.getInstance("TLS");
-                        // The CompositeTrustManager ensures we trust BOTH default CAs and our custom one
-                        sslContext.init(null, new TrustManager[]{new CompositeTrustManager(defaultTrustManager, customTrustManager)}, null);
-                        SSLContext.setDefault(sslContext);
-
-                        LOG.info("JVM default SSL context has been updated to trust the Kubernetes CA.");
-
+                        installKubeconfigCaIntoJvmDefaultSslContext(certificateAuthorityData);
                     } else if (viewContext.getAmbariProperty("k8s.view.ssl.truststore.path") != null) {
                         String trustStorePath = viewContext.getAmbariProperty("k8s.view.ssl.truststore.path");
                         String trustStorePassword = viewContext.getAmbariProperty("k8s.view.ssl.truststore.password");
@@ -2102,6 +2075,58 @@ public class KubernetesService {
     }
 
     /**
+     * Decode the base64-encoded CA from a kubeconfig's {@code certificate-authority-data}
+     * field and install it into the JVM's default {@link SSLContext} via a
+     * {@link CompositeTrustManager} that ALSO retains the platform default truststore.
+     *
+     * <p>Process-global side effect: subsequent {@code HttpsURLConnection} / {@code HttpClient}
+     * code in this JVM that does not specify its own SSL context will trust both the platform
+     * CAs and the Kubernetes cluster CA.  Required by call paths that don't flow through the
+     * Fabric8 client's internal SSL stack (webhook bootstrap helpers, the Prometheus client,
+     * Ambari REST callbacks, etc.).
+     *
+     * <p>Called from both the constructor (on Ambari Server startup, when a kubeconfig was
+     * already on disk from a previous lifecycle) AND {@link #reloadClientIfConfigured()} (on
+     * fresh upload via POST /cluster/config).  Without the second call site, the first upload
+     * after a server restart silently leaves the JVM default SSLContext stale and any
+     * downstream HTTPS call to the apiserver fails with {@code PKIX path building failed}.
+     *
+     * @param certificateAuthorityData base64-encoded PEM CA cert from the kubeconfig
+     */
+    private void installKubeconfigCaIntoJvmDefaultSslContext(String certificateAuthorityData)
+            throws java.security.NoSuchAlgorithmException,
+                   java.security.KeyStoreException,
+                   java.security.cert.CertificateException,
+                   java.security.KeyManagementException,
+                   IOException {
+        LOG.info("Found 'certificate-authority-data' in kubeconfig. Adding it to the JVM's default SSL context.");
+
+        // Default JVM trust manager — preserves trust for the platform cacerts bundle.
+        TrustManagerFactory defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        defaultTrustManagerFactory.init((KeyStore) null);
+        X509TrustManager defaultTrustManager = (X509TrustManager) defaultTrustManagerFactory.getTrustManagers()[0];
+
+        // Custom trust manager loaded with the kubeconfig CA.
+        byte[] decodedCertificateBytes = Base64.getDecoder().decode(certificateAuthorityData);
+        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+        X509Certificate caCertificate = (X509Certificate) certificateFactory.generateCertificate(new ByteArrayInputStream(decodedCertificateBytes));
+
+        KeyStore customTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+        customTrustStore.load(null, null);
+        customTrustStore.setCertificateEntry("k8s-ca", caCertificate);
+
+        TrustManagerFactory customTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        customTrustManagerFactory.init(customTrustStore);
+        X509TrustManager customTrustManager = (X509TrustManager) customTrustManagerFactory.getTrustManagers()[0];
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, new TrustManager[]{new CompositeTrustManager(defaultTrustManager, customTrustManager)}, null);
+        SSLContext.setDefault(sslContext);
+
+        LOG.info("JVM default SSL context has been updated to trust the Kubernetes CA.");
+    }
+
+    /**
      * Ensure a namespace exists; creates it if missing.
      */
     public void createNamespace(String namespace) {
@@ -2141,6 +2166,21 @@ public class KubernetesService {
             byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
             byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
             String kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+
+            // Mirror the constructor's CA-loading step.  Without this, the JVM default
+            // SSLContext is never updated with the kubeconfig CA and any post-upload HTTPS
+            // call that doesn't go through the Fabric8 client's own SSL stack (e.g. the
+            // webhook bootstrap below, or the Prometheus HTTP client built later from the
+            // same view) fails with `PKIX path building failed`.  Bug only manifested on
+            // FIRST upload after server restart (when the constructor's "View is not
+            // configured" path had skipped this work).  See KubernetesService(ViewContext).
+            io.fabric8.kubernetes.api.model.Config kubeconfigModel =
+                Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
+            String certificateAuthorityData =
+                kubeconfigModel.getClusters().get(0).getCluster().getCertificateAuthorityData();
+            if (certificateAuthorityData != null && !certificateAuthorityData.isEmpty()) {
+                installKubeconfigCaIntoJvmDefaultSslContext(certificateAuthorityData);
+            }
 
             Config finalConfiguration = Config.fromKubeconfig(kubeconfigContent);
             loadK8sPropsAsSystemProperties(viewContext);
