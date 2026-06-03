@@ -29,6 +29,37 @@ App.LoginController = Em.Object.extend({
 
   isSubmitDisabled: false,
 
+  /**
+   * Bound to App.router.oidcSignInUrl so any change made by router.onAuthenticationError
+   * propagates here without us having to wire a manual observer.  Ember 1.x reactive
+   * computed properties do NOT walk global property paths (e.g. 'App.router.X') the way
+   * a Binding does — we need this explicit Binding for the chooser button to flip on
+   * after the 403 round-trip populates the URL.
+   */
+  oidcSignInUrlBinding: 'App.router.oidcSignInUrl',
+
+  /**
+   * True when the login page should offer a "Sign in with SSO" button alongside
+   * the local username/password form.  Sourced from oidcSignInUrl above, which
+   * AmbariErrorHandler's 403 response populates whenever jwtProviderType === "oidc"
+   * (i.e. only when Keycloak/OIDC is enabled — Knox clusters get the legacy
+   * hard-redirect and never reach this template, so the button stays hidden).
+   */
+  showOidcButton: Em.computed.bool('oidcSignInUrl'),
+
+  /**
+   * Navigates the browser to Ambari's /oidc/begin endpoint with the current
+   * page URL appended as the returnUrl query parameter, mirroring how the
+   * legacy auto-redirect path constructs the URL.
+   */
+  signInWithOidc: function () {
+    var base = this.get('oidcSignInUrl');
+    if (!base) {
+      return;
+    }
+    window.location.href = base + encodeURIComponent(App.router.getCurrentLocationUrl());
+  },
+
   submit: function (e) {
     this.set('errorMessage', '');
     this.set('isSubmitDisabled', true);

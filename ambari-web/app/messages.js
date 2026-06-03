@@ -533,6 +533,8 @@ Em.I18n.translations = {
   'login.message.title':'Login Message',
   'login.username':'Username',
   'login.loginButton':'Sign in',
+  'login.sso.divider':'OR',
+  'login.sso.button':'Sign in with SSO',
   'login.error.bad.credentials':'Unable to sign in. Invalid username/password combination.',
   'login.error.disabled':'Unable to sign in. Invalid username/password combination.',
   'login.error.bad.connection':'Unable to connect to Ambari Server. Confirm Ambari Server is running and you can reach Ambari Server from this machine.',

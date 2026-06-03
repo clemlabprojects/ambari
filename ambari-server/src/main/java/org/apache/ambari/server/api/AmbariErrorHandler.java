@@ -88,6 +88,10 @@ public class AmbariErrorHandler extends ErrorHandler {
               || ("http".equalsIgnoreCase(scheme) && port == 80);
           String baseUrl = scheme + "://" + host + (defaultPort ? "" : ":" + port);
           errorMap.put("jwtProviderUrl", baseUrl + "/oidc/begin?returnUrl=");
+          // jwtProviderType lets the UI distinguish Knox (which is a gateway: hard-redirect)
+          // from OIDC (which is a peer IdP: the UI can also offer a local-login chooser).
+          // Without this hint the UI cannot tell the two SSO modes apart at the 403 boundary.
+          errorMap.put("jwtProviderType", "oidc");
         } else if (jwtProperties.isEnabledForAmbari()) {
           // Knox SSO flow: redirect the browser directly to the Knox provider URL.
           String providerUrl = jwtProperties.getAuthenticationProviderUrl();
@@ -98,6 +102,7 @@ public class AmbariErrorHandler extends ErrorHandler {
             LOG.warn("The original URL parameter name is not available, forwarding to the SSO provider is not possible");
           } else {
             errorMap.put("jwtProviderUrl", String.format("%s?%s=", providerUrl, originalUrl));
+            errorMap.put("jwtProviderType", "knox");
           }
         }
       }

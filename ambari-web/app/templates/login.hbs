@@ -35,5 +35,13 @@
     </div>
     <button class="btn btn-success" {{QAAttr "login-button"}} {{bindAttr disabled="isSubmitDisabled"}} {{action "submit" target="controller"}}>{{t login.loginButton}}</button>
   </form>
+  {{#if showOidcButton}}
+    <div class="login-sso-divider">
+      <span>{{t login.sso.divider}}</span>
+    </div>
+    <button class="btn btn-primary login-sso-button" {{QAAttr "login-sso-button"}} {{action "signInWithOidc" target="controller"}}>
+      {{t login.sso.button}}
+    </button>
+  {{/if}}
 </div>
 {{/unless}}

@@ -543,6 +543,37 @@ h1 {
   }
 }
 
+// Horizontal-rule-with-text divider above the "Sign in with SSO" button.
+// Only rendered when AmbariErrorHandler advertised an OIDC provider — see
+// loginController.showOidcButton.
+.login-sso-divider {
+  text-align: center;
+  margin: 20px 0 14px;
+  position: relative;
+  &:before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: #ddd;
+    z-index: 0;
+  }
+  span {
+    position: relative;
+    background: #f5f5f5;  // matches .well background
+    padding: 0 12px;
+    color: #888;
+    font-size: 12px;
+    z-index: 1;
+  }
+}
+
+.login-sso-button {
+  width: 100%;
+}
+
 .login-header {
   width: 100%;
   margin-bottom: 10px;

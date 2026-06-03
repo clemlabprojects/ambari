@@ -346,7 +346,24 @@ App.Router = Em.Router.extend({
       try {
         var responseJson = JSON.parse(data.responseText);
         if (responseJson.jwtProviderUrl && this.get('location.lastSetURL') !== this.get('localUserAuthUrl')) {
-          this.redirectByURL(responseJson.jwtProviderUrl + encodeURIComponent(this.getCurrentLocationUrl()));
+          // jwtProviderType distinguishes the two SSO modes that AmbariErrorHandler can advertise:
+          //   - "knox": Knox is a gateway in front of Ambari, so a hard browser redirect to the
+          //             provider URL is correct (Knox bounces the user back via its own flow).
+          //   - "oidc": Keycloak (or any OIDC provider) is a peer.  A hard redirect denies the
+          //             user any local-login fallback — useful on demos / private clusters where
+          //             the IdP is not publicly reachable.  Instead, stash the SSO begin URL on
+          //             the router and soft-navigate to /login, which renders a chooser (local
+          //             form + SSO button) so the user can pick.
+          // Older Ambari did not emit jwtProviderType; the absence of the field is treated as the
+          // legacy Knox-style hard redirect to preserve backwards compatibility.
+          if (responseJson.jwtProviderType === 'oidc') {
+            this.set('oidcSignInUrl', responseJson.jwtProviderUrl);
+            Em.run.next(this, function () {
+              this.transitionTo('login');
+            });
+          } else {
+            this.redirectByURL(responseJson.jwtProviderUrl + encodeURIComponent(this.getCurrentLocationUrl()));
+          }
         }
       } catch (e) {
       } finally {
@@ -357,6 +374,15 @@ App.Router = Em.Router.extend({
       this.loginErrorCallback(data);
     }
   },
+
+  /**
+   * The OIDC sign-in URL captured from a 403/401 response (jwtProviderUrl when
+   * jwtProviderType === 'oidc').  Empty string when OIDC is disabled.  The login
+   * template binds visibility of the "Sign in with SSO" button to this property,
+   * and appends the current page URL as the returnUrl query parameter when the
+   * button is clicked.
+   */
+  oidcSignInUrl: '',
 
   setAuthenticated: function (authenticated) {
     App.db.setAuthenticated(authenticated);
@@ -759,6 +785,13 @@ App.Router = Em.Router.extend({
         if (logoutUrl) {
           window.location.href = logoutUrl;
         } else {
+          // No IdP end-session URL was returned, so this is a LOCAL (or Knox)
+          // logout.  Land on /login — onAuthenticationError now treats an OIDC
+          // 403 as a soft transition into the chooser route (local form + SSO
+          // button), not a hard redirect to Keycloak, so the post-logout page
+          // load no longer bounces the user back into the IdP.  Earlier this
+          // call deflected to /login/local to bypass the legacy hard-redirect;
+          // that workaround is obsolete now that the chooser is the default.
           self.logoffRedirect(context);
         }
       });
