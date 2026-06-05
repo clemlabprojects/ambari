@@ -206,6 +206,31 @@ limitations under the License.
             <groupId>com.marcnuri.helm-java</groupId>
             <artifactId>helm-java</artifactId>
             <version>0.0.15</version>
+            <!--
+              The umbrella artifact transitively pulls every platform-specific native jar.
+              Each registers its own META-INF/services/com.marcnuri.helm.jni.NativeLibrary provider
+              and NativeLibrary.getInstance() returns whichever ServiceLoader iterates first — i.e.
+              classpath-order dependent and non-deterministic. Exclude them all here and let the
+              dependency immediately below add back exactly one based on ${ambari.grafana.arch}.
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>com.marcnuri.helm-java</groupId>
+                    <artifactId>darwin-amd64</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.marcnuri.helm-java</groupId>
+                    <artifactId>darwin-arm64</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.marcnuri.helm-java</groupId>
+                    <artifactId>linux-amd64</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.marcnuri.helm-java</groupId>
+                    <artifactId>linux-arm64</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.marcnuri.helm-java</groupId>
