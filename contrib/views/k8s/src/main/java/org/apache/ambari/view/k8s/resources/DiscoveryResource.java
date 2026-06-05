@@ -21,6 +21,7 @@ package org.apache.ambari.view.k8s.resources;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.apache.ambari.view.k8s.model.MonitoringDiscoveryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,6 @@ import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
-import java.net.URI;
 import java.util.*;
 
 public class DiscoveryResource {
@@ -60,7 +60,7 @@ public class DiscoveryResource {
 
         if ("POLARIS".equals(serviceType)) {
             try {
-                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 String clusterName = resolveClusterName(ambariBase, headers);
                 AmbariActionClient client = new AmbariActionClient(
                         viewContext, ambariBase, clusterName,
@@ -91,7 +91,7 @@ public class DiscoveryResource {
             }
         } else if ("HIVE_SERVER".equals(serviceType)) {
             try {
-                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 String clusterName = resolveClusterName(ambariBase, headers);
                 AmbariActionClient client = new AmbariActionClient(
                         viewContext, ambariBase, clusterName,
@@ -122,7 +122,7 @@ public class DiscoveryResource {
         } else if ("HIVE_METASTORE".equals(serviceType)) {
             try {
                 // 1. Resolve correct Ambari Base URL
-                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 LOG.info("Using Ambari API Base: {}", ambariBase);
 
                 // 2. Resolve Cluster Name
@@ -359,30 +359,6 @@ public class DiscoveryResource {
     }
 
     // -- Private Helpers --
-
-    /**
-     * Robustly resolves the Ambari API URL.
-     * Priority:
-     * 1. View Context Property "client.api.url" (Standard Ambari injection)
-     * 2. Infer from current Request URI (Strip /views/...)
-     * 3. Fallback to localhost
-     */
-    private String resolveAmbariBaseUrl(URI requestUri) {
-        // 1. Use injected Ambari base if available (properly formed)
-        String fromConfig = viewContext.getAmbariProperty("client.api.url");
-        if (fromConfig != null && !fromConfig.isBlank()) {
-            return fromConfig.endsWith("/") ? fromConfig : fromConfig + "/";
-        }
-        // 2. Derive from current request like other parts of the code do
-        // Example in-ambari URI: https://host:8442/api/v1/views/K8S-VIEW/versions/1.0.0.1/...
-        String base = requestUri.toString();
-        int i = base.indexOf("/api/v1/views/");
-        if (i > 0) {
-            return base.substring(0, i + "/api/v1".length());
-        }
-        // 3. As last resort, return the request base (no localhost fallback)
-        return base;
-    }
 
     private String resolveClusterName(String ambariApiBase, HttpHeaders headers) throws Exception {
         if (viewContext.getCluster() != null) {

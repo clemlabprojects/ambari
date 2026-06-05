@@ -31,7 +31,6 @@ import org.slf4j.LoggerFactory;
 import javax.security.auth.x500.X500Principal;
 import javax.ws.rs.core.MultivaluedMap;
 import java.math.BigInteger;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.security.cert.X509Certificate;
@@ -91,8 +90,8 @@ public class WebHookBootstrap {
      */
     public static void prepareWebhookPrereqs(ViewContext ctx,
                                              KubernetesService k8sSvc,
-                                             String webhookName, MultivaluedMap<String,String> callerHeaders,
-                                             URI baseUri) {
+                                             String webhookName,
+                                             MultivaluedMap<String,String> callerHeaders) {
         Objects.requireNonNull(ctx,          "ViewContext must not be null");
         Objects.requireNonNull(k8sSvc,       "KubernetesService must not be null");
         Objects.requireNonNull(webhookName,  "webhookName must not be null");
@@ -229,8 +228,9 @@ public class WebHookBootstrap {
                 LOG.info("Created ambari-mutating-webhook password in credential with alias '{}'", PASS_ALIAS);
             }
 
-            // Build Ambari API base from the same host the View is running
-            String ambariApiBase = baseUri.resolve("/api/v1").toString();
+            // Build Ambari API base targeting the LOCAL Ambari endpoint (not the inbound request's baseUri).
+            // See AmbariLoopbackUrlResolver for the rationale (proxy cert vs Ambari truststore).
+            String ambariApiBase = AmbariLoopbackUrlResolver.resolveApiBase(ctx);
 
             //Build Ambari Action Client with credential headers and base api
             var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, AmbariActionClient.toAuthHeaders(callerHeaders));

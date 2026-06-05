@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -195,9 +196,12 @@ public class ConfigurationResource {
     @Path("/security")
     public Response getSecurityConfig(@Context HttpHeaders headers, @Context UriInfo ui) {
         try {
-            // Lazily auto-create a default OIDC profile when Keycloak is configured in Ambari
+            // Lazily auto-create a default OIDC profile when Keycloak is configured in Ambari.
+            // The loopback uses the local FQDN — not the inbound baseUri — because a public proxy
+            // in front of Ambari would PKIX-fail here and the catch below silently swallows it
+            // (so a missing default profile would be the only visible symptom).
             try {
-                String ambariBase = resolveAmbariBaseUrl(ui.getBaseUri());
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 String cluster = resolveClusterName(ambariBase, headers);
                 AmbariActionClient ambariClient = new AmbariActionClient(
                         viewContext, ambariBase, cluster,
@@ -304,16 +308,6 @@ public class ConfigurationResource {
 
     private SecurityProfilesDTO loadProfilesFromStore() throws Exception {
         return new SecurityProfileService(viewContext).loadProfiles();
-    }
-
-    private String resolveAmbariBaseUrl(java.net.URI requestBase) {
-        String base = requestBase.toString();
-        // Strip everything after /api/v1 to get the Ambari root
-        int i = base.indexOf("/api/v1");
-        if (i > 0) {
-            return base.substring(0, i + "/api/v1".length());
-        }
-        return base;
     }
 
     private String resolveClusterName(String ambariApiBase, HttpHeaders headers) throws Exception {

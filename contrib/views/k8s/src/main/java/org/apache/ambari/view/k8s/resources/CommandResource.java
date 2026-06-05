@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
+import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.*;
@@ -91,7 +92,10 @@ public class CommandResource {
                                @QueryParam("kubeContext") String kubeContext,
                                @Context HttpHeaders headers, @Context UriInfo ui) {
     try {
-      String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(), ui.getBaseUri(), this.ambariAliasResolver);
+      // Pass the LOCAL Ambari API base URI (not the inbound request's baseUri) so background workers
+      // resuming this command later loop back to ambari-server directly rather than through whatever
+      // reverse proxy the user happened to be on. See AmbariLoopbackUrlResolver.
+      String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(), AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext), this.ambariAliasResolver);
       return Response.status(Response.Status.ACCEPTED)
               .entity(Map.of("id", id))
               .build();
@@ -225,12 +229,13 @@ public class CommandResource {
   public Response requestKeytab(@Context HttpHeaders headers,
                                 @Context UriInfo ui,
                                 KeytabRequest req) {
-    // Delegate to the scheduler in CommandService
-    // here we need to pass headers because we will do a request on apache ambari server
+    // Delegate to the scheduler in CommandService.
+    // Headers are forwarded for caller authentication; the URI is the LOCAL Ambari API base
+    // (see AmbariLoopbackUrlResolver — required when Ambari sits behind a reverse proxy).
     final String commandId = CommandService.get(viewContext).submitKeytabRequest(
             req,
             headers.getRequestHeaders(),
-            ui.getBaseUri());
+            AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
 
     // Build a stable href to this command’s status endpoint within the View
     final String base = getCommandsUrl(ui);

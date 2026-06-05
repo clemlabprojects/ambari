@@ -179,8 +179,7 @@ public class KubeService {
                         this.viewContext,
                         this.getKubernetesService(),
                         webhookName,
-                        headers.getRequestHeaders(),
-                        ui.getBaseUri()
+                        headers.getRequestHeaders()
                 );
                 // We NOT install the chart here. This only prepares secrets + namespace + caBundle.
                 // Later, when we deploy the webhook chart, collect all ambari.properties overrides
