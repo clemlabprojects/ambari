@@ -116,6 +116,12 @@ docker exec "${server_cid}" bash -lc '
       7) EXTRA_ARGS="${EXTRA_ARGS} -Dbuild-rpm-rhel7";;
     esac
   fi
+  # Build the contrib views (k8s, capacity-scheduler, files, ...) alongside the rest
+  # so the resulting RPM set matches what Jenkins ships; without -Dviews the K8S view
+  # module is skipped and changes there would silently miss this verification step.
+  if [[ "${EXTRA_ARGS}" != *-Dviews* ]]; then
+    EXTRA_ARGS="${EXTRA_ARGS} -Dviews"
+  fi
   mvn -B clean install package rpm:rpm \
     -Dmaven.clover.skip=true \
     -Dfindbugs.skip=true \
