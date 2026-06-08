@@ -67,6 +67,14 @@ config = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 sudo = AMBARI_SUDO_BINARY
 
+# Required so the {{cluster_name}} placeholder baked into application-properties
+# (e.g. atlas.cluster.name) renders correctly when PropertiesFile templates the
+# /etc/spark3/conf/atlas-application.properties file via setup_atlas_hook.
+# Without this, the jinja inline-template in PropertiesFile evaluates {{cluster_name}}
+# against a params namespace that has no cluster_name binding and silently writes
+# an empty value — breaking Spark Atlas lineage capture.
+cluster_name = config['clusterName']
+
 stack_name = status_params.stack_name
 stack_root = Script.get_stack_root()
 stack_version_unformatted = config['clusterLevelParams']['stack_version']

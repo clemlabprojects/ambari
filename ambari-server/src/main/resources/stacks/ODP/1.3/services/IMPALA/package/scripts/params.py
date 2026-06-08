@@ -88,6 +88,15 @@ def _peer_host(hosts, current_host):
 config = Script.get_config()
 tmp_dir = Script.get_tmp_dir()
 stack_root = Script.get_stack_root()
+
+# Required so the {{cluster_name}} placeholder in application-properties (notably
+# atlas.cluster.name) renders correctly when PropertiesFile templates the
+# /etc/impala/conf/atlas-application.properties file via setup_atlas_hook
+# (see impala_atlas_extractor.py configure()). Without this, the jinja
+# inline-template evaluates {{cluster_name}} against a params namespace with no
+# cluster_name binding and silently writes an empty value — breaking Impala
+# Atlas lineage capture.
+cluster_name = config['clusterName']
 stack_name = default("/hostLevelParams/stack_name", default("/clusterLevelParams/stack_name", None))
 impala_env = config['configurations']['impala-env']
 impala_user = config['configurations']['impala-env']['impala_user']
