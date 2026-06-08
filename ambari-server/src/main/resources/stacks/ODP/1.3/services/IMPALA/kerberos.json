@@ -113,7 +113,7 @@
                 "configuration": "impala-env/http_principal_name"
               },
               "keytab": {
-                "file": "${keytab_dir}/impala-http.service.keytab",
+                "file": "${keytab_dir}/impala.service.keytab",
                 "owner": {
                   "name": "${impala-env/impala_user}",
                   "access": "r"

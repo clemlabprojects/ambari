@@ -87,7 +87,7 @@
     </property>
     <property>
         <name>impala_proxy_user_config</name>
-        <value></value>
+        <value>knox=*</value>
         <description>Authorized Proxy Users, only applicable if enable_ranger=true. Syntax:‑‑authorized_proxy_user_config=authenticated_user1=delegated_user1,delegated_user2,...;authenticated_user2=... , Eg. : "hue=*;impala=*;hive=* "</description>
         <value-attributes>
             <type>string</type>
