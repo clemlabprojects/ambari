@@ -39,6 +39,7 @@ class SERVICE:
   HAWQ = "HAWQ"
   HDFS = "HDFS"
   HIVE = "HIVE"
+  IMPALA = "IMPALA"
   KAFKA = "KAFKA"
   KNOX = "KNOX"
   MAHOUT = "MAHOUT"

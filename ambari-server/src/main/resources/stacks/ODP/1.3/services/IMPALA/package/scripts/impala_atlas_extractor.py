@@ -22,6 +22,8 @@ from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.setup_atlas_hook import setup_atlas_hook
+from ambari_commons.constants import SERVICE
 
 
 class ImpalaAtlasExtractor(Script):
@@ -74,6 +76,23 @@ class ImpalaAtlasExtractor(Script):
                 group=params.impala_group,
                 mode=0o755,
                 create_parents=True,
+            )
+
+        # Template /etc/impala/conf/atlas-application.properties so the bridge
+        # knows how to reach Atlas / Kafka. setup_atlas_hook merges the shared
+        # subset (kafka brokers, zk connect, kerberos jaas, etc.) from the
+        # cluster-wide application-properties config and overlays
+        # impala-atlas-application.properties for any service-specific overrides.
+        # Skipped when Atlas isn't in the cluster — the start() path is already
+        # gated on atlas_in_cluster so a missing file there is a no-op anyway.
+        if params.atlas_in_cluster:
+            atlas_hook_filepath = os.path.join(params.atlas_conf_dir, params.atlas_hook_filename)
+            setup_atlas_hook(
+                SERVICE.IMPALA,
+                params.impala_atlas_application_properties,
+                atlas_hook_filepath,
+                params.impala_user,
+                params.impala_group,
             )
 
         # Render the launcher script. Kept as a separate file (rather than

@@ -238,7 +238,16 @@ impala_atlas_extractor_poll_seconds = default(
 impala_lineage_log_prefix = default(
     "/configurations/impala-env/atlas_extractor_lineage_prefix", "impala_lineage"
 )
-atlas_conf_dir = "/etc/atlas/conf"
+# atlas-application.properties is written to impala's own conf dir (mirroring the
+# hive-atlas-application.properties / /etc/hive/conf pattern). On worker nodes
+# /etc/atlas/conf does not exist because ATLAS_SERVER is not co-deployed there,
+# so the bridge would have no atlas endpoint config to load.
+atlas_conf_dir = "/etc/impala/conf"
+atlas_hook_filename = default("/configurations/atlas-env/metadata_conf_file", "atlas-application.properties")
+# Service-specific Atlas hook properties (kafka client.id, retries, etc.). Falls
+# back to {} which is fine — setup_atlas_hook still merges in the shared subset
+# from the cluster-wide application-properties so the bridge gets a working file.
+impala_atlas_application_properties = default("/configurations/impala-atlas-application.properties", {})
 # Use the version-pinned /usr/odp/current root for jar globs so an in-place
 # stack upgrade lands the new jars without an Ambari restart of this component.
 stack_version_root = os.path.join(stack_root, "current")
