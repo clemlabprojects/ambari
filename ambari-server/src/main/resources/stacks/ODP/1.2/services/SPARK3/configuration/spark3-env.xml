@@ -153,6 +153,24 @@
 export SPARK_HISTORY_OPTS='-Dspark.ui.filters=org.apache.hadoop.security.authentication.server.AuthenticationFilter -Dspark.org.apache.hadoop.security.authentication.server.AuthenticationFilter.params="type=kerberos,kerberos.principal={{spnego_principal}},kerberos.keytab={{spnego_keytab}}"'
 {% endif %}
 
+# Fix JDK 17+ JAXB / Jersey Injector reflection access. Without these flags the
+# History Server REST endpoint /api/v1/applications throws
+# NoClassDefFoundError: com.sun.xml.bind.v2.runtime.reflect.opt.Injector and the
+# UI shows an empty application list. Driver/executor extraJavaOptions do NOT
+# apply to the history daemon, so we set them here in spark-env directly.
+# Appended (not assigned) so the security_enabled block above is preserved.
+export SPARK_HISTORY_OPTS="$SPARK_HISTORY_OPTS \
+  --add-opens=java.base/java.lang=ALL-UNNAMED \
+  --add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
+  --add-opens=java.base/java.io=ALL-UNNAMED \
+  --add-opens=java.base/java.nio=ALL-UNNAMED \
+  --add-opens=java.base/java.util=ALL-UNNAMED \
+  --add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
+  --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+  --add-opens=java.base/sun.security.action=ALL-UNNAMED \
+  --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED \
+  --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
+
 
 # Generic options for the daemons used in the standalone deploy mode
 
