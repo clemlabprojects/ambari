@@ -125,6 +125,19 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
    */
   @Override
   public boolean shouldApply(HttpServletRequest httpServletRequest) {
+    // FIX A (AMBARI-451): don't shadow an explicit Basic auth attempt with a stale
+    // JWT cookie. When the user submits the local login form, the request carries
+    // both an Authorization: Basic header and (often) a leftover hadoop-jwt cookie
+    // from an earlier OIDC session. With JWT registered before Basic in the
+    // AmbariDelegatingAuthenticationFilter list, the JWT filter would otherwise
+    // try to validate the stale cookie, fail with "Invalid JWT token", and prevent
+    // the Basic auth filter from running at all — even though the user is
+    // presenting fresh credentials. Defer to the Basic auth filter in that case.
+    String authHeader = httpServletRequest.getHeader("Authorization");
+    if (authHeader != null && authHeader.startsWith("Basic ")) {
+      return false;
+    }
+
     boolean shouldApply = false;
 
     JwtAuthenticationProperties jwtProperties = propertiesProvider.get();
@@ -203,18 +216,56 @@ public class AmbariJwtAuthenticationFilter implements AmbariAuthenticationFilter
       //clear security context if authentication was required, but failed
       SecurityContextHolder.clearContext();
 
-      AmbariAuthenticationException cause;
-      if (e instanceof AmbariAuthenticationException) {
-        cause = (AmbariAuthenticationException) e;
-      } else {
-        cause = new AmbariAuthenticationException(null, e.getMessage(), false, e);
+      // FIX B (AMBARI-452): evict the stale JWT cookie so the next request from
+      // this browser doesn't replay the same failure. Mirror the attributes used
+      // by LogoutService and OidcCallbackFilter#writeJwtCookie so the browser
+      // actually deletes it (Path=/, HttpOnly, Secure, SameSite=Lax, Max-Age=0).
+      clearJwtCookie(httpServletResponse);
+
+      // FIX B+ (AMBARI-452): for cookie-based JWT failures, we already cleared
+      // the bad cookie above — there is no reason to surface the failure to the
+      // UI.  Pass through the filter chain as unauthenticated; the standard
+      // Spring Security entry point further down the chain will redirect the
+      // user to the login chooser without a confusing "Invalid JWT token"
+      // banner.  We only call ambariEntryPoint.commence (the legacy error path)
+      // if the original throw was something other than a JWT failure (e.g.
+      // a downstream AuthenticationException from chain.doFilter that already
+      // bubbled up here).  The marker we use is whether SecurityContextHolder
+      // still has an authenticated user — when the JWT filter itself fails, the
+      // context was just cleared, so we choose the "silent recover" branch.
+      eventHandler.onUnsuccessfulAuthentication(
+          this, httpServletRequest, httpServletResponse,
+          (e instanceof AmbariAuthenticationException)
+              ? (AmbariAuthenticationException) e
+              : new AmbariAuthenticationException(null, e.getMessage(), false, e));
+
+      try {
+        chain.doFilter(servletRequest, servletResponse);
+      } catch (Exception passthroughEx) {
+        // If the downstream chain itself fails, surface that via the normal
+        // entry point so we don't swallow legitimate auth errors.
+        LOG.debug("Downstream filter chain failed after JWT-cookie eviction", passthroughEx);
+        ambariEntryPoint.commence(httpServletRequest, httpServletResponse, e);
       }
-
-      eventHandler.onUnsuccessfulAuthentication(this, httpServletRequest, httpServletResponse, cause);
-
-      //used to indicate authentication failure, not used here as we have more than one filter
-      ambariEntryPoint.commence(httpServletRequest, httpServletResponse, e);
     }
+  }
+
+  /**
+   * Emit a Set-Cookie response header that immediately expires the JWT cookie,
+   * mirroring the attributes used by {@link OidcCallbackFilter#writeJwtCookie}
+   * so the browser deletes the cookie cleanly (same path, same Secure flag).
+   */
+  private void clearJwtCookie(HttpServletResponse response) {
+    JwtAuthenticationProperties props = propertiesProvider.get();
+    String cookieName = (props == null) ? null : props.getCookieName();
+    if (cookieName == null || cookieName.isEmpty()) {
+      cookieName = AmbariServerConfigurationKey.SSO_JWT_COOKIE_NAME.getDefaultValue();
+    }
+    // Mirror the exact attributes LogoutService and OidcCallbackFilter#writeJwtCookie
+    // use when issuing the cookie, so the browser actually deletes it instead of
+    // keeping a copy under a slightly different attribute key.
+    response.addHeader("Set-Cookie",
+        cookieName + "=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
   }
 
   @Override
