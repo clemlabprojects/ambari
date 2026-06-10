@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.12.11",
+  "version": "1.12.12",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
@@ -1774,7 +1774,7 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.12.11",
+  "requiredChartVersion": ">=1.12.12",
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",
