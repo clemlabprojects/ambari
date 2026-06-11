@@ -322,6 +322,19 @@ public class KeycloakAdminClient {
         rep.put("protocol", "openid-connect");
         if (redirectUri != null && !redirectUri.isBlank()) {
             rep.put("redirectUris", List.of(redirectUri));
+            // Whitelist post-logout redirect URIs so RP-Initiated Logout works.
+            // Without this Keycloak (18+) silently drops the post_logout_redirect_uri
+            // query parameter on /protocol/openid-connect/logout, the SSO session
+            // stays alive after the app's /logout, and the next "Sign in" silently
+            // re-authenticates the same user. We seed the app's host root + /login/
+            // since FAB-based apps land users on /login/ post-logout.
+            String postLogoutBase = deriveBaseUrl(redirectUri);
+            if (postLogoutBase != null) {
+                rep.put("attributes", new java.util.LinkedHashMap<>(Map.of(
+                        "post.logout.redirect.uris",
+                        postLogoutBase + "/##" + postLogoutBase + "/login/"
+                )));
+            }
         }
         // Ensure the ID token + userinfo response include the "groups" claim so
         // Superset (and any KDPS service relying on AUTH_ROLES_MAPPING) can map
@@ -347,6 +360,25 @@ public class KeycloakAdminClient {
                 )
         ));
         return rep;
+    }
+
+    /**
+     * Extract scheme://authority from a full URL, e.g.
+     * "https://superset-test-2.dev.clemlab.com/oauth-authorized/generic"
+     *   → "https://superset-test-2.dev.clemlab.com".
+     * Used to seed Keycloak's post.logout.redirect.uris attribute from the
+     * redirectUri the wizard already validated.
+     */
+    private static String deriveBaseUrl(String url) {
+        try {
+            URI u = URI.create(url);
+            String authority = u.getAuthority();
+            String scheme = u.getScheme();
+            if (authority != null && scheme != null) {
+                return scheme + "://" + authority;
+            }
+        } catch (Exception ignore) {}
+        return null;
     }
 
     // -------------------------------------------------------------------------
