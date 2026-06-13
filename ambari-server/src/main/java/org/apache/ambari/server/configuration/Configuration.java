@@ -3296,7 +3296,6 @@ public class Configuration {
   private Integer getJavaVersionFromJDK() {
     LOG.debug("Default agent configs - setting JAVA_HOME as : {}", getProperty(JAVA_HOME));
     String javaHome = getProperty(JAVA_HOME);
-    Integer javaVersion = -1;
     String versionStr = System.getProperty("java.version");
 
     if (javaHome != null && !javaHome.isEmpty()) {
@@ -3310,45 +3309,71 @@ public class Configuration {
             builder.append(line + "\n");
           }
           LOG.debug("java -version output is : {}", builder.toString());
-          String versionOutput = builder.toString();
-          Pattern pattern = Pattern.compile("(\\d+\\.\\d+(\\.\\d+)?(_\\d+)?)( LTS)?");
-          Matcher matcher = pattern.matcher(versionOutput);
-          LOG.debug("Matcher did found : {}", matcher.find());
-          if (matcher.find()) {
-            String version = matcher.group(1);
-            // Extract main version number - first digit for versions < 9 and 2 first digits for versions >= 9
-            LOG.debug("Found version for java from binary as : {}", version);
-            versionStr = version;
+          String parsed = extractJavaVersionString(builder.toString());
+          if (parsed != null) {
+            LOG.debug("Found version for java from binary as : {}", parsed);
+            versionStr = parsed;
           } else {
-            LOG.warn("Unable to determine Java version from output: {}", versionOutput);
+            LOG.warn("Unable to determine Java version from output: {}", builder);
           }
         }
       } catch (IOException e) {
         LOG.warn("Unable to determine Java version using 'java --version': {}", e.getMessage());
       }
     }
-    if (versionStr.startsWith("1.6")) {
-      javaVersion =  6;
-    } else if (versionStr.startsWith("1.7")) {
-      javaVersion =   7;
-    } else if (versionStr.startsWith("1.8")) {
-      javaVersion =   8;
-    } else if (versionStr.startsWith("11")) {
-      javaVersion =   11;
-    } else if (versionStr.startsWith("17")) {
-      javaVersion =   17;
-    } else if (versionStr.startsWith("21")) {
-      javaVersion =   21;
-    } else { // Some unsupported java version
-      javaVersion =   -1;
+    return javaMajorFromVersionString(versionStr);
+  }
+
+  /**
+   * Extract the Java version string (e.g. "1.8.0_492", "17.0.19") from the
+   * stderr output of {@code java -version}.
+   * <p>
+   * Why this is a separate helper: previously both {@link #getJavaVersionFromJDK()}
+   * and {@link #getAmbariJavaVersionFromJDK()} called {@code matcher.find()} twice —
+   * once in a {@code LOG.debug(...)} argument and once again in the {@code if}
+   * condition. {@code Matcher.find()} advances the matcher position on each call,
+   * so the version actually used by the caller was the SECOND match, not the
+   * first. With JDK 8 Corretto output of the form
+   * <pre>
+   *   openjdk version "1.8.0_492"
+   *   OpenJDK Runtime Environment Corretto-8.492.09.2 (build 1.8.0_492-b09)
+   * </pre>
+   * the second match captures {@code 8.492.09} (from the Corretto build version),
+   * which does not satisfy {@code startsWith("1.8")} and ends up returning -1.
+   *
+   * @param versionOutput the raw stderr captured from {@code java -version}
+   * @return the first version literal matched in the output, or {@code null} if
+   *         no match could be found.
+   */
+  static String extractJavaVersionString(String versionOutput) {
+    if (versionOutput == null || versionOutput.isEmpty()) {
+      return null;
     }
-    return javaVersion;
+    Pattern pattern = Pattern.compile("(\\d+\\.\\d+(\\.\\d+)?(_\\d+)?)( LTS)?");
+    Matcher matcher = pattern.matcher(versionOutput);
+    return matcher.find() ? matcher.group(1) : null;
+  }
+
+  /**
+   * Map a Java version string to its major version number (6, 7, 8, 11, 17, 21).
+   * Returns -1 for null/empty input or any version the stack does not support.
+   */
+  static int javaMajorFromVersionString(String versionStr) {
+    if (versionStr == null || versionStr.isEmpty()) {
+      return -1;
+    }
+    if (versionStr.startsWith("1.6")) return 6;
+    if (versionStr.startsWith("1.7")) return 7;
+    if (versionStr.startsWith("1.8")) return 8;
+    if (versionStr.startsWith("11"))  return 11;
+    if (versionStr.startsWith("17"))  return 17;
+    if (versionStr.startsWith("21"))  return 21;
+    return -1;
   }
 
   private Integer getAmbariJavaVersionFromJDK() {
     LOG.debug("Default agent configs - setting AMBARI_JAVA_HOME as : {}", getProperty(AMBARI_JAVA_HOME));
     String javaHome = getProperty(AMBARI_JAVA_HOME);
-    Integer javaVersion = -1;
     String versionStr = System.getProperty("ambari.java.version");
     if (versionStr == null || versionStr.isEmpty()) {
       // Fall back to the running JVM if no override is provided.
@@ -3366,17 +3391,12 @@ public class Configuration {
             builder.append(line + "\n");
           }
           LOG.debug("ambari.java -version output is : {}", builder.toString());
-          String versionOutput = builder.toString();
-          Pattern pattern = Pattern.compile("(\\d+\\.\\d+(\\.\\d+)?(_\\d+)?)( LTS)?");
-          Matcher matcher = pattern.matcher(versionOutput);
-          LOG.debug("ambari.java. Matcher did found : {}", matcher.find());
-          if (matcher.find()) {
-            String version = matcher.group(1);
-            // Extract main version number - first digit for versions < 9 and 2 first digits for versions >= 9
-            LOG.debug("Found version for ambari.java from binary as : {}", version);
-            versionStr = version;
+          String parsed = extractJavaVersionString(builder.toString());
+          if (parsed != null) {
+            LOG.debug("Found version for ambari.java from binary as : {}", parsed);
+            versionStr = parsed;
           } else {
-            LOG.warn("Unable to determine Java version from output: {}", versionOutput);
+            LOG.warn("Unable to determine Java version from output: {}", builder);
           }
         }
       } catch (IOException e) {
@@ -3387,22 +3407,7 @@ public class Configuration {
       LOG.warn("Unable to determine Ambari Java version; defaulting to unsupported.");
       return -1;
     }
-    if (versionStr.startsWith("1.6")) {
-      javaVersion =  6;
-    } else if (versionStr.startsWith("1.7")) {
-      javaVersion =   7;
-    } else if (versionStr.startsWith("1.8")) {
-      javaVersion =   8;
-    } else if (versionStr.startsWith("11")) {
-      javaVersion =   11;
-    } else if (versionStr.startsWith("17")) {
-      javaVersion =   17;
-    } else if (versionStr.startsWith("21")) {
-      javaVersion =   21;
-    } else { // Some unsupported java version
-      javaVersion =   -1;
-    }
-    return javaVersion;
+    return javaMajorFromVersionString(versionStr);
   }
   /**
    * Get the views directory.
