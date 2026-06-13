@@ -163,23 +163,38 @@ class RMFTestCase(TestCase):
     if 'status_params' in sys.modules:
       del(sys.modules["status_params"])
 
-    with Environment(basedir, test_mode=True) as RMFTestCase.env:
-      with patch('resource_management.core.shell.checked_call', side_effect=checked_call_mocks) as mocks_dict['checked_call']:
-        with patch('resource_management.core.shell.call', side_effect=call_mocks) as mocks_dict['call']:
-          with patch.object(Script, 'get_config', return_value=self.config_dict) as mocks_dict['get_config']:
-            with patch.object(Script, 'get_tmp_dir', return_value="/tmp") as mocks_dict['get_tmp_dir']:
-              with patch.object(Script, 'post_start') as mocks_dict['post_start']:
-                with patch('resource_management.libraries.functions.get_kinit_path', return_value=kinit_path_local) as mocks_dict['get_kinit_path']:
-                  with patch.object(distro, 'linux_distribution', return_value=os_type) as mocks_dict['linux_distribution']:
-                    with patch('resource_management.libraries.functions.stack_select.is_package_supported', return_value=True):
-                      with patch('resource_management.libraries.functions.stack_select.get_supported_packages', return_value=MagicMock()):
-                        with patch.object(os, "environ", new=os_env) as mocks_dict['environ']:
-                          with patch('resource_management.libraries.functions.stack_select.unsafe_get_stack_versions', return_value = (("",0,[]))):
-                            if not try_install:
-                              with patch.object(Script, 'install_packages') as install_mock_value:
-                                method(RMFTestCase.env, *command_args)
-                            else:
-                              method(RMFTestCase.env, *command_args)
+    # Stub sudo.path_isdir to True so production code that probes versioned dirs
+    # (e.g. get_hadoop_conf_dir, YARN hadoop_yarn_versioned_home) keeps the
+    # versioned branch in tests. Without this, sudo.path_isdir falls through
+    # to shell.call(["test","-d",...]) and silently competes with each test's
+    # side_effect list — passing or failing depending on mock-library version.
+    with Environment(basedir, test_mode=True) as RMFTestCase.env, \
+         patch('resource_management.core.shell.checked_call', side_effect=checked_call_mocks) as _cc, \
+         patch('resource_management.core.shell.call', side_effect=call_mocks) as _c, \
+         patch('resource_management.core.sudo.path_isdir', new=MagicMock(return_value=True)) as _pi, \
+         patch.object(Script, 'get_config', return_value=self.config_dict) as _gc, \
+         patch.object(Script, 'get_tmp_dir', return_value="/tmp") as _gt, \
+         patch.object(Script, 'post_start') as _ps, \
+         patch('resource_management.libraries.functions.get_kinit_path', return_value=kinit_path_local) as _kp, \
+         patch.object(distro, 'linux_distribution', return_value=os_type) as _ld, \
+         patch('resource_management.libraries.functions.stack_select.is_package_supported', return_value=True), \
+         patch('resource_management.libraries.functions.stack_select.get_supported_packages', return_value=MagicMock()), \
+         patch.object(os, "environ", new=os_env) as _env, \
+         patch('resource_management.libraries.functions.stack_select.unsafe_get_stack_versions', return_value = (("",0,[]))):
+      mocks_dict['checked_call'] = _cc
+      mocks_dict['call'] = _c
+      mocks_dict['path_isdir'] = _pi
+      mocks_dict['get_config'] = _gc
+      mocks_dict['get_tmp_dir'] = _gt
+      mocks_dict['post_start'] = _ps
+      mocks_dict['get_kinit_path'] = _kp
+      mocks_dict['linux_distribution'] = _ld
+      mocks_dict['environ'] = _env
+      if not try_install:
+        with patch.object(Script, 'install_packages') as install_mock_value:
+          method(RMFTestCase.env, *command_args)
+      else:
+        method(RMFTestCase.env, *command_args)
 
     sys.path.remove(scriptsdir)
 
