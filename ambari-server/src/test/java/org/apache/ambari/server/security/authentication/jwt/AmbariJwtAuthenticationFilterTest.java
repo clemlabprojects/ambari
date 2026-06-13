@@ -298,6 +298,9 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getValue()).andReturn(token.serialize()).atLeastOnce();
 
     HttpServletRequest request = createMock(HttpServletRequest.class);
+    // AMBARI-452: shouldApply() defers to Basic auth when an Authorization header is present.
+    // No header here, so the filter proceeds to the cookie check.
+    expect(request.getHeader("Authorization")).andReturn(null).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie});
 
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
@@ -320,6 +323,8 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getValue()).andReturn("bad token").atLeastOnce();
 
     HttpServletRequest request = createMock(HttpServletRequest.class);
+    // AMBARI-452: shouldApply() inspects the Authorization header before any cookie work.
+    expect(request.getHeader("Authorization")).andReturn(null).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie});
 
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
@@ -341,6 +346,8 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getName()).andReturn("some-other-cookie").atLeastOnce();
 
     HttpServletRequest request = createMock(HttpServletRequest.class);
+    // AMBARI-452: shouldApply() inspects the Authorization header before any cookie work.
+    expect(request.getHeader("Authorization")).andReturn(null).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie});
 
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
@@ -359,6 +366,9 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(jwtAuthenticationPropertiesProvider.get()).andReturn(null).anyTimes();
 
     HttpServletRequest request = createMock(HttpServletRequest.class);
+    // AMBARI-452: shouldApply() inspects the Authorization header unconditionally,
+    // even when JWT is disabled (the Basic-auth deferral runs first).
+    expect(request.getHeader("Authorization")).andReturn(null).once();
 
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
 
@@ -551,6 +561,15 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getValue()).andReturn(sessionToken.serialize()).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
 
+    // AMBARI-452: on JWT failure the filter evicts the stale cookie and passes
+    // the request through the chain silently — entryPoint.commence() is only
+    // invoked if the downstream chain itself errors.
+    response.addHeader("Set-Cookie",
+        "non-default=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+    expectLastCall().once();
+    filterChain.doFilter(request, response);
+    expectLastCall().once();
+
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
     eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
     expectLastCall().once();
@@ -559,8 +578,6 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expectLastCall().once();
 
     AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
-    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
-    expectLastCall().once();
 
     Users users = createMock(Users.class);
 
@@ -610,6 +627,14 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getValue()).andReturn(expiredToken.serialize()).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
 
+    // AMBARI-452: on JWT failure the filter evicts the stale cookie and passes
+    // the request through the chain silently.
+    response.addHeader("Set-Cookie",
+        "non-default=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+    expectLastCall().once();
+    filterChain.doFilter(request, response);
+    expectLastCall().once();
+
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
     eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
     expectLastCall().once();
@@ -618,8 +643,6 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expectLastCall().once();
 
     AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
-    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
-    expectLastCall().once();
 
     Users users = createMock(Users.class);
 
@@ -670,6 +693,14 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expect(cookie.getValue()).andReturn(evilToken.serialize()).once();
     expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
 
+    // AMBARI-452: on JWT failure the filter evicts the stale cookie and passes
+    // the request through the chain silently.
+    response.addHeader("Set-Cookie",
+        "non-default=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+    expectLastCall().once();
+    filterChain.doFilter(request, response);
+    expectLastCall().once();
+
     AmbariAuthenticationEventHandler eventHandler = createNiceMock(AmbariAuthenticationEventHandler.class);
     eventHandler.beforeAttemptAuthentication(capture(captureFilter), eq(request), eq(response));
     expectLastCall().once();
@@ -678,8 +709,6 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expectLastCall().once();
 
     AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
-    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
-    expectLastCall().once();
 
     Users users = createMock(Users.class);
 
@@ -717,6 +746,14 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
 
     expect(request.getCookies()).andReturn(new Cookie[]{cookie}).once();
 
+    // AMBARI-452: on JWT failure the filter evicts the stale cookie and passes
+    // the request through the chain silently.
+    response.addHeader("Set-Cookie",
+        "non-default=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+    expectLastCall().once();
+    filterChain.doFilter(request, response);
+    expectLastCall().once();
+
     Users users = createMock(Users.class);
     expect(users.getUserEntity("test-user")).andReturn(null).once();
 
@@ -727,8 +764,6 @@ public class AmbariJwtAuthenticationFilterTest extends EasyMockSupport {
     expectLastCall().once();
 
     AuthenticationEntryPoint entryPoint = createNiceMock(AmbariEntryPoint.class);
-    entryPoint.commence(eq(request), eq(response), anyObject(AmbariAuthenticationException.class));
-    expectLastCall().once();
 
     replayAll();
 
