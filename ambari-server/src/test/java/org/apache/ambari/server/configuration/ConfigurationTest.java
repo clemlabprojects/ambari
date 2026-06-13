@@ -967,4 +967,98 @@ public class ConfigurationTest {
       // This is expected
     }
   }
+
+  // Real "java -version" stderr captures used across the parser tests. These come from
+  // running the listed JDK distributions; the bug surfaced on JDK 8 Corretto because the
+  // first regex match (1.8.0_492) was being discarded by a double matcher.find() call.
+
+  private static final String CORRETTO_8_OUTPUT =
+      "openjdk version \"1.8.0_492\"\n"
+      + "OpenJDK Runtime Environment Corretto-8.492.09.2 (build 1.8.0_492-b09)\n"
+      + "OpenJDK 64-Bit Server VM Corretto-8.492.09.2 (build 25.492-b09, mixed mode)\n";
+
+  private static final String CORRETTO_17_OUTPUT =
+      "openjdk version \"17.0.19\" 2026-04-21 LTS\n"
+      + "OpenJDK Runtime Environment Corretto-17.0.19.10.1 (build 17.0.19+10-LTS)\n"
+      + "OpenJDK 64-Bit Server VM Corretto-17.0.19.10.1 (build 17.0.19+10-LTS, mixed mode, sharing)\n";
+
+  private static final String ORACLE_8_OUTPUT =
+      "java version \"1.8.0_391\"\n"
+      + "Java(TM) SE Runtime Environment (build 1.8.0_391-b13)\n"
+      + "Java HotSpot(TM) 64-Bit Server VM (build 25.391-b13, mixed mode)\n";
+
+  private static final String TEMURIN_11_OUTPUT =
+      "openjdk version \"11.0.22\" 2024-01-16\n"
+      + "OpenJDK Runtime Environment Temurin-11.0.22+7 (build 11.0.22+7)\n"
+      + "OpenJDK 64-Bit Server VM Temurin-11.0.22+7 (build 11.0.22+7, mixed mode)\n";
+
+  private static final String TEMURIN_21_OUTPUT =
+      "openjdk version \"21.0.2\" 2024-01-16 LTS\n"
+      + "OpenJDK Runtime Environment Temurin-21.0.2+13 (build 21.0.2+13-LTS)\n"
+      + "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS, mixed mode)\n";
+
+  @Test
+  public void testExtractJavaVersionString_correttoJdk8() {
+    // Regression for the double-find bug: prior code captured the SECOND match
+    // (8.492.09 from the Corretto build version) and downstream returned -1.
+    assertEquals("1.8.0_492", Configuration.extractJavaVersionString(CORRETTO_8_OUTPUT));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_correttoJdk17() {
+    assertEquals("17.0.19", Configuration.extractJavaVersionString(CORRETTO_17_OUTPUT));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_oracleJdk8() {
+    assertEquals("1.8.0_391", Configuration.extractJavaVersionString(ORACLE_8_OUTPUT));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_temurinJdk11() {
+    assertEquals("11.0.22", Configuration.extractJavaVersionString(TEMURIN_11_OUTPUT));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_temurinJdk21() {
+    assertEquals("21.0.2", Configuration.extractJavaVersionString(TEMURIN_21_OUTPUT));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_nullOrEmpty() {
+    Assert.assertNull(Configuration.extractJavaVersionString(null));
+    Assert.assertNull(Configuration.extractJavaVersionString(""));
+  }
+
+  @Test
+  public void testExtractJavaVersionString_garbage() {
+    Assert.assertNull(Configuration.extractJavaVersionString("not a java -version output"));
+  }
+
+  @Test
+  public void testJavaMajorFromVersionString_supportedVersions() {
+    assertEquals(6,  Configuration.javaMajorFromVersionString("1.6.0_45"));
+    assertEquals(7,  Configuration.javaMajorFromVersionString("1.7.0_80"));
+    assertEquals(8,  Configuration.javaMajorFromVersionString("1.8.0_492"));
+    assertEquals(11, Configuration.javaMajorFromVersionString("11.0.22"));
+    assertEquals(17, Configuration.javaMajorFromVersionString("17.0.19"));
+    assertEquals(21, Configuration.javaMajorFromVersionString("21.0.2"));
+  }
+
+  @Test
+  public void testJavaMajorFromVersionString_unsupportedOrEmpty() {
+    assertEquals(-1, Configuration.javaMajorFromVersionString(null));
+    assertEquals(-1, Configuration.javaMajorFromVersionString(""));
+    assertEquals(-1, Configuration.javaMajorFromVersionString("9.0.4"));
+    assertEquals(-1, Configuration.javaMajorFromVersionString("25"));
+  }
+
+  @Test
+  public void testCorrettoJdk8_endToEndParsesAsMajor8() {
+    // The end-to-end regression: feed the exact Corretto 8 -version output and confirm
+    // the helpers compose to "8", not -1.
+    String captured = Configuration.extractJavaVersionString(CORRETTO_8_OUTPUT);
+    assertEquals("1.8.0_492", captured);
+    assertEquals(8, Configuration.javaMajorFromVersionString(captured));
+  }
 }
