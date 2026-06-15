@@ -97,14 +97,19 @@ def setup_ranger_polaris():
               group=params.user_group,
               mode=0o644)
 
-  # Extend the credential-helper classpath to include Hadoop's common lib so that
-  # commons-collections4 (required by hadoop-common's Configuration class since Hadoop 3.3)
-  # is available when org.apache.ranger.credentialapi.buildks creates the JCEKS file.
-  # This mirrors the pattern used by the KNOX Ranger plugin setup.
+  # Credential-helper classpath for org.apache.ranger.credentialapi.buildks (creates the JCEKS
+  # referenced by ranger-policymgr-ssl.xml). Under upstream-native Ranger the standalone
+  # ranger-polaris-plugin install dir no longer exists; the Ranger credential API + commons-collections
+  # classes are bundled in the Polaris server's Quarkus fast-jar lib (via authz-embedded ->
+  # ranger-plugins-common/credentialbuilder). Hadoop's common lib is kept for commons-collections4
+  # (required by hadoop-common's Configuration since Hadoop 3.3), mirroring the KNOX plugin pattern.
+  # TODO(verify-on-cluster): confirm the polaris-server fast-jar lib subpath (lib/main, lib/boot)
+  # against the installed layout produced by install_polaris.sh.
   stack_root = Script.get_stack_root()
   stack_version = get_stack_version('polaris-server')
   cred_lib_path_override = (
-    '{root}/{ver}/ranger-polaris-plugin/install/lib/*'
+    '{root}/{ver}/polaris-server/lib/main/*'
+    ':{root}/{ver}/polaris-server/lib/boot/*'
     ':{root}/{ver}/hadoop/share/hadoop/common/*'
     ':{root}/{ver}/hadoop/share/hadoop/common/lib/*'
   ).format(root=stack_root, ver=stack_version)

@@ -608,7 +608,7 @@ if enable_ranger_polaris:
     "service": repo_name,
     "name": "[AMBARI] - Polaris Admin Access",
     "resources": {
-      "realm-identifier": {
+      "root": {
         "values": ["*"],
         "isExcludes": "false",
         "isRecursive": "false"
@@ -616,13 +616,13 @@ if enable_ranger_polaris:
     },
     "policyItems": [{
       "accesses": [
-        {"type": "catalog_create", "isAllowed": "true"},
-        {"type": "catalog_list", "isAllowed": "true"},
-        {"type": "principal_create", "isAllowed": "true"},
-        {"type": "principal_list", "isAllowed": "true"},
-        {"type": "principal_role_create", "isAllowed": "true"},
-        {"type": "principal_role_list", "isAllowed": "true"},
-        {"type": "service_manage_access", "isAllowed": "true"},
+        {"type": "service-access-manage", "isAllowed": "true"},
+        {"type": "catalog-create", "isAllowed": "true"},
+        {"type": "catalog-list", "isAllowed": "true"},
+        {"type": "principal-create", "isAllowed": "true"},
+        {"type": "principal-list", "isAllowed": "true"},
+        {"type": "principal-role-create", "isAllowed": "true"},
+        {"type": "principal-role-list", "isAllowed": "true"},
       ],
       "users": [polaris_admin_username],
       "groups": [],
@@ -728,43 +728,49 @@ if enable_ranger_polaris:
   )
   if not ranger_service_name or "{{" in ranger_service_name or "}}" in ranger_service_name:
     ranger_service_name = repo_name
-  application_properties["polaris.authorization.ranger.service-name"] = ranger_service_name
-  if not str(application_properties.get("polaris.authorization.ranger.app-id", "")).strip():
-    application_properties["polaris.authorization.ranger.app-id"] = "polaris"
+  # ---- Upstream-native Ranger contract (Polaris 1.5.0 + Ranger authz-embedded 2.8.0) ----
+  # The native authorizer (org.apache.polaris.extension.auth.ranger.RangerPolarisAuthorizerConfig)
+  # forwards every polaris.authorization.ranger.<K> to the embedded Ranger plugin as ranger.<K>
+  # (or verbatim when <K> starts with 'xasecure.'). serviceName is mandatory; the service NAME is
+  # bound to the hard-coded 'polaris' service TYPE via the ranger.authz.* layer, after which
+  # RangerAdminRESTClient downloads that service's policies from Ranger Admin. This REPLACES the
+  # former custom-extension keys (app-id / kerberos.* / config-files[] / policy-source-impl / plugin.*).
+  authz_prefix = "polaris.authorization.ranger"
+  application_properties[authz_prefix + ".service-name"] = ranger_service_name
+  application_properties[authz_prefix + ".authz.init.services"] = ranger_service_name
+  application_properties["{0}.authz.service.{1}.servicetype".format(authz_prefix, ranger_service_name)] = "polaris"
+  application_properties[authz_prefix + ".authz.default.policy.source.impl"] = "org.apache.ranger.admin.client.RangerAdminRESTClient"
+  if policymgr_mgr_url:
+    application_properties[authz_prefix + ".authz.default.policy.rest.url"] = policymgr_mgr_url
+  application_properties[authz_prefix + ".authz.default.policy.rest.ssl.config.file"] = format("{polaris_conf_dir}/ranger-policymgr-ssl.xml")
+  application_properties[authz_prefix + ".authz.default.policy.pollIntervalMs"] = "30000"
+  application_properties[authz_prefix + ".authz.default.policy.cache.dir"] = format("/etc/ranger/{repo_name}/policycache")
 
-  # When Kerberos is enabled, configure the Ranger plugin to log in via the Polaris keytab so
-  # that the Ranger Admin REST client uses SPNEGO/Kerberos rather than SIMPLE authentication.
+  # Audit: forward xasecure.audit.* from ranger-polaris-audit verbatim (passed through unchanged
+  # by toRangerProperties). NOTE: Polaris 1.5.0 bundles the Solr audit destination but NOT
+  # ranger-audit-dest-hdfs; enabling HDFS audit requires re-adding that dependency in the
+  # polaris ranger-extension build (extensions/auth/ranger/impl/build.gradle.kts).
+  for ranger_key, ranger_value in ranger_polaris_audit.items():
+    if not ranger_key.startswith("xasecure.audit."):
+      continue
+    audit_value = _resolve_ambari_template_value(ranger_value, ranger_template_values)
+    if audit_value is None or "{{" in str(audit_value) or "}}" in str(audit_value):
+      continue
+    application_properties["{0}.{1}".format(authz_prefix, ranger_key)] = audit_value
+
+  # Kerberos to Ranger Admin: upstream performs NO explicit keytab login. The embedded plugin
+  # (RangerBasePlugin) can self-login via ranger.plugin.<type>.ugi.* (RANGER-5116); we map the
+  # Polaris keytab onto the ranger.authz.default.ugi.* layer (re-namespaced to ranger.plugin.polaris.ugi.*)
+  # so the admin REST client uses SPNEGO rather than SIMPLE auth. polaris_kerberos_opts already
+  # supplies a JAAS login config so the JVM also holds ambient UGI creds as a fallback.
+  # TODO(verify-on-kerberized-cluster): confirm the embedded path honors ugi.initialize; if not,
+  # rely on ambient UGI + forceSecureEndpointAccess.
   if security_enabled and polaris_jaas_principal and polaris_keytab_path:
-    application_properties["polaris.authorization.ranger.kerberos.principal"] = polaris_jaas_principal
-    application_properties["polaris.authorization.ranger.kerberos.keytab"] = polaris_keytab_path
-
-  ranger_config_files = [
-    format("{polaris_conf_dir}/ranger-polaris-security.xml"),
-    format("{polaris_conf_dir}/ranger-polaris-audit.xml"),
-    format("{polaris_conf_dir}/ranger-policymgr-ssl.xml"),
-  ]
-  for idx, cfg_file in enumerate(ranger_config_files):
-    application_properties["polaris.authorization.ranger.config-files[{0}]".format(idx)] = cfg_file
-
-  policy_source_impl = _resolve_ambari_template_value(
-    ranger_polaris_security.get("ranger.plugin.polaris.policy.source.impl", ""),
-    ranger_template_values,
-  )
-  if policy_source_impl and "{{" not in policy_source_impl and "}}" not in policy_source_impl:
-    application_properties["polaris.authorization.ranger.policy-source-impl"] = policy_source_impl
-
-  ranger_plugin_sources = [ranger_polaris_security, ranger_polaris_audit]
-  for ranger_source in ranger_plugin_sources:
-    for ranger_key, ranger_value in ranger_source.items():
-      if not ranger_key.startswith("ranger.plugin.polaris."):
-        continue
-      plugin_suffix = ranger_key[len("ranger.plugin.polaris."):]
-      if not plugin_suffix:
-        continue
-      plugin_value = _resolve_ambari_template_value(ranger_value, ranger_template_values)
-      if not plugin_value or "{{" in plugin_value or "}}" in plugin_value:
-        continue
-      application_properties["polaris.authorization.ranger.plugin.{0}".format(plugin_suffix)] = plugin_value
+    application_properties[authz_prefix + ".authz.default.ugi.initialize"] = "true"
+    application_properties[authz_prefix + ".authz.default.ugi.login.type"] = "keytab"
+    application_properties[authz_prefix + ".authz.default.ugi.keytab.principal"] = polaris_jaas_principal
+    application_properties[authz_prefix + ".authz.default.ugi.keytab.file"] = polaris_keytab_path
+    application_properties[authz_prefix + ".authz.default.forceSecureEndpointAccess"] = "true"
 
   if has_namenode:
     hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
