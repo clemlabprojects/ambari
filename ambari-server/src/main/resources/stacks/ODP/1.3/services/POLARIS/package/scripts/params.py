@@ -531,7 +531,7 @@ if security_enabled:
 
 # Ranger plugin integration expands Ambari templates, computes repository
 # metadata, and injects plugin-specific runtime keys for Polaris.
-ranger_policy_config = {}
+ranger_policy_configs = []
 stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBEROS_SUPPORT, version_for_stack_feature_checks)
 xml_configurations_supported = check_stack_feature(StackFeature.RANGER_XML_CONFIGURATION, version_for_stack_feature_checks)
 ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
@@ -603,34 +603,90 @@ if enable_ranger_polaris:
   if not is_empty(repo_name_value) and repo_name_value != "{{repo_name}}":
     repo_name = repo_name_value
 
-  ranger_policy_config = {
-    "isEnabled": "true",
-    "service": repo_name,
-    "name": "[AMBARI] - Polaris Admin Access",
-    "resources": {
-      "root": {
-        "values": ["*"],
-        "isExcludes": "false",
-        "isRecursive": "false"
-      }
-    },
-    "policyItems": [{
-      "accesses": [
-        {"type": "service-access-manage", "isAllowed": "true"},
-        {"type": "catalog-create", "isAllowed": "true"},
-        {"type": "catalog-list", "isAllowed": "true"},
-        {"type": "principal-create", "isAllowed": "true"},
-        {"type": "principal-list", "isAllowed": "true"},
-        {"type": "principal-role-create", "isAllowed": "true"},
-        {"type": "principal-role-list", "isAllowed": "true"},
-      ],
-      "users": [polaris_admin_username],
-      "groups": [],
-      "roles": [],
-      "conditions": [],
-      "delegateAdmin": "false"
-    }]
-  }
+  # Bootstrap admin (superuser) policies.
+  #
+  # The Ranger 'polaris' service definition is hierarchical and NON-recursive: every resource level
+  # (root > catalog > {namespace,catalog-role}, namespace > {table,policy}, root > {principal,
+  # principal-role}) is a valid leaf and none are mandatory. Consequently a policy scoped to
+  # {root:*} authorises only root-level operations (creating/listing top-level collections);
+  # operations targeting a specific entity (drop/manage a given catalog, principal, namespace,
+  # table, policy, ...) are evaluated against the FULL leaf path and are NOT covered by a root-only
+  # policy. To make the Polaris bootstrap admin a true superuser -- this is the identity Ambari
+  # itself uses to create catalogs and bootstrap Polaris -- we grant it every access type at every
+  # leaf path, mirroring the multiple "all - <resource>" default policies other Ranger services
+  # ship. Access types are enumerated statically (no runtime service-def lookup by design); extend
+  # POLARIS_RANGER_ACCESS_TYPES if a future Ranger 'polaris' service-def adds access types.
+  POLARIS_RANGER_ACCESS_TYPES = [
+    "service-access-manage",
+    "catalog-create", "catalog-drop", "catalog-list", "catalog-access-manage",
+    "catalog-content-manage", "catalog-grants-list", "catalog-grants-manage",
+    "catalog-metadata-full", "catalog-metadata-manage", "catalog-policy-attach",
+    "catalog-policy-detach", "catalog-properties-read", "catalog-properties-write",
+    "catalog-role-create", "catalog-role-drop", "catalog-role-list", "catalog-role-usage",
+    "catalog-role-grants-for-grantee-manage", "catalog-role-grants-list",
+    "catalog-role-grants-manage", "catalog-role-metadata-full", "catalog-role-properties-read",
+    "catalog-role-properties-write",
+    "namespace-create", "namespace-drop", "namespace-list", "namespace-grants-list",
+    "namespace-grants-manage", "namespace-metadata-full", "namespace-policy-attach",
+    "namespace-policy-detach", "namespace-properties-read", "namespace-properties-write",
+    "policy-create", "policy-drop", "policy-list", "policy-read", "policy-write",
+    "policy-attach", "policy-detach", "policy-grants-manage", "policy-metadata-full",
+    "principal-create", "principal-drop", "principal-list", "principal-credentials-reset",
+    "principal-credentials-rotate", "principal-grants-list", "principal-grants-manage",
+    "principal-grants-for-grantee-manage", "principal-metadata-full",
+    "principal-properties-read", "principal-properties-write",
+    "principal-role-create", "principal-role-drop", "principal-role-list",
+    "principal-role-usage", "principal-role-grants-list", "principal-role-grants-manage",
+    "principal-role-grants-for-grantee-manage", "principal-role-metadata-full",
+    "principal-role-properties-read", "principal-role-properties-write",
+    "table-create", "table-drop", "table-list", "table-data-read", "table-data-write",
+    "table-grants-list", "table-grants-manage", "table-metadata-full", "table-policy-attach",
+    "table-policy-detach", "table-properties-read", "table-properties-write",
+    "table-properties-set", "table-properties-remove", "table-uuid-assign",
+    "table-format-version-upgrade", "table-schema-add", "table-schema-set-current",
+    "table-partition-spec-add", "table-partition-specs-remove", "table-sort-order-add",
+    "table-sort-order-set-default", "table-snapshot-add", "table-snapshots-remove",
+    "table-snapshot-ref-set", "table-snapshot-ref-remove", "table-location-set",
+    "table-statistics-set", "table-statistics-remove", "table-structure-manage",
+    "view-create", "view-drop", "view-list", "view-grants-list", "view-grants-manage",
+    "view-metadata-full", "view-properties-read", "view-properties-write",
+  ]
+
+  # (policy-name suffix, resource leaf path) -- one policy per valid leaf in the resource hierarchy.
+  POLARIS_ADMIN_RESOURCE_PATHS = [
+    ("", {"root": ["*"]}),
+    ("catalog", {"root": ["*"], "catalog": ["*"]}),
+    ("principal", {"root": ["*"], "principal": ["*"]}),
+    ("principal-role", {"root": ["*"], "principal-role": ["*"]}),
+    ("catalog-role", {"root": ["*"], "catalog": ["*"], "catalog-role": ["*"]}),
+    ("namespace", {"root": ["*"], "catalog": ["*"], "namespace": ["*"]}),
+    ("table", {"root": ["*"], "catalog": ["*"], "namespace": ["*"], "table": ["*"]}),
+    ("policy", {"root": ["*"], "catalog": ["*"], "namespace": ["*"], "policy": ["*"]}),
+  ]
+
+  _polaris_admin_accesses = [{"type": at, "isAllowed": "true"} for at in POLARIS_RANGER_ACCESS_TYPES]
+  ranger_policy_configs = []
+  for _suffix, _resource_values in POLARIS_ADMIN_RESOURCE_PATHS:
+    _policy_name = "[AMBARI] - Polaris Admin Access"
+    if _suffix:
+      _policy_name = "{0} - {1}".format(_policy_name, _suffix)
+    ranger_policy_configs.append({
+      "isEnabled": "true",
+      "service": repo_name,
+      "name": _policy_name,
+      "resources": {
+        _rk: {"values": _rv, "isExcludes": "false", "isRecursive": "false"}
+        for _rk, _rv in _resource_values.items()
+      },
+      "policyItems": [{
+        "accesses": [dict(_a) for _a in _polaris_admin_accesses],
+        "users": [polaris_admin_username],
+        "groups": [],
+        "roles": [],
+        "conditions": [],
+        "delegateAdmin": "true"
+      }]
+    })
 
   ssl_keystore_password = config['configurations']['ranger-polaris-policymgr-ssl']['xasecure.policymgr.clientssl.keystore.password']
   ssl_truststore_password = config['configurations']['ranger-polaris-policymgr-ssl']['xasecure.policymgr.clientssl.truststore.password']

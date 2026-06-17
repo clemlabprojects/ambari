@@ -113,10 +113,10 @@ def setup_ranger_polaris():
   stack_root = Script.get_stack_root()
   stack_version = get_stack_version('polaris-server')
   cred_lib_path_override = (
-    '{root}/{ver}/polaris-server/lib/main/*'
-    ':{root}/{ver}/polaris-server/lib/boot/*'
-    ':{root}/{ver}/hadoop/share/hadoop/common/*'
+    '{root}/{ver}/hadoop/share/hadoop/common/*'
     ':{root}/{ver}/hadoop/share/hadoop/common/lib/*'
+  ).format(root=stack_root, ver=stack_version)
+
   # Lay the helper down under the Polaris state dir (root-owned, 0755) before the keystore step runs.
   # It is invoked via "sudo" by setup_ranger_plugin_keystore(), and re-written on every configure so it
   # self-heals across package upgrades.
@@ -127,8 +127,6 @@ def setup_ranger_polaris():
        group='root',
        mode=0o755)
   cred_setup_prefix_override = (cred_helper_path, '-l', cred_lib_path_override)
-
-  ).format(root=stack_root, ver=stack_version)
 
 
   Logger.info("Creating Polaris Catalog Default Admin Realm User: " + params.polaris_admin_username)
@@ -159,15 +157,32 @@ def setup_ranger_polaris():
                       cred_lib_path_override=cred_lib_path_override,
                       cred_setup_prefix_override=cred_setup_prefix_override)
 
-  _ensure_polaris_admin_root_policy(ranger_admin_v2_obj)
+  _ensure_polaris_admin_policies(ranger_admin_v2_obj)
 
 
-def _ensure_polaris_admin_root_policy(ranger_admin_v2_obj):
+def _ensure_polaris_admin_policies(ranger_admin_v2_obj):
+  """Ensure every bootstrap-admin policy (one per resource leaf path) exists in Ranger.
+
+  Polaris resources are hierarchical and non-recursive, so a single {root:*} policy cannot grant
+  the admin full control of child-scoped operations (drop/manage a specific catalog, principal,
+  table, ...). params.ranger_policy_configs therefore carries one policy per leaf path; we ensure
+  each independently so the bootstrap admin is a true superuser."""
   import params
 
-  desired_policy = params.ranger_policy_config if params.ranger_policy_config else None
+  desired_policies = list(params.ranger_policy_configs) if getattr(params, "ranger_policy_configs", None) else []
+  if not desired_policies:
+    Logger.info("No Polaris Ranger policy templates configured; skipping Polaris admin policy ensure step.")
+    return
+
+  Logger.info("Ensuring {0} Polaris Ranger admin policy(ies).".format(len(desired_policies)))
+  for desired_policy in desired_policies:
+    _ensure_polaris_admin_policy(ranger_admin_v2_obj, desired_policy)
+
+
+def _ensure_polaris_admin_policy(ranger_admin_v2_obj, desired_policy):
+  import params
+
   if not desired_policy:
-    Logger.info("No Polaris Ranger policy template configured; skipping Polaris admin root policy ensure step.")
     return
 
   service_name = str(desired_policy.get("service", "")).strip()
