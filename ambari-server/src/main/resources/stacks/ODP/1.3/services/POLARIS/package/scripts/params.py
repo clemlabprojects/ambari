@@ -810,7 +810,11 @@ if enable_ranger_polaris:
     if not ranger_key.startswith("xasecure.audit."):
       continue
     audit_value = _resolve_ambari_template_value(ranger_value, ranger_template_values)
-    if audit_value is None or "{{" in str(audit_value) or "}}" in str(audit_value):
+    # Skip empty / unresolved values. SmallRye config validation treats an empty string as null
+    # (SRCFG00040) for the typed Ranger audit properties (e.g. xasecure.audit.destination.solr.urls
+    # when Solr audit is disabled) and aborts Quarkus startup. Omitting the key entirely -- rather
+    # than emitting it empty -- is the correct contract for a disabled audit destination.
+    if audit_value is None or str(audit_value).strip() == "" or "{{" in str(audit_value) or "}}" in str(audit_value):
       continue
     application_properties["{0}.{1}".format(authz_prefix, ranger_key)] = audit_value
 
