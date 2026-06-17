@@ -16,6 +16,7 @@ limitations under the License.
 """
 from resource_management.core.logger import Logger
 from resource_management.core.resources import File
+from resource_management.core.source import StaticFile
 from resource_management.core.exceptions import Fail
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.setup_ranger_plugin_xml import setup_configuration_file_for_required_plugins
@@ -97,14 +98,18 @@ def setup_ranger_polaris():
               group=params.user_group,
               mode=0o644)
 
-  # Credential-helper classpath for org.apache.ranger.credentialapi.buildks (creates the JCEKS
-  # referenced by ranger-policymgr-ssl.xml). Under upstream-native Ranger the standalone
-  # ranger-polaris-plugin install dir no longer exists; the Ranger credential API + commons-collections
-  # classes are bundled in the Polaris server's Quarkus fast-jar lib (via authz-embedded ->
-  # ranger-plugins-common/credentialbuilder). Hadoop's common lib is kept for commons-collections4
-  # (required by hadoop-common's Configuration since Hadoop 3.3), mirroring the KNOX plugin pattern.
-  # TODO(verify-on-cluster): confirm the polaris-server fast-jar lib subpath (lib/main, lib/boot)
-  # against the installed layout produced by install_polaris.sh.
+  # JCEKS credential setup for the Ranger policy-manager SSL config (ranger-policymgr-ssl.xml).
+  #
+  # Ambari's setup_ranger_plugin_keystore() shells out to a "ranger_credential_helper.py" that, in
+  # the stock flow, lives inside a Ranger plugin install dir and runs org.apache.ranger.credentialapi.buildks.
+  # Apache Polaris 1.5.0 uses Ranger's built-in (authz-embedded) authorizer and ships NO Ranger plugin
+  # install dir, so neither that script nor the buildks class exist on a Polaris host. We therefore:
+  #   1. lay down our own helper (package/files/polaris_ranger_credential_helper.py), CLI-compatible with
+  #      the stock one, which builds the identical Hadoop CredentialProvider JCEKS via
+  #      org.apache.hadoop.security.alias.CredentialShell (always present -- Hadoop is a Polaris dep);
+  #   2. point both cred_lib_path_override (the -l classpath) and cred_setup_prefix_override (the helper
+  #      path + -l) at it, so setup_ranger_plugin_keystore() invokes our helper instead of the missing one.
+  # CredentialShell needs only the Hadoop common jars on its classpath.
   stack_root = Script.get_stack_root()
   stack_version = get_stack_version('polaris-server')
   cred_lib_path_override = (
@@ -112,6 +117,17 @@ def setup_ranger_polaris():
     ':{root}/{ver}/polaris-server/lib/boot/*'
     ':{root}/{ver}/hadoop/share/hadoop/common/*'
     ':{root}/{ver}/hadoop/share/hadoop/common/lib/*'
+  # Lay the helper down under the Polaris state dir (root-owned, 0755) before the keystore step runs.
+  # It is invoked via "sudo" by setup_ranger_plugin_keystore(), and re-written on every configure so it
+  # self-heals across package upgrades.
+  cred_helper_path = '/var/lib/polaris/polaris_ranger_credential_helper.py'
+  File(cred_helper_path,
+       content=StaticFile('polaris_ranger_credential_helper.py'),
+       owner='root',
+       group='root',
+       mode=0o755)
+  cred_setup_prefix_override = (cred_helper_path, '-l', cred_lib_path_override)
+
   ).format(root=stack_root, ver=stack_version)
 
 
@@ -140,7 +156,8 @@ def setup_ranger_polaris():
                       is_stack_supports_ranger_kerberos=params.stack_supports_ranger_kerberos,
                       component_user_principal=params.polaris_jaas_principal if params.security_enabled else None,
                       component_user_keytab=params.polaris_keytab_path if params.security_enabled else None,
-                      cred_lib_path_override=cred_lib_path_override)
+                      cred_lib_path_override=cred_lib_path_override,
+                      cred_setup_prefix_override=cred_setup_prefix_override)
 
   _ensure_polaris_admin_root_policy(ranger_admin_v2_obj)
 
