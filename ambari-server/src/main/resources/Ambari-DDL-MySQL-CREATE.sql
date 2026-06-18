@@ -1136,9 +1136,24 @@ CREATE INDEX idx_alert_history_state on alert_history(alert_state);
 CREATE INDEX idx_alert_group_name on alert_group(group_name);
 CREATE INDEX idx_alert_notice_state on alert_notice(notify_state);
 
+CREATE TABLE oidc_client (
+  id BIGINT NOT NULL,
+  cluster_id BIGINT NOT NULL,
+  service_name VARCHAR(255) NOT NULL,
+  client_name VARCHAR(255) NOT NULL,
+  client_id VARCHAR(512) NOT NULL,
+  internal_id VARCHAR(255),
+  realm VARCHAR(255) NOT NULL,
+  secret_alias VARCHAR(255),
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  CONSTRAINT pk_oidc_client PRIMARY KEY (id),
+  CONSTRAINT fk_oidc_client_cluster FOREIGN KEY (cluster_id) REFERENCES clusters (cluster_id));
+
 -- In order for the first ID to be 1, must initialize the ambari_sequences table with a sequence_value of 0.
 INSERT INTO ambari_sequences(sequence_name, sequence_value) VALUES
   ('kkp_id_seq', 0),
+  ('oidc_client_id_seq', 1),
   ('cluster_id_seq', 1),
   ('host_id_seq', 0),
   ('host_role_command_id_seq', 1),
