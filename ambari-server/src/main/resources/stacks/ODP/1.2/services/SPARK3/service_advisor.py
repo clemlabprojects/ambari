@@ -194,6 +194,21 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     putSparkProperty = self.putProperty(configurations, "spark3-defaults", services)
     putSparkThriftSparkConf = self.putProperty(configurations, "spark3-thrift-sparkconf", services)
 
+    # Resolve spark.yarn.historyServer.address to a concrete <host>:<port> — the XML
+    # default {{spark_history_server_host}}:{{spark_history_ui_port}} is only resolved
+    # by params.py for the InlineTemplate path; every other consumer (Ambari REST,
+    # alert framework, setup_spark.py's PropertiesFile, YARN RM tracking URL) sees the
+    # raw Jinja2 placeholders.
+    sjh_hosts = self.getHostNamesWithComponent("SPARK3", "SPARK3_JOBHISTORYSERVER", services)
+    if sjh_hosts:
+      spark3_defaults = self.getServicesSiteProperties(services, "spark3-defaults") or {}
+      ssl_enabled = str(spark3_defaults.get("spark.ssl.enabled", "false")).lower() == "true"
+      if ssl_enabled:
+        port = spark3_defaults.get("spark.ssl.historyServer.port", "18482")
+      else:
+        port = spark3_defaults.get("spark.history.ui.port", "18082")
+      putSparkProperty("spark.yarn.historyServer.address", f"{sjh_hosts[0]}:{port}")
+
     spark_queue = self.recommendYarnQueue(services, "spark3-defaults", "spark.yarn.queue")
     if spark_queue is not None:
       putSparkProperty("spark.yarn.queue", spark_queue)
