@@ -194,6 +194,21 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     putSparkThriftSparkConf = self.putProperty(configurations, "spark3-thrift-sparkconf", services)
     putSparkEnvProperty = self.putProperty(configurations, "spark3-env", services)
 
+    # Resolve spark.yarn.historyServer.address to a concrete <host>:<port> — the XML
+    # default {{spark_history_server_host}}:{{spark_history_ui_port}} is only resolved
+    # by params.py for the InlineTemplate path; every other consumer (Ambari REST,
+    # alert framework, setup_spark.py's PropertiesFile, YARN RM tracking URL) sees the
+    # raw Jinja2 placeholders.
+    sjh_hosts = self.getHostNamesWithComponent("SPARK3", "SPARK3_JOBHISTORYSERVER", services)
+    if sjh_hosts:
+      spark3_defaults = self.getServicesSiteProperties(services, "spark3-defaults") or {}
+      ssl_enabled = str(spark3_defaults.get("spark.ssl.enabled", "false")).lower() == "true"
+      if ssl_enabled:
+        port = spark3_defaults.get("spark.ssl.historyServer.port", "18482")
+      else:
+        port = spark3_defaults.get("spark.history.ui.port", "18082")
+      putSparkProperty("spark.yarn.historyServer.address", f"{sjh_hosts[0]}:{port}")
+
     preferred_fs_type = self.getCoreFilesystemType(configurations, services)
     spark3_fs_type = self.getConfigProperty(configurations, services, "spark3-env", "spark3_filesystem_type", preferred_fs_type)
     putSparkEnvProperty("spark3_filesystem_type", spark3_fs_type)
