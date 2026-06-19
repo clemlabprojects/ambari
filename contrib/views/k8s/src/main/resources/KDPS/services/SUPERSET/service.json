@@ -523,17 +523,10 @@
       "skipIfVarEmpty": "supersetSecret",
       "targets": [
         {
-          "path": "extraEnv.SECRET_KEY",
+          "path": "extraEnv.SUPERSET_SECRET_KEY",
           "from": {
             "type": "var",
             "name": "supersetSecret"
-          }
-        },
-        {
-          "path": "configOverrides.secret",
-          "from": {
-            "type": "template",
-            "template": "SECRET_KEY = '${supersetSecret}'"
           }
         }
       ]
