@@ -1909,9 +1909,13 @@ public class CommandService {
      * fake a plugin-settings block.
      */
     void planRangerTagSyncSources(CommandEntity rootCommand,
-                                  List<String> childCommands,
+                                  List<String> childCommandsIgnored,
                                   HelmDeployRequest request,
                                   Map<String, Object> params) {
+        // childCommandsIgnored is kept for symmetry with planRangerRepositoryCreation's
+        // signature but is unused — createRangerTagSyncRegister self-persists
+        // rootCommand.childListJson so the post-deploy call site doesn't need to
+        // re-save the root afterwards.
         Map<String, Map<String, Object>> rangerSpec = request.getRanger();
         if (rangerSpec == null || rangerSpec.isEmpty()) {
             return;
@@ -1927,7 +1931,7 @@ public class CommandService {
         params.put("_tagSyncSettings", tagSyncSettingsSpec);
 
         // Defer to the plan factory to walk ranger-tagsync-source entries.
-        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params, childCommands);
+        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params);
     }
 
     /**
@@ -2973,21 +2977,42 @@ public class CommandService {
         rootParams.put("_baseUri", baseUri.toString());
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
 
-        List<String> childCommandIds = new ArrayList<>();
-        this.commandPlanFactory.createRangerTagSyncRegister(
-                rootCommand, serviceDefinition.ranger, rootParams, childCommandIds);
+        // Plumb ranger-tagsync-settings into params so the runtime handler reads
+        // chart-wide TagSync wiring (mirrors the deploy-time planRangerTagSyncSources).
+        Map<String, Object> tagSyncSettingsSpec = serviceDefinition.ranger.get("ranger-tagsync-settings");
+        if (tagSyncSettingsSpec == null || tagSyncSettingsSpec.isEmpty()) {
+            throw new IllegalStateException(
+                    "Service definition for " + releaseMetadata.getServiceKey()
+                            + " has no ranger-tagsync-settings block — nothing to replay.");
+        }
+        rootParams.put("_tagSyncSettings", tagSyncSettingsSpec);
 
-        if (childCommandIds.isEmpty()) {
+        // Initialize root with an empty child list before the plan-factory appends.
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(new ArrayList<String>()));
+        store(rootStatus);
+        store(rootCommand);
+
+        // createRangerTagSyncRegister self-manages rootCommand.childListJson + re-stores
+        // the root, so we don't need to do it again afterwards.
+        this.commandPlanFactory.createRangerTagSyncRegister(
+                rootCommand, serviceDefinition.ranger, rootParams);
+
+        // Refresh from datastore to read what the plan-factory wrote, so we can
+        // detect the no-children case without confusing the operator.
+        List<String> children;
+        try {
+            children = gson.fromJson(rootCommand.getChildListJson(),
+                    new TypeToken<ArrayList<String>>(){}.getType());
+            if (children == null) children = Collections.emptyList();
+        } catch (Exception e) {
+            children = Collections.emptyList();
+        }
+        if (children.isEmpty()) {
             throw new IllegalStateException(
                     "No ranger-tagsync-source entries declared for " + releaseMetadata.getServiceKey()
                             + " — nothing to replay.");
         }
-
-        rootCommand.setParamsJson(gson.toJson(rootParams));
-        rootCommand.setChildListJson(gson.toJson(childCommandIds));
-
-        store(rootStatus);
-        store(rootCommand);
 
         scheduleNow(commandId);
         return commandId;
@@ -4354,12 +4379,17 @@ public class CommandService {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
         if (ranger != null) {
-            // Two independent sub-plans, each gated by its own settings block:
-            //   - ranger-plugin-settings drives plugin repository creation (Trino, etc.)
-            //   - ranger-tagsync-settings drives TagSync source registration (OpenMetadata, etc.)
-            // A service can declare one, the other, both, or neither.
+            // ranger-plugin-settings drives plugin repository creation (Trino, etc.).
+            // Plugin-repo creation talks directly to Ranger Admin REST and doesn't
+            // depend on the chart's pods, so it stays pre-helm.
+            //
+            // TagSync source registration is intentionally NOT called here — the
+            // step body needs a Running airflow scheduler pod to mint the OM
+            // ingestion-bot JWT, which only exists after the helm install
+            // completes. planRangerTagSyncSources is called from the post-deploy
+            // block below (after createRealChartInstallationCommands), where
+            // AMBARI_VIEW_PROVISION and OM_ATLAS_FEDERATION_REGISTER also live.
             planRangerRepositoryCreation(rootCommand, childCommands, request, params, effectiveValues, ambariActionClient, cluster);
-            planRangerTagSyncSources(rootCommand, childCommands, request, params);
         }
         // storing the Command Status
         store(commandStatusEntity);
@@ -4776,6 +4806,15 @@ public class CommandService {
                         );
                         LOG.info("Queued AMBARI_VIEW_PROVISION post-deploy step for release '{}' (serviceKey={})",
                                 request.getReleaseName(), request.getServiceKey());
+                    }
+
+                    // Ranger TagSync source registration runs post-deploy because the
+                    // OM_RANGER_TAGSYNC_REGISTER step body exec-s into an airflow
+                    // scheduler pod to mint the OM bot JWT — the pod doesn't exist
+                    // until the helm install completes. Gating + plumbing of
+                    // _tagSyncSettings into params happens inside planRangerTagSyncSources.
+                    if (request.getRanger() != null) {
+                        planRangerTagSyncSources(rootCommand, /* childCommands ignored, method self-persists */ null, request, params);
                     }
 
                     // Atlas federation: queue only when the wizard toggle is on. The step

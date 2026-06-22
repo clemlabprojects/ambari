@@ -693,28 +693,36 @@ public class CommandPlanFactory {
      * Plans one {@code OM_RANGER_TAGSYNC_REGISTER} child command per
      * {@code type: "ranger-tagsync-source"} entry in the service.json {@code ranger} block.
      *
-     * <p>The new step writes the source's endpoint/token/class into Ambari's
-     * {@code ranger-tagsync-site} config and triggers a Ranger TagSync component restart
-     * so the source is picked up. Mirrors the Trino-style plugin-repository registration
-     * pattern but targets a different Ranger sub-component (TagSync vs Ranger Admin).
+     * <p>The step body mints the OM ingestion-bot JWT by exec-ing into the
+     * airflow scheduler pod, then writes the source's endpoint/JWT/class into
+     * Ambari's {@code ranger-tagsync-site} config and triggers a Ranger TagSync
+     * component restart so the source is picked up.
      *
-     * <p>Idempotency comes from the step body — re-running with the same source name
-     * detects no diff and skips the config write + restart.
+     * <p><b>Plan ordering matters:</b> because the JWT-mint exec needs a Running
+     * airflow scheduler pod, callers MUST queue this AFTER
+     * {@link #createRealChartInstallationCommands} (post-deploy), not before.
+     * Self-managing {@code rootCommand.childListJson} (same pattern as
+     * {@link #createAmbariViewProvisionCommand}) ensures the step actually
+     * appears in the tree when called from the post-deploy block, where
+     * submitDeploy has already done its last persist.
+     *
+     * <p>Idempotency comes from the step body — re-running with the same source
+     * name detects no diff and skips the config write + restart.
      *
      * @param rootCommand   parent command this step hangs off
      * @param rangerRequest the service.json {@code ranger} map (key → entry spec)
      * @param params        root params propagated to the step (must carry {@code _baseUri},
      *                      {@code _cluster}, {@code _callerHeaders}, {@code namespace},
-     *                      {@code releaseName})
-     * @param childCommands list of child command IDs to append to (mutated)
+     *                      {@code releaseName}, {@code _tagSyncSettings})
      */
     public void createRangerTagSyncRegister(CommandEntity rootCommand,
                                             Map<String, Map<String, Object>> rangerRequest,
-                                            Map<String, Object> params,
-                                            List<String> childCommands) {
+                                            Map<String, Object> params) {
         if (rangerRequest == null || rangerRequest.isEmpty()) {
             return;
         }
+        Type listType = new TypeToken<ArrayList<String>>(){}.getType();
+
         for (Map.Entry<String, Map<String, Object>> entry : rangerRequest.entrySet()) {
             Map<String, Object> spec = entry.getValue();
             if (spec == null) continue;
@@ -729,7 +737,7 @@ public class CommandPlanFactory {
             String id = rootCommand.getId() + "-tagsync-" + UUID.randomUUID();
 
             // Carry the per-entry spec into the step's params; the step body needs the
-            // source class, cm_name, token-secret coordinates, and any sourcename mapper.
+            // source class, cm_name, and any sourcename mapper.
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
             stepParams.put("_tagSyncEntryKey", entry.getKey());
             stepParams.put("_tagSyncSpec", spec);
@@ -752,10 +760,23 @@ public class CommandPlanFactory {
 
             tagSyncCmd.setCommandStatusId(status.getId());
 
+            // Append to root's child list — mirrors createAmbariViewProvisionCommand /
+            // createOmAtlasFederationRegister. submitDeploy's post-deploy block does
+            // not re-store rootCommand after itself, so each plan-factory method
+            // queued there must persist its own addition.
+            List<String> children;
+            try {
+                children = gson.fromJson(rootCommand.getChildListJson(), listType);
+                if (children == null) children = new ArrayList<>();
+            } catch (Exception e) {
+                children = new ArrayList<>();
+            }
+            children.add(id);
+            rootCommand.setChildListJson(gson.toJson(children));
+
             store(status);
             store(tagSyncCmd);
-
-            childCommands.add(tagSyncCmd.getId());
+            store(rootCommand);
         }
     }
 
