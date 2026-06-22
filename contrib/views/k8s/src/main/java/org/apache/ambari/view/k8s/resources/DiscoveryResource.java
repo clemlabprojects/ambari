@@ -152,18 +152,65 @@ public class DiscoveryResource {
                         ? (httpsPort == null || httpsPort.isBlank() ? "21443" : httpsPort.trim())
                         : (httpPort  == null || httpPort.isBlank()  ? "21000" : httpPort.trim());
 
+                // ----- Atlas auth mode (drives KDPS's atlasFederation post-deploy steps) -----
+                // Atlas supports several authentication methods simultaneously (any subset
+                // of file/kerberos/ldap toggled on). When more than one is active we pick
+                // the most automation-friendly: kerberos (SPNEGO) > ldap > file (basic).
+                // The KDPS UI surfaces the resolved mode read-only so the operator sees
+                // which credential path will be wired by the post-deploy steps.
+                String kerberosOn = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.authentication.method.kerberos");
+                String ldapType   = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.authentication.method.ldap.type");
+                String fileOn     = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.authentication.method.file");
+                String authMode;
+                if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
+                    authMode = "kerberos";
+                } else if (ldapType != null && !ldapType.isBlank() && !"NONE".equalsIgnoreCase(ldapType.trim())) {
+                    authMode = "ldap";
+                } else if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
+                    authMode = "basic";
+                } else {
+                    authMode = "none";
+                }
+
+                // ----- Atlas authorization (ACL) mode -----
+                // `atlas-ranger` → the Atlas-Ranger plugin pulls policies from Ranger Admin.
+                // `simple` (or unset) → file-based atlas-simple-authz-policy.json.
+                String authzImpl = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.authorizer.impl");
+                String aclMode = (authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger"))
+                        ? "ranger" : "simple";
+
+                // ----- Kerberos realm (only relevant when authMode == kerberos) -----
+                // The OM ingestion-bot principal KDPS already provisions follows
+                // `oma-ing-<namespace>@<realm>` — we surface the realm so the wizard
+                // can show the expected principal pattern.
+                String krbRealm = client.getDesiredConfigProperty(clusterName,
+                        "kerberos-env", "realm");
+
                 if (hosts != null) {
                     for (String h : hosts) {
                         String url = scheme + "://" + h + ":" + port;
                         Map<String, String> item = new HashMap<>();
                         item.put("label", "Atlas (" + url + ")");
                         item.put("value", url);
+                        // Enrichment used by the atlasFederation wizard + post-deploy dispatch
+                        item.put("authMode", authMode);
+                        item.put("aclMode", aclMode);
+                        item.put("managedBy", "ambari");
+                        if (krbRealm != null && !krbRealm.isBlank()) {
+                            item.put("kerberosRealm", krbRealm.trim());
+                        }
                         results.add(item);
                     }
                 }
                 if (results.isEmpty()) {
                     LOG.warn("No ATLAS_SERVER hosts found in cluster {}", clusterName);
                 }
+                LOG.info("Discovered Atlas: authMode={}, aclMode={}, realm={}, instances={}",
+                        authMode, aclMode, krbRealm, results.size());
             } catch (Exception e) {
                 LOG.error("Failed to discover Atlas", e);
             }
