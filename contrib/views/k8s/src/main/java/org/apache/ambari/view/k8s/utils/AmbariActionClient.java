@@ -1040,6 +1040,162 @@ public class AmbariActionClient {
     }
 
     /**
+     * Merges {@code propsToSet} into the current properties of the Ambari config type
+     * {@code type} and writes a new tag via {@code PUT /clusters/{cluster}}.
+     *
+     * <p>Idempotent: if every key/value in {@code propsToSet} is already present at the
+     * current desired tag, no write happens and the method returns {@code false}.
+     *
+     * <p>Tag scheme: {@code "version-" + System.currentTimeMillis() + "-" + (suffix or "kdps")}.
+     * Ambari treats each tag write as a new config version, so re-running KDPS deploys (which
+     * fire this method) bumps the version only on real diffs.
+     *
+     * @param cluster     Ambari cluster name
+     * @param type        config type, e.g. {@code ranger-tagsync-site}
+     * @param propsToSet  keys to merge in (null/empty values cause the key to be REMOVED;
+     *                    non-null values overwrite existing values). Never null; empty map
+     *                    is a no-op.
+     * @param tagSuffix   optional suffix for the new tag (e.g. {@code "om-tagsync"}); may be null
+     * @return {@code true} when a new tag was written, {@code false} when no diff
+     * @throws Exception on transport or parsing errors
+     */
+    public boolean updateClusterConfig(String cluster,
+                                       String type,
+                                       Map<String, String> propsToSet,
+                                       String tagSuffix) throws Exception {
+        Objects.requireNonNull(cluster, "cluster");
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(propsToSet, "propsToSet");
+        if (propsToSet.isEmpty()) {
+            LOG.debug("updateClusterConfig: empty propsToSet for type '{}', no-op", type);
+            return false;
+        }
+
+        Map<String, String> current = new LinkedHashMap<>(getDesiredConfigProperties(cluster, type));
+        // Detect a real diff. An empty/null value is a delete request.
+        boolean changed = false;
+        for (Map.Entry<String, String> e : propsToSet.entrySet()) {
+            String k = e.getKey();
+            String v = e.getValue();
+            if (k == null || k.isBlank()) continue;
+            if (v == null || v.isEmpty()) {
+                if (current.containsKey(k)) {
+                    current.remove(k);
+                    changed = true;
+                }
+            } else if (!v.equals(current.get(k))) {
+                current.put(k, v);
+                changed = true;
+            }
+        }
+        if (!changed) {
+            LOG.info("updateClusterConfig: no changes for type '{}' on cluster '{}' (idempotent skip)", type, cluster);
+            return false;
+        }
+
+        String safeSuffix = (tagSuffix == null || tagSuffix.isBlank()) ? "kdps" : tagSuffix.replaceAll("[^A-Za-z0-9._-]", "-");
+        String newTag = "version-" + System.currentTimeMillis() + "-" + safeSuffix;
+
+        // Build the desired PUT body: {"Clusters":{"desired_config":{"type":"...","tag":"...","properties":{...}}}}
+        JsonObject propsJson = new JsonObject();
+        for (Map.Entry<String, String> e : current.entrySet()) {
+            propsJson.addProperty(e.getKey(), e.getValue() == null ? "" : e.getValue());
+        }
+        JsonObject desired = new JsonObject();
+        desired.addProperty("type", type);
+        desired.addProperty("tag", newTag);
+        desired.add("properties", propsJson);
+        JsonObject clusters = new JsonObject();
+        clusters.add("desired_config", desired);
+        JsonObject root = new JsonObject();
+        root.add("Clusters", clusters);
+
+        String url = ambariApiBase + "/clusters/" + encode(cluster);
+        String payload = root.toString();
+        LOG.info("updateClusterConfig: PUT {} type='{}' tag='{}' propCount={}", url, type, newTag, current.size());
+
+        try (InputStream is = stream.readFrom(
+                url,
+                "PUT",
+                payload,
+                withStdHeaders(Map.of("Content-Type", "application/json"))
+        )) {
+            String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            LOG.debug("updateClusterConfig response ({}/{}): {}", cluster, type, resp.length() > 200 ? resp.substring(0, 200) + "..." : resp);
+        }
+        return true;
+    }
+
+    /**
+     * Submits a component-level RESTART command to Ambari via
+     * {@code POST /clusters/{cluster}/requests}. Returns the Ambari request id which the
+     * caller can pass to {@link #waitUntilComplete(int, long, java.util.concurrent.TimeUnit)}
+     * for synchronous wait.
+     *
+     * <p>The restart is scoped to all hosts running the given component
+     * (Ambari resolves the host list internally from {@code resource_filters}).
+     *
+     * @param cluster       Ambari cluster name
+     * @param serviceName   service the component belongs to (e.g. {@code RANGER})
+     * @param componentName component to restart (e.g. {@code RANGER_TAGSYNC})
+     * @param context       human-readable context shown in Ambari's "Background Operations" panel
+     * @return Ambari request id
+     */
+    public int submitComponentRestart(String cluster,
+                                      String serviceName,
+                                      String componentName,
+                                      String context) throws Exception {
+        Objects.requireNonNull(cluster, "cluster");
+        Objects.requireNonNull(serviceName, "serviceName");
+        Objects.requireNonNull(componentName, "componentName");
+
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context", (context == null || context.isBlank())
+                ? ("Restart " + serviceName + "/" + componentName)
+                : context);
+        requestInfo.addProperty("command", "RESTART");
+        JsonObject operationLevel = new JsonObject();
+        operationLevel.addProperty("level", "HOST_COMPONENT");
+        operationLevel.addProperty("cluster_name", cluster);
+        operationLevel.addProperty("service_name", serviceName);
+        operationLevel.addProperty("hosts_predicate",
+                "HostRoles/component_name=" + componentName);
+        requestInfo.add("operation_level", operationLevel);
+
+        JsonObject resourceFilter = new JsonObject();
+        resourceFilter.addProperty("service_name", serviceName);
+        resourceFilter.addProperty("component_name", componentName);
+        // hosts left unset → Ambari resolves to every host running the component.
+        JsonArray filters = new JsonArray();
+        filters.add(resourceFilter);
+
+        JsonObject root = new JsonObject();
+        root.add("RequestInfo", requestInfo);
+        root.add("Requests/resource_filters", filters);
+
+        String url = ambariApiBase + "/clusters/" + encode(cluster) + "/requests";
+        String payload = root.toString();
+        LOG.info("submitComponentRestart: POST {} service='{}' component='{}'", url, serviceName, componentName);
+
+        try (InputStream is = stream.readFrom(
+                url,
+                "POST",
+                payload,
+                withStdHeaders(Map.of("Content-Type", "application/json"))
+        )) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                throw new IllegalStateException("Unexpected response for component restart submission: " + json);
+            }
+            int id = ro.get("id").getAsInt();
+            LOG.info("Component restart accepted by Ambari, request id={}", id);
+            return id;
+        }
+    }
+
+    /**
      * Creates or updates an Ambari view instance via PUT (idempotent create-or-update).
      *
      * <p>After a successful SQL Assistant Helm deploy the K8s view calls this to wire

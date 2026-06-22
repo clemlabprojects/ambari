@@ -118,4 +118,48 @@ public class StackServiceDef {
      * drift apart.
      */
     public String requiredChartVersion;
+
+    /**
+     * Declarative external-service auth wiring. See
+     * {@code docs/EXTERNAL_SERVICE_TARGETS.md} for the full contract.
+     *
+     * <p>Each entry models one outbound connection the chart can make to a service
+     * that is either Ambari-managed (no URL override → internal pipeline fires)
+     * or external (URL override set → operator picks an auth mode and Secret,
+     * KDPS resolves the Secret and writes helm overrides per the mode's
+     * {@code applyTo} block).
+     *
+     * <p>The wizard reads this block to render auth-mode dropdowns + conditional
+     * Secret pickers. The deploy pipeline reads it to resolve credentials and
+     * apply helm overrides.
+     *
+     * <p>No-op when null — services that don't need external integrations
+     * (e.g. SQL-ASSISTANT) simply omit the block.
+     */
+    public java.util.Map<String, ExternalServiceTarget> externalServiceTargets;
+
+    /**
+     * Extra helm value paths where the image-pull secret name must be written, in
+     * addition to the two universal paths KDPS always sets
+     * (<code>imagePullSecrets[0].name</code> and <code>global.imagePullSecrets[0]</code>).
+     *
+     * <p>Needed because not every sub-chart honors <code>global.imagePullSecrets</code>.
+     * For example, the airflow sub-chart used by OpenMetadata reads its own
+     * <code>registry.secretName</code> field; without an entry here the airflow pods
+     * spawn with no pull secret and ImagePullBackOff against the private Harbor.
+     * The opensearch sub-chart has a similar carve-out using
+     * <code>imagePullSecrets[0].name</code> nested under its own key.
+     *
+     * <p>Example in service.json:
+     * <pre>
+     *   "imagePullSecretTargets": [
+     *     "dependencies.airflow.registry.secretName"
+     *   ]
+     * </pre>
+     *
+     * <p>This keeps the secret name a single source of truth (resolved server-side
+     * from the repo binding via <code>ensureImagePullSecretFromRepo</code>) and avoids
+     * hard-coding it in chart values.yaml.
+     */
+    public List<String> imagePullSecretTargets;
 }
