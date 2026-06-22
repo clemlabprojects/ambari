@@ -119,6 +119,105 @@ public class DiscoveryResource {
             } catch (Exception e) {
                 LOG.error("Failed to discover HiveServer2", e);
             }
+        } else if ("ATLAS".equals(serviceType)) {
+            try {
+                // 1. Resolve correct Ambari Base URL
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
+                LOG.info("Using Ambari API Base: {}", ambariBase);
+
+                // 2. Resolve Cluster Name
+                String clusterName = resolveClusterName(ambariBase, headers);
+                LOG.info("Target Cluster Name: {}", clusterName);
+
+                // 3. Setup Client
+                AmbariActionClient client = new AmbariActionClient(
+                        viewContext,
+                        ambariBase,
+                        clusterName,
+                        AmbariActionClient.toAuthHeaders(headers.getRequestHeaders())
+                );
+
+                // 4. Look up the ATLAS_SERVER host(s) from Ambari
+                List<String> hosts = client.getComponentHosts(clusterName, "ATLAS", "ATLAS_SERVER");
+                String httpsPort  = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.server.https.port");
+                String httpPort   = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.server.http.port");
+                String tlsEnabled = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.enableTLS");
+
+                boolean tls = tlsEnabled == null || !tlsEnabled.equalsIgnoreCase("false");
+                String scheme = tls ? "https" : "http";
+                String port   = tls
+                        ? (httpsPort == null || httpsPort.isBlank() ? "21443" : httpsPort.trim())
+                        : (httpPort  == null || httpPort.isBlank()  ? "21000" : httpPort.trim());
+
+                if (hosts != null) {
+                    for (String h : hosts) {
+                        String url = scheme + "://" + h + ":" + port;
+                        Map<String, String> item = new HashMap<>();
+                        item.put("label", "Atlas (" + url + ")");
+                        item.put("value", url);
+                        results.add(item);
+                    }
+                }
+                if (results.isEmpty()) {
+                    LOG.warn("No ATLAS_SERVER hosts found in cluster {}", clusterName);
+                }
+            } catch (Exception e) {
+                LOG.error("Failed to discover Atlas", e);
+            }
+        } else if ("RANGER".equals(serviceType)) {
+            // Discover Ranger Admin URL from this Ambari cluster, when Ranger is part
+            // of the ODP stack. Returns an empty list when Ranger isn't installed —
+            // the wizard falls back to the URL-override field so operators can point
+            // at an external Ranger.
+            try {
+                String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
+                String clusterName = resolveClusterName(ambariBase, headers);
+                AmbariActionClient client = new AmbariActionClient(
+                        viewContext,
+                        ambariBase,
+                        clusterName,
+                        AmbariActionClient.toAuthHeaders(headers.getRequestHeaders())
+                );
+
+                List<String> hosts = client.getComponentHosts(clusterName, "RANGER", "RANGER_ADMIN");
+                // Default Ranger ports: 6080 (http) / 6182 (https). The desired port lives
+                // in ranger-admin-site under the canonical http/https keys; the TLS toggle
+                // is `ranger.service.https.attrib.ssl.enabled`. Be tolerant of missing keys
+                // — a freshly-bootstrapped Ranger may not have all properties yet.
+                String httpsPort = client.getDesiredConfigProperty(clusterName,
+                        "ranger-admin-site", "ranger.service.https.port");
+                String httpPort = client.getDesiredConfigProperty(clusterName,
+                        "ranger-admin-site", "ranger.service.http.port");
+                String tlsEnabled = client.getDesiredConfigProperty(clusterName,
+                        "ranger-admin-site", "ranger.service.https.attrib.ssl.enabled");
+
+                boolean tls = tlsEnabled != null && tlsEnabled.equalsIgnoreCase("true");
+                String scheme = tls ? "https" : "http";
+                String port = tls
+                        ? (httpsPort == null || httpsPort.isBlank() ? "6182" : httpsPort.trim())
+                        : (httpPort == null || httpPort.isBlank() ? "6080" : httpPort.trim());
+
+                if (hosts != null) {
+                    for (String h : hosts) {
+                        String url = scheme + "://" + h + ":" + port;
+                        Map<String, String> item = new HashMap<>();
+                        item.put("label", "Ranger Admin (" + url + ")");
+                        item.put("value", url);
+                        results.add(item);
+                    }
+                }
+                if (results.isEmpty()) {
+                    LOG.warn("No RANGER_ADMIN hosts found in cluster {} — operator can override the URL for external Ranger", clusterName);
+                }
+            } catch (Exception e) {
+                // Same fail-open pattern as the ATLAS branch: an unreachable Ambari
+                // shouldn't block the wizard from rendering — operators with an
+                // external Ranger can still type the URL into the override field.
+                LOG.error("Failed to discover Ranger Admin", e);
+            }
         } else if ("HIVE_METASTORE".equals(serviceType)) {
             try {
                 // 1. Resolve correct Ambari Base URL
