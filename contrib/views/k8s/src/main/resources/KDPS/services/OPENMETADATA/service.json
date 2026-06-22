@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.5",
+  "version": "1.13.6",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
@@ -2138,7 +2138,7 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.13.5",
+  "requiredChartVersion": ">=1.13.6",
   "externalServiceTargets": {
     "hive": {
       "label": "Hive Metastore",
