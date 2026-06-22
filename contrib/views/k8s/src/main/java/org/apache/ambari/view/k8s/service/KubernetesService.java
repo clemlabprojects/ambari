@@ -2127,19 +2127,80 @@ public class KubernetesService {
     }
 
     /**
-     * Ensure a namespace exists; creates it if missing.
+     * Ensure a namespace exists and is ready for new resources.
+     *
+     * <p>Handles the common <em>uninstall-then-reinstall</em> race:
+     * when a previous {@code helm uninstall} or {@code kubectl delete namespace}
+     * is still running, the namespace appears in {@code Terminating} phase.
+     * Creating resources in it would fail with HTTP 403
+     * {@code NamespaceTerminating} (typically surfaced several steps later in
+     * the deploy plan — Krb5 ConfigMap, image pull Secret, etc.) and the operator
+     * sees a confusing K8s error instead of a clear "wait for cleanup" message.
+     *
+     * <p>Behavior:
+     * <ol>
+     *   <li>If the namespace doesn't exist → create it.</li>
+     *   <li>If it exists and is {@code Active} → no-op.</li>
+     *   <li>If it exists and is {@code Terminating} → poll until it's gone
+     *       (up to {@code NAMESPACE_TERMINATING_TIMEOUT_SECONDS}), then create
+     *       it fresh. Throws with a clear "still terminating" message on
+     *       timeout so the operator can rerun the deploy.</li>
+     * </ol>
      */
     public void createNamespace(String namespace) {
-
         Objects.requireNonNull(namespace, "namespace");
         try {
-            client.namespaces()
-                .createOrReplace(new NamespaceBuilder()
+            io.fabric8.kubernetes.api.model.Namespace existing =
+                    client.namespaces().withName(namespace).get();
+            if (existing != null) {
+                String phase = existing.getStatus() == null ? null : existing.getStatus().getPhase();
+                if ("Terminating".equalsIgnoreCase(phase)) {
+                    LOG.info("Namespace '{}' is Terminating — waiting up to {}s for cleanup to complete before re-creating",
+                            namespace, NAMESPACE_TERMINATING_TIMEOUT_SECONDS);
+                    waitForNamespaceGone(namespace, NAMESPACE_TERMINATING_TIMEOUT_SECONDS);
+                    // Fall through to the create below — namespace is gone now.
+                } else {
+                    LOG.debug("Namespace '{}' already exists (phase={}); no-op", namespace, phase);
+                    return;
+                }
+            }
+            client.namespaces().createOrReplace(new NamespaceBuilder()
                     .withNewMetadata().withName(namespace).endMetadata()
                     .build());
         } catch (KubernetesClientException e) {
             throw new RuntimeException("Failed to create namespace: " + namespace, e);
         }
+    }
+
+    /** Upper bound for the Terminating-phase wait. Most K8s namespace cleanups
+     *  finish in &lt;30s but stuck finalizers (PVCs, webhooks) can drag it out. */
+    private static final int NAMESPACE_TERMINATING_TIMEOUT_SECONDS = 120;
+
+    /**
+     * Polls the API server until the namespace disappears (cleanup finished) or
+     * the deadline elapses. Throws {@link RuntimeException} on timeout with a
+     * pointer to the typical culprit (stuck finalizers) so operators know where
+     * to look.
+     */
+    private void waitForNamespaceGone(String namespace, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        int pollMs = 2000;
+        while (System.currentTimeMillis() < deadline) {
+            io.fabric8.kubernetes.api.model.Namespace ns = client.namespaces().withName(namespace).get();
+            if (ns == null) {
+                LOG.info("Namespace '{}' cleanup completed; safe to re-create now", namespace);
+                return;
+            }
+            try {
+                Thread.sleep(pollMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for namespace '" + namespace + "' to terminate", ie);
+            }
+        }
+        throw new RuntimeException("Timed out after " + timeoutSeconds + "s waiting for namespace '" + namespace
+                + "' to finish terminating. Check for stuck finalizers: `kubectl get ns " + namespace
+                + " -o yaml | grep -A5 finalizers` — common culprits are pending CRD instances or admission webhooks.");
     }
 
     /**

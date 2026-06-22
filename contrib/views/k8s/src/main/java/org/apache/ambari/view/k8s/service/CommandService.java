@@ -3430,6 +3430,15 @@ public class CommandService {
         // the same rewritten values map.
         applyValueAliasesAndVersionCheck(request, version);
 
+        // Fail-fast on a Terminating namespace. The backends create the namespace
+        // anyway as part of the helm install, but they do so several steps into
+        // the plan — by which point the operator has already seen Krb5 ConfigMap
+        // / image-pull-Secret 403s with confusing K8s wording. Running the wait
+        // here surfaces the "still terminating, try again in N seconds" message
+        // immediately and avoids spinning up a half-built command tree on a
+        // namespace that's about to disappear.
+        kubernetesService.createNamespace(request.getNamespace());
+
         DeploymentContext context = new DeploymentContext(
                 repoId,
                 version,
