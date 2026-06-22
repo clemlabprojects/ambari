@@ -465,6 +465,15 @@ is_ranger_kms_ssl_enabled = default('configurations/ranger-kms-site/ranger.servi
 atlas_admin_username = config['configurations']['atlas-env']['atlas.admin.username']
 atlas_admin_password = config['configurations']['atlas-env']['atlas.admin.password']
 
+# OpenMetadata federation user — provisioned by the KDPS view's atlasFederation
+# post-deploy step (ATLAS_USER_PROVISION_OM). When non-blank, metadata.py
+# appends a corresponding line to users-credentials.properties on Atlas
+# restart. The hash is computed view-side so neither this config nor the
+# credentials file carries the plaintext password.
+om_federation_username = default('configurations/atlas-env/openmetadata.federation.username', '')
+om_federation_password_hash = default('configurations/atlas-env/openmetadata.federation.password_hash', '')
+om_federation_role = default('configurations/atlas-env/openmetadata.federation.role', 'ROLE_USER')
+
 mount_table_xml_inclusion_file_full_path = None
 mount_table_content = None
 if 'viewfs-mount-table' in config['configurations']:

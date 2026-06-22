@@ -207,4 +207,48 @@
     <description>Configurable HBase conf directory.</description>
     <on-ambari-upgrade add="false"/>
   </property>
+
+  <!--
+    OpenMetadata federation user — Ambari-management properties (NOT consumed by
+    Atlas directly; Atlas reads users-credentials.properties on the filesystem).
+    KDPS view's atlasFederation post-deploy step (ATLAS_USER_PROVISION_OM) writes
+    these values via Ambari config update. On the next Atlas restart, metadata.py
+    appends a corresponding line to users-credentials.properties. Empty values
+    are a no-op (the existing OM federation user, if any, is left untouched).
+
+    The username is a service-principal-like identity; the password is stored as
+    its SHA-256 hash (same format Atlas's users-credentials.properties expects).
+    KDPS hashes the plaintext at provisioning time so neither this config nor
+    users-credentials.properties holds the plaintext password.
+  -->
+  <property>
+    <name>openmetadata.federation.username</name>
+    <value></value>
+    <display-name>OpenMetadata federation user</display-name>
+    <description>Local Atlas user the OpenMetadata Atlas federation integration authenticates as (basic-auth mode only). Provisioned by the KDPS view atlasFederation post-deploy step. Leave empty when not federating OM, when Atlas uses Kerberos/LDAP authentication, or when an external Atlas is integrated.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>openmetadata.federation.password_hash</name>
+    <value></value>
+    <display-name>OpenMetadata federation password (SHA-256)</display-name>
+    <description>SHA-256 hash of the OpenMetadata federation user's password, in the same hex-string format used by Atlas's users-credentials.properties. KDPS hashes the plaintext at provisioning time so neither this config nor Atlas's credentials file stores it in clear. Leave empty when not federating OM with basic auth.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>openmetadata.federation.role</name>
+    <value>ROLE_USER</value>
+    <display-name>OpenMetadata federation user role</display-name>
+    <description>Atlas role granted to the OpenMetadata federation user. Defaults to ROLE_USER (read-only). Set to ROLE_ADMIN only if the operator intends OM to perform write operations against Atlas (uncommon — federation typically reads metadata).</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>

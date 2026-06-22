@@ -110,6 +110,49 @@ def metadata(type='server'):
           owner=params.metadata_user
         )
 
+      # OpenMetadata federation user — Ambari adds this user to Atlas's
+      # users-credentials.properties when KDPS view has provisioned the
+      # `openmetadata.federation.{username,password_hash}` keys via
+      # ATLAS_USER_PROVISION_OM. The hash is pre-computed view-side (SHA-256
+      # hex, same format as the admin password above). Empty values → no-op
+      # so this branch stays quiet when atlasFederation is disabled or
+      # when OM federates via Kerberos/LDAP/external Atlas.
+      if params.om_federation_username and params.om_federation_password_hash:
+        role = params.om_federation_role if params.om_federation_role else 'ROLE_USER'
+        ModifyPropertiesFile(format("{conf_dir}/users-credentials.properties"),
+          properties={format(params.om_federation_username): format(f'{role}::{params.om_federation_password_hash}')},
+          owner=params.metadata_user
+        )
+
+        # Mirror the user → role mapping into atlas-simple-authz-policy.json so
+        # the simple authorizer also recognises it. This is a no-op when Atlas
+        # is configured to use the Ranger authorizer (the file is unread); the
+        # patch is harmless and idempotent there too. The file is initially
+        # copied from the stack source above; we read + merge + rewrite so a
+        # second call with the same user is a no-op JSON-diff. Atlas restart
+        # is required to pick up either kind of change (KDPS surfaces that in
+        # the Ambari UI as the normal "Restart Required" badge).
+        try:
+          import json as _json
+          authz_path = format("{conf_dir}/atlas-simple-authz-policy.json")
+          if os.path.exists(authz_path):
+            with open(authz_path, 'r') as _f:
+              authz_doc = _json.load(_f)
+            user_roles = authz_doc.setdefault('userRoles', {})
+            existing_roles = user_roles.get(params.om_federation_username) or []
+            if role not in existing_roles:
+              user_roles[params.om_federation_username] = sorted(set(existing_roles + [role]))
+              # Write atomically: tmp + rename, then chmod via the Execute below
+              tmp_path = authz_path + '.tmp'
+              with open(tmp_path, 'w') as _f:
+                _json.dump(authz_doc, _f, indent=2, sort_keys=True)
+              os.replace(tmp_path, authz_path)
+        except Exception:
+          # Don't fail Atlas restart over a best-effort policy merge — the
+          # config update step will surface the actual error in Ambari logs,
+          # and the basic-auth user write above is the load-bearing change.
+          pass
+
       files_to_chown = [format("{conf_dir}/atlas-simple-authz-policy.json"), format("{conf_dir}/users-credentials.properties")]
       for file in files_to_chown:
         if os.path.exists(file):
