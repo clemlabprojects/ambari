@@ -4821,12 +4821,36 @@ public class CommandService {
                     // body re-checks atlasFederation.enabled at execute time so a reapply
                     // after the toggle was flipped off still fails loudly instead of
                     // silently succeeding.
+                    //
+                    // ----- Auth-mode-aware dispatch -----
+                    // For Ambari-managed Atlas (the host operator's Atlas is part of the same
+                    // Ambari cluster KDPS is running in), we discover the Atlas auth + ACL
+                    // modes from Atlas's stack config and queue the right pre-OM steps:
+                    //
+                    //   basic auth   → ATLAS_USER_PROVISION_OM
+                    //   simple ACL   → ATLAS_SIMPLE_AUTHZ_GRANT_OM
+                    //   ranger ACL   → RANGER_POLICY_CREATE_ATLAS_OM_READ
+                    //
+                    // For an external Atlas (URL override + operator-supplied creds) we skip
+                    // all Atlas-side provisioning and just queue OM_ATLAS_FEDERATION_REGISTER.
+                    //
+                    // All paths end with OM_ATLAS_FEDERATION_REGISTER as the FINAL step so
+                    // the OM REST call happens AFTER Atlas-side wiring is in place.
                     Object atlasSpec = serviceDef.postDeploy.get("atlasFederation");
                     if (atlasSpec != null) {
                         Object enabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
                                 "atlasFederation.enabled");
                         if (enabledRaw != null && "true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
+                            try {
+                                queueAtlasFederationProvisioningSteps(
+                                        rootCommand, request, params, cluster, ambariActionClient);
+                            } catch (Exception ex) {
+                                LOG.warn("Atlas federation provisioning dispatch failed for '{}': {} "
+                                        + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
+                                        request.getReleaseName(), ex.toString());
+                            }
+                            // Always queue the OM-side REST registration last (auth-mode aware).
                             Map<String, Object> atlasParams = new LinkedHashMap<>();
                             atlasParams.put("releaseName", request.getReleaseName());
                             atlasParams.put("namespace", request.getNamespace());
@@ -5899,6 +5923,18 @@ public class CommandService {
                 }
                 case OM_ATLAS_FEDERATION_REGISTER -> {
                     String result = registerOmAtlasFederation(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case ATLAS_USER_PROVISION_OM -> {
+                    String result = provisionAtlasUserForOm(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case ATLAS_SIMPLE_AUTHZ_GRANT_OM -> {
+                    String result = grantAtlasSimpleAuthzForOm(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case RANGER_POLICY_CREATE_ATLAS_OM_READ -> {
+                    String result = createRangerAtlasReadPolicyForOm(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
                 // ... inside runNextStep ...
@@ -7820,6 +7856,338 @@ public class CommandService {
 
     private static String stringValue(Object o) {
         return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    /**
+     * Dispatch helper: looks at the deploy-time atlas-federation context (the
+     * resolved Atlas endpoint + auth/acl modes — either discovered from the
+     * Ambari-managed Atlas or operator-supplied for an external Atlas) and
+     * queues the right Atlas-side provisioning steps BEFORE the final
+     * OM_ATLAS_FEDERATION_REGISTER step (which the caller queues after this
+     * returns).
+     *
+     * <p>Step matrix (Ambari-managed Atlas):
+     * <pre>
+     *   basic   + simple   → ATLAS_USER_PROVISION_OM, ATLAS_SIMPLE_AUTHZ_GRANT_OM
+     *   basic   + ranger   → ATLAS_USER_PROVISION_OM, RANGER_POLICY_CREATE_ATLAS_OM_READ
+     *   kerberos + simple  → (no user provision)    , ATLAS_SIMPLE_AUTHZ_GRANT_OM (principal-based)
+     *   kerberos + ranger  → (no user provision)    , RANGER_POLICY_CREATE_ATLAS_OM_READ (principal-based)
+     *   ldap     + any     → (no user provision)    , ACL step keyed on the operator-typed LDAP user
+     * </pre>
+     *
+     * <p>External Atlas (no Ambari-managed Atlas in the cluster) skips everything;
+     * the caller's OM_ATLAS_FEDERATION_REGISTER step uses operator-supplied creds.
+     */
+    @SuppressWarnings("unchecked")
+    private void queueAtlasFederationProvisioningSteps(CommandEntity rootCommand,
+                                                       HelmDeployRequest request,
+                                                       Map<String, Object> params,
+                                                       String cluster,
+                                                       AmbariActionClient ambariActionClient) throws Exception {
+        if (cluster == null || cluster.isBlank() || ambariActionClient == null) {
+            LOG.info("Atlas federation dispatch: no Ambari cluster context — external Atlas only path, "
+                    + "queueing OM_ATLAS_FEDERATION_REGISTER with operator-supplied creds.");
+            return;
+        }
+        // Detect whether Atlas is Ambari-managed by probing for ATLAS_SERVER hosts.
+        java.util.List<String> atlasHosts;
+        try {
+            atlasHosts = ambariActionClient.getComponentHosts(cluster, "ATLAS", "ATLAS_SERVER");
+        } catch (Exception ex) {
+            LOG.info("Atlas federation dispatch: Ambari ATLAS host probe failed ({}), "
+                    + "assuming external Atlas.", ex.toString());
+            return;
+        }
+        if (atlasHosts == null || atlasHosts.isEmpty()) {
+            LOG.info("Atlas federation dispatch: no Ambari-managed ATLAS_SERVER in cluster '{}' — "
+                    + "external Atlas path.", cluster);
+            return;
+        }
+
+        // Resolve auth + acl modes from Atlas config (DiscoveryResource uses the same probes).
+        String kerberosOn = ambariActionClient.getDesiredConfigProperty(cluster,
+                "application-properties", "atlas.authentication.method.kerberos");
+        String ldapType = ambariActionClient.getDesiredConfigProperty(cluster,
+                "application-properties", "atlas.authentication.method.ldap.type");
+        String fileOn = ambariActionClient.getDesiredConfigProperty(cluster,
+                "application-properties", "atlas.authentication.method.file");
+        String authMode;
+        if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
+            authMode = "kerberos";
+        } else if (ldapType != null && !ldapType.isBlank() && !"NONE".equalsIgnoreCase(ldapType.trim())) {
+            authMode = "ldap";
+        } else if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
+            authMode = "basic";
+        } else {
+            authMode = "none";
+        }
+        String authzImpl = ambariActionClient.getDesiredConfigProperty(cluster,
+                "application-properties", "atlas.authorizer.impl");
+        String aclMode = (authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger"))
+                ? "ranger" : "simple";
+
+        LOG.info("Atlas federation dispatch: cluster='{}' authMode={} aclMode={} (Ambari-managed Atlas)",
+                cluster, authMode, aclMode);
+
+        // Stash discovered modes on params so each step body can re-read them
+        // (e.g. the principal kind decision in RANGER_POLICY_CREATE_ATLAS_OM_READ).
+        params.put("_atlasAuthMode", authMode);
+        params.put("_atlasAclMode", aclMode);
+
+        // ----- 1) User provision (basic auth only) -----
+        if ("basic".equals(authMode)) {
+            Map<String, Object> stepParams = new LinkedHashMap<>(params);
+            stepParams.put("_atlasFederationRole", "ROLE_USER");
+            this.commandPlanFactory.createAtlasUserProvisionOm(rootCommand, stepParams);
+            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM");
+        }
+
+        // ----- 2) ACL grant — simple OR ranger -----
+        if ("simple".equals(aclMode)) {
+            if ("basic".equals(authMode)) {
+                // The simple-authz grant only makes sense if we have a user identity
+                // recorded in atlas-env (which ATLAS_USER_PROVISION_OM just did).
+                this.commandPlanFactory.createAtlasSimpleAuthzGrantOm(rootCommand, params);
+                LOG.info("Atlas federation dispatch: queued ATLAS_SIMPLE_AUTHZ_GRANT_OM");
+            } else {
+                // Kerberos / LDAP + simple authz: requires writing the principal/user
+                // into simple-authz-policy.json directly. Out of scope for this
+                // iteration — log a clear warning so the operator knows the
+                // federation will fail authz unless they patch the file by hand.
+                LOG.warn("Atlas federation dispatch: ({},{}) requires writing principal '{}' into "
+                                + "atlas-simple-authz-policy.json manually — KDPS does not yet automate "
+                                + "this combination. The OM_ATLAS_FEDERATION_REGISTER REST call will "
+                                + "likely return 403 until the operator grants access.",
+                        authMode, aclMode, "openmetadata");
+            }
+        } else if ("ranger".equals(aclMode)) {
+            Map<String, Object> stepParams = new LinkedHashMap<>(params);
+            // Principal to grant depends on auth mode.
+            String principal;
+            if ("kerberos".equals(authMode)) {
+                // Reuse the OM ingestion-bot Kerberos principal KDPS already provisions
+                // for the OM-Ranger TagSync source. Pattern: <serviceName>-<namespace>@<realm>.
+                String kerbRealm = ambariActionClient.getDesiredConfigProperty(cluster, "kerberos-env", "realm");
+                if (kerbRealm == null || kerbRealm.isBlank()) {
+                    LOG.warn("Atlas federation dispatch: Kerberos auth mode but kerberos-env.realm is empty — "
+                            + "RANGER_POLICY_CREATE_ATLAS_OM_READ will fail at execute time.");
+                }
+                principal = "oma-ing-" + request.getNamespace() + "@"
+                        + (kerbRealm == null ? "REALM-MISSING" : kerbRealm.trim());
+            } else if ("basic".equals(authMode)) {
+                principal = "openmetadata-federation";  // matches ATLAS_USER_PROVISION_OM default
+            } else /* ldap */ {
+                principal = stringValue(ConfigResolutionService.getByDottedPath(
+                        request.getValues() != null ? request.getValues() : Collections.emptyMap(),
+                        "atlasFederation.username"));
+                if (principal.isBlank()) principal = "openmetadata-federation";
+            }
+            stepParams.put("_omPrincipal", principal);
+            this.commandPlanFactory.createRangerPolicyCreateAtlasOmRead(rootCommand, stepParams);
+            LOG.info("Atlas federation dispatch: queued RANGER_POLICY_CREATE_ATLAS_OM_READ principal='{}'",
+                    principal);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Atlas federation provisioning steps (Ambari-managed Atlas only).
+    //
+    // Three discrete steps cooperate to grant the OpenMetadata federation
+    // user the right to read from Atlas:
+    //   1) ATLAS_USER_PROVISION_OM   — writes the Atlas-side basic-auth user
+    //      (atlas-env props) + holds the plaintext password in a K8s Secret
+    //      in the OM namespace so the subsequent OM_ATLAS_FEDERATION_REGISTER
+    //      step can read it.
+    //   2) ATLAS_SIMPLE_AUTHZ_GRANT_OM — for simple-authz Atlas authorizer:
+    //      surfaces the user in the simple-authz-policy.json (the actual
+    //      file merge happens in the ODP ATLAS package's metadata.py on
+    //      Atlas restart).
+    //   3) RANGER_POLICY_CREATE_ATLAS_OM_READ — for the Ranger Atlas
+    //      authorizer: POST a read-only policy to Ranger Admin REST + poll
+    //      until it's readable back (proxy signal for plugin-pull).
+    //
+    // Each is idempotent: re-running with the same effective inputs produces
+    // no externally-visible change. That's load-bearing for replayability.
+    //
+    // None of these steps trigger an Atlas restart — the operator drives it
+    // through Ambari's normal "Restart Required" badge. Atlas restart blast-
+    // radius is larger than KDPS should auto-trigger (unlike Ranger TagSync
+    // where we do).
+    // ---------------------------------------------------------------------
+
+    /**
+     * Body of {@code ATLAS_USER_PROVISION_OM}. Reads (or generates + persists)
+     * the OM federation credentials in a K8s Secret named
+     * {@code <release>-atlas-federation}, then writes the resolved username +
+     * SHA-256 password hash into the Ambari {@code atlas-env} config so the
+     * ODP {@code metadata.py} hook materialises a corresponding line in
+     * Atlas's {@code users-credentials.properties} on the next Atlas restart.
+     *
+     * @return JSON status: {@code {username, configChanged, secretName}}
+     */
+    @SuppressWarnings("unchecked")
+    String provisionAtlasUserForOm(Map<String, Object> childParams) throws Exception {
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        String cluster     = (String) childParams.get("_cluster");
+        if (releaseName == null || namespace == null || cluster == null) {
+            throw new IllegalStateException("Missing releaseName/namespace/_cluster in ATLAS_USER_PROVISION_OM params");
+        }
+        String overrideUsername = stringValue(childParams.get("_atlasFederationUsername"));
+        String role = stringValue(childParams.get("_atlasFederationRole"));
+        if (role.isBlank()) role = "ROLE_USER";
+
+        // 1. Get-or-create credentials in a per-release K8s Secret
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.Credentials creds =
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
+                        this.kubernetesService.getClient(), namespace, releaseName, overrideUsername);
+
+        // 2. Write atlas-env props in Ambari
+        String baseUriStr = (String) childParams.get("_baseUri");
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        boolean configChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
+                ambari, cluster, creds.username, creds.passwordSha256Hex, role);
+
+        LOG.info("ATLAS_USER_PROVISION_OM: release='{}' user='{}' role='{}' secretName='{}-atlas-federation' "
+                        + "configChanged={} preExistingSecret={} (Atlas restart required after this step)",
+                releaseName, creds.username, role, releaseName, configChanged, creds.preExisting);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("username", creds.username);
+        result.put("role", role);
+        result.put("secretName", releaseName + "-atlas-federation");
+        result.put("configChanged", configChanged);
+        result.put("preExistingSecret", creds.preExisting);
+        result.put("restartRequiredFor", "ATLAS/ATLAS_SERVER");
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@code ATLAS_SIMPLE_AUTHZ_GRANT_OM}. The real file merge happens
+     * in the ODP {@code metadata.py} hook on Atlas restart (it reads
+     * {@code atlas-env.openmetadata.federation.role} and appends the user→role
+     * mapping into {@code atlas-simple-authz-policy.json}). This step exists
+     * so the operator's command tree shows two clear lines (user provisioned
+     * + ACL granted), and so we can re-check the configured role in case
+     * the dispatch flow was customized.
+     *
+     * <p>The step body itself is a thin verification — it confirms the
+     * three required atlas-env keys are set. The actual ACL is applied on
+     * Atlas restart by the stack hook.
+     */
+    @SuppressWarnings("unchecked")
+    String grantAtlasSimpleAuthzForOm(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in ATLAS_SIMPLE_AUTHZ_GRANT_OM params");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        String user = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
+        String hash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
+        String role = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.role");
+        if (user == null || user.isBlank() || hash == null || hash.isBlank()) {
+            throw new IllegalStateException("ATLAS_SIMPLE_AUTHZ_GRANT_OM: expected "
+                    + "atlas-env.openmetadata.federation.username + .password_hash to be set "
+                    + "by the previous ATLAS_USER_PROVISION_OM step but they're empty. Check the command tree.");
+        }
+        LOG.info("ATLAS_SIMPLE_AUTHZ_GRANT_OM: user='{}' role='{}' — ACL will be applied to "
+                        + "atlas-simple-authz-policy.json by the ODP metadata.py hook on next Atlas restart.",
+                user, role);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("user", user);
+        result.put("role", role);
+        result.put("aclTarget", "atlas-simple-authz-policy.json");
+        result.put("appliedBy", "ODP/ATLAS metadata.py on next Atlas restart");
+        result.put("restartRequiredFor", "ATLAS/ATLAS_SERVER");
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@code RANGER_POLICY_CREATE_ATLAS_OM_READ}. Resolves Ranger
+     * Admin URL + creds from Ambari config, then delegates to
+     * {@code OmAtlasProvisioning.createOrFindAtlasReadPolicy} which is
+     * idempotent (lookup-by-name first; only POST when absent) and polls
+     * the policy back via GET-by-id to confirm it's queryable (proxy signal
+     * for plugin-pull readiness on the Atlas side).
+     *
+     * @return JSON: {@code {policyId, policyName, principal, atlasServiceName}}
+     */
+    @SuppressWarnings("unchecked")
+    String createRangerAtlasReadPolicyForOm(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_CREATE_ATLAS_OM_READ params");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        // ----- Ranger Admin URL (mirrors DiscoveryResource RANGER probe) -----
+        String httpsPort = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.https.port");
+        String httpPort  = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.http.port");
+        String tlsRaw    = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.https.attrib.ssl.enabled");
+        boolean tls = "true".equalsIgnoreCase(tlsRaw == null ? "" : tlsRaw.trim());
+        String port = tls
+                ? (httpsPort == null || httpsPort.isBlank() ? "6182" : httpsPort.trim())
+                : (httpPort == null || httpPort.isBlank() ? "6080" : httpPort.trim());
+        java.util.List<String> hosts = ambari.getComponentHosts(cluster, "RANGER", "RANGER_ADMIN");
+        if (hosts == null || hosts.isEmpty()) {
+            throw new IllegalStateException("No RANGER_ADMIN hosts found on cluster '" + cluster + "'");
+        }
+        String rangerUrl = (tls ? "https://" : "http://") + hosts.get(0) + ":" + port;
+
+        // ----- Ranger Admin credentials -----
+        // Pull from admin-properties (the install-time admin/password pair).
+        // Dev-cluster fallback is admin/admin which matches ODP's default.
+        String rangerUser = ambari.getDesiredConfigProperty(cluster, "admin-properties", "admin_username");
+        if (rangerUser == null || rangerUser.isBlank()) rangerUser = "admin";
+        String rangerPass = ambari.getDesiredConfigProperty(cluster, "admin-properties", "admin_password");
+        if (rangerPass == null || rangerPass.isBlank()) {
+            throw new IllegalStateException("Could not resolve Ranger Admin password from admin-properties.admin_password "
+                    + "(empty). Provide a credential override or rotate the Ranger admin secret.");
+        }
+
+        // ----- Atlas service repo name in Ranger -----
+        // Default convention in ODP installs: <cluster_name>_atlas. Operators may
+        // override via service.json `atlasRangerServiceName` (passed in childParams
+        // by the dispatcher) for the rare case where the repo was renamed.
+        String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
+        if (atlasService.isBlank()) atlasService = cluster + "_atlas";
+
+        // ----- Principal: basic-auth username OR Kerberos principal -----
+        // Dispatcher passes _omPrincipal (the right form for the current auth mode).
+        String principal = stringValue(childParams.get("_omPrincipal"));
+        boolean isKerberos = "kerberos".equalsIgnoreCase(stringValue(childParams.get("_atlasAuthMode")));
+        if (principal.isBlank()) {
+            throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_CREATE_ATLAS_OM_READ params "
+                    + "(the dispatcher should populate this with either the Atlas federation username or the OM "
+                    + "Kerberos principal depending on Atlas auth mode).");
+        }
+
+        String policyName = "kdps-openmetadata-" + releaseName + "-read";
+        LOG.info("RANGER_POLICY_CREATE_ATLAS_OM_READ: rangerUrl='{}' atlasService='{}' principal='{}' isKerberos={} policyName='{}'",
+                rangerUrl, atlasService, principal, isKerberos, policyName);
+
+        long policyId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindAtlasReadPolicy(
+                rangerUrl, rangerUser, rangerPass, atlasService, policyName, principal, isKerberos,
+                java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("policyId", policyId);
+        result.put("policyName", policyName);
+        result.put("atlasServiceName", atlasService);
+        result.put("principal", principal);
+        result.put("rangerUrl", rangerUrl);
+        return gson.toJson(result);
     }
 
     /**

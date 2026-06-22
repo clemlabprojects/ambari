@@ -158,6 +158,60 @@ public enum CommandType {
      */
     OM_ATLAS_FEDERATION_REAPPLY,
 
+    /**
+     * Provisions the OpenMetadata federation user in an Ambari-managed Atlas
+     * (basic-auth mode only). Writes {@code openmetadata.federation.username} +
+     * {@code openmetadata.federation.password_hash} into the {@code atlas-env}
+     * Ambari config. The ODP ATLAS stack scripts ({@code metadata.py}) read
+     * these on the next Atlas restart and append a line to Atlas's
+     * {@code users-credentials.properties} file. KDPS does NOT trigger the
+     * Atlas restart — the operator drives it via the normal "Restart Required"
+     * Ambari badge (Atlas restart blast-radius is larger than KDPS should own).
+     *
+     * <p>Idempotent: re-running with the same username/hash detects no diff in
+     * Ambari config and is a no-op. The plaintext password is held only in an
+     * operator-readable K8s Secret in the OM release namespace; the Atlas
+     * config + credentials file only hold the SHA-256 hash.
+     *
+     * <p>Skipped when Atlas auth mode is kerberos/ldap (those modes don't use
+     * basic auth, so no user provisioning is needed).
+     */
+    ATLAS_USER_PROVISION_OM,
+
+    /**
+     * Grants the OpenMetadata federation user the configured role in Atlas's
+     * simple-authorizer policy file ({@code atlas-simple-authz-policy.json}).
+     * The role lookup is sourced from {@code atlas-env.openmetadata.federation.role}
+     * (default {@code ROLE_USER}) — set by {@link #ATLAS_USER_PROVISION_OM}
+     * already, so this step typically writes nothing new; the actual file
+     * merge happens in the ODP {@code metadata.py} hook on Atlas restart.
+     *
+     * <p>Exists as a distinct step (rather than folded into the user-provision
+     * step) so the operator's command tree shows two clear lines: "user
+     * created" + "ACL granted". Skipped when Atlas's authorizer is the
+     * Ranger plugin (in that case {@link #RANGER_POLICY_CREATE_ATLAS_OM_READ}
+     * is queued instead).
+     */
+    ATLAS_SIMPLE_AUTHZ_GRANT_OM,
+
+    /**
+     * Creates a read-only Ranger policy in the Atlas service repository that
+     * grants the OpenMetadata federation user (basic-auth username OR Kerberos
+     * principal, depending on Atlas auth mode) permission to read Atlas
+     * entities + classifications. Used when Atlas's authorizer is the Ranger
+     * plugin ({@code atlas.authorizer.impl=…ranger…}).
+     *
+     * <p>After POSTing the policy via {@code /service/public/v2/api/policy},
+     * the step polls {@code /service/public/v2/api/policy/{id}} to confirm
+     * the policy is queryable — that's the proxy signal that the Atlas-side
+     * Ranger plugin has pulled it (the plugin's policy-cache reload runs on
+     * a short interval; the lookup also forces a refresh on the Admin side).
+     *
+     * <p>Idempotent: a GET by-name first short-circuits the POST if the policy
+     * already exists for this OM user + Atlas service repo combination.
+     */
+    RANGER_POLICY_CREATE_ATLAS_OM_READ,
+
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
 

@@ -781,6 +781,94 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans a single {@code ATLAS_USER_PROVISION_OM} child command — writes the
+     * OM federation user into Ambari's {@code atlas-env} (the ODP ATLAS stack
+     * scripts materialize it into {@code users-credentials.properties} on the
+     * next Atlas restart). Self-persists rootCommand.childListJson.
+     */
+    public void createAtlasUserProvisionOm(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.ATLAS_USER_PROVISION_OM,
+                "Atlas: provision OpenMetadata federation user",
+                "-atlas-user-prov-");
+    }
+
+    /**
+     * Plans a single {@code ATLAS_SIMPLE_AUTHZ_GRANT_OM} child command — verifies
+     * the simple-authz grant is wired (the actual file write happens in the ODP
+     * ATLAS metadata.py hook on Atlas restart).
+     */
+    public void createAtlasSimpleAuthzGrantOm(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.ATLAS_SIMPLE_AUTHZ_GRANT_OM,
+                "Atlas: grant OpenMetadata user in simple-authz policy",
+                "-atlas-simple-authz-");
+    }
+
+    /**
+     * Plans a single {@code RANGER_POLICY_CREATE_ATLAS_OM_READ} child command —
+     * creates a read-only Ranger policy in the Atlas service repo for the OM
+     * federation principal (basic username OR Kerberos principal depending on
+     * Atlas auth mode).
+     */
+    public void createRangerPolicyCreateAtlasOmRead(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.RANGER_POLICY_CREATE_ATLAS_OM_READ,
+                "Ranger: create read-only policy for OpenMetadata federation in Atlas service repo",
+                "-ranger-atlas-policy-");
+    }
+
+    /**
+     * Shared queue-step helper for the three Atlas federation provisioning step
+     * types. All follow the same shape (one child, no children of their own,
+     * params snapshot from the dispatcher, self-persisting root child list).
+     */
+    private void queueAtlasFederationStep(CommandEntity rootCommand,
+                                          Map<String, Object> params,
+                                          CommandType type,
+                                          String title,
+                                          String idMarker) {
+        final String now = Instant.now().toString();
+        String id = rootCommand.getId() + idMarker + UUID.randomUUID();
+
+        CommandEntity cmd = new CommandEntity();
+        cmd.setTitle(title);
+        cmd.setId(id);
+        cmd.setType(type.name());
+        cmd.setViewInstance(ctx.getInstanceName());
+        cmd.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+
+        cmd.setCommandStatusId(status.getId());
+
+        // Self-persist into root.childListJson (mirrors createAmbariViewProvisionCommand
+        // and createOmAtlasFederationRegister — submitDeploy's post-deploy block doesn't
+        // re-save root after this call, so we have to).
+        java.lang.reflect.Type listType = new TypeToken<ArrayList<String>>(){}.getType();
+        List<String> children;
+        try {
+            children = gson.fromJson(rootCommand.getChildListJson(), listType);
+            if (children == null) children = new ArrayList<>();
+        } catch (Exception e) {
+            children = new ArrayList<>();
+        }
+        children.add(id);
+        rootCommand.setChildListJson(gson.toJson(children));
+
+        store(status);
+        store(cmd);
+        store(rootCommand);
+        LOG.info("Queued {} step {} on root {}", type, id, rootCommand.getId());
+    }
+
+    /**
      * Plans a single {@code OM_ATLAS_FEDERATION_REGISTER} child command when the
      * service.json {@code postDeploy.atlasFederation} block is non-null AND the
      * deploy-time form values toggled {@code atlasFederation.enabled} on.
