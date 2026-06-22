@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.12.12",
+  "version": "1.13.5",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
@@ -425,6 +425,34 @@
       "from": {
         "type": "form",
         "field": "ingress.externalSecret.refreshInterval"
+      }
+    },
+    {
+      "name": "dependenciesEnabled",
+      "from": {
+        "type": "form",
+        "field": "dependencies.enabled"
+      }
+    },
+    {
+      "name": "atlasFederationEnabled",
+      "from": {
+        "type": "form",
+        "field": "atlasFederation.enabled"
+      }
+    },
+    {
+      "name": "atlasUrlDiscovered",
+      "from": {
+        "type": "form",
+        "field": "ui_atlas_url"
+      }
+    },
+    {
+      "name": "atlasUrlOverride",
+      "from": {
+        "type": "form",
+        "field": "atlasFederation.hostPort"
       }
     }
   ],
@@ -895,6 +923,143 @@
           }
         }
       ]
+    },
+    {
+      "name": "om-dependencies-toggle",
+      "_description": "Gates the openmetadata-dependencies (Airflow) sub-chart.",
+      "targets": [
+        {
+          "path": "dependencies.enabled",
+          "from": {
+            "type": "form",
+            "field": "dependencies.enabled"
+          }
+        }
+      ]
+    },
+    {
+      "name": "om-dependencies-replicas",
+      "skipIfVarEmpty": "dependenciesEnabled",
+      "targets": [
+        {
+          "path": "dependencies.airflow.scheduler.replicas",
+          "from": {
+            "type": "form",
+            "field": "dependencies.airflow.scheduler.replicas"
+          }
+        },
+        {
+          "path": "dependencies.airflow.apiServer.replicas",
+          "from": {
+            "type": "form",
+            "field": "dependencies.airflow.apiServer.replicas"
+          }
+        }
+      ]
+    },
+    {
+      "name": "atlas-federation-toggle",
+      "_description": "Atlas federation requires Airflow → also flips dependencies.enabled when the operator turns this on. Express via two targets so the bindings engine sets both atomically.",
+      "targets": [
+        {
+          "path": "atlasFederation.enabled",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.enabled"
+          }
+        },
+        {
+          "path": "dependencies.enabled",
+          "skipIfVarEmpty": "atlasFederationEnabled",
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "atlas-federation-config",
+      "skipIfVarEmpty": "atlasFederationEnabled",
+      "targets": [
+        {
+          "path": "atlasFederation.username",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.username"
+          }
+        },
+        {
+          "path": "atlasFederation.existingSecret",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.existingSecret"
+          }
+        },
+        {
+          "path": "atlasFederation.password",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.password"
+          }
+        },
+        {
+          "path": "atlasFederation.schedule",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.schedule"
+          }
+        },
+        {
+          "path": "atlasFederation.databaseServiceNames",
+          "op": "csvToList",
+          "from": {
+            "type": "form",
+            "field": "atlasFederation.databaseServiceNames"
+          }
+        }
+      ]
+    },
+    {
+      "name": "atlas-url-discovered",
+      "_description": "Sets atlasFederation.hostPort from the Ambari-discovered Atlas service.",
+      "skipIfVarEmpty": "atlasUrlDiscovered",
+      "targets": [
+        {
+          "path": "atlasFederation.hostPort",
+          "from": {
+            "type": "var",
+            "name": "atlasUrlDiscovered"
+          }
+        }
+      ]
+    },
+    {
+      "name": "atlas-url-override",
+      "_description": "Override the discovered Atlas URL when the operator types in the override field.",
+      "skipIfVarEmpty": "atlasUrlOverride",
+      "targets": [
+        {
+          "path": "atlasFederation.hostPort",
+          "from": {
+            "type": "var",
+            "name": "atlasUrlOverride"
+          }
+        }
+      ]
+    },
+    {
+      "name": "om-airflow-ingress-toggle",
+      "skipIfVarEmpty": "dependenciesEnabled",
+      "targets": [
+        {
+          "path": "dependencies.airflow.ingress.enabled",
+          "from": {
+            "type": "form",
+            "field": "dependencies.airflow.ingress.enabled"
+          }
+        }
+      ]
     }
   ],
   "form": [
@@ -1117,14 +1282,26 @@
           "type": "service-select",
           "serviceType": "HIVE_METASTORE",
           "excludeFromValues": true,
-          "help": "Select a running Hive Metastore to auto-configure the Hive connector."
+          "help": "Hive Metastore consumed by OM's Hive connector (direct thrift). Independent of Trino — you can have both. Leave empty if OM only consumes via Trino."
         },
         {
           "name": "ui_hive_metastore_uri_override",
           "label": "URI Hive Metastore (override)",
           "type": "string",
           "defaultValue": "",
-          "help": "e.g. thrift://hive-metastore.ns:9083 — overrides auto-discovered value."
+          "help": "e.g. thrift://hive-metastore.ns:9083 — overrides auto-discovered value. When set AND Hive is external, an authentication picker appears below."
+        },
+        {
+          "name": "_hive_external_auth",
+          "type": "external-auth-target",
+          "target": "hive",
+          "label": "External Hive authentication",
+          "excludeFromValues": true,
+          "help": "Visible only when the URI override above is set — i.e. Hive Metastore is on a foreign cluster KDPS does not manage. Pick the auth mode the foreign Hive uses (none / kerberos), then reference the K8s Secret carrying credentials.",
+          "condition": {
+            "field": "ui_hive_metastore_uri_override",
+            "operator": "non-empty"
+          }
         },
         {
           "name": "ui_trino_host",
@@ -1132,7 +1309,7 @@
           "type": "k8s-discovery",
           "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
           "excludeFromValues": true,
-          "help": "Select a running Trino coordinator to auto-configure the Trino connector."
+          "help": "Trino coordinator consumed by OM's Trino connector. KDPS automatically registers the 'trino-clemlab' connection in OM at install when this is set."
         },
         {
           "name": "ui_trino_host_override",
@@ -1145,44 +1322,184 @@
     },
     {
       "name": "ingestionConfig",
-      "label": "Ingestion / Airflow",
+      "label": "Ingestion / Airflow (openmetadata-dependencies sub-chart)",
       "type": "group",
       "fields": [
         {
-          "name": "ingestion.enabled",
-          "label": "Déployer Airflow (ingestion bundlée)",
+          "name": "dependencies.enabled",
+          "label": "Deploy bundled Airflow",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Deploy the openmetadata/ingestion Airflow image alongside the server. Disable if you connect to an existing Airflow."
+          "help": "Deploys the openmetadata-dependencies sub-chart alongside OM. Needed for Atlas federation or any scheduled ingestion. Auto-flipped ON if Atlas federation is enabled."
         },
         {
-          "name": "ingestion.airflowUrl",
-          "label": "URL Airflow externe",
-          "type": "string",
-          "defaultValue": "",
-          "help": "Base URL of an existing Airflow instance (e.g. http://airflow-webserver.airflow:8080). Used when bundled Airflow is disabled.",
+          "name": "dependencies.airflow.scheduler.replicas",
+          "label": "Scheduler replicas",
+          "type": "number",
+          "defaultValue": 1,
           "condition": {
-            "field": "ingestion.enabled",
-            "value": false
-          }
-        },
-        {
-          "name": "ingestion.resources.requests.cpu",
-          "label": "CPU Demandé (ingestion)",
-          "type": "string",
-          "defaultValue": "500m",
-          "condition": {
-            "field": "ingestion.enabled",
+            "field": "dependencies.enabled",
             "value": true
           }
         },
         {
-          "name": "ingestion.resources.requests.memory",
-          "label": "Mémoire Demandée (ingestion)",
-          "type": "string",
-          "defaultValue": "2Gi",
+          "name": "dependencies.airflow.apiServer.replicas",
+          "label": "API server replicas (Airflow 3.x)",
+          "type": "number",
+          "defaultValue": 1,
           "condition": {
-            "field": "ingestion.enabled",
+            "field": "dependencies.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "dependencies.airflow.ingress.enabled",
+          "label": "Expose Airflow UI via ingress",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Mount the bundled Airflow API server behind an Ingress so operators can browse DAG runs in a browser. Off by default — Airflow is reachable only from in-cluster OM otherwise. Hostname is derived from the OM ingress host with '-airflow' suffix when ingress is enabled on OM.",
+          "condition": {
+            "field": "dependencies.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "dependencies.airflow.logs.persistence.enabled",
+          "label": "Persist Airflow logs (requires RWX storage)",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Off (default): each Airflow pod uses an emptyDir mount for /opt/airflow/logs — per-pod, ephemeral, OK for dev / KubernetesExecutor where worker log read happens via the worker's own /logs endpoint. On: the chart creates a ReadWriteMany PVC for shared log storage across scheduler/worker/triggerer/api-server pods. RWX is REQUIRED — works with NFS, EFS, CephFS, etc. Single-node dev clusters using local-path do NOT support RWX. When you need persistence on a non-RWX cluster, fill the 'Existing PVC' field below with a pre-created PVC instead.",
+          "condition": {
+            "field": "dependencies.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "dependencies.airflow.logs.persistence.size",
+          "label": "Log PVC size",
+          "type": "string",
+          "defaultValue": "10Gi",
+          "help": "Size of the RWX PVC the airflow chart creates for shared logs. Only used when 'Persist Airflow logs' is on AND 'Existing PVC' is empty.",
+          "condition": {
+            "field": "dependencies.airflow.logs.persistence.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "dependencies.airflow.logs.persistence.storageClassName",
+          "label": "Storage class (must support RWX)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Examples: nfs-csi-default, efs-sc, rook-cephfs, longhorn (RWX class). Leave empty to use the cluster default — but ONLY if the cluster default supports RWX. On most kubeadm clusters the default is local-path (RWO only), which will leave this PVC stuck Pending.",
+          "condition": {
+            "field": "dependencies.airflow.logs.persistence.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "dependencies.airflow.logs.persistence.existingClaim",
+          "label": "Existing PVC name (optional)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "If you already created a PVC ahead of deploy (in this release's namespace), name it here — the chart will use that instead of creating a new one. Useful when the cluster default storage class doesn't support RWX and you want to provision the PVC manually with a different class. When set, the size + storage class fields above are ignored.",
+          "condition": {
+            "field": "dependencies.airflow.logs.persistence.enabled",
+            "value": true
+          }
+        }
+      ],
+      "help": "Deploy the openmetadata-dependencies sub-chart (Airflow 3.0.2 + the OM ingestion runner image). Required to run any OM pipeline (Atlas federation, Trino metadata ingest, etc.). Disable only if you connect to an external Airflow."
+    },
+    {
+      "name": "atlasFederation",
+      "label": "Atlas Federation",
+      "type": "group",
+      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). Pre-req on the Atlas side: a local user (default 'openmetadata-ingestion') must exist. Use seed-atlas-user.sh until Atlas user management lands in the Ambari Atlas service.",
+      "fields": [
+        {
+          "name": "atlasFederation.enabled",
+          "label": "Enable Atlas federation",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "When ON, the post-install Job calls OM REST to register the Atlas service + pipeline. Also flips the Ingestion / Airflow toggle ON (Atlas federation needs the runner)."
+        },
+        {
+          "name": "ui_atlas_url",
+          "label": "Atlas service (auto-discovered)",
+          "type": "service-select",
+          "serviceType": "ATLAS",
+          "excludeFromValues": true,
+          "help": "Picked from Ambari's ATLAS service registration. Choose if multiple Atlas hosts are registered.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.hostPort",
+          "label": "Atlas URL (override)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Override the discovered URL when Atlas is reached via a different FQDN (DMZ, external).",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.username",
+          "label": "Atlas local username",
+          "type": "string",
+          "defaultValue": "openmetadata-ingestion",
+          "help": "Local Atlas account (users-credentials.properties). In production Atlas may use SSO/Kerberos/LDAP, but the OM ingestion bot needs a stable local identity. Pre-create with seed-atlas-user.sh.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          },
+          "required": true
+        },
+        {
+          "name": "atlasFederation.existingSecret",
+          "label": "Existing Kubernetes Secret name",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Name of an existing Secret holding the Atlas password under key 'password'. If empty, the chart auto-creates a Secret named '<release>-atlas-credentials' with a random password on first install; subsequent helm upgrades reuse the same value via helm lookup. For non-basic auth (Kerberos / Knox SSO) to an external Atlas, use the 'External Atlas authentication' picker below.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "_atlas_external_auth",
+          "type": "external-auth-target",
+          "target": "atlas",
+          "label": "External Atlas authentication",
+          "excludeFromValues": true,
+          "help": "Visible when the Atlas URL override is set. Pick the auth mode the external Atlas uses (basic / kerberos / knox-sso). For 'basic' you may also use the 'Existing Kubernetes Secret name' field above — they target the same Secret.",
+          "condition": {
+            "field": "atlasFederation.hostPort",
+            "operator": "non-empty"
+          }
+        },
+        {
+          "name": "atlasFederation.schedule",
+          "label": "Ingestion schedule (cron)",
+          "type": "string",
+          "defaultValue": "0 */6 * * *",
+          "help": "Default every 6h.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.databaseServiceNames",
+          "label": "Target OM database services",
+          "type": "string",
+          "defaultValue": "trino-clemlab",
+          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. Defaults to 'trino-clemlab'.",
+          "condition": {
+            "field": "atlasFederation.enabled",
             "value": true
           }
         }
@@ -1659,19 +1976,55 @@
       "fields": [
         {
           "name": "rangerTagSyncEnabled",
-          "label": "Activer Ranger TagSync",
+          "label": "Enable Ranger TagSync",
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
-          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon."
+          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags."
+        },
+        {
+          "name": "ui_ranger_admin_url",
+          "label": "Ranger Admin (auto-discovered)",
+          "type": "service-select",
+          "serviceType": "RANGER",
+          "excludeFromValues": true,
+          "help": "Auto-discovered from this Ambari cluster's RANGER service when installed. Empty list means Ranger is not part of this stack — use the override field below to target an external Ranger.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
+        },
+        {
+          "name": "rangerTagSync.adminUrlOverride",
+          "label": "Ranger Admin URL (external override)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "When set, KDPS treats this as an EXTERNAL Ranger: no Ambari ranger-tagsync-site mutation, no component restart. Instead the rendered ranger-tagsync-site snippet is logged + saved on the command status for the operator to paste into the external Ranger TagSync host's xml. Leave empty when Ranger is part of this Ambari cluster. When set, the authentication picker appears below.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          },
+          "defaultValue": ""
+        },
+        {
+          "name": "_ranger_external_auth",
+          "type": "external-auth-target",
+          "target": "ranger",
+          "label": "External Ranger authentication",
+          "excludeFromValues": true,
+          "help": "Visible only when the Ranger Admin URL override above is set. Pick the auth mode the external Ranger uses (basic / kerberos / knox-sso) then reference the K8s Secret carrying credentials.",
+          "condition": {
+            "field": "rangerTagSync.adminUrlOverride",
+            "operator": "non-empty"
+          }
         },
         {
           "name": "rangerTagSyncToken",
-          "label": "OpenMetadata Bot JWT Token",
+          "label": "OM bot JWT (optional — auto-fetched)",
           "type": "password",
-          "required": true,
+          "required": false,
           "excludeFromValues": true,
-          "help": "JWT token for the OpenMetadata bot account used by Ranger TagSync to call the OM REST API.",
+          "help": "Leave empty: the post-install Job fetches the ingestion-bot JWT from OM postgres (Fernet-decrypted) and writes it to the Secret referenced below. The bootstrap Job also sets the bot's JWTTokenExpiry to 'Unlimited' so the token doesn't expire and break TagSync after 7 days.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1679,21 +2032,22 @@
         },
         {
           "name": "rangerTagSyncTokenSecretName",
-          "label": "Secret Kubernetes (token)",
+          "label": "Token Secret name (optional)",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the K8s Secret that holds the bot token under key 'tagsync-token'. Leave empty to auto-generate from release name.",
+          "help": "K8s Secret holding the JWT under key 'tagsync-token'. Defaults to '<release>-tagsync-token' when empty.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
-          }
+          },
+          "defaultValue": ""
         },
         {
           "name": "rangerTagSyncEndpoint",
-          "label": "OpenMetadata API endpoint (override)",
+          "label": "OM API endpoint as seen from Ranger TagSync (optional)",
           "type": "string",
           "excludeFromValues": true,
-          "help": "REST API base URL seen from the Ranger TagSync host, e.g. https://openmetadata.example.com/api. Defaults to https://<ingressHost>/api when Ingress is enabled.",
+          "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1701,33 +2055,35 @@
         },
         {
           "name": "rangerTagSyncTrinoServiceFqn",
-          "label": "OpenMetadata Trino service FQN",
+          "label": "OM Trino service name (auto-discovered)",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Fully-qualified name of the Trino ingestion service in OpenMetadata (e.g. 'trino_prod'). Used as the key to map OM entities to the Ranger Trino service.",
+          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
-          }
+          },
+          "defaultValue": "trino-clemlab"
         },
         {
           "name": "rangerTagSyncRangerTrinoService",
-          "label": "Nom du service Ranger Trino",
+          "label": "Ranger Trino service name (auto-discovered)",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' where tags will be applied (e.g. 'cl1_trino').",
+          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
-          }
+          },
+          "defaultValue": "trino-trino-ns"
         },
         {
           "name": "rangerTagSyncComponentType",
-          "label": "Component table type",
+          "label": "Ranger component type",
           "type": "string",
           "defaultValue": "trino",
           "excludeFromValues": true,
-          "help": "Value of ranger.tagsync.source.openmetadatarest.component.tabletype. Defaults to 'trino'.",
+          "help": "Leave 'trino' unless connecting a non-Trino tag source.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1735,11 +2091,11 @@
         },
         {
           "name": "rangerTagSyncDownloadInterval",
-          "label": "Download interval (ms)",
+          "label": "Sync interval (ms)",
           "type": "number",
           "defaultValue": 230000,
           "excludeFromValues": true,
-          "help": "How often (milliseconds) Ranger TagSync polls OpenMetadata for tag updates.",
+          "help": "Default 230s. Lower → tags propagate faster, more load on OM.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1747,11 +2103,11 @@
         },
         {
           "name": "rangerTagSyncBatchSize",
-          "label": "Batch size (entities)",
+          "label": "Batch size (entities/page)",
           "type": "number",
           "defaultValue": 10000,
           "excludeFromValues": true,
-          "help": "Maximum number of entities fetched per TagSync page request.",
+          "help": "Default 10000. Raise for catalogs >100k entities.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1774,10 +2130,112 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.12.12",
+  "requiredChartVersion": ">=1.13.5",
+  "externalServiceTargets": {
+    "hive": {
+      "label": "Hive Metastore",
+      "discoveryServiceType": "HIVE_METASTORE",
+      "urlOverrideField": "ui_hive_metastore_uri_override",
+      "modeField": "hive.externalAuthMode",
+      "authModes": {
+        "none": {
+          "label": "No authentication (dev only)"
+        },
+        "kerberos": {
+          "label": "Kerberos / SASL GSSAPI",
+          "secretField": "hive.externalKeytabSecret",
+          "secretKeys": ["keytab", "principal"],
+          "applyTo": {
+            "global.security.kerberos.keytab.secretName":    "{{secret.name}}",
+            "global.security.kerberos.keytab.secretDataKey": "keytab",
+            "global.security.kerberos.principal":            "{{secret.data.principal | b64decode | trim}}"
+          }
+        }
+      }
+    },
+    "ranger": {
+      "label": "Ranger Admin (for TagSync)",
+      "discoveryServiceType": "RANGER",
+      "urlOverrideField": "rangerTagSync.adminUrlOverride",
+      "modeField": "rangerTagSync.adminAuthMode",
+      "authModes": {
+        "basic": {
+          "label": "Username + password",
+          "secretField": "rangerTagSync.adminCredsSecret",
+          "secretKeys": ["username", "password"]
+        },
+        "kerberos": {
+          "label": "Kerberos / SPNEGO",
+          "secretField": "rangerTagSync.adminKeytabSecret",
+          "secretKeys": ["keytab", "principal"]
+        },
+        "knox-sso": {
+          "label": "Knox SSO",
+          "secretField": "rangerTagSync.knoxSecret",
+          "secretKeys": ["sso-token"]
+        }
+      }
+    },
+    "atlas": {
+      "label": "Atlas (for federation)",
+      "discoveryServiceType": "ATLAS",
+      "urlOverrideField": "atlasFederation.hostPort",
+      "modeField": "atlasFederation.externalAuthMode",
+      "authModes": {
+        "basic": {
+          "label": "Atlas local user (basic auth)",
+          "secretField": "atlasFederation.existingSecret",
+          "secretKeys": ["username", "password"]
+        },
+        "kerberos": {
+          "label": "Kerberos / SPNEGO",
+          "secretField": "atlasFederation.keytabSecret",
+          "secretKeys": ["keytab", "principal"]
+        },
+        "knox-sso": {
+          "label": "Knox SSO",
+          "secretField": "atlasFederation.knoxSecret",
+          "secretKeys": ["sso-token"]
+        }
+      }
+    }
+  },
+  "imagePullSecretTargets": [
+    "dependencies.airflow.registry.secretName",
+    "opensearch.imagePullSecrets[0].name"
+  ],
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",
-    "tlsProvisioning": "k8s-view"
-  }
+    "tlsProvisioning": "k8s-view",
+    "authModes": {
+      "field": "global.security.auth.mode",
+      "mappings": {
+        "none": { "value": "basic", "locked": true, "label": "Basic (no security profile selected)" },
+        "ldap": { "value": "ldap",  "locked": true },
+        "ad":   { "value": "ldap",  "locked": true, "label": "LDAP (AD profile)" },
+        "oidc": { "value": "oidc",  "locked": true }
+      }
+    }
+  },
+  "postDeploy": {
+    "atlasFederation": {
+      "_description": "Marker — presence of this block tells CommandService.submitDeploy to queue the OM_ATLAS_FEDERATION_REGISTER step after the chart installs (only when atlasFederation.enabled=true in form values). The step body reads Atlas connection params from the materialised helm values at execute time."
+    }
+  },
+  "replayableActions": [
+    {
+      "key": "om-ranger-tagsync",
+      "label": "Re-register Ranger TagSync source",
+      "endpoint": "actions/om-ranger-tagsync",
+      "_description": "Reruns the OM→Ranger TagSync source registration. Visible on the release row when service.json declares a ranger-tagsync-source entry."
+    },
+    {
+      "key": "om-atlas-federation",
+      "label": "Re-register Atlas federation",
+      "endpoint": "actions/om-atlas-federation",
+      "skipIfValueEmpty": "atlasFederation.enabled",
+      "_description": "Replays the four OM REST calls that wire an Atlas federation. Hidden when atlasFederation.enabled=false in the release values so the operator doesn't get a button that always fails."
+    }
+  ]
 }

@@ -1890,6 +1890,10 @@ public class CommandService {
 
         // Add the Ranger repository creation step to the command plan.
         this.commandPlanFactory.createRangerPluginRepository(rootCommand, rangerSpec, params, childCommands);
+
+        // Add one Ranger TagSync source-registration step per `ranger-tagsync-source`
+        // entry in the service.json ranger block. No-op when none are declared.
+        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params, childCommands);
     }
 
     /**
@@ -2867,6 +2871,164 @@ public class CommandService {
     }
 
     /**
+     * Replay the OpenMetadata→Ranger TagSync source registration for a deployed release.
+     * Reads the {@code ranger-tagsync-source} entries from the service.json {@code ranger}
+     * block and queues one {@link CommandType#OM_RANGER_TAGSYNC_REGISTER} child per entry —
+     * the same body the deploy-time step runs. Cluster + Ambari headers come from the
+     * caller (reapply runs as the operator hitting the button, not as the deploy actor).
+     *
+     * @return command id for polling
+     */
+    public String submitReleaseOmRangerTagSyncReapply(String namespace,
+                                                      String releaseName,
+                                                      MultivaluedMap<String, String> callerHeaders,
+                                                      URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
+                || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+
+        StackDefinitionService stackDefinitionService = new StackDefinitionService(ctx);
+        StackServiceDef serviceDefinition = stackDefinitionService.getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null || serviceDefinition.ranger == null || serviceDefinition.ranger.isEmpty()) {
+            throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey()
+                    + " has no Ranger spec — nothing to replay.");
+        }
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName;
+        try {
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to resolve Ambari cluster name for OM TagSync reapply.", ex);
+        }
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.OM_RANGER_TAGSYNC_REAPPLY.name());
+        rootCommand.setTitle("Re-register OM→Ranger TagSync source for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("chart", releaseMetadata.getChartRef());
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("repoId", releaseMetadata.getRepoId());
+        rootParams.put("version", releaseMetadata.getVersion());
+        rootParams.put("_cluster", clusterName);
+        rootParams.put("_baseUri", baseUri.toString());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+
+        List<String> childCommandIds = new ArrayList<>();
+        this.commandPlanFactory.createRangerTagSyncRegister(
+                rootCommand, serviceDefinition.ranger, rootParams, childCommandIds);
+
+        if (childCommandIds.isEmpty()) {
+            throw new IllegalStateException(
+                    "No ranger-tagsync-source entries declared for " + releaseMetadata.getServiceKey()
+                            + " — nothing to replay.");
+        }
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+
+        store(rootStatus);
+        store(rootCommand);
+
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Replay the OpenMetadata Atlas-federation registration for a deployed release.
+     * Queues a single {@link CommandType#OM_ATLAS_FEDERATION_REGISTER} child whose
+     * body reads the current release values, mints a fresh Unlimited JWT, and
+     * upserts the four OM REST entities. The pre-flight check rejects the request
+     * early if the release isn't OPENMETADATA or has {@code atlasFederation.enabled=false}.
+     *
+     * @return command id for polling
+     */
+    public String submitReleaseOmAtlasFederationReapply(String namespace,
+                                                        String releaseName,
+                                                        MultivaluedMap<String, String> callerHeaders,
+                                                        URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(baseUri, "baseUri");
+
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
+                || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+
+        // The values check (atlasFederation.enabled) is intentionally deferred to
+        // the step body — the submit path stays uniform, the body raises a clear
+        // IllegalStateException when the toggle was flipped off after deploy.
+
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType(CommandType.OM_ATLAS_FEDERATION_REAPPLY.name());
+        rootCommand.setTitle("Re-register OM Atlas federation for " + releaseName);
+
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+
+        Map<String, Object> rootParams = new LinkedHashMap<>();
+        rootParams.put("chart", releaseMetadata.getChartRef());
+        rootParams.put("releaseName", releaseName);
+        rootParams.put("namespace", namespace);
+        rootParams.put("serviceKey", releaseMetadata.getServiceKey());
+        rootParams.put("repoId", releaseMetadata.getRepoId());
+        rootParams.put("version", releaseMetadata.getVersion());
+        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+
+        List<String> childCommandIds = new ArrayList<>();
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams, childCommandIds);
+
+        rootCommand.setParamsJson(gson.toJson(rootParams));
+        rootCommand.setChildListJson(gson.toJson(childCommandIds));
+
+        store(rootStatus);
+        store(rootCommand);
+
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
      * Re-issue TLS leaf certificates for every host of a running release, regardless of which
      * provisioning system issued the existing Secret. Dispatches per source:
      * <ul>
@@ -3568,6 +3730,14 @@ public class CommandService {
             LOG.warn("Could not fingerprint security profile {}: {}", resolvedSecurityProfile, ex.toString());
         }
         applySecurityOverrides(securityCfg, params);
+
+        // External-service credential routing — when the operator declared external
+        // service targets in service.json#externalServiceTargets, for each entry
+        // whose URL override is non-empty, read the chosen auth mode + Secret and
+        // write the helm overrides from the mode's applyTo block. No-op when no
+        // entries are external (regression-safe — Ambari-managed deploys
+        // unaffected). See docs/EXTERNAL_SERVICE_TARGETS.md for the contract.
+        applyExternalServiceCredentials(request, params);
 
         // Resolve Kerberos injection mode from view settings and pass it down to Helm values + step params.
         String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
@@ -4558,6 +4728,27 @@ public class CommandService {
                         LOG.info("Queued AMBARI_VIEW_PROVISION post-deploy step for release '{}' (serviceKey={})",
                                 request.getReleaseName(), request.getServiceKey());
                     }
+
+                    // Atlas federation: queue only when the wizard toggle is on. The step
+                    // body re-checks atlasFederation.enabled at execute time so a reapply
+                    // after the toggle was flipped off still fails loudly instead of
+                    // silently succeeding.
+                    Object atlasSpec = serviceDef.postDeploy.get("atlasFederation");
+                    if (atlasSpec != null) {
+                        Object enabledRaw = ConfigResolutionService.getByDottedPath(
+                                request.getValues() != null ? request.getValues() : Collections.emptyMap(),
+                                "atlasFederation.enabled");
+                        if (enabledRaw != null && "true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
+                            Map<String, Object> atlasParams = new LinkedHashMap<>();
+                            atlasParams.put("releaseName", request.getReleaseName());
+                            atlasParams.put("namespace", request.getNamespace());
+                            atlasParams.put("serviceKey", request.getServiceKey());
+                            this.commandPlanFactory.createOmAtlasFederationRegister(
+                                    rootCommand, atlasParams, childCommands);
+                            LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'",
+                                    request.getReleaseName());
+                        }
+                    }
                 }
             } catch (Exception ex) {
                 LOG.warn("Could not queue post-deploy Ambari view provision step for '{}': {}",
@@ -5298,6 +5489,7 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
                         overrideProperties.put(imageGlobalRegistryProperty, imageRepository);
@@ -5437,6 +5629,7 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
                         overrideProperties.put(imageGlobalRegistryProperty, imageRepository);
@@ -5612,6 +5805,14 @@ public class CommandService {
                     res.put("requestId", reqId);
                     childSt.setResultJson(gson.toJson(res));
                 }
+                case OM_RANGER_TAGSYNC_REGISTER -> {
+                    String result = registerRangerTagSyncSource(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case OM_ATLAS_FEDERATION_REGISTER -> {
+                    String result = registerOmAtlasFederation(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
                 // ... inside runNextStep ...
                 case CONFIG_MATERIALIZE -> {
                     String serviceName = (String) childParams.get("serviceName");
@@ -5741,6 +5942,7 @@ public class CommandService {
                         // plain secret names (strings), not {name: ...} maps. Using the [0] index without .name
                         // produces the correct string-list format that renderPullSecrets handles.
                         overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
+                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
 
                     HelmRepoEntity repository = repositoryDao.findById(repoId);
@@ -5933,6 +6135,7 @@ public class CommandService {
                     if (secretName != null) {
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
                         overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
+                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
 
                     appendCommandLog(id, "Upgrading release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
@@ -7059,6 +7262,613 @@ public class CommandService {
     }
 
     /**
+     * Build the merged property delta that the {@code OM_RANGER_TAGSYNC_REGISTER} step writes
+     * into the cluster's {@code ranger-tagsync-site} config. Extracted as a static method
+     * so unit tests can validate it without a live Ambari client.
+     *
+     * <p>Inputs flow from the service.json {@code ranger.*} entry of type
+     * {@code ranger-tagsync-source}, plus a few resolved-at-runtime values (OM endpoint,
+     * JWT). The returned map is suitable for handing to
+     * {@link AmbariActionClient#updateClusterConfig(String, String, Map, String)}.
+     *
+     * <p>Idempotency is handled by {@code updateClusterConfig} (it compares against
+     * current desired-config and skips the PUT if nothing changed); this method just
+     * computes the desired-state delta.
+     *
+     * @param spec              the service.json ranger entry (must have {@code type:
+     *                          "ranger-tagsync-source"}; other types raise IAE)
+     * @param entryKey          the entry's logical name (for the source key, e.g.
+     *                          {@code openmetadatarest})
+     * @param omEndpoint        resolved OM REST endpoint URL
+     * @param jwt               the OM ingestion-bot JWT (Bearer token)
+     * @param currentSources    current value of {@code ranger.tagsync.sources} on the
+     *                          cluster (CSV); used to dedup-append
+     * @return ordered map of properties to set; never null
+     */
+    static Map<String, String> buildTagSyncRangerSiteOverrides(Map<String, Object> spec,
+                                                               String entryKey,
+                                                               String omEndpoint,
+                                                               String jwt,
+                                                               String currentSources) {
+        if (spec == null) throw new IllegalArgumentException("spec is required");
+        Object type = spec.get("type");
+        if (type == null || !"ranger-tagsync-source".equals(String.valueOf(type))) {
+            throw new IllegalArgumentException("expected type=ranger-tagsync-source, got: " + type);
+        }
+        if (entryKey == null || entryKey.isBlank()) throw new IllegalArgumentException("entryKey is required");
+        if (omEndpoint == null || omEndpoint.isBlank()) throw new IllegalArgumentException("omEndpoint is required");
+        if (jwt == null || jwt.isBlank()) throw new IllegalArgumentException("jwt is required");
+
+        // Use the entry key as the unique "source key" within ranger-tagsync-site
+        // (this is also what the operator types into ranger.tagsync.sources CSV).
+        String sourceKey = entryKey;
+
+        Map<String, String> props = new LinkedHashMap<>();
+        // ----- per-source endpoint + auth + class -----
+        props.put("ranger.tagsync.source." + sourceKey + ".endpoint", omEndpoint);
+        props.put("ranger.tagsync.source." + sourceKey + ".token", jwt);
+        Object sourceClass = spec.get("source_class");
+        if (sourceClass != null && !String.valueOf(sourceClass).isBlank()) {
+            props.put("ranger.tagsync.source." + sourceKey + ".class", String.valueOf(sourceClass));
+        }
+        // Reasonable default polling interval: 30s; operators can override via Ambari UI later.
+        props.putIfAbsent("ranger.tagsync.source." + sourceKey + ".cookies.timeout.millis", "30000");
+
+        // ----- service-name mapper: maps OM database-service name → Ranger Trino service name -----
+        // The spec may declare a static mapping or rely on the wizard's form-supplied helm values.
+        // We accept either a literal {trinoIngestionServiceFqn → rangerTrinoServiceName} pair
+        // (provided by the plan via _tagSyncTrinoServiceFqn / _tagSyncRangerTrinoService keys)
+        // or skip the mapper line — operators can wire it manually.
+        Object trinoFqn = spec.get("trinoIngestionServiceFqn");
+        Object rangerTrinoSvc = spec.get("rangerTrinoServiceName");
+        if (trinoFqn != null && rangerTrinoSvc != null
+                && !String.valueOf(trinoFqn).isBlank() && !String.valueOf(rangerTrinoSvc).isBlank()) {
+            props.put("ranger.tagsync.atlas.openmetadata.servicename.mapper."
+                            + trinoFqn + ".ranger.service",
+                    String.valueOf(rangerTrinoSvc));
+        }
+
+        // ----- append source key to ranger.tagsync.sources (dedup, comma-separated) -----
+        java.util.LinkedHashSet<String> sources = new java.util.LinkedHashSet<>();
+        if (currentSources != null && !currentSources.isBlank()) {
+            for (String s : currentSources.split(",")) {
+                String t = s.trim();
+                if (!t.isEmpty()) sources.add(t);
+            }
+        }
+        sources.add(sourceKey);
+        props.put("ranger.tagsync.sources", String.join(",", sources));
+
+        return props;
+    }
+
+    /**
+     * Renders the {@code ranger-tagsync-site} property delta as an XML snippet suitable
+     * for pasting into an external Ranger TagSync host's configuration file. Used when
+     * the operator targets an external Ranger (not part of this Ambari cluster) —
+     * since KDPS cannot mutate that cluster's config, we surface the values to apply
+     * manually. Stored on the command's result JSON and appended to the deploy log.
+     *
+     * <p>Output mirrors Ranger's hadoop-conf style XML for direct file paste.
+     */
+    static String renderTagSyncXmlSnippet(Map<String, String> propsToSet) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<!-- ranger-tagsync-site.xml snippet rendered by KDPS for external Ranger TagSync -->\n");
+        sb.append("<!-- Paste into your external Ranger TagSync host's ranger-tagsync-site.xml -->\n");
+        sb.append("<configuration>\n");
+        for (Map.Entry<String, String> e : propsToSet.entrySet()) {
+            sb.append("  <property>\n");
+            sb.append("    <name>").append(e.getKey()).append("</name>\n");
+            // Redact JWT/password-looking values in the rendered log — operators get the
+            // actual value from the K8s Secret KDPS provisioned, the snippet is for
+            // structure only.
+            String v = e.getValue();
+            String safe = (e.getKey().endsWith(".token") || e.getKey().endsWith(".password"))
+                    ? "<REDACTED — read from K8s Secret>"
+                    : (v == null ? "" : v);
+            sb.append("    <value>").append(safe).append("</value>\n");
+            sb.append("  </property>\n");
+        }
+        sb.append("</configuration>\n");
+        return sb.toString();
+    }
+
+    /**
+     * Body of the {@code OM_RANGER_TAGSYNC_REGISTER} step. Extracted so the dispatch site
+     * stays small and so the integration logic (read OM endpoint + JWT, merge into
+     * ranger-tagsync-site, restart Ranger TagSync) is testable with mocked clients.
+     *
+     * <p><b>Branches on Ranger ownership:</b>
+     * <ul>
+     *   <li><b>Ambari-managed Ranger</b> (no {@code ranger.tagSync.adminUrlOverride} in
+     *       helm values): write {@code ranger-tagsync-site} via Ambari, restart the
+     *       {@code RANGER_TAGSYNC} component, return {@code {configChanged, restartRequestId}}.</li>
+     *   <li><b>External Ranger</b> (operator supplied a URL override): KDPS cannot mutate
+     *       the foreign cluster's config or restart its services — render the
+     *       {@code ranger-tagsync-site} snippet for manual paste and return
+     *       {@code {mode: "external", xmlSnippet, externalRangerUrl,
+     *       credsSecretName}}. Operator finishes the wiring by hand. This keeps the
+     *       integration honest about its limits instead of silently doing nothing.</li>
+     * </ul>
+     *
+     * @return a small JSON payload to record on the command's status; never null
+     * @throws Exception when any required input is missing or an Ambari call fails
+     *                   (only on the Ambari-managed branch)
+     */
+    @SuppressWarnings("unchecked")
+    String registerRangerTagSyncSource(Map<String, Object> childParams) throws Exception {
+        String cluster     = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        String entryKey    = (String) childParams.get("_tagSyncEntryKey");
+        Map<String, Object> spec = (Map<String, Object>) childParams.get("_tagSyncSpec");
+        if (entryKey == null || entryKey.isBlank() || spec == null) {
+            throw new IllegalStateException("Missing _tagSyncEntryKey/_tagSyncSpec in OM_RANGER_TAGSYNC_REGISTER params");
+        }
+
+        // ----- Resolve OM endpoint from helm values (or the spec's hint) -----
+        Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
+        String endpointHelmPath = String.valueOf(spec.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint"));
+        Object endpointRaw = ConfigResolutionService.getByDottedPath(values, endpointHelmPath);
+        String omEndpoint = endpointRaw == null ? "" : String.valueOf(endpointRaw);
+        if (omEndpoint.isBlank()) {
+            throw new IllegalStateException("Could not resolve OM endpoint at helm path '" + endpointHelmPath
+                    + "' — the operator must enable Ranger TagSync and provide an endpoint in the wizard.");
+        }
+
+        // ----- Mint a fresh Unlimited-TTL JWT for OM's ingestion-bot via the
+        // OM-deps airflow scheduler pod. The previous design read the JWT from a
+        // K8s Secret that a helm hook Job populated; chart 1.13.5 deletes that
+        // Job (and the Secret), so the Ambari step now mints the JWT itself.
+        // See OmBotJwtClient for the why-exec-not-JDBC rationale.
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, releaseName + "-fernet");
+            if (fernetSec != null && fernetSec.getData() != null
+                    && fernetSec.getData().containsKey("fernet-key")) {
+                fernetKey = new String(
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get("fernet-key")),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}-fernet' Secret, falling back to chart default: {}",
+                    namespace, releaseName, ex.toString());
+        }
+        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
+                this.kubernetesService.getClient(),
+                namespace,
+                releaseName,
+                fernetKey,
+                java.time.Duration.ofSeconds(120));
+
+        // ----- Branch on Ranger ownership via externalServiceTargets schema -----
+        // The URL override lives in formValues (excluded from helm values). Resolve
+        // the form-field path by looking up the service def's `externalServiceTargets`
+        // entry — convention: the key is "ranger" for this consumer, but we accept
+        // any entry whose discoveryServiceType == "RANGER" for forward-compat.
+        Map<String, Object> formValues = (Map<String, Object>) childParams.get("formValues");
+        if (formValues == null) formValues = Collections.emptyMap();
+        String externalRangerUrl = "";
+        String externalRangerMode = "";
+        String externalRangerSecretName = "";
+        try {
+            String serviceKey = (String) childParams.get("serviceKey");
+            if (serviceKey != null && !serviceKey.isBlank()) {
+                var def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+                if (def != null && def.externalServiceTargets != null) {
+                    for (var e : def.externalServiceTargets.entrySet()) {
+                        var t = e.getValue();
+                        if (t == null) continue;
+                        boolean matches = "RANGER".equalsIgnoreCase(t.discoveryServiceType)
+                                || "ranger".equalsIgnoreCase(e.getKey());
+                        if (!matches || t.urlOverrideField == null || t.urlOverrideField.isBlank()) continue;
+                        Object urlRaw = ConfigResolutionService.getByDottedPath(formValues, t.urlOverrideField);
+                        externalRangerUrl = urlRaw == null ? "" : String.valueOf(urlRaw).trim();
+                        if (t.modeField != null && !t.modeField.isBlank()) {
+                            Object modeRaw = ConfigResolutionService.getByDottedPath(formValues, t.modeField);
+                            externalRangerMode = modeRaw == null ? "" : String.valueOf(modeRaw).trim();
+                        }
+                        if (!externalRangerMode.isEmpty() && t.authModes != null) {
+                            var mode = t.authModes.get(externalRangerMode);
+                            if (mode != null && mode.secretField != null && !mode.secretField.isBlank()) {
+                                Object secRaw = ConfigResolutionService.getByDottedPath(formValues, mode.secretField);
+                                externalRangerSecretName = secRaw == null ? "" : String.valueOf(secRaw).trim();
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read externalServiceTargets for {}: {}",
+                    childParams.get("serviceKey"), ex.toString());
+        }
+        boolean external = !externalRangerUrl.isEmpty();
+
+        // Always compute the property delta — both branches need it. Don't pass currentSources
+        // on the external branch (we can't read the foreign cluster's config).
+        String currentSources = external
+                ? null
+                : new AmbariActionClient(ctx,
+                        java.net.URI.create((String) childParams.get("_baseUri")).resolve("/api/v1").toString(),
+                        cluster,
+                        AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")))
+                                .getDesiredConfigProperty(cluster, "ranger-tagsync-site", "ranger.tagsync.sources");
+        Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt, currentSources);
+
+        if (external) {
+            // No Ambari mutation, no restart. Surface what the operator must apply.
+            String snippet = renderTagSyncXmlSnippet(propsToSet);
+            LOG.info("OM_RANGER_TAGSYNC_REGISTER (external) source='{}' rangerUrl='{}' authMode='{}' "
+                            + "— rendered {} props to snippet (see command status JSON / deploy log). "
+                            + "Operator must paste into external Ranger TagSync host's ranger-tagsync-site.xml "
+                            + "and restart that daemon.",
+                    entryKey, externalRangerUrl, externalRangerMode, propsToSet.size());
+            LOG.info("--- ranger-tagsync-site snippet (external) ---\n{}", snippet);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("mode", "external");
+            result.put("sourceKey", entryKey);
+            result.put("externalRangerUrl", externalRangerUrl);
+            if (!externalRangerMode.isEmpty()) result.put("externalAuthMode", externalRangerMode);
+            if (!externalRangerSecretName.isEmpty()) result.put("credsSecretName", externalRangerSecretName);
+            result.put("xmlSnippet", snippet);
+            result.put("propertiesCount", propsToSet.size());
+            return gson.toJson(result);
+        }
+
+        // ----- Ambari-managed Ranger path (current behavior, regression-safe) -----
+        if (cluster == null || cluster.isBlank()) {
+            throw new IllegalStateException("Missing _cluster in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+        }
+        String baseUriStr = (String) childParams.get("_baseUri");
+        if (baseUriStr == null || baseUriStr.isBlank()) {
+            throw new IllegalStateException("Missing _baseUri in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+        }
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        String ambariApiBase = baseUri.resolve("/api/v1").toString();
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        var ambari = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
+
+        LOG.info("OM_RANGER_TAGSYNC_REGISTER (Ambari-managed): writing {} props to ranger-tagsync-site for source '{}' on cluster '{}'",
+                propsToSet.size(), entryKey, cluster);
+        boolean wrote = ambari.updateClusterConfig(cluster, "ranger-tagsync-site", propsToSet, "om-tagsync-" + releaseName);
+
+        Integer restartReqId = null;
+        if (wrote) {
+            int reqId = ambari.submitComponentRestart(cluster, "RANGER", "RANGER_TAGSYNC",
+                    "KDPS: restart Ranger TagSync after registering source '" + entryKey + "'");
+            restartReqId = reqId;
+            boolean ok = ambari.waitUntilComplete(reqId, 600L, java.util.concurrent.TimeUnit.SECONDS);
+            if (!ok) {
+                throw new IllegalStateException("Ranger TagSync restart did not complete (Ambari requestId=" + reqId + ")");
+            }
+            LOG.info("Ranger TagSync restarted; source '{}' is now active", entryKey);
+        } else {
+            LOG.info("ranger-tagsync-site already had source '{}'; skipping Ranger TagSync restart", entryKey);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("mode", "ambari-managed");
+        result.put("sourceKey", entryKey);
+        result.put("configChanged", wrote);
+        if (restartReqId != null) result.put("restartRequestId", restartReqId);
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of the {@code OM_ATLAS_FEDERATION_REGISTER} step. Mints an Unlimited-TTL
+     * JWT for the OM ingestion-bot, then calls OM REST four times to set up the
+     * federation: {@code metadataServices} (Atlas), {@code databaseServices}
+     * (CustomDatabase landing zone), {@code ingestionPipelines} (metadata pipeline
+     * with the operator-chosen schedule), and a {@code trigger} POST to start the
+     * first run.
+     *
+     * <p>Replaces the helm post-install hook Job the OM chart used to ship.
+     * Idempotent: PUTs are upserts in OM, so a replay registers no duplicates
+     * and the operator can re-run safely.
+     *
+     * @return a small JSON payload to record on the command's status; never null
+     * @throws Exception when any required input is missing or the OM REST flow fails
+     */
+    @SuppressWarnings("unchecked")
+    String registerOmAtlasFederation(Map<String, Object> childParams) throws Exception {
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        if (releaseName == null || releaseName.isBlank() || namespace == null || namespace.isBlank()) {
+            throw new IllegalStateException("Missing releaseName/namespace in OM_ATLAS_FEDERATION_REGISTER params");
+        }
+
+        Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
+
+        // Surface a clear error early if the operator turned the toggle off (e.g. by
+        // editing values then hitting Reapply) instead of letting OM REST fail mid-flow.
+        Object enabledRaw = ConfigResolutionService.getByDottedPath(values, "atlasFederation.enabled");
+        if (enabledRaw == null || !"true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
+            throw new IllegalStateException("atlasFederation.enabled is false in the current release values — "
+                    + "either enable the toggle in the wizard and upgrade the release, or run a reapply "
+                    + "after fixing the values.");
+        }
+
+        String atlasHostPort = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.hostPort"));
+        if (atlasHostPort.isBlank()) {
+            throw new IllegalStateException("atlasFederation.hostPort is empty — set Atlas URL in the wizard.");
+        }
+        String atlasUsername = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.username"));
+        if (atlasUsername.isBlank()) {
+            throw new IllegalStateException("atlasFederation.username is empty — set Atlas bot user in the wizard.");
+        }
+        String schedule = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.schedule"));
+        if (schedule.isBlank()) {
+            schedule = "0 */6 * * *";
+        }
+
+        // Atlas password: form field wins; else read the existingSecret named in form
+        // values and decode `password` key; else fail.
+        String atlasPassword = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.password"));
+        if (atlasPassword.isBlank()) {
+            String existingSecret = stringValue(
+                    ConfigResolutionService.getByDottedPath(values, "atlasFederation.existingSecret"));
+            if (!existingSecret.isBlank()) {
+                io.fabric8.kubernetes.api.model.Secret sec =
+                        this.kubernetesService.getSecret(namespace, existingSecret);
+                if (sec != null && sec.getData() != null && sec.getData().containsKey("password")) {
+                    atlasPassword = new String(
+                            java.util.Base64.getDecoder().decode(sec.getData().get("password")),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+        }
+        if (atlasPassword.isBlank()) {
+            throw new IllegalStateException("Atlas password not found — either set atlasFederation.password "
+                    + "in the wizard or point atlasFederation.existingSecret at an opaque Secret with a 'password' key.");
+        }
+
+        // databaseServiceNames is bound as a list (csvToList) in the OM service.json;
+        // tolerate both list and CSV-string shapes for robustness.
+        Object dbsRaw = ConfigResolutionService.getByDottedPath(values, "atlasFederation.databaseServiceNames");
+        List<String> dbs = new ArrayList<>();
+        if (dbsRaw instanceof List<?> l) {
+            for (Object o : l) {
+                if (o == null) continue;
+                String s = String.valueOf(o).trim();
+                if (!s.isEmpty()) dbs.add(s);
+            }
+        } else if (dbsRaw != null) {
+            for (String s : String.valueOf(dbsRaw).split(",")) {
+                String t = s.trim();
+                if (!t.isEmpty()) dbs.add(t);
+            }
+        }
+
+        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet
+        // Secret carries an override).
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, releaseName + "-fernet");
+            if (fernetSec != null && fernetSec.getData() != null
+                    && fernetSec.getData().containsKey("fernet-key")) {
+                fernetKey = new String(
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get("fernet-key")),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_ATLAS_FEDERATION_REGISTER: could not read '{}/{}-fernet' Secret, falling back to chart default: {}",
+                    namespace, releaseName, ex.toString());
+        }
+        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
+                this.kubernetesService.getClient(),
+                namespace, releaseName, fernetKey,
+                java.time.Duration.ofSeconds(120));
+
+        org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.Result result =
+                org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.register(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, jwt,
+                        atlasHostPort, atlasUsername, atlasPassword,
+                        dbs, schedule,
+                        java.time.Duration.ofSeconds(180));
+
+        Map<String, Object> resultMap = new LinkedHashMap<>();
+        resultMap.put("metadataServiceId", result.metadataServiceId);
+        resultMap.put("databaseServiceName", result.databaseServiceName);
+        resultMap.put("pipelineId", result.pipelineId);
+        resultMap.put("triggerStatus", result.triggerStatus);
+        return gson.toJson(resultMap);
+    }
+
+    private static String stringValue(Object o) {
+        return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    /**
+     * Routes an operator-supplied Kerberos credentials Secret (declared via a form field
+     * with {@code credentialKind: "kerberos"}) into the chart's existing
+     * {@code global.security.kerberos.*} pipeline. Used when targeting an external
+     * Kerberized service (e.g. Hive Metastore on a foreign realm) — the operator pre-creates
+     * a K8s Secret with binary key {@code keytab} and string key {@code principal}, then
+     * references its name in the wizard; KDPS reads the principal and overrides the helm
+     * values so OM mounts the operator's keytab instead of Ambari's generated one.
+     *
+     * <p>The Secret MUST exist in the release namespace before submitDeploy; KDPS does not
+     * create or mirror it. Missing-Secret raises a clear IllegalStateException so the
+     * operator sees the error in the wizard's deploy log instead of a confusing pod-start
+     * failure later.
+     *
+     * <p>No-op when the form field is absent or blank — internal-Kerberos deploys retain
+     * the existing Ambari-driven keytab pipeline byte-for-byte (regression-safe).
+     *
+     * <p>Field convention: {@code hive.externalKerberosCredsSecret}. Hardcoded here because
+     * Hive is the only consumer today; future external-Kerberos services can opt in by
+     * adding the same form-field name to their service.json or by generalizing this lookup
+     * to walk all {@code credentialKind: "kerberos"} fields.
+     */
+    /**
+     * For each entry in the service definition's {@code externalServiceTargets}
+     * map, decides whether the entry is in <em>external</em> mode (operator
+     * supplied a URL override) and, if so, reads the chosen auth mode + Secret
+     * and writes the helm overrides from the mode's {@code applyTo} block.
+     *
+     * <p>Per-entry flow:
+     * <ol>
+     *   <li>Read {@code urlOverrideField} from {@code request.formValues}. If
+     *       blank → skip (Ambari-managed, internal pipeline handles it).</li>
+     *   <li>Read {@code modeField} for the chosen mode. Default to the single
+     *       declared mode when only one exists.</li>
+     *   <li>Look up the mode in {@code authModes}. Unknown mode → IAE.</li>
+     *   <li>Read the mode's {@code secretField} from form values to get the
+     *       K8s Secret name. {@code none} mode skips this.</li>
+     *   <li>Load the Secret from the release namespace. Missing Secret → IAE
+     *       with a "create it ahead of deploy" message.</li>
+     *   <li>Validate every key in {@code secretKeys} is present.</li>
+     *   <li>For each {@code applyTo} entry, interpolate the template via
+     *       {@link ExternalCredentialResolver} and write as a helm override.</li>
+     * </ol>
+     *
+     * <p>No-op when {@code externalServiceTargets} is null/empty (services that
+     * don't declare external integrations). No-op per-entry when its URL
+     * override is blank — internal-cluster paths are byte-identical to before
+     * this method existed.
+     */
+    @SuppressWarnings("unchecked")
+    void applyExternalServiceCredentials(HelmDeployRequest request, Map<String, Object> params) {
+        String serviceKey = request.getServiceKey();
+        if (serviceKey == null || serviceKey.isBlank()) return;
+
+        org.apache.ambari.view.k8s.model.stack.StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+        } catch (Exception ex) {
+            LOG.warn("applyExternalServiceCredentials: could not load service def {}: {}", serviceKey, ex.toString());
+            return;
+        }
+        if (def == null || def.externalServiceTargets == null || def.externalServiceTargets.isEmpty()) return;
+
+        Map<String, Object> formValues = request.getFormValues();
+        if (formValues == null) formValues = java.util.Collections.emptyMap();
+
+        for (Map.Entry<String, org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget> entry
+                : def.externalServiceTargets.entrySet()) {
+            String targetKey = entry.getKey();
+            org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget target = entry.getValue();
+            if (target == null || target.urlOverrideField == null || target.urlOverrideField.isBlank()) continue;
+            if (target.authModes == null || target.authModes.isEmpty()) continue;
+
+            // (1) URL override gate — blank ⇒ Ambari-managed, skip entirely
+            Object urlRaw = ConfigResolutionService.getByDottedPath(formValues, target.urlOverrideField);
+            String url = urlRaw == null ? "" : String.valueOf(urlRaw).trim();
+            if (url.isEmpty()) {
+                LOG.debug("applyExternalServiceCredentials: target '{}' has empty URL override — internal/Ambari-managed", targetKey);
+                continue;
+            }
+
+            // (2) Mode resolution
+            String modeName = null;
+            if (target.modeField != null && !target.modeField.isBlank()) {
+                Object modeRaw = ConfigResolutionService.getByDottedPath(formValues, target.modeField);
+                modeName = modeRaw == null ? null : String.valueOf(modeRaw).trim();
+            }
+            if (modeName == null || modeName.isEmpty()) {
+                if (target.authModes.size() == 1) {
+                    modeName = target.authModes.keySet().iterator().next();
+                } else {
+                    throw new IllegalStateException(
+                            "External target '" + targetKey + "' has multiple auth modes but no chosen mode at '"
+                                    + target.modeField + "'. The wizard's auth-method dropdown was not filled in.");
+                }
+            }
+            var mode = target.authModes.get(modeName);
+            if (mode == null) {
+                throw new IllegalStateException(
+                        "External target '" + targetKey + "': mode '" + modeName
+                                + "' is not declared in service.json#externalServiceTargets." + targetKey
+                                + ".authModes (available: " + target.authModes.keySet() + ")");
+            }
+
+            // (3) Secret lookup (skip for modes with no secretField, e.g. "none")
+            String secretName = null;
+            Map<String, String> secretData = null;
+            if (mode.secretField != null && !mode.secretField.isBlank()) {
+                Object secretRaw = ConfigResolutionService.getByDottedPath(formValues, mode.secretField);
+                secretName = secretRaw == null ? "" : String.valueOf(secretRaw).trim();
+                if (secretName.isEmpty()) {
+                    throw new IllegalStateException(
+                            "External target '" + targetKey + "' mode '" + modeName + "' requires a K8s Secret name "
+                                    + "in form field '" + mode.secretField + "' — operator left it blank.");
+                }
+                String namespace = request.getNamespace();
+                io.fabric8.kubernetes.api.model.Secret sec;
+                try {
+                    sec = this.kubernetesService.getSecret(namespace, secretName);
+                } catch (Exception ex) {
+                    throw new IllegalStateException("Failed to read Secret '" + namespace + "/" + secretName
+                            + "' for external target '" + targetKey + "': " + ex.getMessage(), ex);
+                }
+                if (sec == null) {
+                    throw new IllegalStateException(
+                            "External target '" + targetKey + "' references K8s Secret '" + namespace + "/"
+                                    + secretName + "' which does not exist. Create it ahead of deploy with these keys: "
+                                    + (mode.secretKeys == null ? "(none)" : mode.secretKeys));
+                }
+                secretData = sec.getData() == null ? java.util.Collections.emptyMap() : sec.getData();
+                if (mode.secretKeys != null) {
+                    for (String k : mode.secretKeys) {
+                        if (!secretData.containsKey(k)) {
+                            throw new IllegalStateException(
+                                    "Secret '" + namespace + "/" + secretName + "' is missing required key '" + k
+                                            + "' (auth mode '" + modeName + "' for target '" + targetKey + "' requires "
+                                            + mode.secretKeys + ").");
+                        }
+                    }
+                }
+            }
+
+            // (4) Resolve applyTo via the template engine + write helm overrides
+            var resolverCtx = new ExternalCredentialResolver.ResolverContext(secretName, secretData, formValues);
+            Map<String, String> overrides = ExternalCredentialResolver.resolveApplyTo(mode, resolverCtx);
+            for (Map.Entry<String, String> ov : overrides.entrySet()) {
+                this.commandUtils.addOverride(params, ov.getKey(), ov.getValue());
+            }
+            LOG.info("applyExternalServiceCredentials: target='{}' mode='{}' url='{}' wrote {} helm overrides",
+                    targetKey, modeName, url, overrides.size());
+        }
+    }
+
+    /**
+     * Inject the image-pull secret name into the extra helm value paths declared by
+     * the service definition's {@code imagePullSecretTargets} list. KDPS always
+     * writes two universal paths inline at the call sites
+     * ({@code imagePullSecrets[0].name} and {@code global.imagePullSecrets[0]});
+     * this method handles the chart-specific carve-outs (e.g. the airflow sub-chart
+     * inside OpenMetadata which reads {@code dependencies.airflow.registry.secretName}
+     * rather than honoring {@code global.imagePullSecrets}).
+     *
+     * <p>No-op when secretName, serviceKey, or the service.json's
+     * {@code imagePullSecretTargets} is absent — i.e. existing services unaffected.
+     */
+    private void applyImagePullSecretTargets(Object secretName, Object serviceKey,
+                                             Map<String, String> overrideProperties) {
+        if (secretName == null) return;
+        String svcKey = serviceKey == null ? null : String.valueOf(serviceKey);
+        if (svcKey == null || svcKey.isBlank()) return;
+        try {
+            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
+            if (def == null || def.imagePullSecretTargets == null) return;
+            for (String path : def.imagePullSecretTargets) {
+                if (path == null || path.isBlank()) continue;
+                overrideProperties.put(path, String.valueOf(secretName));
+                LOG.info("Image-pull-secret cascade: set {}='{}' from service.json imagePullSecretTargets ({})",
+                        path, secretName, svcKey);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not load service def {} for pull-secret target injection: {}",
+                    svcKey, ex.toString());
+        }
+    }
+
+    /**
      * Translate global security configuration into Helm overrides (global.security.*).
      *
      * @param cfg    security config
@@ -7075,7 +7885,11 @@ public class CommandService {
 
         Map<String, Object> asMap = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(cfg, Map.class);
 
-        // Apply auth-mode specific mappings
+        // Apply auth-mode specific mappings. The auth-mode override always wins
+        // against the Step-3 form value for the same helm path (helm --set beats
+        // values.yaml), so the Step-1 → Step-3 cascade is enforced here regardless
+        // of what the wizard form rendered. Logged at INFO so operators can see
+        // the cascade in deploy logs when they think they set the field manually.
         for (Map.Entry<String, String> entry : modeMapping.entrySet()) {
             String fromPath = entry.getKey();
             String helmPath = entry.getValue();
@@ -7084,6 +7898,10 @@ public class CommandService {
             String strVal = String.valueOf(val);
             if (strVal.isBlank()) continue;
             CommandUtils.addOverride(params, helmPath, strVal);
+            if ("global.security.auth.mode".equals(helmPath)) {
+                LOG.info("Security profile cascade: set {}='{}' from selected profile (mode='{}')",
+                        helmPath, strVal, cfg.mode);
+            }
         }
 
         // Apply TLS/truststore mappings

@@ -121,6 +121,27 @@ limitations under the License.
             <artifactId>caffeine</artifactId>
             <version>3.1.8</version>
         </dependency>
+        <!-- Fernet decryption for the OM ingestion-bot JWT. OM stores its
+             bot's JWT in user_entity.json.authenticationMechanism.config.JWTToken
+             as a Fernet-encrypted string. To mint the Unlimited-TTL token used
+             by the Ranger TagSync source + the Atlas federation registration
+             (both Ambari operations), the view needs to decrypt that string
+             server-side. -->
+        <dependency>
+            <groupId>com.macasaet.fernet</groupId>
+            <artifactId>fernet-java8</artifactId>
+            <version>1.5.0</version>
+        </dependency>
+        <!-- PostgreSQL JDBC driver. The OM_ATLAS_FEDERATION_REGISTER and
+             OM_RANGER_TAGSYNC_REGISTER Ambari operations read the bot JWT
+             directly from OM's PostgreSQL — far simpler than scraping it back
+             from K8s once it's been written by the chart's no-longer-shipped
+             post-install hook Jobs. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.4</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.ambari.contrib.views</groupId>
             <artifactId>ambari-views-utils</artifactId>

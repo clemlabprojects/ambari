@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, type ReleaseTlsEntry } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { API_BASE_URL } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
@@ -302,6 +302,30 @@ const HelmReleasesPage: React.FC = () => {
   };
 
   /**
+   * Replay an arbitrary service.json-declared post-deploy action. The action
+   * carries its own endpoint suffix (e.g. {@code actions/om-atlas-federation}),
+   * so adding a new replayable step is purely a service.json change — no UI
+   * code touches when a new service surfaces one.
+   */
+  const triggerServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
+    const hide = message.loading(`${action.label} for ${release.name}...`, 0);
+    try {
+      const response = await triggerReplayableAction(release.namespace, release.name, action.endpoint);
+      if (response?.id) {
+        setWatchedCommandId(response.id);
+        setIsCommandDrawerOpen(true);
+        message.success(`${action.label}: started`);
+      } else {
+        message.success(`${action.label}: submitted`);
+      }
+    } catch (e: any) {
+      message.error(e?.message || `Failed: ${action.label}`);
+    } finally {
+      hide();
+    }
+  };
+
+  /**
    * Re-apply the Ranger repository configuration for a release.
    * This mirrors the install-time Ranger setup without touching the chart.
    */
@@ -543,6 +567,15 @@ const HelmReleasesPage: React.FC = () => {
           label: 'Reapply Ranger repository',
           onClick: () => triggerRangerRepositoryReapply(record)
         }] : []),
+        // Service.json-declared replayable post-deploy actions. The list is empty
+        // for services that don't surface any — gate the spread on length so we
+        // don't drop an undefined into the menu items array.
+        ...((serviceDefinition?.replayableActions ?? []).map(action => ({
+          key: `replay-${action.key}`,
+          icon: <SafetyCertificateOutlined />,
+          label: action.label,
+          onClick: () => triggerServiceReplayableAction(record, action),
+        }))),
         ...(record.serviceKey === 'SQL-ASSISTANT' ? [{
           key: 'open-sql-assistant',
           icon: <ExperimentOutlined />,

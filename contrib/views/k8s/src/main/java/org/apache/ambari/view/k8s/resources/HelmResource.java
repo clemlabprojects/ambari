@@ -474,6 +474,82 @@ public class HelmResource {
     }
 
     /**
+     * Replay the OpenMetadata→Ranger TagSync source registration for a deployed release.
+     * Mints a fresh ingestion-bot JWT via exec-in-pod, writes the source into Ambari's
+     * {@code ranger-tagsync-site} stack config, and restarts the Ranger TagSync
+     * component. Only valid for releases whose service.json declares a
+     * {@code ranger-tagsync-source} entry.
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/om-ranger-tagsync")
+    public Response reapplyReleaseOmRangerTagSync(@PathParam("namespace") String namespace,
+                                                  @PathParam("release") String releaseName,
+                                                  @Context HttpHeaders requestHeaders,
+                                                  @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            LOG.info("Submitting OM→Ranger TagSync reapply for release {}/{}", namespace, releaseName);
+            String commandId = commandService.submitReleaseOmRangerTagSyncReapply(
+                    namespace,
+                    releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage())).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("OM→Ranger TagSync reapply failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Replay the OpenMetadata Atlas-federation registration for a deployed release.
+     * Mints a fresh ingestion-bot JWT and upserts the four OM REST entities
+     * (metadataService, databaseService, ingestionPipeline, trigger).
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/om-atlas-federation")
+    public Response reapplyReleaseOmAtlasFederation(@PathParam("namespace") String namespace,
+                                                    @PathParam("release") String releaseName,
+                                                    @Context HttpHeaders requestHeaders,
+                                                    @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            LOG.info("Submitting OM Atlas federation reapply for release {}/{}", namespace, releaseName);
+            String commandId = commandService.submitReleaseOmAtlasFederationReapply(
+                    namespace,
+                    releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    uriInfo.getBaseUri()
+            );
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString()))
+                    .location(commandLocation)
+                    .build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage())).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", iae.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("OM Atlas federation reapply failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
      * Register (or re-register) the OIDC client(s) for a deployed release without re-installing
      * the chart.  Reads oidc[] from the service definition, calls Keycloak admin API, and
      * writes/rotates the resulting credentials in a Kubernetes Secret.

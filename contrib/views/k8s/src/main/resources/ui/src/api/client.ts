@@ -46,12 +46,20 @@ export type CommandStatus = {
   updatedAt?: string;
 };
 
+export interface ReplayableAction {
+  key: string;
+  label: string;
+  endpoint: string;
+  skipIfValueEmpty?: string;
+}
+
 export interface StackServiceDef {
   name: string;
   label: string;
   chart: string;
   description: string;
   form: any[]; // FormField[]
+  replayableActions?: ReplayableAction[];
 }
 
 export interface StackConfig {
@@ -643,6 +651,20 @@ export const registerReleaseOidcClient = async (namespace: string, releaseName: 
  */
 export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ranger`;
+  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
+ * Generic dispatcher for service.json-declared replayable actions. The endpoint
+ * path is the one the service definition surfaces (e.g. {@code actions/om-atlas-federation}),
+ * so adding a new replayable post-deploy step doesn't require a UI change.
+ */
+export const triggerReplayableAction = async (
+  namespace: string,
+  releaseName: string,
+  endpoint: string,
+) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/${endpoint}`;
   return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
 };
 

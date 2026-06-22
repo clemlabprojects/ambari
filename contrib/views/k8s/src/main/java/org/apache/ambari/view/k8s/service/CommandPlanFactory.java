@@ -690,6 +690,122 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans one {@code OM_RANGER_TAGSYNC_REGISTER} child command per
+     * {@code type: "ranger-tagsync-source"} entry in the service.json {@code ranger} block.
+     *
+     * <p>The new step writes the source's endpoint/token/class into Ambari's
+     * {@code ranger-tagsync-site} config and triggers a Ranger TagSync component restart
+     * so the source is picked up. Mirrors the Trino-style plugin-repository registration
+     * pattern but targets a different Ranger sub-component (TagSync vs Ranger Admin).
+     *
+     * <p>Idempotency comes from the step body — re-running with the same source name
+     * detects no diff and skips the config write + restart.
+     *
+     * @param rootCommand   parent command this step hangs off
+     * @param rangerRequest the service.json {@code ranger} map (key → entry spec)
+     * @param params        root params propagated to the step (must carry {@code _baseUri},
+     *                      {@code _cluster}, {@code _callerHeaders}, {@code namespace},
+     *                      {@code releaseName})
+     * @param childCommands list of child command IDs to append to (mutated)
+     */
+    public void createRangerTagSyncRegister(CommandEntity rootCommand,
+                                            Map<String, Map<String, Object>> rangerRequest,
+                                            Map<String, Object> params,
+                                            List<String> childCommands) {
+        if (rangerRequest == null || rangerRequest.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Map<String, Object>> entry : rangerRequest.entrySet()) {
+            Map<String, Object> spec = entry.getValue();
+            if (spec == null) continue;
+            Object typeRaw = spec.get("type");
+            if (typeRaw == null || !"ranger-tagsync-source".equals(String.valueOf(typeRaw))) {
+                continue;
+            }
+
+            LOG.info("Planning Ranger TagSync source registration: name='{}'", entry.getKey());
+
+            final String now = Instant.now().toString();
+            String id = rootCommand.getId() + "-tagsync-" + UUID.randomUUID();
+
+            // Carry the per-entry spec into the step's params; the step body needs the
+            // source class, cm_name, token-secret coordinates, and any sourcename mapper.
+            Map<String, Object> stepParams = new LinkedHashMap<>(params);
+            stepParams.put("_tagSyncEntryKey", entry.getKey());
+            stepParams.put("_tagSyncSpec", spec);
+
+            CommandEntity tagSyncCmd = new CommandEntity();
+            tagSyncCmd.setTitle("Ranger TagSync: register source '" + entry.getKey() + "'");
+            tagSyncCmd.setId(id);
+            tagSyncCmd.setType(CommandType.OM_RANGER_TAGSYNC_REGISTER.name());
+            tagSyncCmd.setViewInstance(ctx.getInstanceName());
+            tagSyncCmd.setParamsJson(gson.toJson(stepParams));
+
+            CommandStatusEntity status = new CommandStatusEntity();
+            status.setId(id + "-status");
+            status.setAttempt(0);
+            status.setState(CommandState.PENDING.name());
+            status.setCreatedBy(ctx.getUsername());
+            status.setCreatedAt(now);
+            status.setUpdatedAt(now);
+            status.setWorkerId(null);
+
+            tagSyncCmd.setCommandStatusId(status.getId());
+
+            store(status);
+            store(tagSyncCmd);
+
+            childCommands.add(tagSyncCmd.getId());
+        }
+    }
+
+    /**
+     * Plans a single {@code OM_ATLAS_FEDERATION_REGISTER} child command when the
+     * service.json {@code postDeploy.atlasFederation} block is non-null AND the
+     * deploy-time form values toggled {@code atlasFederation.enabled} on.
+     *
+     * <p>The runtime body reads the Atlas connection params from the materialised
+     * helm values, mints an Unlimited JWT via the airflow scheduler pod, and
+     * drives the four OM REST calls. The plan factory just queues the work — all
+     * value lookup happens at execute time so a reapply picks up the current
+     * release values rather than a snapshot of the original deploy.
+     *
+     * @param rootCommand    parent command this step hangs off
+     * @param params         root params propagated to the step (must carry
+     *                       {@code namespace}, {@code releaseName})
+     * @param childCommands  list of child command IDs to append to (mutated)
+     */
+    public void createOmAtlasFederationRegister(CommandEntity rootCommand,
+                                                Map<String, Object> params,
+                                                List<String> childCommands) {
+        final String now = Instant.now().toString();
+        String id = rootCommand.getId() + "-atlas-fed-" + UUID.randomUUID();
+
+        CommandEntity atlasCmd = new CommandEntity();
+        atlasCmd.setTitle("OpenMetadata: register Atlas federation");
+        atlasCmd.setId(id);
+        atlasCmd.setType(CommandType.OM_ATLAS_FEDERATION_REGISTER.name());
+        atlasCmd.setViewInstance(ctx.getInstanceName());
+        atlasCmd.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        status.setWorkerId(null);
+
+        atlasCmd.setCommandStatusId(status.getId());
+
+        store(status);
+        store(atlasCmd);
+
+        childCommands.add(atlasCmd.getId());
+    }
+
+    /**
      * this method is a submethod of submitDeploy which handle the creation of the helm repository commands
      * @param cmd
      * @param repoId

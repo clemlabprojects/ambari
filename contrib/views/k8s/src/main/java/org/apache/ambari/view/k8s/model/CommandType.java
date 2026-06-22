@@ -104,6 +104,60 @@ public enum CommandType {
     /** Re-applies an existing Ranger repository configuration without a full Helm upgrade. */
     RANGER_REPOSITORY_REAPPLY,
 
+    /**
+     * Registers OpenMetadata as a tag source in the ODP Ranger TagSync component.
+     * Mints an Unlimited-TTL JWT for the OM ingestion-bot (via the OmBotJwtClient
+     * exec-in-pod helper), writes the JWT + source endpoint + source class into
+     * Ambari's {@code ranger-tagsync-site} stack config, then triggers a Ranger
+     * TagSync component restart so the new source is picked up.
+     *
+     * <p>This step is OM-specific because the JWT-minting path uses OM's
+     * Fernet-encrypted user_entity table + OM REST. Future TagSync source types
+     * (Atlas-as-source, Hive metastore tags, etc.) would need their own
+     * service-specific enums.
+     *
+     * <p>Driven by service.json entries with {@code type: "ranger-tagsync-source"}
+     * under the OPENMETADATA service's {@code ranger} block.
+     */
+    OM_RANGER_TAGSYNC_REGISTER,
+
+    /**
+     * Standalone replay of {@link #OM_RANGER_TAGSYNC_REGISTER}, triggered by the
+     * "Re-register Ranger TagSync source" button on the KDPS release row. Shares
+     * its executor body with the deploy-time enum; the separate enum exists so
+     * the command tree's run history shows replays distinctly from initial
+     * registrations (mirrors the {@link #RANGER_REPOSITORY_REAPPLY} pattern).
+     */
+    OM_RANGER_TAGSYNC_REAPPLY,
+
+    /**
+     * Registers Apache Atlas as a federated metadata source in OpenMetadata.
+     * Replaces the helm post-install hook Job previously shipped in the OM
+     * chart. The step:
+     * <ol>
+     *   <li>Mints an Unlimited-TTL JWT for the OM ingestion-bot via
+     *       {@code OmBotJwtClient}</li>
+     *   <li>PUTs {@code /api/v1/services/metadataServices} on OM REST with
+     *       the Atlas connection (URL + credentials Secret + database service
+     *       names list)</li>
+     *   <li>PUTs {@code /api/v1/services/databaseServices} for the federated
+     *       hive-entities landing zone</li>
+     *   <li>PUTs {@code /api/v1/services/ingestionPipelines} with the
+     *       operator-selected schedule</li>
+     *   <li>Triggers the first ingestion run</li>
+     * </ol>
+     *
+     * <p>Driven by the {@code atlasFederation.enabled=true} form value in the
+     * OPENMETADATA wizard.
+     */
+    OM_ATLAS_FEDERATION_REGISTER,
+
+    /**
+     * Standalone replay of {@link #OM_ATLAS_FEDERATION_REGISTER}, triggered by
+     * the "Re-register Atlas federation" button on the KDPS release row.
+     */
+    OM_ATLAS_FEDERATION_REAPPLY,
+
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
 
