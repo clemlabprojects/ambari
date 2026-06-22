@@ -46,10 +46,18 @@ limitations under the License.
     </system-services>
     <parameter>
         <name>k8s.view.working.dir</name>
-        <description>Le répertoire sur le serveur Ambari où stocker les fichiers de configuration de la vue.</description>
-        <label>Répertoire de Travail</label>
+        <description>
+          Répertoire sur le serveur Ambari où la vue stocke ses fichiers de configuration
+          (kubeconfig, repos Helm, registre OCI). NE PAS définir explicitement sauf besoin
+          d'override — laisser ce paramètre vide pour que le service utilise
+          /var/lib/ambari-server/resources/views/k8s-view-data/&lt;instanceName&gt;, chemin
+          persistant qui survit aux redéploiements de la vue (AMBARI-426). Une valeur
+          explicite pointant vers /var/lib/ambari-server/resources/views/work/...
+          serait perdue à chaque redéploiement du JAR — voir
+          ViewConfigurationService.defaultWorkDir().
+        </description>
+        <label>Répertoire de Travail (optionnel)</label>
         <required>false</required>
-        <default-value>/var/lib/ambari-server/resources/views/work/K8S-VIEW{1.0.0.6}</default-value>
     </parameter>
     <parameter>
         <name>ambari.cluster.discovery.enabled</name>
