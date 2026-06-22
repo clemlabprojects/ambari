@@ -321,7 +321,22 @@ public class KeycloakAdminClient {
         rep.put("serviceAccountsEnabled", serviceAccountsEnabled);
         rep.put("protocol", "openid-connect");
         if (redirectUri != null && !redirectUri.isBlank()) {
-            rep.put("redirectUris", List.of(redirectUri));
+            // SPA-style apps (OpenMetadata 1.x) drive an iframe silent token
+            // refresh against a SECOND redirect path (/silent-callback). When
+            // /callback is the only URI registered, Keycloak rejects the
+            // silent-refresh and the user gets intermittent "Invalid redirect
+            // uri" pages. We auto-expand a single `…/callback` URI into the
+            // canonical SPA set; other apps (Superset's /oauth-authorized/…,
+            // JupyterHub's /hub/oauth_callback) won't match this suffix and
+            // remain unchanged.
+            java.util.LinkedHashSet<String> uris = new java.util.LinkedHashSet<>();
+            uris.add(redirectUri);
+            if (redirectUri.endsWith("/callback")) {
+                String base = redirectUri.substring(0, redirectUri.length() - "/callback".length());
+                uris.add(base + "/silent-callback");
+                uris.add(base + "/signed-in");
+            }
+            rep.put("redirectUris", new java.util.ArrayList<>(uris));
             // Whitelist post-logout redirect URIs so RP-Initiated Logout works.
             // Without this Keycloak (18+) silently drops the post_logout_redirect_uri
             // query parameter on /protocol/openid-connect/logout, the SSO session
