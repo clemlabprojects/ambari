@@ -158,7 +158,7 @@ public final class OmAtlasFederationClient {
             "set -eu\n" +
             "python3 - <<'PY'\n" +
             "import os, json, sys, urllib.request\n" +
-            "OM = 'http://' + os.environ['OM_RELEASE'] + '-openmetadata.' + os.environ['OM_NAMESPACE'] + ':8585'\n" +
+            "OM = 'http://' + os.environ.get('OM_SVC_HOST', os.environ['OM_RELEASE']) + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
             "HDR = {'Authorization': 'Bearer ' + os.environ['OM_JWT'], 'Content-Type': 'application/json'}\n" +
             "def om(method, path, body=None):\n" +
             "    req = urllib.request.Request(OM + '/api/v1' + path,\n" +

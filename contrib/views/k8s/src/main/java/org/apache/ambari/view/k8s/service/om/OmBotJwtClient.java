@@ -102,10 +102,30 @@ public final class OmBotJwtClient {
                                           String release,
                                           String fernetKey,
                                           java.time.Duration timeout) throws Exception {
+        return mintUnlimitedJwt(client, namespace, release, fernetKey, null, null, timeout);
+    }
+
+    /**
+     * Same as {@link #mintUnlimitedJwt(KubernetesClient, String, String, String, java.time.Duration)}
+     * but with explicit OM service host + port — used when the chart's OM Service
+     * doesn't follow the {@code <release>-openmetadata} convention. Resolved from
+     * the {@code ranger-tagsync-settings.om_service_template} +
+     * {@code om_port} fields.
+     */
+    public static String mintUnlimitedJwt(KubernetesClient client,
+                                          String namespace,
+                                          String release,
+                                          String fernetKey,
+                                          String omServiceName,
+                                          Integer omPort,
+                                          java.time.Duration timeout) throws Exception {
         if (client == null) throw new IllegalArgumentException("client is required");
         if (namespace == null || namespace.isBlank()) throw new IllegalArgumentException("namespace is required");
         if (release == null || release.isBlank()) throw new IllegalArgumentException("release is required");
         String key = (fernetKey == null || fernetKey.isBlank()) ? DEFAULT_FERNET_KEY : fernetKey;
+        // OM Service name + port — settings-driven, defaulting to release name on port 8585.
+        String svc = (omServiceName == null || omServiceName.isBlank()) ? release : omServiceName;
+        int port = omPort == null ? 8585 : omPort;
 
         // Find an airflow scheduler pod (the upstream chart labels them
         // tier=airflow, component=scheduler). Restrict by release prefix so we
@@ -152,9 +172,11 @@ public final class OmBotJwtClient {
             "    print('ingestion-bot has no JWT yet', file=sys.stderr); sys.exit(1)\n" +
             "ct = re.sub(r'^fernet:', '', raw)\n" +
             "jwt = Fernet(os.environ['OM_FERNET_KEY'].encode()).decrypt(ct.encode()).decode()\n" +
-            "# 2. Rotate to Unlimited via OM REST. Service is reachable from this\n" +
-            "#    pod as <release>-openmetadata.<ns>:8585.\n" +
-            "om = 'http://' + release + '-openmetadata.' + os.environ['OM_NAMESPACE'] + ':8585'\n" +
+            "# 2. Rotate to Unlimited via OM REST. The service name + port come\n" +
+            "#    from ranger-tagsync-settings (chart-specific); the OM main\n" +
+            "#    chart names its Service `<release>` (not `<release>-openmetadata`),\n" +
+            "#    so the default templating yields the right hostname.\n" +
+            "om = 'http://' + os.environ['OM_SVC_HOST'] + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ['OM_PORT']\n" +
             "req = urllib.request.Request(om + '/api/v1/users/security/token',\n" +
             "    data=json.dumps({'JWTTokenExpiry': 'Unlimited'}).encode(),\n" +
             "    headers={'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json'},\n" +
@@ -197,8 +219,13 @@ public final class OmBotJwtClient {
                     @Override public void onClose(int code, String reason) { done.countDown(); }
                     @Override public void onFailure(Throwable t, Response r) { done.countDown(); }
                 })
-                .exec("bash", "-c", "OM_RELEASE='" + release + "' OM_NAMESPACE='" + namespace
-                        + "' OM_FERNET_KEY='" + key + "' bash -c " + shellQuote(script))) {
+                .exec("bash", "-c",
+                        "OM_RELEASE=" + shellQuote(release) +
+                        " OM_NAMESPACE=" + shellQuote(namespace) +
+                        " OM_FERNET_KEY=" + shellQuote(key) +
+                        " OM_SVC_HOST=" + shellQuote(svc) +
+                        " OM_PORT=" + shellQuote(String.valueOf(port)) +
+                        " bash -c " + shellQuote(script))) {
             boolean finished = done.await(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
                 throw new IllegalStateException(

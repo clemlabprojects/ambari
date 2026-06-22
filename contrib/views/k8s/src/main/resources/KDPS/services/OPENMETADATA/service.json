@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.6",
+  "version": "1.13.8",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
@@ -2124,7 +2124,7 @@
       "enabled_helm_prop": "ranger.tagSync.enabled",
       "fernet_secret_name_template": "{{releaseName}}-fernet",
       "fernet_secret_key": "fernet-key",
-      "om_service_template": "{{releaseName}}-openmetadata",
+      "om_service_template": "{{releaseName}}",
       "om_port": 8585,
       "bot_username": "ingestion-bot"
     },
@@ -2138,7 +2138,7 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.13.6",
+  "requiredChartVersion": ">=1.13.8",
   "externalServiceTargets": {
     "hive": {
       "label": "Hive Metastore",

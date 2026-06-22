@@ -7503,7 +7503,18 @@ public class CommandService {
         // Settings drives the helm path (chart-specific); per-source `endpoint_helm_prop`
         // remains an honored override for the rare case a chart has more than one source
         // landing in different helm paths.
+        //
+        // Two callers, two value sources (mirrors registerOmAtlasFederation):
+        //   1. Deploy-time: params carry valuesPath → loadValuesFromParams.
+        //   2. Reapply-time (actions/om-ranger-tagsync): no valuesPath → fall
+        //      back to the live helm release values.
         Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
+        if (values == null || values.isEmpty()) {
+            values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+            if (values == null) values = Collections.emptyMap();
+            LOG.info("OM_RANGER_TAGSYNC_REGISTER: read live helm release values for {}/{} ({} keys)",
+                    namespace, releaseName, values.size());
+        }
         String endpointHelmPath = String.valueOf(spec.getOrDefault(
                 "endpoint_helm_prop",
                 settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint")));
@@ -7540,11 +7551,20 @@ public class CommandService {
             LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
                     namespace, fernetSecretName, fernetSecretKey, ex.toString());
         }
+        // OM service host + port from settings (chart-specific). Default: just the
+        // release name + 8585 (matches OM chart's `<release>` Service name).
+        String omSvcTpl = String.valueOf(settings.getOrDefault("om_service_template", "{{releaseName}}"));
+        String omSvc = omSvcTpl.replace("{{releaseName}}", releaseName);
+        Object omPortRaw = settings.get("om_port");
+        Integer omPort = (omPortRaw instanceof Number) ? ((Number) omPortRaw).intValue() :
+                (omPortRaw != null && !String.valueOf(omPortRaw).isBlank() ? Integer.parseInt(String.valueOf(omPortRaw)) : Integer.valueOf(8585));
         String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
                 this.kubernetesService.getClient(),
                 namespace,
                 releaseName,
                 fernetKey,
+                omSvc,
+                omPort,
                 java.time.Duration.ofSeconds(120));
 
         // ----- Branch on Ranger ownership via externalServiceTargets schema -----
@@ -7685,7 +7705,21 @@ public class CommandService {
             throw new IllegalStateException("Missing releaseName/namespace in OM_ATLAS_FEDERATION_REGISTER params");
         }
 
+        // Two callers, two value sources:
+        //   1. Deploy-time (createOmAtlasFederationRegister via submitDeploy):
+        //      params carry a `valuesPath` pointing at the cache file with the
+        //      resolved-by-binding helm values. loadValuesFromParams reads that.
+        //   2. Reapply-time (submitReleaseOmAtlasFederationReapply via the
+        //      `actions/om-atlas-federation` REST endpoint): there's no in-flight
+        //      deploy, so no valuesPath. Fall back to the LIVE helm release
+        //      values pulled from helm's Secret in the release namespace.
         Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
+        if (values == null || values.isEmpty()) {
+            values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+            if (values == null) values = Collections.emptyMap();
+            LOG.info("OM_ATLAS_FEDERATION_REGISTER: read live helm release values for {}/{} ({} keys)",
+                    namespace, releaseName, values.size());
+        }
 
         // Surface a clear error early if the operator turned the toggle off (e.g. by
         // editing values then hitting Reapply) instead of letting OM REST fail mid-flow.

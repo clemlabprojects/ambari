@@ -36,6 +36,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.service.PathConfig;
 import org.apache.ambari.view.k8s.service.CommandService;
+import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
@@ -489,11 +490,15 @@ public class HelmResource {
         try {
             authHelper.checkWritePermission();
             LOG.info("Submitting OM→Ranger TagSync reapply for release {}/{}", namespace, releaseName);
+            // Use the loopback Ambari API base, NOT uriInfo.getBaseUri() — the
+            // latter points at the VIEW resource path (.../resources/api/) which
+            // 404s when resolveClusterName tries /clusters under it. The deploy
+            // submit path does the same conversion (CommandResource.submitDeploy).
             String commandId = commandService.submitReleaseOmRangerTagSyncReapply(
                     namespace,
                     releaseName,
                     requestHeaders.getRequestHeaders(),
-                    uriInfo.getBaseUri()
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext)
             );
             URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
             return Response.status(Response.Status.ACCEPTED)
