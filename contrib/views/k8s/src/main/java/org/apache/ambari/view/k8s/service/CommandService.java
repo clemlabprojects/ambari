@@ -1828,7 +1828,9 @@ public class CommandService {
         // Ranger plugin settings drive repository naming and extra configs.
         Map<String, Object> rangerPluginSettingsSpec = rangerSpec.get("ranger-plugin-settings");
         if (rangerPluginSettingsSpec == null || rangerPluginSettingsSpec.isEmpty()) {
-            LOG.warn("Ranger plugin settings missing for release {}; cannot plan repository creation.", request.getReleaseName());
+            LOG.info("No ranger-plugin-settings in spec for release {}; skipping plugin-repository creation. "
+                    + "TagSync sources (if any) are handled by planRangerTagSyncSources, called separately.",
+                    request.getReleaseName());
             return;
         }
 
@@ -1890,9 +1892,41 @@ public class CommandService {
 
         // Add the Ranger repository creation step to the command plan.
         this.commandPlanFactory.createRangerPluginRepository(rootCommand, rangerSpec, params, childCommands);
+    }
 
-        // Add one Ranger TagSync source-registration step per `ranger-tagsync-source`
-        // entry in the service.json ranger block. No-op when none are declared.
+    /**
+     * Planning sibling for {@code ranger-tagsync-source} entries — gated by a
+     * {@code ranger-tagsync-settings} block in the service.json {@code ranger}
+     * map. Mirrors {@link #planRangerRepositoryCreation}'s {@code ranger-plugin-settings}
+     * gate: the settings block carries chart-wide TagSync wiring (endpoint helm
+     * path, fernet Secret coordinates, OM REST shape, bot username) and signals
+     * "this service supports TagSync registration." Per-source entries
+     * ({@code ranger-tagsync-source}) carry identity-only fields.
+     *
+     * <p>The split makes a service that only registers TagSync sources
+     * (OPENMETADATA — OM is a tag SOURCE, not a Ranger plugin consumer) work
+     * cleanly: no spurious "Ranger plugin settings missing" warning, no need to
+     * fake a plugin-settings block.
+     */
+    void planRangerTagSyncSources(CommandEntity rootCommand,
+                                  List<String> childCommands,
+                                  HelmDeployRequest request,
+                                  Map<String, Object> params) {
+        Map<String, Map<String, Object>> rangerSpec = request.getRanger();
+        if (rangerSpec == null || rangerSpec.isEmpty()) {
+            return;
+        }
+        Map<String, Object> tagSyncSettingsSpec = rangerSpec.get("ranger-tagsync-settings");
+        if (tagSyncSettingsSpec == null || tagSyncSettingsSpec.isEmpty()) {
+            LOG.info("No ranger-tagsync-settings in spec for release {}; skipping TagSync source registration.",
+                    request.getReleaseName());
+            return;
+        }
+        // Persist settings into params so the runtime handler (registerRangerTagSyncSource)
+        // can read endpoint helm path, fernet Secret name template, OM bot wiring, etc.
+        params.put("_tagSyncSettings", tagSyncSettingsSpec);
+
+        // Defer to the plan factory to walk ranger-tagsync-source entries.
         this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params, childCommands);
     }
 
@@ -3015,14 +3049,15 @@ public class CommandService {
         rootParams.put("version", releaseMetadata.getVersion());
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
 
-        List<String> childCommandIds = new ArrayList<>();
-        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams, childCommandIds);
-
+        // Root needs an empty childListJson before the plan-factory appends to it.
         rootCommand.setParamsJson(gson.toJson(rootParams));
-        rootCommand.setChildListJson(gson.toJson(childCommandIds));
-
+        rootCommand.setChildListJson(gson.toJson(new ArrayList<String>()));
         store(rootStatus);
         store(rootCommand);
+
+        // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
+        // re-stores the root, so we don't need to do it again after this call.
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams);
 
         scheduleNow(commandId);
         return commandId;
@@ -4319,7 +4354,12 @@ public class CommandService {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
         if (ranger != null) {
+            // Two independent sub-plans, each gated by its own settings block:
+            //   - ranger-plugin-settings drives plugin repository creation (Trino, etc.)
+            //   - ranger-tagsync-settings drives TagSync source registration (OpenMetadata, etc.)
+            // A service can declare one, the other, both, or neither.
             planRangerRepositoryCreation(rootCommand, childCommands, request, params, effectiveValues, ambariActionClient, cluster);
+            planRangerTagSyncSources(rootCommand, childCommands, request, params);
         }
         // storing the Command Status
         store(commandStatusEntity);
@@ -4753,7 +4793,7 @@ public class CommandService {
                             atlasParams.put("namespace", request.getNamespace());
                             atlasParams.put("serviceKey", request.getServiceKey());
                             this.commandPlanFactory.createOmAtlasFederationRegister(
-                                    rootCommand, atlasParams, childCommands);
+                                    rootCommand, atlasParams);
                             LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'",
                                     request.getReleaseName());
                         }
@@ -7414,10 +7454,20 @@ public class CommandService {
         if (entryKey == null || entryKey.isBlank() || spec == null) {
             throw new IllegalStateException("Missing _tagSyncEntryKey/_tagSyncSpec in OM_RANGER_TAGSYNC_REGISTER params");
         }
+        // ranger-tagsync-settings carries chart-wide TagSync wiring (endpoint helm path,
+        // fernet Secret coordinates, OM REST shape, bot username). Plan-factory populated
+        // _tagSyncSettings before queueing this step.
+        Map<String, Object> settings = (Map<String, Object>) childParams.get("_tagSyncSettings");
+        if (settings == null) settings = Collections.emptyMap();
 
-        // ----- Resolve OM endpoint from helm values (or the spec's hint) -----
+        // ----- Resolve OM endpoint from helm values -----
+        // Settings drives the helm path (chart-specific); per-source `endpoint_helm_prop`
+        // remains an honored override for the rare case a chart has more than one source
+        // landing in different helm paths.
         Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
-        String endpointHelmPath = String.valueOf(spec.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint"));
+        String endpointHelmPath = String.valueOf(spec.getOrDefault(
+                "endpoint_helm_prop",
+                settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint")));
         Object endpointRaw = ConfigResolutionService.getByDottedPath(values, endpointHelmPath);
         String omEndpoint = endpointRaw == null ? "" : String.valueOf(endpointRaw);
         if (omEndpoint.isBlank()) {
@@ -7430,19 +7480,26 @@ public class CommandService {
         // K8s Secret that a helm hook Job populated; chart 1.13.5 deletes that
         // Job (and the Secret), so the Ambari step now mints the JWT itself.
         // See OmBotJwtClient for the why-exec-not-JDBC rationale.
+        //
+        // Fernet Secret coordinates come from settings (chart-specific) with sensible
+        // defaults — release-name templated since the Secret is per-release.
+        String fernetSecretNameTpl = String.valueOf(
+                settings.getOrDefault("fernet_secret_name_template", "{{releaseName}}-fernet"));
+        String fernetSecretName = fernetSecretNameTpl.replace("{{releaseName}}", releaseName);
+        String fernetSecretKey = String.valueOf(settings.getOrDefault("fernet_secret_key", "fernet-key"));
         String fernetKey = null;
         try {
             io.fabric8.kubernetes.api.model.Secret fernetSec =
-                    this.kubernetesService.getSecret(namespace, releaseName + "-fernet");
+                    this.kubernetesService.getSecret(namespace, fernetSecretName);
             if (fernetSec != null && fernetSec.getData() != null
-                    && fernetSec.getData().containsKey("fernet-key")) {
+                    && fernetSec.getData().containsKey(fernetSecretKey)) {
                 fernetKey = new String(
-                        java.util.Base64.getDecoder().decode(fernetSec.getData().get("fernet-key")),
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get(fernetSecretKey)),
                         java.nio.charset.StandardCharsets.UTF_8).trim();
             }
         } catch (Exception ex) {
-            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}-fernet' Secret, falling back to chart default: {}",
-                    namespace, releaseName, ex.toString());
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
+                    namespace, fernetSecretName, fernetSecretKey, ex.toString());
         }
         String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
                 this.kubernetesService.getClient(),

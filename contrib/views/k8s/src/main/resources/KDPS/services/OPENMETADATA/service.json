@@ -2117,14 +2117,22 @@
     }
   ],
   "ranger": {
+    "ranger-tagsync-settings": {
+      "_description": "Chart-wide TagSync wiring — mirrors the role of ranger-plugin-settings for the plugin side. Drives planRangerTagSyncSources gating AND the OM_RANGER_TAGSYNC_REGISTER runtime handler (endpoint helm path, fernet Secret coordinates, OM REST shape, bot username). Per-source entries below carry identity-only fields.",
+      "type": "ranger-tagsync-settings",
+      "endpoint_helm_prop": "ranger.tagSync.endpoint",
+      "enabled_helm_prop": "ranger.tagSync.enabled",
+      "fernet_secret_name_template": "{{releaseName}}-fernet",
+      "fernet_secret_key": "fernet-key",
+      "om_service_template": "{{releaseName}}-openmetadata",
+      "om_port": 8585,
+      "bot_username": "ingestion-bot"
+    },
     "ranger-openmetadata-tagsync": {
+      "_description": "Per-source identity. Chart-wide wiring lives in ranger-tagsync-settings above.",
       "type": "ranger-tagsync-source",
       "cm_name": "ranger-openmetadata-tagsync",
-      "cm_type": "config-map",
-      "helm_values_property": "ranger.tagSync.configMapName",
-      "source_class": "org.apache.ranger.tagsync.source.openmetadatarest.OpenmetadataRESTTagSource",
-      "token_secret_name_helm_prop": "ranger.tagSync.tokenSecretName",
-      "token_secret_key_helm_prop": "ranger.tagSync.tokenSecretKey"
+      "source_class": "org.apache.ranger.tagsync.source.openmetadatarest.OpenmetadataRESTTagSource"
     }
   },
   "valueAliases": {

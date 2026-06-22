@@ -770,14 +770,19 @@ public class CommandPlanFactory {
      * value lookup happens at execute time so a reapply picks up the current
      * release values rather than a snapshot of the original deploy.
      *
+     * <p>Self-manages {@code rootCommand.childListJson}: reads the current list,
+     * appends the new child id, and re-persists the root. Mirrors the pattern in
+     * {@link #createAmbariViewProvisionCommand} — submitDeploy doesn't re-save
+     * the root after the post-deploy block, so any plan-factory method called
+     * there has to persist the root itself or the new child will be orphaned
+     * (created in the datastore but absent from the command tree).
+     *
      * @param rootCommand    parent command this step hangs off
      * @param params         root params propagated to the step (must carry
      *                       {@code namespace}, {@code releaseName})
-     * @param childCommands  list of child command IDs to append to (mutated)
      */
     public void createOmAtlasFederationRegister(CommandEntity rootCommand,
-                                                Map<String, Object> params,
-                                                List<String> childCommands) {
+                                                Map<String, Object> params) {
         final String now = Instant.now().toString();
         String id = rootCommand.getId() + "-atlas-fed-" + UUID.randomUUID();
 
@@ -799,10 +804,23 @@ public class CommandPlanFactory {
 
         atlasCmd.setCommandStatusId(status.getId());
 
+        // Append to root's child list — mirrors createAmbariViewProvisionCommand
+        Type listType = new TypeToken<ArrayList<String>>(){}.getType();
+        List<String> children;
+        try {
+            children = gson.fromJson(rootCommand.getChildListJson(), listType);
+            if (children == null) children = new ArrayList<>();
+        } catch (Exception e) {
+            children = new ArrayList<>();
+        }
+        children.add(id);
+        rootCommand.setChildListJson(gson.toJson(children));
+
         store(status);
         store(atlasCmd);
+        store(rootCommand);
 
-        childCommands.add(atlasCmd.getId());
+        LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER step {} on root {}", id, rootCommand.getId());
     }
 
     /**
