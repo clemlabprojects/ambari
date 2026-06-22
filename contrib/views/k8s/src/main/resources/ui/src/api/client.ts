@@ -894,7 +894,19 @@ export async function submitHelmDeploy(payload: {
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(`Submit failed: ${response.status}`);
+  if (!response.ok) {
+    // Surface the server error body — without this we lose the actual reason
+    // (e.g. "Chart version 1.13.1 does not match the range '>=1.13.2'") and
+    // the operator only sees "Submit failed: 400" which is useless.
+    let detail = '';
+    try {
+      const body: any = await response.clone().json();
+      detail = body?.error ? `: ${body.error}` : '';
+    } catch {
+      try { detail = `: ${await response.text()}`; } catch { /* keep empty */ }
+    }
+    throw new Error(`Submit failed: ${response.status}${detail}`);
+  }
   return response.json() as Promise<{id: string}>;
 }
 

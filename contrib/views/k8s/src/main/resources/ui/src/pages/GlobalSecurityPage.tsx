@@ -428,7 +428,6 @@ const GlobalSecurityPage: React.FC = () => {
                       <Form.Item
                         {...field}
                         name={[field.name, 'key']}
-                        fieldKey={[field.fieldKey, 'key']}
                         rules={[{ required: true, message: 'Path is required' }]}
                       >
                         <Tooltip title="Helm path for override">
@@ -438,7 +437,6 @@ const GlobalSecurityPage: React.FC = () => {
                       <Form.Item
                         {...field}
                         name={[field.name, 'value']}
-                        fieldKey={[field.fieldKey, 'value']}
                       >
                         <Input placeholder="value" />
                       </Form.Item>

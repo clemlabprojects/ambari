@@ -27,6 +27,9 @@ import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.*;
 import javax.ws.rs.core.*;
@@ -36,6 +39,8 @@ import java.util.Map;
 @Path("/")
 @Produces(MediaType.APPLICATION_JSON)
 public class CommandResource {
+
+  private static final Logger LOG = LoggerFactory.getLogger(CommandResource.class);
 
   private final ViewContext viewContext;
 
@@ -100,6 +105,7 @@ public class CommandResource {
               .entity(Map.of("id", id))
               .build();
     } catch (IllegalArgumentException iae) {
+      LOG.warn("submitDeploy rejected (400): {}", iae.getMessage());
       return Response.status(Response.Status.BAD_REQUEST)
               .entity(Map.of("error", iae.getMessage()))
               .build();
@@ -110,6 +116,7 @@ public class CommandResource {
       // IllegalArgumentException (typically from a TLS-mode payload validation).
       Throwable cause = re.getCause();
       if (cause instanceof IllegalArgumentException) {
+        LOG.warn("submitDeploy rejected (400, unwrapped): {}", cause.getMessage());
         return Response.status(Response.Status.BAD_REQUEST)
                 .entity(Map.of("error", cause.getMessage()))
                 .build();
