@@ -38,6 +38,14 @@ public class FormField {
     public String serviceType; // for service-select / discovery backed fields
     public String discoveryType; // e.g. monitoring-discovery
 
+    /**
+     * For {@code type: "external-auth-target"} fields — references a key in the
+     * service def's {@code externalServiceTargets} map. The wizard's
+     * ExternalAuthTargetField component reads the referenced entry to learn
+     * which auth modes + Secret field paths to render.
+     */
+    public String target;
+
     // For discovery/selectors
     public String lookupLabel;
     public String placeholder;

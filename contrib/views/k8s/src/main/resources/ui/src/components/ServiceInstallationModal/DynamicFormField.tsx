@@ -18,9 +18,10 @@
 
 import React from 'react';
 import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Tooltip, Typography } from 'antd';
-import type { FormField } from '../../types/ServiceTypes';
+import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
 import ServiceSelect from './ServiceSelect';
+import ExternalAuthTargetField from './ExternalAuthTargetField';
 
 const { Option } = Select;
 
@@ -67,11 +68,18 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // (e.g. `"value": ["signedByAmbariCA", "signedByCompanyCA"]` — show this
   // field when the watched value matches ANY entry). Without the array branch,
   // such fields would never render because `array === scalar` is always false.
+  //
+  // condition.operator: optional, defaults to equality. "non-empty" lets a field
+  // gate-show only when another field has a non-blank string value — useful for
+  // external-auth-target groups that should only appear when the corresponding
+  // URL override has been filled in.
   const isVisible = !condition
       ? true
-      : Array.isArray(condition.value)
-          ? condition.value.includes(watchedValue)
-          : watchedValue === condition.value;
+      : condition.operator === 'non-empty'
+          ? watchedValue != null && String(watchedValue).trim().length > 0
+          : Array.isArray(condition.value)
+              ? condition.value.includes(watchedValue)
+              : watchedValue === condition.value;
   if (!isVisible) return null;
 
   switch (field.type) {
@@ -113,6 +121,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Card>
       );
     }
+    case 'external-auth-target':
+      return <ExternalAuthTargetField field={field as ExternalAuthTargetFormField} />;
     case 'service-select':
     case 'hadoop-discovery': {
       const f = field as any;

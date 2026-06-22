@@ -17,9 +17,11 @@
  */
 
 import React from 'react';
-import { Alert, Form, Input, Typography, Divider, Select, Radio, Card } from 'antd';
+import { Alert, Form, Input, Typography, Divider, Select, Radio, Card, Tag } from 'antd';
 import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
+import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
+import { ExternalAuthTargetsContext } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
 
 interface InstallStepProps {
   definition: any;
@@ -212,7 +214,23 @@ const InstallStep: React.FC<InstallStepProps> = ({
   const chartFields = (definition?.form || []).filter((f: any) => !['releaseName', 'namespace'].includes(f.name));
   const mountSpecs = Array.isArray(definition?.mounts) ? definition.mounts : [];
 
+  // Resolve the Step 1 → Step 3 auth cascade for this service. When active:
+  //  - apply disabled state to the target field (via applyAuthCascadeToFields)
+  //  - render a blue info banner so the operator knows the form value isn't
+  //    free-text. Server-side enforcement happens regardless via
+  //    applySecurityOverrides (--set wins over values.yaml).
+  const profileName: string | undefined = data?.securityProfile;
+  const chosenProfileMode: string | undefined = profileName ? securityProfiles?.[profileName]?.mode : undefined;
+  const authCascade = resolveAuthCascade(definition, chosenProfileMode);
+  const cascadedChartFields = applyAuthCascadeToFields(chartFields, authCascade);
+  // Step-1 incompatibility: service has authModes declared but no mapping for the chosen mode.
+  const authBlock = (definition as any)?.securityCoupling?.authModes;
+  const cascadeMismatch = Boolean(
+    chosenProfileMode && authBlock?.field && authBlock?.mappings && !authBlock.mappings[chosenProfileMode]
+  );
+
   return (
+    <ExternalAuthTargetsContext.Provider value={(definition as any)?.externalServiceTargets}>
     <Form form={form} layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
         {mode === 'storage' ? (
           <>
@@ -257,16 +275,53 @@ const InstallStep: React.FC<InstallStepProps> = ({
                 />
               );
             })()}
-            {chartFields.length === 0 ? (
+            {authCascade && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message={
+                  <span>
+                    Authentication mode set by security profile
+                    {profileName ? <Tag style={{ marginLeft: 8 }}>{profileName}</Tag> : null}
+                    {chosenProfileMode ? <Tag color="blue">mode: {chosenProfileMode}</Tag> : null}
+                  </span>
+                }
+                description={
+                  <span>
+                    The field <code>{authCascade.field}</code> is{' '}
+                    {authCascade.locked ? 'locked' : 'pre-set'} to <strong>{authCascade.value}</strong>.
+                    Server-side overrides enforce this at deploy time regardless of the form value,
+                    so this cascade keeps the display honest.
+                  </span>
+                }
+              />
+            )}
+            {cascadeMismatch && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="No auth-mode mapping for the selected security profile"
+                description={
+                  <span>
+                    Profile mode <strong>{chosenProfileMode}</strong> is not declared in this service's{' '}
+                    <code>securityCoupling.authModes</code>. The auth field is left untouched — set it manually if needed.
+                  </span>
+                }
+              />
+            )}
+            {cascadedChartFields.length === 0 ? (
               <Typography.Text type="secondary">No chart fields defined.</Typography.Text>
             ) : (
-              chartFields.map((f: any) => (
+              cascadedChartFields.map((f: any) => (
                 <DynamicFormField key={f.name} field={f} />
               ))
             )}
           </>
         )}
     </Form>
+    </ExternalAuthTargetsContext.Provider>
   );
 };
 export default InstallStep;

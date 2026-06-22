@@ -267,6 +267,46 @@ const ServiceWizardPage: React.FC = () => {
     });
   }, [def, securityProfiles, (installValues as any)?.securityProfile]);
 
+  // Step 1 → Step 3 auth cascade. When a service.json declares
+  // `securityCoupling.authModes` and the selected profile's mode is a key in
+  // its mappings, push the cascaded value into installValues. Locked entries
+  // ALWAYS overwrite (mirrors what `applySecurityOverrides` does server-side
+  // via helm --set); unlocked entries only backfill empty values so manual
+  // edits survive. No matching mode key → leave the field untouched (Step-1
+  // incompatibility banner is rendered by InstallStep).
+  useEffect(() => {
+    if (!def || !installValues) return;
+    const profileName = (installValues as any)?.securityProfile;
+    if (!profileName) return;
+    const profile = (securityProfiles?.profiles as any)?.[profileName];
+    const mode = profile?.mode;
+    if (!mode) return;
+    const block = (def as any)?.securityCoupling?.authModes;
+    if (!block?.field || !block?.mappings) return;
+    const mapping = block.mappings[mode];
+    if (!mapping || mapping.value === undefined) return;
+    const parts = String(block.field)
+      .replace(/\\\./g, '__DOT__')
+      .split('.')
+      .map((p: string) => p.replace(/__DOT__/g, '.'));
+    setInstallValues((prev: any) => {
+      const next = JSON.parse(JSON.stringify(prev || {}));
+      let cur = next;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      const leaf = parts[parts.length - 1];
+      const existing = cur[leaf];
+      const shouldWrite = mapping.locked
+        ? existing !== mapping.value
+        : (existing === undefined || existing === null || existing === '');
+      if (!shouldWrite) return prev;
+      cur[leaf] = mapping.value;
+      return next;
+    });
+  }, [def, securityProfiles, (installValues as any)?.securityProfile]);
+
   // Auth profiles imply TLS: OAuth callbacks reject http:// and session cookies
   // need the Secure flag. The rule lives in service.json under `securityCoupling`
   // so individual services can opt out or change the default minimum TLS mode
@@ -597,8 +637,8 @@ const ServiceWizardPage: React.FC = () => {
     if (!def) return [];
     return [
       { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
-      { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} /> },
-      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} /> },
+      { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} /> },
     ];

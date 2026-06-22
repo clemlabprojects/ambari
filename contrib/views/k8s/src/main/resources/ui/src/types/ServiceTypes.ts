@@ -32,7 +32,44 @@ export interface GroupFormField extends FormFieldBase {
     type: 'group';
     fields: FormField[];
 }
-export type FormField = StandardFormField | ServiceSelectFormField | K8sDiscoveryFormField | SecretDiscoveryFormField | GroupFormField;
+/**
+ * Placeholder field that renders the auth-mode dropdown + conditional Secret
+ * picker for one entry in the service def's `externalServiceTargets` map. The
+ * `target` attribute matches a top-level key in `externalServiceTargets`.
+ *
+ * The component reads the referenced entry from `ServiceDefinition.externalServiceTargets`
+ * to know which auth modes are supported and which form-field paths to write to
+ * (modeField, secretField). See docs/EXTERNAL_SERVICE_TARGETS.md.
+ */
+export interface ExternalAuthTargetFormField extends FormFieldBase {
+    type: 'external-auth-target';
+    target: string;
+}
+export type FormField =
+    | StandardFormField
+    | ServiceSelectFormField
+    | K8sDiscoveryFormField
+    | SecretDiscoveryFormField
+    | GroupFormField
+    | ExternalAuthTargetFormField;
+
+/**
+ * One outbound connection the service can make (e.g. "hive", "ranger", "atlas").
+ * See docs/EXTERNAL_SERVICE_TARGETS.md for the full contract.
+ */
+export interface ExternalAuthMode {
+    label: string;
+    secretField?: string;
+    secretKeys?: string[];
+    applyTo?: Record<string, string>;
+}
+export interface ExternalServiceTarget {
+    label: string;
+    discoveryServiceType?: string;
+    urlOverrideField: string;
+    modeField?: string;
+    authModes: Record<string, ExternalAuthMode>;
+}
 
 export interface ServiceDefinition {
   label: string;
@@ -45,6 +82,7 @@ export interface ServiceDefinition {
   kerberos?: Array<Record<string, any>>;
   ranger?: Record<string, Record<string, any>>;
   oidc?: Array<Record<string, any>>;
+  externalServiceTargets?: Record<string, ExternalServiceTarget>;
 }
 export interface AvailableServices {
   [key: string]: ServiceDefinition;

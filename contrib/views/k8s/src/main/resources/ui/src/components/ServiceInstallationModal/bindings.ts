@@ -230,10 +230,25 @@ export function valueFromTargetSource(
     return base + (t.from.suffix || '');
   }
 
-  // Case: Direct Form Field copy
+  // Case: Direct Form Field copy.
+  //
+  // Preserve the form field's original type when no suffix is set, so a
+  // number-typed form field (e.g. `replicas`) doesn't get stringified to
+  // "1" and then rejected by helm values.schema.json with
+  // "Expected: integer, given: string". Same for booleans, arrays, objects.
+  //
+  // When a suffix is set the binding is explicitly building a string
+  // (e.g. "http://" + host + ":80"), so coerce to string in that path only.
+  //
+  // null/undefined form values become undefined so the binding is skipped
+  // (rather than writing "" to a non-string-typed helm path — same schema
+  // failure mode otherwise).
   if (t.from.type === 'form') {
     const v = getAtStr(formVals, t.from.field);
-    return (v == null ? '' : String(v)) + (t.from.suffix || '');
+    if (t.from.suffix) {
+      return (v == null ? '' : String(v)) + t.from.suffix;
+    }
+    return v == null ? undefined : v;
   }
 
   // Case: Variable Indirection (look up in varCtx)

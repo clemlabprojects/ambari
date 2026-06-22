@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.42.1",
+  "version": "1.43.0",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -703,6 +703,13 @@
       "from": {
         "type": "form",
         "field": "ingress.externalSecret.refreshInterval"
+      }
+    },
+    {
+      "name": "hadoopGroupMappingEnabled",
+      "from": {
+        "type": "form",
+        "field": "hadoopConf.groupMapping.enabled"
       }
     }
   ],
@@ -1409,6 +1416,96 @@
           "from": {
             "type": "template",
             "template": "connector.name=hive\nhive.metastore.uri=${hiveMetastoreUri}\nhive.security=allow-all\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "hadoop-group-mapping-toggle",
+      "_description": "Sets hadoopConf.groupMapping.enabled — gates the init-container that splices LdapGroupsMapping into core-site.xml (chart >= 1.43.0).",
+      "targets": [
+        {
+          "path": "hadoopConf.groupMapping.enabled",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.enabled"
+          }
+        }
+      ]
+    },
+    {
+      "name": "hadoop-group-mapping-ldap-props",
+      "_description": "Map every Hadoop LdapGroupsMapping form field to its helm path. All paths under hadoopConf.groupMapping.ldap.* are read by the trino chart's init-hadoop-conf-overlay init container.",
+      "skipIfVarEmpty": "hadoopGroupMappingEnabled",
+      "targets": [
+        {
+          "path": "hadoopConf.groupMapping.ldap.url",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.url"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.bindUser",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.bindUser"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.bindPasswordSecret.name",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.bindPasswordSecret.name"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.bindPasswordSecret.key",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.bindPasswordSecret.key"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.baseDn",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.baseDn"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.userSearchFilter",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.userSearchFilter"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.groupSearchFilter",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.groupSearchFilter"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.memberAttr",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.memberAttr"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.cacheSeconds",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.cacheSeconds"
+          }
+        },
+        {
+          "path": "hadoopConf.groupMapping.ldap.negativeCacheSeconds",
+          "from": {
+            "type": "form",
+            "field": "hadoopConf.groupMapping.ldap.negativeCacheSeconds"
           }
         }
       ]
@@ -2148,13 +2245,142 @@
           "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseigné, remplace la valeur découverte."
         }
       ]
+    },
+    {
+      "name": "hadoopGroupMapping",
+      "label": "Mapping de groupes LDAP (Hadoop UGI)",
+      "type": "group",
+      "help": "Active la résolution des groupes Hadoop via un annuaire LDAP/FreeIPA. Indispensable pour que les politiques Ranger basées sur les groupes (banque_*, assurance_*, etc.) s'appliquent aux requêtes Trino (le conteneur Trino ne contient pas de SSSD). Voir HADOOP-LDAP-GROUP-MAPPING.md.",
+      "fields": [
+        {
+          "name": "hadoopConf.groupMapping.enabled",
+          "label": "Activer le mapping LDAP",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Si activé, un init container fusionne les propriétés LdapGroupsMapping dans core-site.xml au démarrage du pod. Nécessite chart Trino >= 1.43.0."
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.url",
+          "label": "URL LDAP",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Endpoint LDAP/IPA. Ex: ldap://admin01.dev01.hadoop.clemlab.com:389. Pour LDAPS utiliser ldaps://...:636 et vérifier que le CA est présent dans le truststore Trino.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          },
+          "required": true
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.bindUser",
+          "label": "Utilisateur de bind",
+          "type": "string",
+          "defaultValue": "",
+          "help": "DN du compte de service utilisé pour interroger l'annuaire (IPA cache memberOf en lecture anonyme — un bind authentifié est requis). Ex: uid=hadoop-group-mapping,cn=users,cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          },
+          "required": true
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.name",
+          "label": "Nom du Secret contenant le mot de passe",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Nom d'un Kubernetes Secret du namespace cible (à créer préalablement) qui contient le mot de passe du compte de bind. Le chart monte ce Secret sur /etc/hadoop/ldap-bind/password en lecture seule.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          },
+          "required": true
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.key",
+          "label": "Clé dans le Secret",
+          "type": "string",
+          "defaultValue": "password",
+          "help": "Clé du Secret qui contient effectivement le mot de passe (par défaut 'password').",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.baseDn",
+          "label": "Base DN de recherche",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Racine de recherche pour les utilisateurs et les groupes. Ex (FreeIPA): cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          },
+          "required": true
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.userSearchFilter",
+          "label": "Filtre utilisateur (avancé)",
+          "type": "string",
+          "defaultValue": "(&(objectClass=person)(uid={0}))",
+          "help": "{0} est substitué par le nom de l'utilisateur. Ne pas modifier sauf annuaire non-IPA.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.groupSearchFilter",
+          "label": "Filtre groupe (avancé)",
+          "type": "string",
+          "defaultValue": "(objectClass=posixGroup)",
+          "help": "Filtre LDAP pour énumérer les groupes. Compatible avec FreeIPA/RHIDM par défaut.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.memberAttr",
+          "label": "Attribut membre (avancé)",
+          "type": "string",
+          "defaultValue": "member",
+          "help": "Attribut LDAP qui contient les DN des membres du groupe. FreeIPA = 'member'.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.cacheSeconds",
+          "label": "Cache positif (secondes, avancé)",
+          "type": "number",
+          "defaultValue": 300,
+          "help": "Durée de mise en cache des résolutions de groupes côté Hadoop client.",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "hadoopConf.groupMapping.ldap.negativeCacheSeconds",
+          "label": "Cache négatif (secondes, avancé)",
+          "type": "number",
+          "defaultValue": 30,
+          "help": "Durée de mise en cache des utilisateurs sans groupe (évite de marteler LDAP).",
+          "condition": {
+            "field": "hadoopConf.groupMapping.enabled",
+            "value": true
+          }
+        }
+      ]
     }
   ],
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.42.1",
+  "requiredChartVersion": ">=1.43.0",
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",

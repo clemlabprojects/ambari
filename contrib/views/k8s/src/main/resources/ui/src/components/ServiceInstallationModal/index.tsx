@@ -112,6 +112,68 @@ const renderTemplate = (tpl: string, ctx: any) => {
   });
 };
 
+/* ------------------------- Step-1 → Step-3 auth cascade --------------------- */
+/**
+ * Resolves the per-service auth cascade declared in `service.json#securityCoupling.authModes`.
+ *
+ * Contract (schema):
+ *   "authModes": {
+ *     "field": "<helm-path>",                       // form field to drive (e.g. global.security.auth.mode)
+ *     "mappings": {
+ *       "<profile-mode>": { "value": "<v>", "locked": true|false, "label"?: "<label override>" }
+ *     }
+ *   }
+ *
+ * If the selected security profile's `mode` is a key in `mappings`, the field is
+ * forced to `value` (and disabled when `locked`). When no mapping exists for the
+ * current mode, the cascade returns null — the form field stays under operator
+ * control. The companion Step-1 banner surfaces the gap.
+ *
+ * Note: server-side `applySecurityOverrides` writes the cascaded helm path via
+ * `--set` regardless of what the form rendered, so this client-side cascade is
+ * purely a UX truth-in-display — it does NOT enforce, the backend already does.
+ */
+export type AuthCascade = {
+  field: string;
+  value: string;
+  locked: boolean;
+  label?: string;
+};
+
+export const resolveAuthCascade = (service: any, profileMode?: string | null): AuthCascade | null => {
+  const block = service?.securityCoupling?.authModes;
+  if (!block || !block.field || !block.mappings || !profileMode) return null;
+  const mapping = block.mappings[profileMode];
+  if (!mapping) return null;
+  return {
+    field: String(block.field),
+    value: String(mapping.value),
+    locked: Boolean(mapping.locked),
+    label: mapping.label ? String(mapping.label) : undefined,
+  };
+};
+
+export const applyAuthCascadeToFields = (fields: FormField[], cascade: AuthCascade | null): FormField[] => {
+  if (!cascade || !Array.isArray(fields)) return fields;
+  return fields.map((f) => {
+    if ((f as any).type === 'group') {
+      const sub = applyAuthCascadeToFields((f as any).fields || [], cascade);
+      return { ...f, fields: sub } as FormField;
+    }
+    if (f && f.name === cascade.field) {
+      return {
+        ...f,
+        disabled: cascade.locked || (f as any).disabled,
+        defaultValue: cascade.value,
+        help: cascade.label
+          ? `${cascade.label}${(f as any).help ? ` — ${(f as any).help}` : ''}`
+          : (f as any).help,
+      } as FormField;
+    }
+    return f;
+  });
+};
+
 /* ---------------------------------- props ----------------------------------- */
 
 type ServiceInstallationModalProps = {
@@ -334,7 +396,54 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const watchedMounts = Form.useWatch(['mounts'], form);
   const releaseNameWatch = Form.useWatch(['releaseName'], form);
   const deploymentModeWatch = Form.useWatch(['deploymentMode'], form);
+  const watchedSecurityProfile = Form.useWatch(['securityProfile'], form);
   const allValues = Form.useWatch([], form); // watch the whole form
+
+  // Auth cascade: derive the chosen profile's `mode` from the loaded security
+  // profile catalog (fetched in the init effect, line ~243). The cascade is then
+  // resolved against the currently selected service's securityCoupling.authModes.
+  const chosenProfileMode = useMemo<string | undefined>(() => {
+    if (!watchedSecurityProfile) return undefined;
+    const p = (securityProfiles?.profiles || {})[watchedSecurityProfile];
+    const m = p?.mode;
+    return typeof m === 'string' && m.length > 0 ? m : undefined;
+  }, [watchedSecurityProfile, securityProfiles]);
+
+  const currentServiceCascade = useMemo<AuthCascade | null>(() => {
+    if (!selectedServiceKey || !availableServices) return null;
+    const svc = (availableServices as any)[selectedServiceKey];
+    return resolveAuthCascade(svc, chosenProfileMode);
+  }, [selectedServiceKey, availableServices, chosenProfileMode]);
+
+  // Push the cascaded value into the form whenever the cascade resolves to a
+  // new value. Mirrors the deploy-time server cascade (CommandService
+  // applySecurityOverrides) so the form display matches the deployed config.
+  useEffect(() => {
+    if (!currentServiceCascade) return;
+    const nameParts = currentServiceCascade.field
+      .replace(/\\\./g, '__DOT__')
+      .split('.')
+      .map((p) => p.replace(/__DOT__/g, '.'));
+    const existing = form.getFieldValue(nameParts);
+    if (existing !== currentServiceCascade.value) {
+      form.setFieldValue(nameParts, currentServiceCascade.value);
+    }
+  }, [currentServiceCascade, form]);
+
+  // Step-1 warning: enabled KDPS service has authModes declared but no mapping
+  // for the currently selected profile mode. Returns the offending service
+  // key/label pairs so the modal can render an antd Alert. Empty array =
+  // happy path (no banner). Today only OPENMETADATA declares authModes, so the
+  // banner stays empty unless a future service.json adopts the schema with a
+  // missing mode key.
+  const incompatibleCascadeServices = useMemo<{ key: string; label: string }[]>(() => {
+    if (!chosenProfileMode || !availableServices || !selectedServiceKey) return [];
+    const svc = (availableServices as any)[selectedServiceKey];
+    const block = svc?.securityCoupling?.authModes;
+    if (!block || !block.field || !block.mappings) return [];
+    if (block.mappings[chosenProfileMode]) return [];
+    return [{ key: selectedServiceKey, label: svc?.label || selectedServiceKey }];
+  }, [chosenProfileMode, availableServices, selectedServiceKey]);
 
   useEffect(() => {
     // Only switch views automatically in DEPLOY mode. Upgrade mode forces YAML.
@@ -1301,7 +1410,46 @@ const handleServiceChange = (value: string) => {
             <VolumeEditor specs={currentService.mounts as MountSpec[]} />
           )}
 
-          {currentService.form.map((field: FormField) => (
+          {currentServiceCascade && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={
+                <span>
+                  Authentication mode set by security profile
+                  {watchedSecurityProfile ? <Tag style={{ marginLeft: 8 }}>{watchedSecurityProfile}</Tag> : null}
+                  {chosenProfileMode ? <Tag color="blue">mode: {chosenProfileMode}</Tag> : null}
+                </span>
+              }
+              description={
+                <span>
+                  The field <code>{currentServiceCascade.field}</code> is{' '}
+                  {currentServiceCascade.locked ? 'locked' : 'pre-set'} to{' '}
+                  <strong>{currentServiceCascade.value}</strong>. Server-side overrides enforce this at deploy time
+                  regardless of the form value, so this cascade keeps the display honest.
+                </span>
+              }
+            />
+          )}
+          {incompatibleCascadeServices.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="This service has no mapping for the selected security profile"
+              description={
+                <span>
+                  Profile mode <strong>{chosenProfileMode}</strong> is not declared in{' '}
+                  <code>{(incompatibleCascadeServices[0]?.label) || 'this service'}</code>'s
+                  {' '}<code>securityCoupling.authModes</code>. The form auth field is left untouched —
+                  set it manually if needed.
+                </span>
+              }
+            />
+          )}
+
+          {applyAuthCascadeToFields(currentService.form, currentServiceCascade).map((field: FormField) => (
             <DynamicFormField key={field.name} field={field} />
           ))}
         </>
