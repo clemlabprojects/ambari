@@ -526,16 +526,32 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/actions/om-atlas-federation")
     public Response reapplyReleaseOmAtlasFederation(@PathParam("namespace") String namespace,
                                                     @PathParam("release") String releaseName,
+                                                    @QueryParam("rangerAdminUsername") String rangerAdminUsername,
+                                                    @QueryParam("rangerAdminPassword") String rangerAdminPassword,
                                                     @Context HttpHeaders requestHeaders,
                                                     @Context UriInfo uriInfo) {
         try {
             authHelper.checkWritePermission();
             LOG.info("Submitting OM Atlas federation reapply for release {}/{}", namespace, releaseName);
+            // Use the loopback Ambari API base, NOT uriInfo.getBaseUri() — same fix
+            // as actions/om-ranger-tagsync. The view's base URI points at the VIEW
+            // resource path and 404s when resolveClusterName tries /clusters under it,
+            // also fails SSL cert validation when the view is fronted by a different
+            // hostname than the loopback API base.
+            //
+            // rangerAdminUsername / rangerAdminPassword are optional query params used
+            // ONLY when the Ambari-managed Atlas uses the Ranger authorizer. Passwords
+            // are not persisted on the release (excludeFromValues at install time), so
+            // the operator must re-provide them on reapply. Skipping these on a Ranger
+            // ACL cluster will cause RANGER_POLICY_CREATE_ATLAS_OM_READ to attempt the
+            // dev-default 'admin/admin' and fail with HTTP 401 on real clusters.
             String commandId = commandService.submitReleaseOmAtlasFederationReapply(
                     namespace,
                     releaseName,
                     requestHeaders.getRequestHeaders(),
-                    uriInfo.getBaseUri()
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext),
+                    rangerAdminUsername,
+                    rangerAdminPassword
             );
             URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
             return Response.status(Response.Status.ACCEPTED)

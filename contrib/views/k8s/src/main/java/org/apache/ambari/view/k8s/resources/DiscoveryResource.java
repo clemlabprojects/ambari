@@ -154,23 +154,28 @@ public class DiscoveryResource {
 
                 // ----- Atlas auth mode (drives KDPS's atlasFederation post-deploy steps) -----
                 // Atlas supports several authentication methods simultaneously (any subset
-                // of file/kerberos/ldap toggled on). When more than one is active we pick
-                // the most automation-friendly: kerberos (SPNEGO) > ldap > file (basic).
+                // of file/kerberos/ldap toggled on). Priority order is "what OM's Atlas
+                // connector can authenticate with most reliably":
+                //   1. file (basic) — OM's Atlas connector accepts username+password directly
+                //   2. ldap         — same wire shape (basic), creds typed by operator
+                //   3. kerberos     — OM Atlas connector has no first-class Kerberos mode;
+                //                     using it requires a SPNEGO-fronted Atlas or a sidecar
+                //                     proxy. Treat as last resort.
                 // The KDPS UI surfaces the resolved mode read-only so the operator sees
                 // which credential path will be wired by the post-deploy steps.
                 String kerberosOn = client.getDesiredConfigProperty(clusterName,
                         "application-properties", "atlas.authentication.method.kerberos");
-                String ldapType   = client.getDesiredConfigProperty(clusterName,
-                        "application-properties", "atlas.authentication.method.ldap.type");
+                String ldapOn     = client.getDesiredConfigProperty(clusterName,
+                        "application-properties", "atlas.authentication.method.ldap");
                 String fileOn     = client.getDesiredConfigProperty(clusterName,
                         "application-properties", "atlas.authentication.method.file");
                 String authMode;
-                if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
-                    authMode = "kerberos";
-                } else if (ldapType != null && !ldapType.isBlank() && !"NONE".equalsIgnoreCase(ldapType.trim())) {
-                    authMode = "ldap";
-                } else if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
+                if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
                     authMode = "basic";
+                } else if ("true".equalsIgnoreCase(ldapOn != null ? ldapOn.trim() : "")) {
+                    authMode = "ldap";
+                } else if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
+                    authMode = "kerberos";
                 } else {
                     authMode = "none";
                 }

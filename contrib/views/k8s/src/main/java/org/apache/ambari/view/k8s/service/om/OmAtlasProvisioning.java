@@ -177,20 +177,23 @@ public final class OmAtlasProvisioning {
     /**
      * Ranger Admin REST policy create + propagation poll. Idempotent.
      *
-     * <p>Steps:
-     * <ol>
-     *   <li>GET policies for the Atlas service repo filtered by policy name —
-     *       if a policy with our canonical name already exists, return its id
-     *       without touching anything.</li>
-     *   <li>Otherwise POST a new policy granting the OM federation principal
-     *       read access on {@code entity-type/*}, {@code entity-classification/*},
-     *       {@code relationship-type/*}, {@code type-category/*}.</li>
-     *   <li>Poll GET-by-id every {@code POLL_INTERVAL} until the policy is
-     *       readable (Atlas's Ranger plugin pulls policies on a ~30s interval;
-     *       the Admin-side query forces a refresh).</li>
-     * </ol>
+     * <p>Atlas's Ranger service-def validates resource keys against a fixed list
+     * of allowed sets. A single policy can NOT mix resources from different
+     * sets (e.g. {@code entity-type+type-category}). To grant the OM federation
+     * user both {@code entity-read} and {@code type-read} we create TWO
+     * separate policies:
+     * <ul>
+     *   <li>{@code <name>-entities} — resources {@code (entity-type, entity-classification, entity)},
+     *       access {@code entity-read}</li>
+     *   <li>{@code <name>-types} — resources {@code (type-category, type)},
+     *       access {@code type-read}</li>
+     * </ul>
      *
-     * @return the policy id (created or pre-existing)
+     * <p>Each policy go through: 1) GET-by-name (skip if exists), 2) POST,
+     * 3) GET-by-id poll until readable (proxy for "persisted + indexed").
+     *
+     * @return the entity-policy id (the most important of the two; types
+     *         policy id is logged separately)
      */
     public static long createOrFindAtlasReadPolicy(String rangerAdminUrl,
                                                    String rangerUser,
@@ -203,16 +206,85 @@ public final class OmAtlasProvisioning {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
 
-        // 1. Look up by name
+        // Ranger Admin enforces that any user/group referenced in a policy MUST
+        // exist in its own xuser table — Atlas-side user provisioning is a
+        // separate identity store. Register first (idempotent), then grant.
+        ensureRangerUserExists(rangerAdminUrl, basic, omPrincipal);
+
+        // Per-policy timeout: split the budget so a slow first poll doesn't
+        // starve the second create.
+        long perPolicyMs = Math.max(5_000L, timeoutMs / 2);
+
+        long entityPolicyId = createOrFindOnePolicy(rangerAdminUrl, basic, atlasServiceName,
+                policyName + "-entities", omPrincipal, isKerberos,
+                AtlasResourceSet.ENTITIES, perPolicyMs);
+        long typePolicyId = createOrFindOnePolicy(rangerAdminUrl, basic, atlasServiceName,
+                policyName + "-types", omPrincipal, isKerberos,
+                AtlasResourceSet.TYPES, perPolicyMs);
+        LOG.info("OmAtlasProvisioning: Atlas read policies provisioned — entities={} types={}",
+                entityPolicyId, typePolicyId);
+        return entityPolicyId;
+    }
+
+    /** Which of the Atlas-Ranger servicedef resource sets a policy targets. */
+    private enum AtlasResourceSet {
+        ENTITIES("entity-type", "entity-classification", "entity"),  // → entity-read
+        TYPES("type-category", "type");                              // → type-read
+        final String[] keys;
+        AtlasResourceSet(String... keys) { this.keys = keys; }
+        String accessType() {
+            return this == ENTITIES ? "entity-read" : "type-read";
+        }
+        /**
+         * Name of the Atlas-Ranger plugin's auto-created default policy for this
+         * resource set. Ranger refuses two policies with identical resources
+         * (code 3010), so we GRANT-by-appending a policyItem to the default
+         * policy instead of creating a new one with the same resource scope.
+         */
+        String defaultPolicyName() {
+            return this == ENTITIES
+                    ? "all - entity-type, entity-classification, entity"
+                    : "all - type-category, type";
+        }
+    }
+
+    /**
+     * Grant the OM federation principal read access for one Atlas resource set.
+     *
+     * <p>Strategy:
+     * <ol>
+     *   <li>Look up the Atlas-Ranger plugin's auto-created DEFAULT policy for
+     *       this resource set (e.g. "all - entity-type, entity-classification, entity").
+     *       If found, GET its current JSON, append a new policyItem granting
+     *       {@code (entity-read | type-read)} to our principal (idempotent — skip if
+     *       already present), PUT the updated policy back. This avoids Ranger's
+     *       "duplicate resource" rejection (code 3010) that fires when two
+     *       policies share the same resource scope.</li>
+     *   <li>If the default policy isn't there (rare — operator deleted it),
+     *       POST a fresh policy with our canonical name as a fallback.</li>
+     * </ol>
+     */
+    private static long createOrFindOnePolicy(String rangerAdminUrl, String basic,
+                                              String atlasServiceName, String policyName,
+                                              String omPrincipal, boolean isKerberos,
+                                              AtlasResourceSet set, long timeoutMs) throws Exception {
+        // Path A: append to the default Atlas policy (preferred — matches how
+        // operators normally grant in the Ranger UI).
+        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, atlasServiceName,
+                set.defaultPolicyName());
+        if (defaultId != null) {
+            return appendPolicyItemToExisting(rangerAdminUrl, basic, atlasServiceName,
+                    set.defaultPolicyName(), defaultId, omPrincipal, set, timeoutMs);
+        }
+
+        // Path B: default policy missing — fall back to creating our own.
         Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, atlasServiceName, policyName);
         if (existing != null) {
-            LOG.info("OmAtlasProvisioning: Ranger policy '{}' already exists (id={}) — skip create",
+            LOG.info("OmAtlasProvisioning: KDPS-created Ranger policy '{}' already exists (id={}) — skip create",
                     policyName, existing);
             return existing;
         }
-
-        // 2. POST a new policy
-        JsonObject policy = buildAtlasReadPolicy(atlasServiceName, policyName, omPrincipal, isKerberos);
+        JsonObject policy = buildAtlasReadPolicy(atlasServiceName, policyName, omPrincipal, isKerberos, set);
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
         configureSsl(conn);
@@ -232,7 +304,6 @@ public final class OmAtlasProvisioning {
         long policyId = created.get("id").getAsLong();
         LOG.info("OmAtlasProvisioning: Ranger policy '{}' created (id={})", policyName, policyId);
 
-        // 3. Poll until the policy is readable back via GET-by-id (proxies "policy persisted + indexed")
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         Exception lastErr = null;
         while (System.nanoTime() < deadline) {
@@ -257,11 +328,185 @@ public final class OmAtlasProvisioning {
                         + timeoutMs + "ms — last error: " + (lastErr == null ? "n/a" : lastErr.getMessage()));
     }
 
+    /**
+     * Ensure the OM federation principal is registered in Ranger Admin's xuser table.
+     * Ranger rejects PUTs to a policy that reference an unknown user
+     * ("Operation denied. User name: X specified in policy does not exist in ranger admin").
+     *
+     * <p>Idempotent — uses GET-by-name then POST.
+     */
+    private static void ensureRangerUserExists(String rangerAdminUrl, String basic,
+                                                String userName) throws Exception {
+        // Check existence first via the v2 xusers list filtered by name.
+        HttpURLConnection check = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/xusers/users?name=" + pathSegmentEncode(userName)).openConnection();
+        configureSsl(check);
+        check.setRequestProperty("Authorization", basic);
+        int cc = check.getResponseCode();
+        if (cc == 200) {
+            String body = readBody(check, false);
+            // Response is { vXUsers: [ ... ] } — present if user exists
+            try {
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                if (root.has("vXUsers") && root.getAsJsonArray("vXUsers").size() > 0) {
+                    for (int i = 0; i < root.getAsJsonArray("vXUsers").size(); i++) {
+                        JsonObject u = root.getAsJsonArray("vXUsers").get(i).getAsJsonObject();
+                        if (userName.equals(u.has("name") ? u.get("name").getAsString() : null)) {
+                            LOG.info("OmAtlasProvisioning: Ranger user '{}' already exists (id={}) — no-op",
+                                    userName, u.has("id") ? u.get("id").getAsString() : "?");
+                            return;
+                        }
+                    }
+                }
+            } catch (Exception ignore) { /* fall through to create */ }
+        }
+
+        // POST a new external user. Use a long random password — Ranger requires
+        // a value but for an external user authenticated by Atlas (basic) or
+        // Kerberos, this password is never used to log in to Ranger directly.
+        JsonObject xuser = new JsonObject();
+        xuser.addProperty("name", userName);
+        xuser.addProperty("password", java.util.UUID.randomUUID().toString() + "Aa1!");
+        xuser.addProperty("firstName", userName);
+        xuser.addProperty("lastName", "(KDPS)");
+        xuser.addProperty("emailAddress", "");
+        xuser.addProperty("description", "Provisioned by Ambari KDPS for OpenMetadata Atlas federation");
+        xuser.addProperty("status", 1);
+        xuser.addProperty("isVisible", 1);
+        xuser.addProperty("userSource", 0);
+        JsonArray roles = new JsonArray(); roles.add("ROLE_USER");
+        xuser.add("userRoleList", roles);
+
+        HttpURLConnection post = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/xusers/secure/users").openConnection();
+        configureSsl(post);
+        post.setRequestMethod("POST");
+        post.setRequestProperty("Authorization", basic);
+        post.setRequestProperty("Content-Type", "application/json");
+        post.setDoOutput(true);
+        try (var os = post.getOutputStream()) {
+            os.write(GSON.toJson(xuser).getBytes(StandardCharsets.UTF_8));
+        }
+        int pc = post.getResponseCode();
+        if (pc >= 200 && pc < 300) {
+            LOG.info("OmAtlasProvisioning: created Ranger xuser '{}'", userName);
+            return;
+        }
+        // 400 with "already exists" is benign (raced with an external sync) — treat as success.
+        String err = readBody(post, true);
+        if (pc == 400 && err.toLowerCase().contains("already exists")) {
+            LOG.info("OmAtlasProvisioning: Ranger xuser '{}' already exists (raced) — continuing", userName);
+            return;
+        }
+        throw new IllegalStateException("Ranger xuser create failed for '" + userName
+                + "': HTTP " + pc + " — " + err);
+    }
+
+    /**
+     * Fetch the policy by id, append a new policyItem granting the OM principal
+     * the resource-set's access type (idempotent — skip if already present),
+     * PUT back. Returns the policy id.
+     */
+    private static long appendPolicyItemToExisting(String rangerAdminUrl, String basic,
+                                                   String atlasServiceName, String policyName,
+                                                   long policyId, String omPrincipal,
+                                                   AtlasResourceSet set, long timeoutMs) throws Exception {
+        // 1) GET the policy
+        HttpURLConnection get = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
+        configureSsl(get);
+        get.setRequestProperty("Authorization", basic);
+        int gc = get.getResponseCode();
+        if (gc != 200) {
+            throw new IllegalStateException("Ranger policy GET by id=" + policyId
+                    + " returned HTTP " + gc + ": " + readBody(get, true));
+        }
+        JsonObject policy = JsonParser.parseString(readBody(get, false)).getAsJsonObject();
+
+        // 2) Check if our principal already has the required access — idempotency
+        JsonArray policyItems = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
+                ? policy.getAsJsonArray("policyItems")
+                : new JsonArray();
+        for (int i = 0; i < policyItems.size(); i++) {
+            JsonObject existing = policyItems.get(i).getAsJsonObject();
+            JsonArray users = existing.has("users") ? existing.getAsJsonArray("users") : new JsonArray();
+            boolean hasUser = false;
+            for (int j = 0; j < users.size(); j++) {
+                if (omPrincipal.equals(users.get(j).getAsString())) { hasUser = true; break; }
+            }
+            if (!hasUser) continue;
+            JsonArray accesses = existing.has("accesses") ? existing.getAsJsonArray("accesses") : new JsonArray();
+            for (int k = 0; k < accesses.size(); k++) {
+                JsonObject a = accesses.get(k).getAsJsonObject();
+                if (set.accessType().equals(a.has("type") ? a.get("type").getAsString() : null)
+                        && a.has("isAllowed") && a.get("isAllowed").getAsBoolean()) {
+                    LOG.info("OmAtlasProvisioning: Atlas policy '{}' (id={}) already grants '{}' to '{}' — no-op",
+                            policyName, policyId, set.accessType(), omPrincipal);
+                    return policyId;
+                }
+            }
+        }
+
+        // 3) Append a new policyItem
+        JsonObject newItem = new JsonObject();
+        newItem.add("users", arrayOf(omPrincipal));
+        newItem.add("groups", new JsonArray());
+        newItem.add("roles", new JsonArray());
+        newItem.add("accesses", arrayOfObjects(new String[]{set.accessType()}, "isAllowed", true));
+        newItem.addProperty("delegateAdmin", false);
+        policyItems.add(newItem);
+        policy.add("policyItems", policyItems);
+
+        // 4) PUT back
+        HttpURLConnection put = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
+        configureSsl(put);
+        put.setRequestMethod("PUT");
+        put.setRequestProperty("Authorization", basic);
+        put.setRequestProperty("Content-Type", "application/json");
+        put.setDoOutput(true);
+        try (var os = put.getOutputStream()) {
+            os.write(GSON.toJson(policy).getBytes(StandardCharsets.UTF_8));
+        }
+        int pc = put.getResponseCode();
+        if (pc < 200 || pc >= 300) {
+            throw new IllegalStateException("Ranger policy update failed: HTTP " + pc + " — " + readBody(put, true));
+        }
+        LOG.info("OmAtlasProvisioning: appended policyItem (user='{}', access='{}') to Atlas policy '{}' (id={})",
+                omPrincipal, set.accessType(), policyName, policyId);
+
+        // 5) Poll — confirm the update is queryable back.
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        Exception lastErr = null;
+        while (System.nanoTime() < deadline) {
+            try {
+                HttpURLConnection verify = (HttpURLConnection) new URL(
+                        rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
+                configureSsl(verify);
+                verify.setRequestProperty("Authorization", basic);
+                if (verify.getResponseCode() == 200) {
+                    LOG.info("OmAtlasProvisioning: Ranger policy id={} update verified readable", policyId);
+                    return policyId;
+                }
+            } catch (Exception e) {
+                lastErr = e;
+            }
+            Thread.sleep(2000);
+        }
+        throw new IllegalStateException("Ranger policy id=" + policyId
+                + " updated but did not become readable within " + timeoutMs
+                + "ms — last error: " + (lastErr == null ? "n/a" : lastErr.getMessage()));
+    }
+
     private static Long lookupAtlasPolicyByName(String rangerAdminUrl, String authHeader,
                                                 String atlasServiceName, String policyName) throws Exception {
+        // Ranger expects RFC-3986 path-segment encoding (' ' → %20). Java's
+        // URLEncoder.encode does form encoding (' ' → '+'), which Ranger 404s on
+        // for policy names containing spaces (e.g. "all - entity-type, entity-classification, entity").
+        // Build the path with %20 by post-processing URLEncoder output.
         String urlStr = rangerAdminUrl + "/service/public/v2/api/service/"
-                + java.net.URLEncoder.encode(atlasServiceName, StandardCharsets.UTF_8)
-                + "/policy/" + java.net.URLEncoder.encode(policyName, StandardCharsets.UTF_8);
+                + pathSegmentEncode(atlasServiceName)
+                + "/policy/" + pathSegmentEncode(policyName);
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         configureSsl(conn);
         conn.setRequestProperty("Authorization", authHeader);
@@ -276,7 +521,8 @@ public final class OmAtlasProvisioning {
     }
 
     private static JsonObject buildAtlasReadPolicy(String atlasServiceName, String policyName,
-                                                   String omPrincipal, boolean isKerberos) {
+                                                   String omPrincipal, boolean isKerberos,
+                                                   AtlasResourceSet set) {
         JsonObject p = new JsonObject();
         p.addProperty("service", atlasServiceName);
         p.addProperty("name", policyName);
@@ -289,11 +535,10 @@ public final class OmAtlasProvisioning {
         p.addProperty("policyPriority", 0);
 
         // Atlas Ranger resources — `*` matches every entity/classification.
-        // Atlas's Ranger plugin keys the resources off these top-level
-        // resource types defined in the atlas-servicedef.
+        // The set of keys MUST match one of the servicedef-declared combinations
+        // (see AtlasResourceSet for the two we use).
         JsonObject resources = new JsonObject();
-        for (String t : new String[]{"entity-type", "entity-classification",
-                "relationship-type", "type-category", "atlas-service"}) {
+        for (String t : set.keys) {
             JsonObject r = new JsonObject();
             r.add("values", arrayOf("*"));
             r.addProperty("isExcludes", false);
@@ -302,29 +547,28 @@ public final class OmAtlasProvisioning {
         }
         p.add("resources", resources);
 
-        // Single allow-policy item for the OM principal with read accesses.
         JsonObject item = new JsonObject();
-        if (isKerberos) {
-            // Kerberos principals look like `<service>@<realm>`; Ranger stores
-            // them in `users` (Ranger normalises against the auth-to-local rule).
-            item.add("users", arrayOf(omPrincipal));
-        } else {
-            item.add("users", arrayOf(omPrincipal));
-        }
+        // Kerberos principals look like `<service>@<realm>`; Ranger stores them
+        // in `users` (Ranger normalises against the auth-to-local rule).
+        item.add("users", arrayOf(omPrincipal));
         item.add("groups", new JsonArray());
         item.add("roles", new JsonArray());
-        item.add("accesses", arrayOfObjects(new String[]{"entity-read", "type-read", "entity-read-classification"},
-                "isAllowed", true));
+        // Single access type per policy — entity-read for the ENTITIES set,
+        // type-read for the TYPES set (see AtlasResourceSet.accessType).
+        item.add("accesses", arrayOfObjects(new String[]{set.accessType()}, "isAllowed", true));
         item.addProperty("delegateAdmin", false);
         p.add("policyItems", arrayOfObjects(new JsonObject[]{item}));
 
-        // Defaults for the rest
         p.add("denyPolicyItems", new JsonArray());
         p.add("allowExceptions", new JsonArray());
         p.add("denyExceptions", new JsonArray());
         p.add("dataMaskPolicyItems", new JsonArray());
         p.add("rowFilterPolicyItems", new JsonArray());
         return p;
+    }
+
+    private static String pathSegmentEncode(String s) {
+        return java.net.URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static JsonArray arrayOf(String... values) {

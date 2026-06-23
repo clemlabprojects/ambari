@@ -3031,6 +3031,21 @@ public class CommandService {
                                                         String releaseName,
                                                         MultivaluedMap<String, String> callerHeaders,
                                                         URI baseUri) {
+        return submitReleaseOmAtlasFederationReapply(namespace, releaseName, callerHeaders, baseUri, null, null);
+    }
+
+    /**
+     * Variant that accepts optional Ranger Admin credentials. Used on Ranger-ACL Atlas
+     * clusters where the password ('ranger-env.admin_password') is stored encrypted in
+     * Ambari and not view-resolvable — operator re-supplies it via the reapply REST
+     * endpoint.
+     */
+    public String submitReleaseOmAtlasFederationReapply(String namespace,
+                                                        String releaseName,
+                                                        MultivaluedMap<String, String> callerHeaders,
+                                                        URI baseUri,
+                                                        String rangerAdminUsername,
+                                                        String rangerAdminPassword) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -3065,6 +3080,20 @@ public class CommandService {
         rootStatus.setAttempt(0);
         rootCommand.setCommandStatusId(rootStatus.getId());
 
+        // Resolve Ambari context (cluster name + AmbariActionClient) so the dispatcher
+        // can discover Atlas auth/acl modes and the per-step bodies can write configs.
+        // Same shape as the OM_RANGER_TAGSYNC_REAPPLY submit path.
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName = null;
+        AmbariActionClient ambariActionClient = null;
+        try {
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+            ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation reapply: could not resolve Ambari cluster ({}). "
+                    + "Falling back to OM-only path (no Atlas-side provisioning will run).", ex.toString());
+        }
+
         Map<String, Object> rootParams = new LinkedHashMap<>();
         rootParams.put("chart", releaseMetadata.getChartRef());
         rootParams.put("releaseName", releaseName);
@@ -3073,12 +3102,35 @@ public class CommandService {
         rootParams.put("repoId", releaseMetadata.getRepoId());
         rootParams.put("version", releaseMetadata.getVersion());
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        if (clusterName != null) rootParams.put("_cluster", clusterName);
+        rootParams.put("_baseUri", baseUri.toString());
+        if (rangerAdminUsername != null && !rangerAdminUsername.isBlank()) {
+            rootParams.put("_rangerAdminUsername", rangerAdminUsername);
+        }
+        if (rangerAdminPassword != null && !rangerAdminPassword.isBlank()) {
+            rootParams.put("_rangerAdminPassword", rangerAdminPassword);
+        }
 
         // Root needs an empty childListJson before the plan-factory appends to it.
         rootCommand.setParamsJson(gson.toJson(rootParams));
         rootCommand.setChildListJson(gson.toJson(new ArrayList<String>()));
         store(rootStatus);
         store(rootCommand);
+
+        // Re-run the same dispatcher submitDeploy uses, so the reapply chain mirrors
+        // what would happen on a fresh install: ATLAS_USER_PROVISION_OM /
+        // ATLAS_SIMPLE_AUTHZ_GRANT_OM / RANGER_POLICY_CREATE_ATLAS_OM_READ (whichever
+        // apply for the discovered (auth, acl) modes) BEFORE OM_ATLAS_FEDERATION_REGISTER.
+        try {
+            HelmDeployRequest reqForDispatch = new HelmDeployRequest();
+            reqForDispatch.setNamespace(namespace);
+            reqForDispatch.setReleaseName(releaseName);
+            queueAtlasFederationProvisioningSteps(rootCommand, reqForDispatch, rootParams,
+                    clusterName, ambariActionClient);
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation reapply: provisioning dispatch failed ({}). "
+                    + "Continuing with bare OM_ATLAS_FEDERATION_REGISTER step.", ex.toString());
+        }
 
         // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
         // re-stores the root, so we don't need to do it again after this call.
@@ -7779,9 +7831,20 @@ public class CommandService {
             schedule = "0 */6 * * *";
         }
 
-        // Atlas password: form field wins; else read the existingSecret named in form
-        // values and decode `password` key; else fail.
+        // Atlas credentials — three sources, in priority order:
+        //   1. atlasFederation.password from form values (operator typed it in the wizard)
+        //   2. atlasFederation.existingSecret named in form values, key `password`
+        //      (operator pre-created the Secret out-of-band)
+        //   3. <release>-atlas-federation Secret (KDPS-provisioned by the prior
+        //      ATLAS_USER_PROVISION_OM step). This is the canonical path on
+        //      Ambari-managed Atlas — the dispatcher queued ATLAS_USER_PROVISION_OM
+        //      which created the Secret + wrote the hash to Ambari atlas-env.
+        //
+        // The username comes from the same Secret when source #3 is used (so the
+        // basic auth on OM REST matches what ATLAS_USER_PROVISION_OM put in
+        // users-credentials.properties on Atlas restart).
         String atlasPassword = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.password"));
+        String credsSource = "values.atlasFederation.password";
         if (atlasPassword.isBlank()) {
             String existingSecret = stringValue(
                     ConfigResolutionService.getByDottedPath(values, "atlasFederation.existingSecret"));
@@ -7792,13 +7855,41 @@ public class CommandService {
                     atlasPassword = new String(
                             java.util.Base64.getDecoder().decode(sec.getData().get("password")),
                             java.nio.charset.StandardCharsets.UTF_8);
+                    credsSource = "operator-secret:" + existingSecret;
                 }
             }
         }
         if (atlasPassword.isBlank()) {
-            throw new IllegalStateException("Atlas password not found — either set atlasFederation.password "
-                    + "in the wizard or point atlasFederation.existingSecret at an opaque Secret with a 'password' key.");
+            // Fallback: the KDPS-provisioned Secret (ATLAS_USER_PROVISION_OM result).
+            String kdpsSecret = releaseName + "-atlas-federation";
+            io.fabric8.kubernetes.api.model.Secret sec =
+                    this.kubernetesService.getSecret(namespace, kdpsSecret);
+            if (sec != null && sec.getData() != null && sec.getData().containsKey("password")) {
+                atlasPassword = new String(
+                        java.util.Base64.getDecoder().decode(sec.getData().get("password")),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                // Also derive the username from this Secret — the dispatcher used a
+                // canonical name and ATLAS_USER_PROVISION_OM persisted it here.
+                if (sec.getData().containsKey("username")) {
+                    String secretUsername = new String(
+                            java.util.Base64.getDecoder().decode(sec.getData().get("username")),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    if (atlasUsername.equals("openmetadata-ingestion") || atlasUsername.isBlank()) {
+                        // Operator left the wizard's "username" field at its OM-bot default;
+                        // override with the actual federation user that exists in Atlas.
+                        atlasUsername = secretUsername;
+                    }
+                }
+                credsSource = "kdps-secret:" + kdpsSecret;
+            }
         }
+        if (atlasPassword.isBlank()) {
+            throw new IllegalStateException("Atlas password not found — set atlasFederation.password in the wizard, "
+                    + "point atlasFederation.existingSecret at an Opaque Secret with a 'password' key, OR ensure "
+                    + "the ATLAS_USER_PROVISION_OM step ran successfully (it creates a per-release Secret named "
+                    + "'" + releaseName + "-atlas-federation' that this step falls back to).");
+        }
+        LOG.info("OM_ATLAS_FEDERATION_REGISTER: using credentials source={} username={}", credsSource, atlasUsername);
 
         // databaseServiceNames is bound as a list (csvToList) in the OM service.json;
         // tolerate both list and CSV-string shapes for robustness.
@@ -7904,20 +7995,21 @@ public class CommandService {
             return;
         }
 
-        // Resolve auth + acl modes from Atlas config (DiscoveryResource uses the same probes).
+        // Resolve auth + acl modes from Atlas config (mirrors DiscoveryResource priority:
+        // basic > ldap > kerberos — matches what OM's Atlas connector can actually use).
         String kerberosOn = ambariActionClient.getDesiredConfigProperty(cluster,
                 "application-properties", "atlas.authentication.method.kerberos");
-        String ldapType = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.ldap.type");
+        String ldapOn = ambariActionClient.getDesiredConfigProperty(cluster,
+                "application-properties", "atlas.authentication.method.ldap");
         String fileOn = ambariActionClient.getDesiredConfigProperty(cluster,
                 "application-properties", "atlas.authentication.method.file");
         String authMode;
-        if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
-            authMode = "kerberos";
-        } else if (ldapType != null && !ldapType.isBlank() && !"NONE".equalsIgnoreCase(ldapType.trim())) {
-            authMode = "ldap";
-        } else if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
+        if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
             authMode = "basic";
+        } else if ("true".equalsIgnoreCase(ldapOn != null ? ldapOn.trim() : "")) {
+            authMode = "ldap";
+        } else if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
+            authMode = "kerberos";
         } else {
             authMode = "none";
         }
@@ -7962,6 +8054,30 @@ public class CommandService {
             }
         } else if ("ranger".equals(aclMode)) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
+
+            // Ranger Admin credentials: the policy-create body needs to authenticate
+            // to Ranger Admin REST. We can't read `ranger-env.admin_password` from
+            // view context (Ambari returns the SECRET-reference form), so the
+            // operator must supply the password via the wizard.
+            //
+            // Wiring: read from form state (NOT chart values) because both fields are
+            // declared excludeFromValues — the wizard strips them from request.values()
+            // before submit. The full form snapshot is preserved on request.formValues.
+            //   atlasFederation.rangerAdminUsername (optional, defaults to ranger-env admin_username)
+            //   atlasFederation.rangerAdminPassword (required when ACL = ranger)
+            // and forward to step params (_rangerAdminUsername / _rangerAdminPassword).
+            // The handler still tolerates absence (it warns + falls back to admin/admin
+            // for dev clusters where that's the actual password).
+            Map<String, Object> formValues = request.getFormValues() != null
+                    ? request.getFormValues()
+                    : (request.getValues() != null ? request.getValues() : Collections.emptyMap());
+            String rangerUser = stringValue(
+                    ConfigResolutionService.getByDottedPath(formValues, "atlasFederation.rangerAdminUsername"));
+            if (!rangerUser.isBlank()) stepParams.put("_rangerAdminUsername", rangerUser);
+            String rangerPass = stringValue(
+                    ConfigResolutionService.getByDottedPath(formValues, "atlasFederation.rangerAdminPassword"));
+            if (!rangerPass.isBlank()) stepParams.put("_rangerAdminPassword", rangerPass);
+
             // Principal to grant depends on auth mode.
             String principal;
             if ("kerberos".equals(authMode)) {
@@ -8146,14 +8262,54 @@ public class CommandService {
         String rangerUrl = (tls ? "https://" : "http://") + hosts.get(0) + ":" + port;
 
         // ----- Ranger Admin credentials -----
-        // Pull from admin-properties (the install-time admin/password pair).
-        // Dev-cluster fallback is admin/admin which matches ODP's default.
-        String rangerUser = ambari.getDesiredConfigProperty(cluster, "admin-properties", "admin_username");
+        // Username + password live in `ranger-env` (`admin_username` is the literal
+        // user, `admin_password` is the SECRET-encoded reference Ambari uses).
+        // Resolution order:
+        //   1. Operator override via params (_rangerAdminUsername / _rangerAdminPassword)
+        //   2. Ambari `ranger-env` values, run through AmbariAliasResolver for
+        //      the password (handles `${alias=…}` form when present)
+        //   3. Dev-cluster fallback `admin/admin` (matches ODP default)
+        //
+        // The pragmatic fallback (3) is intentional: on a real cluster the
+        // operator should already have a non-default Ranger admin password; if
+        // resolution (2) fails it usually means the SECRET reference can't be
+        // resolved via view context, in which case operator override (1) is the
+        // expected path. We log a warning so the cluster admin sees the
+        // fallback path taken.
+        String rangerUser = stringValue(childParams.get("_rangerAdminUsername"));
+        if (rangerUser.isBlank()) {
+            rangerUser = ambari.getDesiredConfigProperty(cluster, "ranger-env", "admin_username");
+        }
         if (rangerUser == null || rangerUser.isBlank()) rangerUser = "admin";
-        String rangerPass = ambari.getDesiredConfigProperty(cluster, "admin-properties", "admin_password");
-        if (rangerPass == null || rangerPass.isBlank()) {
-            throw new IllegalStateException("Could not resolve Ranger Admin password from admin-properties.admin_password "
-                    + "(empty). Provide a credential override or rotate the Ranger admin secret.");
+
+        String rangerPass = stringValue(childParams.get("_rangerAdminPassword"));
+        if (rangerPass.isBlank()) {
+            String raw = ambari.getDesiredConfigProperty(cluster, "ranger-env", "admin_password");
+            if (raw != null && !raw.isBlank()) {
+                if (raw.startsWith("${alias=") && raw.endsWith("}")) {
+                    AmbariAliasResolver resolver = new AmbariAliasResolver(ctx);
+                    try {
+                        rangerPass = new String(resolver.resolve(ctx, raw));
+                    } catch (Exception ex) {
+                        LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: alias resolution for ranger-env.admin_password "
+                                + "failed ({}). Falling back to dev-default admin/admin.", ex.toString());
+                    }
+                } else if (raw.startsWith("SECRET:")) {
+                    // Ambari returns SECRET:<type>:<version>:<key> for view-context reads
+                    // of sensitive configs — the alias resolver can't directly decode
+                    // this form (it expects ${alias=}). Falling back to default.
+                    LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: ranger-env.admin_password is in SECRET-reference "
+                            + "form (not view-resolvable). Falling back to dev-default admin/admin. "
+                            + "Set _rangerAdminPassword override in step params for non-default clusters.");
+                } else {
+                    rangerPass = raw;
+                }
+            }
+        }
+        if (rangerPass.isBlank()) {
+            LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: using dev-default Ranger admin password 'admin'. "
+                    + "For non-default clusters provide _rangerAdminPassword in step params.");
+            rangerPass = "admin";
         }
 
         // ----- Atlas service repo name in Ranger -----

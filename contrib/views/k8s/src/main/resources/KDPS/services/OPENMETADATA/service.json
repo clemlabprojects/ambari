@@ -1502,6 +1502,30 @@
             "field": "atlasFederation.enabled",
             "value": true
           }
+        },
+        {
+          "name": "atlasFederation.rangerAdminUsername",
+          "label": "Ranger Admin username",
+          "type": "string",
+          "defaultValue": "admin",
+          "excludeFromValues": true,
+          "help": "Required only when the Ambari-managed Atlas uses the Ranger authorizer. KDPS calls Ranger Admin REST to create a read-only policy granting the OM federation user access to the Atlas service repo. Defaults to 'admin' (matches the typical ODP install).",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.rangerAdminPassword",
+          "label": "Ranger Admin password",
+          "type": "password",
+          "defaultValue": "",
+          "excludeFromValues": true,
+          "help": "Required only when the Ambari-managed Atlas uses the Ranger authorizer. The password Ambari stores as 'ranger-env.admin_password' (Ambari returns this as an opaque SECRET reference that the K8s view cannot decrypt, so the operator must re-enter it here). Leave empty when Atlas uses the file-based 'simple' authorizer.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
         }
       ]
     },
