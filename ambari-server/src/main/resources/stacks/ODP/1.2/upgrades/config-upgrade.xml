@@ -48,11 +48,11 @@
             <set key="transaction.state.log.min.isr" value="2"/>
             <set key="transaction.state.log.replication.factor" value="3"/>
           </definition>
-          <definition xsi:type="configure" id="odp_1_3_2_0_kafka_pin_protocol_2_8" summary="Pin inter.broker.protocol.version=2.8 so Kafka 3.9 brokers stay wire-compatible with 2.8 brokers during the rolling restart. log.message.format.version is intentionally NOT set: per Apache Kafka 3.9 docs, brokers upgrading from 2.4+ only need to override IBP unless LMFV was previously overridden.">
+          <definition xsi:type="configure" id="odp_1_3_2_0_kafka_pin_protocol_2_8" summary="Pin Kafka IBP=2.8 so 3.9 brokers stay wire-compatible with not-yet-restarted 2.8 brokers during the rolling restart.">
             <type>kafka-broker</type>
             <set key="inter.broker.protocol.version" value="2.8"/>
           </definition>
-          <definition xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9" summary="Point of no return: bump inter.broker.protocol.version to 3.9 so brokers leave 2.8 compatibility mode. After the subsequent broker restart, downgrading the Kafka cluster (and therefore the ODP stack) to an older protocol version is no longer possible per Apache Kafka 3.9 docs.">
+          <definition xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9" summary="Bump Kafka IBP to 3.9 (point of no return: ODP/Kafka downgrade impossible after the next broker restart per Apache Kafka 3.9 docs).">
             <type>kafka-broker</type>
             <set key="inter.broker.protocol.version" value="3.9"/>
           </definition>
