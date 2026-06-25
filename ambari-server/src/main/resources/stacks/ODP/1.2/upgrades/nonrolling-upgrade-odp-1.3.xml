@@ -368,13 +368,10 @@
           <summary>Migrates Spark3 from Log4j to Log4j2 Properties</summary>
         </task>
       </execute-stage>
-      <!-- KAFKA: in a NON_ROLLING upgrade all brokers stop together, so the
-           two-pass IBP pin/bump dance from the rolling pack is unnecessary; set
-           inter.broker.protocol.version=3.9 directly. Downgrade-to-1.2 is
-           impossible once brokers boot with this value, per Apache Kafka 3.9 docs. -->
-      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Set Kafka inter.broker.protocol.version to 3.9 (point of no return)">
-        <task xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9"/>
-      </execute-stage>
+      <!-- KAFKA IBP bump-to-3.9 removed from the 1.2 -> 1.3.x path: 1.3.1.0 ships
+           Kafka 3.8.1 which can't speak IBP=3.9.  The bump runs on the next hop
+           (1.3.1 -> 1.3.2 / Kafka 3.9.1), defined in ODP/1.3/upgrades/nonrolling-upgrade-odp-1.3.xml.
+           Existing kafka-broker IBP carries over unchanged: 3.8 brokers accept IBP=3.6 (1.2.4.0 default). -->
       <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Apply config for Kafka 3 Major Version Upgrade">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction"/>
       </execute-stage>

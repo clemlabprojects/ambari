@@ -138,22 +138,14 @@
 
 
     <!--
-      Kafka rolling upgrade is two-pass per the Apache Kafka 3.9 docs.  Pass 1 pins IBP=2.8
-      into kafka-broker config BEFORE any broker restarts, then the rolling restart below
-      brings brokers up on 3.9 binaries speaking 2.8 protocol (wire-compatible with the
-      not-yet-restarted 2.8 brokers).  Pass 2 (see KAFKA_PROTOCOL_BUMP near POST_CLUSTER)
-      bumps IBP to 3.9 after every Kafka client service is on ODP 1.3.x and triggers a
-      second rolling restart.
+      Kafka IBP pin/bump removed from the 1.2 -> 1.3.x path: ODP 1.3.1.0 ships
+      Kafka 3.8.1, which does NOT recognize inter.broker.protocol.version=3.9
+      (an unknown IBP value makes the broker refuse to start).  The two-pass dance
+      fires correctly only on the 1.3.1 -> 1.3.2 path (see ODP/1.3/upgrades/upgrade-odp-1.3.xml)
+      where Kafka 3.9.1 is installed.  Between 1.2.4.0 (Kafka 3.6.2) and 1.3.1.0
+      (Kafka 3.8.1), brokers are wire-compatible without intervention: 3.8 brokers
+      speak IBP=3.6 (the default carried over from 1.2.4.0) just fine.
     -->
-    <group xsi:type="cluster" name="KAFKA_PROTOCOL_PIN" title="Pin Kafka inter.broker.protocol.version to 2.8">
-      <direction>UPGRADE</direction>
-      <skippable>true</skippable>
-      <supports-auto-skip-failure>false</supports-auto-skip-failure>
-
-      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Pin Kafka inter.broker.protocol.version to 2.8">
-        <task xsi:type="configure" id="odp_1_3_2_0_kafka_pin_protocol_2_8"/>
-      </execute-stage>
-    </group>
 
     <group name="KAFKA" title="Kafka">
       <skippable>true</skippable>
@@ -496,50 +488,11 @@
     </group>
 
     <!--
-      Kafka rolling-upgrade "pass 2": all Kafka client services (Ranger, HBase, Hive, Atlas)
-      and Kafka brokers themselves have been restarted on ODP 1.3.x by now, with brokers
-      running 3.9 binaries but speaking IBP=2.8.  We now bump IBP to 3.9 in kafka-broker
-      config (cluster group below) and then do a SECOND rolling restart of brokers via the
-      restart group that follows.  After that, brokers exchange the 3.9 protocol.
-
-      Point of no return: per Apache Kafka 3.9 docs ("Once the brokers begin using the
-      latest protocol version, it will no longer be possible to downgrade the cluster to
-      an older version"), downgrade to ODP 1.2.x is impossible once brokers have
-      restarted with IBP=3.9.  An operator-confirm manual stage gates the bump.
-
-      Customer producer/consumer applications are NOT affected: IBP only governs
-      broker-to-broker traffic.  Existing Kafka 2.x client jars continue to work against
-      an IBP=3.9 broker.
-
-      Implementation note: the pin/bump configure tasks live in cluster-type groups, NOT
-      in <processing>/<pre-upgrade> for KAFKA_BROKER.  Putting them in <processing> would
-      re-apply the pin (IBP=2.8) during the second rolling restart and silently undo the
-      bump.  By splitting into [cluster group config-only] + [restart group restart-only]
-      we get a clean two-pass orchestration without restart-time config conflicts.
+      Kafka IBP bump-to-3.9 (formerly KAFKA_PROTOCOL_BUMP + KAFKA_RESTART_FOR_3_9)
+      removed from the 1.2 -> 1.3.x path - 1.3.1.0 ships Kafka 3.8.1, which can't
+      speak IBP=3.9.  The bump runs on the next hop (1.3.1 -> 1.3.2 / Kafka 3.9.1),
+      defined in ODP/1.3/upgrades/upgrade-odp-1.3.xml.
     -->
-    <group xsi:type="cluster" name="KAFKA_PROTOCOL_BUMP" title="Bump Kafka inter.broker.protocol.version to 3.9">
-      <direction>UPGRADE</direction>
-      <skippable>true</skippable>
-      <supports-auto-skip-failure>false</supports-auto-skip-failure>
-
-      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Confirm Kafka 3.9 protocol bump (point of no return)">
-        <task xsi:type="manual">
-          <message>Per the Apache Kafka 3.9 upgrade documentation: "Once the brokers begin using the latest protocol version, it will no longer be possible to downgrade the cluster to an older version." Confirm every Kafka client service (Atlas, Hive, HBase, Ranger, and NiFi if you restarted it manually) has been restarted on ODP 1.3.x before continuing. Customer producer/consumer applications stay compatible — IBP only affects broker-to-broker traffic and existing 2.x client jars continue to work against a 3.9 broker.</message>
-        </task>
-      </execute-stage>
-
-      <execute-stage service="KAFKA" component="KAFKA_BROKER" title="Bump Kafka inter.broker.protocol.version to 3.9">
-        <task xsi:type="configure" id="odp_1_3_2_0_kafka_bump_protocol_3_9"/>
-      </execute-stage>
-    </group>
-
-    <group xsi:type="restart" name="KAFKA_RESTART_FOR_3_9" title="Rolling restart Kafka brokers on 3.9 protocol">
-      <skippable>true</skippable>
-      <supports-auto-skip-failure>false</supports-auto-skip-failure>
-      <service name="KAFKA">
-        <component>KAFKA_BROKER</component>
-      </service>
-    </group>
 
     <group xsi:type="cluster" name="FINALIZE_PRE_CHECK" title="Finalize {{direction.text.proper}} Pre-Check">
       <direction>UPGRADE</direction>
@@ -709,11 +662,10 @@
     <service name="KAFKA">
       <component name="KAFKA_BROKER">
         <!--
-          IBP pin (2.8) and bump (3.9) live in cluster-type groups, NOT here.  If a
-          configure task was placed here it would re-fire on every rolling restart of the
-          broker — including the second restart in KAFKA_RESTART_FOR_3_9 — and re-pin
-          IBP to 2.8, undoing the bump.  Keep <pre-upgrade> to idempotent broker-level
-          tweaks only.
+          IBP pin/bump for Kafka 3.9 is not part of the 1.2 -> 1.3.x path (see comment near
+          line 140) — 1.3.1 ships Kafka 3.8.1 which can't speak IBP=3.9.  The dance lives on
+          the next hop (ODP/1.3/upgrades/upgrade-odp-1.3.xml).  Keep <pre-upgrade> here for
+          idempotent broker-level tweaks only.
         -->
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction" />
