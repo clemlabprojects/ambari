@@ -180,7 +180,8 @@ class HiveMetastore(Script):
       schematool_hive_metastore_conf_dir = params.hive_metastore_conf_dir
 
     env_dict = {
-      'HIVE_CONF_DIR': schematool_hive_metastore_conf_dir
+      'HIVE_CONF_DIR': schematool_hive_metastore_conf_dir,
+      'JAVA_HOME': params.java64_home
     }
 
     command = format("{binary} -dbType {hive_metastore_db_type} -upgradeSchema")

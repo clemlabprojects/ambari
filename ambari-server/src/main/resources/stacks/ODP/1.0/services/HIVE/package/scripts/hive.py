@@ -481,7 +481,8 @@ def create_hive_metastore_schema():
   Logger.info("Hive schematool settings (sys DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
       schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
 
-  create_hive_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+  create_hive_schema_cmd = format("export JAVA_HOME={java64_home} ; "
+                                  "export HIVE_CONF_DIR={hive_conf_dir} ; "
                                   "timeout {schema_tool_timeout}s "
                                   "{hive_schematool_bin}/schematool -initSchema "
                                   "-dbType hive "
@@ -490,7 +491,8 @@ def create_hive_metastore_schema():
                                   "-passWord {hive_metastore_user_passwd!p} "
                                   "-verbose")
 
-  check_hive_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+  check_hive_schema_created_cmd = as_user(format("export JAVA_HOME={java64_home} ; "
+                                          "export HIVE_CONF_DIR={hive_conf_dir} ; "
                                           "timeout {schema_tool_timeout}s "
                                           "{hive_schematool_bin}/schematool -info "
                                           "-dbType hive "
@@ -546,14 +548,16 @@ def create_metastore_schema():
     hive_conf_dir = params.hive_metastore_conf_dir
   Logger.info("Hive schematool settings (metastore DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
       schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
-  create_schema_cmd = format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+  create_schema_cmd = format("export JAVA_HOME={java64_home} ; "
+                             "export HIVE_CONF_DIR={hive_conf_dir} ; "
                              "timeout {schema_tool_timeout}s "
                              "{hive_schematool_bin}/schematool -initSchema "
                              "-dbType {hive_metastore_db_type} "
                              "-userName {hive_metastore_user_name} "
                              "-passWord {hive_metastore_user_passwd!p} -verbose")
 
-  check_schema_created_cmd = as_user(format("export HIVE_CONF_DIR={hive_conf_dir} ; "
+  check_schema_created_cmd = as_user(format("export JAVA_HOME={java64_home} ; "
+                                    "export HIVE_CONF_DIR={hive_conf_dir} ; "
                                     "timeout {schema_tool_timeout}s "
                                     "{hive_schematool_bin}/schematool -info "
                                     "-dbType {hive_metastore_db_type} "
