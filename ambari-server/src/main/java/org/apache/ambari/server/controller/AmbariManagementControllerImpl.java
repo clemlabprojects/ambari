@@ -50,6 +50,7 @@ import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.ORACLE_JD
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.PACKAGE_LIST;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SCRIPT;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SCRIPT_TYPE;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SECONDARY_JAVA_HOME;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SERVICE_PACKAGE_FOLDER;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SERVICE_REPO_INFO;
 import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_NAME;
@@ -6102,6 +6103,12 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
     clusterLevelParams.put(JAVA_VERSION, String.valueOf(configs.getJavaVersion()));
     clusterLevelParams.put(JDK_NAME, getJDKName());
     clusterLevelParams.put(JCE_NAME, getJCEName());
+    // AMBARI-483: publish secondary_java_home in ambariLevelParams so per-component scripts can
+    // resolve the JDK their metainfo javaHomeSelector points to. Without this, components running
+    // on a different JDK than the stack primary (Hive 4, NiFi 2, etc.) fall back to the primary.
+    if (StringUtils.isNotEmpty(configs.getSecondaryJavaHome())) {
+      clusterLevelParams.put(SECONDARY_JAVA_HOME, configs.getSecondaryJavaHome());
+    }
     clusterLevelParams.put(DB_NAME, getServerDB());
     clusterLevelParams.put(MYSQL_JDBC_URL, getMysqljdbcUrl());
     clusterLevelParams.put(ORACLE_JDBC_URL, getOjdbcUrl());

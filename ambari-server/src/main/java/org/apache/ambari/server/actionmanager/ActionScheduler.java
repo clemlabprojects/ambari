@@ -1200,6 +1200,13 @@ class ActionScheduler implements Runnable {
     String javaHomeSelector = getJavaHomeSelectorFromComponentMetadata(cluster, cmd);
     if (StringUtils.isNotEmpty(javaHomeSelector)) {
       hostParamsCmd.put(ExecutionCommand.KeyNames.JAVA_HOME_SELECTOR, javaHomeSelector);
+      // AMBARI-483: also publish in commandParams. In Ambari 2.8.x the agent JSON's hostLevelParams
+      // section carries only host metadata (blueprint state, hostRepositories, recoveryConfig);
+      // the legacy stage host_params route doesn't surface arbitrary keys there. commandParams
+      // reaches the agent JSON intact and is what params.py can rely on.
+      Map<String, String> cmdParamsForSelector = cmd.getCommandParams();
+      cmdParamsForSelector.put(ExecutionCommand.KeyNames.JAVA_HOME_SELECTOR, javaHomeSelector);
+      cmd.setCommandParams(cmdParamsForSelector);
     }
 
     cmd.setHostLevelParams(hostParamsCmd);
