@@ -21,6 +21,16 @@
     <service>
       <name>NIFI</name>
       <version>1.28.1</version>
+      <components>
+        <component>
+          <name>NIFI_MASTER</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+        <component>
+          <name>NIFI_CA</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+      </components>
     </service>
   </services>
 </metainfo>

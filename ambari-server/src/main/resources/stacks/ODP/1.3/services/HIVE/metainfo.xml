@@ -21,6 +21,24 @@
     <service>
       <name>HIVE</name>
       <version>4.0.1</version>
+      <components>
+        <component>
+          <name>HIVE_METASTORE</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+        <component>
+          <name>HIVE_SERVER</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+        <component>
+          <name>HIVE_SERVER_INTERACTIVE</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+        <component>
+          <name>HIVE_CLIENT</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+      </components>
     </service>
   </services>
 </metainfo>

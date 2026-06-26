@@ -441,6 +441,13 @@ ambari_java_home = config['ambariLevelParams']['ambari_java_home']
 ambari_java_exec = format("{ambari_java_home}/bin/java")
 java_version = expect("/ambariLevelParams/java_version", int)
 
+# Hive 4 requires Java 17+; on stacks that advertise secondary_java_home_support
+# (ODP 1.3.2.0+) the metainfo javaHomeSelector routes us to /hostLevelParams/secondary_java_home.
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  java64_home = host_level_params.get(java_home_selector, None) or java64_home
+
 ##### MYSQL
 db_name = config['configurations']['hive-env']['hive_database_name']
 mysql_group = 'mysql'

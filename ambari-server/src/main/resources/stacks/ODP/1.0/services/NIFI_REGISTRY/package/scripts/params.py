@@ -243,6 +243,13 @@ nifi_registry_authorizer = 'managed-authorizer'
 nifi_registry_host_name = config['agentLevelParams']['hostname']
 
 java_home = config['ambariLevelParams']['java_home']
+# NiFi Registry 1.28 still runs on Java 8/11/17, but ODP 1.3.2.0+ aligns it with NiFi 2.x
+# on the secondary JDK via the metainfo javaHomeSelector (-> /hostLevelParams/secondary_java_home).
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  java_home = host_level_params.get(java_home_selector, None) or java_home
+  jdk64_home = java_home
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 smokeuser = config['configurations']['cluster-env']['smokeuser']
 smokeuser_principal = config['configurations']['cluster-env']['smokeuser_principal_name']

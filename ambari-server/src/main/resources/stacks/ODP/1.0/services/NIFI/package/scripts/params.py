@@ -363,6 +363,13 @@ nifi_authorizer = 'file-provider'
 
 nifi_host_port = config['configurations']['nifi-ambari-config']['nifi.node.port']
 java_home = config['ambariLevelParams']['java_home']
+# NiFi 2.x requires Java 21; on stacks that advertise secondary_java_home_support
+# (ODP 1.3.2.0+) the metainfo javaHomeSelector routes us to /hostLevelParams/secondary_java_home.
+host_level_params = default("/hostLevelParams", {})
+java_home_selector = default("/hostLevelParams/java_home_selector", "java_home")
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  java_home = host_level_params.get(java_home_selector, None) or java_home
+  jdk64_home = java_home
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 smokeuser = config['configurations']['cluster-env']['smokeuser']
 smokeuser_principal = config['configurations']['cluster-env']['smokeuser_principal_name']
