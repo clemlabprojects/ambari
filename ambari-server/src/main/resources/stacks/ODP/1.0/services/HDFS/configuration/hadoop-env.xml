@@ -288,7 +288,12 @@
       # remote nodes.
 
       # The java implementation to use.  Required.
-      export JAVA_HOME={{java_home}}
+      # AMBARI-486: conditional default lets tools that need a different JDK
+      # (e.g. Hive 4 schematool under secondary_java_home) override JAVA_HOME
+      # in the parent env without being clobbered when the hadoop wrapper
+      # sources this file. Daemons launched with no inherited JAVA_HOME still
+      # get {{java_home}} unchanged.
+      export JAVA_HOME=${JAVA_HOME:-{{java_home}}}
       export HADOOP_HOME_WARN_SUPPRESS=1
 
       # Hadoop home directory
