@@ -356,6 +356,17 @@ public class KubeService {
     }
 
     /**
+     * Platform contexts: named ODP environments (Atlas/Ranger/Kerberos endpoints + auth)
+     * that KDPS services integrate against. The managed default is auto-seeded from the
+     * Ambari-managed cluster; external contexts are operator-defined.
+     * URL: /api/v1/.../resources/api/contexts
+     */
+    @Path("/contexts")
+    public org.apache.ambari.view.k8s.resources.ContextResource contexts() {
+        return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext);
+    }
+
+    /**
      * Resolve {@code appVersion} (the component's own version — e.g. GitLab
      * 17.11.2 inside chart 8.11.2) for every catalog service in parallel and
      * return a {@code serviceName -> appVersion} map. Best-effort: a service

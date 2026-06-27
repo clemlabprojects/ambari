@@ -39,6 +39,7 @@ import {
   ShopOutlined,
   ThunderboltOutlined,
   ToolOutlined,
+  ApiOutlined,
 } from '@ant-design/icons';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
@@ -60,6 +61,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/repositories': 'Helm Repositories',
   '/git-repositories': 'Git Repositories',
   '/nodes': 'Nodes',
+  '/contexts': 'Platform Contexts',
   '/workloads': 'Workloads',
   '/global-security': 'Security Profile',
   '/certificate-authorities': 'Certificate Authorities',
@@ -83,6 +85,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
   '/truststores': 'Security',
   '/operators': 'Operators',
   '/nodes': 'Administration',
+  '/contexts': 'Administration',
   '/managed-configs': 'Administration',
   '/configuration': 'Administration',
 };
@@ -156,6 +159,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       key: '/admin-group', icon: <ToolOutlined />, label: 'Administration',
       children: [
         { key: '/nodes', icon: <CloudServerOutlined />, label: <NavLink to="/nodes">Nodes</NavLink> },
+        { key: '/contexts', icon: <ApiOutlined />, label: <NavLink to="/contexts">Platform Contexts</NavLink> },
         { key: '/managed-configs', icon: <ProfileOutlined />, label: <NavLink to="/managed-configs">Config Profiles</NavLink> },
         { key: '/configuration', icon: <SettingOutlined />, label: <NavLink to="/configuration">Cluster Settings</NavLink> },
       ],

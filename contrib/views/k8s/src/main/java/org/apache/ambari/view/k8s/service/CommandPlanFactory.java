@@ -198,12 +198,13 @@ public class CommandPlanFactory {
         String releaseName = (String) params.get("releaseName");
         String namespace = (String) params.get("namespace");
 
-        dryRunChartInstall.setTitle("Chart Installation " + chart+ " Installation " );
         dryRunChartInstall.setId(id);
         if (isDrRun){
-        dryRunChartInstall.setType(CommandType.HELM_DEPLOY_DRY_RUN.name());
+            dryRunChartInstall.setType(CommandType.HELM_DEPLOY_DRY_RUN.name());
+            dryRunChartInstall.setTitle("Helm: validate chart " + chart + " (dry-run)");
         }else {
             dryRunChartInstall.setType(CommandType.HELM_DEPLOY.name());
+            dryRunChartInstall.setTitle("Helm: install chart " + chart);
         }
         dryRunChartInstall.setViewInstance(ctx.getInstanceName());
 
@@ -339,7 +340,7 @@ public class CommandPlanFactory {
                         String id = cmd.getId() + "-" + subId;
                         final String now = Instant.now().toString();
                         CommandEntity dependencyCrdCheck = new CommandEntity();
-                        dependencyCrdCheck.setTitle("CRD "+ dependencyName+ " Installation" );
+                        dependencyCrdCheck.setTitle("Kubernetes: install CRDs for " + dependencyName);
                         dependencyCrdCheck.setId(id);
                         dependencyCrdCheck.setType(CommandType.HELM_DEPLOY_DEPENDENCY_CRD.name());
                         dependencyCrdCheck.setViewInstance(ctx.getInstanceName());
@@ -421,7 +422,7 @@ public class CommandPlanFactory {
             final String now = Instant.now().toString();
             helmChartDryRunCmd.setId(id);
             helmChartDryRunCmd.setType(CommandType.HELM_DEPLOY_DRY_RUN_DEPENDENCY_RELEASE.name());
-            helmChartDryRunCmd.setTitle("DryRun of the dependency "+ dependencyName);
+            helmChartDryRunCmd.setTitle("Helm: validate dependency " + dependencyName + " (dry-run)");
             helmChartDryRunCmd.setViewInstance(ctx.getInstanceName());
             LOG.info("Creating HelmDeployDryRun command with id: {} for dependency: {} ", id, dependencyName);
             Map<String, Object> params = new LinkedHashMap<>();
@@ -550,7 +551,7 @@ public class CommandPlanFactory {
 
             helmChartRunCmd.setId(id);
             helmChartRunCmd.setType(CommandType.HELM_DEPLOY_DEPENDENCY_RELEASE.name());
-            helmChartRunCmd.setTitle("Run of the dependency "+ dependencyName);
+            helmChartRunCmd.setTitle("Helm: install dependency " + dependencyName);
             helmChartRunCmd.setViewInstance(ctx.getInstanceName());
 
             helmChartRunCmd.setParamsJson(gson.toJson(params));
@@ -601,7 +602,7 @@ public class CommandPlanFactory {
         CommandEntity satisfied = new CommandEntity();
         satisfied.setId(id);
         satisfied.setType(CommandType.DEPENDENCY_SATISFIED.name());
-        satisfied.setTitle("Dependency already present: " + dependencyName);
+        satisfied.setTitle("Helm: dependency " + dependencyName + " already present");
         satisfied.setViewInstance(ctx.getInstanceName());
 
         Map<String, Object> params = new LinkedHashMap<>();
@@ -666,7 +667,7 @@ public class CommandPlanFactory {
 //        params.put("_rangerSpec", gson.toJson(rangerRequest));
 
         CommandEntity rangerRequirements = new CommandEntity();
-        rangerRequirements.setTitle("Ranger Repository Creation");
+        rangerRequirements.setTitle("Ranger: create plugin repository");
         rangerRequirements.setId(id);
         rangerRequirements.setType(CommandType.RANGER_REPOSITORY_CREATION.name());
         rangerRequirements.setViewInstance(ctx.getInstanceName());
@@ -743,7 +744,7 @@ public class CommandPlanFactory {
             stepParams.put("_tagSyncSpec", spec);
 
             CommandEntity tagSyncCmd = new CommandEntity();
-            tagSyncCmd.setTitle("Ranger TagSync: register source '" + entry.getKey() + "'");
+            tagSyncCmd.setTitle("Ranger: register TagSync source '" + entry.getKey() + "'");
             tagSyncCmd.setId(id);
             tagSyncCmd.setType(CommandType.OM_RANGER_TAGSYNC_REGISTER.name());
             tagSyncCmd.setViewInstance(ctx.getInstanceName());
@@ -816,6 +817,18 @@ public class CommandPlanFactory {
                 CommandType.RANGER_POLICY_CREATE_ATLAS_OM_READ,
                 "Ranger: create read-only policy for OpenMetadata federation in Atlas service repo",
                 "-ranger-atlas-policy-");
+    }
+
+    /**
+     * Plans a single {@code RANGER_POLICY_GRANT_VIA_AMBARI} child command — grants the OM
+     * federation user read access on the Atlas service repo by delegating to the Ambari
+     * server (which holds the Ranger admin password). Used for a MANAGED platform context.
+     */
+    public void createRangerPolicyGrantViaAmbari(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.RANGER_POLICY_GRANT_VIA_AMBARI,
+                "Ranger: grant OpenMetadata federation read access in Atlas service repo (via Ambari)",
+                "-ranger-atlas-grant-");
     }
 
     /**
@@ -930,6 +943,61 @@ public class CommandPlanFactory {
         store(rootCommand);
 
         LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER step {} on root {}", id, rootCommand.getId());
+    }
+
+    /**
+     * Queue the OpenMetadata base Hive ingestion registration step. This is the
+     * first layer of Atlas+Hive federation — it creates the real OM Hive
+     * DatabaseService + metadata pipeline that the Atlas federation step then
+     * enriches. submitDeploy queues this BEFORE
+     * {@link #createOmAtlasFederationRegister} so the tables exist before Atlas
+     * tries to patch them. Self-manages {@code rootCommand.childListJson} and
+     * re-stores the root (mirrors {@link #createOmAtlasFederationRegister}).
+     *
+     * @param rootCommand parent command this step hangs off
+     * @param params      root params propagated to the step (must carry
+     *                    {@code namespace}, {@code releaseName})
+     */
+    public void createOmHiveBaseIngestionRegister(CommandEntity rootCommand,
+                                                  Map<String, Object> params) {
+        final String now = Instant.now().toString();
+        String id = rootCommand.getId() + "-hive-base-" + UUID.randomUUID();
+
+        CommandEntity hiveCmd = new CommandEntity();
+        hiveCmd.setTitle("OpenMetadata: register base Hive ingestion");
+        hiveCmd.setId(id);
+        hiveCmd.setType(CommandType.OM_HIVE_BASE_INGESTION_REGISTER.name());
+        hiveCmd.setViewInstance(ctx.getInstanceName());
+        hiveCmd.setParamsJson(gson.toJson(params));
+
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        status.setWorkerId(null);
+
+        hiveCmd.setCommandStatusId(status.getId());
+
+        // Append to root's child list — mirrors createOmAtlasFederationRegister
+        Type listType = new TypeToken<ArrayList<String>>(){}.getType();
+        List<String> children;
+        try {
+            children = gson.fromJson(rootCommand.getChildListJson(), listType);
+            if (children == null) children = new ArrayList<>();
+        } catch (Exception e) {
+            children = new ArrayList<>();
+        }
+        children.add(id);
+        rootCommand.setChildListJson(gson.toJson(children));
+
+        store(status);
+        store(hiveCmd);
+        store(rootCommand);
+
+        LOG.info("Queued OM_HIVE_BASE_INGESTION_REGISTER step {} on root {}", id, rootCommand.getId());
     }
 
     /**
@@ -1082,7 +1150,7 @@ public class CommandPlanFactory {
         cmd.setId(id);
         cmd.setViewInstance(ctx.getInstanceName());
         cmd.setType(CommandType.AMBARI_VIEW_PROVISION.name());
-        cmd.setTitle("Provision Ambari view instance: " + releaseName);
+        cmd.setTitle("Ambari: provision view instance for " + releaseName);
 
         // Build params — copy auth context from root so the step can call Ambari REST
         Map<String, Object> params = new LinkedHashMap<>();
@@ -1184,7 +1252,7 @@ public class CommandPlanFactory {
         cmd.setId(id);
         cmd.setViewInstance(ctx.getInstanceName());
         cmd.setType(CommandType.CONFIG_MATERIALIZE.name());
-        cmd.setTitle("Materialize Configurations");
+        cmd.setTitle("Ambari: materialize stack configurations");
 
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("serviceName", serviceName);

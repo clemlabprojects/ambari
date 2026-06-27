@@ -162,4 +162,21 @@ public class StackServiceDef {
      * hard-coding it in chart values.yaml.
      */
     public List<String> imagePullSecretTargets;
+
+    /**
+     * Platform-context requirements (see docs/CONTEXT_FRAMEWORK.md). Each entry declares a
+     * capability + the fields the service needs from its resolved context, optionally gated
+     * by a {@code when} form-value path and scoped by {@code appliesTo} (EXTERNAL|MANAGED).
+     * Drives dynamic requiredness on external contexts + the deploy-time satisfaction gate.
+     * Example entry: {@code {"capability":"atlas","fields":["federationUser","federationPassword"],
+     * "when":"atlasFederation.enabled","appliesTo":"EXTERNAL"}}.
+     */
+    public List<Map<String, Object>> requiresContext;
+
+    /**
+     * Declarative platform integration operations run post-deploy against the resolved
+     * context (see docs/CONTEXT_FRAMEWORK.md). Each entry: {@code {"op":"atlas.federation",
+     * "when":"atlasFederation.enabled"}}. Generalizes the previously-bespoke ranger/atlas gates.
+     */
+    public List<Map<String, Object>> platformOps;
 }

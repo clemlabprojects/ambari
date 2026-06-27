@@ -1,0 +1,12 @@
+{
+  "capability": "kerberos",
+  "label": "Kerberos",
+  "order": 30,
+  "fields": [
+    { "name": "realm", "label": "Kerberos realm", "type": "string",
+      "placeholder": "EXAMPLE.COM",
+      "managedResolver": "kerberos.realm" },
+    { "name": "kdcHost", "label": "KDC host", "type": "string",
+      "managedResolver": "kerberos.kdcHost", "appliesTo": "EXTERNAL" }
+  ]
+}

@@ -77,12 +77,14 @@ public final class OmAtlasFederationClient {
         public final String databaseServiceName;
         public final String pipelineId;
         public final String triggerStatus;
+        public final String deployStatus;
         public Result(String metadataServiceId, String databaseServiceName,
-                      String pipelineId, String triggerStatus) {
+                      String pipelineId, String triggerStatus, String deployStatus) {
             this.metadataServiceId = metadataServiceId;
             this.databaseServiceName = databaseServiceName;
             this.pipelineId = pipelineId;
             this.triggerStatus = triggerStatus;
+            this.deployStatus = deployStatus;
         }
     }
 
@@ -178,6 +180,16 @@ public final class OmAtlasFederationClient {
             "    'serviceType': 'Atlas',\n" +
             "    'connection': {'config': {\n" +
             "        'type': 'Atlas',\n" +
+            // entity_type is a REQUIRED field on OM's AtlasConnection schema (the top-level
+            // Atlas entity type the connector scans). It is passed verbatim to Atlas's
+            // entity-list API, so it must be a real Atlas type name: Atlas tracks Hive tables
+            // as 'hive_table' (there is no 'Table' type in Atlas), hence 'hive_table'. The
+            // connector then ENRICHES the matching tables already ingested into the OM database
+            // service(s) listed in databaseServiceName (the base Hive service, e.g. hive-clemlab,
+            // created by OmBaseIngestionClient). With entity_type='Table' Atlas returns nothing
+            // and no enrichment happens. Omitting it makes OM's workflow_factory raise a pydantic
+            // ValidationError (masked by a .model AttributeError) → deploy 400 → no DAG → no data.
+            "        'entity_type': 'hive_table',\n" +
             "        'hostPort': os.environ['ATLAS_HOST_PORT'],\n" +
             "        'username': os.environ['ATLAS_USER'],\n" +
             "        'password': os.environ['ATLAS_PASSWORD'],\n" +
@@ -221,7 +233,15 @@ public final class OmAtlasFederationClient {
             "if code not in (200, 201):\n" +
             "    print('ingestionPipeline PUT failed: ' + body, file=sys.stderr); sys.exit(4)\n" +
             "pipe_id = json.loads(body)['id']\n" +
-            "# 4) trigger first run\n" +
+            "# 4) DEPLOY the pipeline — this is what generates the Airflow DAG. Without it the\n" +
+            "#    pipeline exists in OM but no DAG is created, so trigger is a no-op and nothing\n" +
+            "#    is ever ingested. Must run BEFORE trigger.\n" +
+            "code, body = om('POST', '/services/ingestionPipelines/deploy/' + pipe_id)\n" +
+            "print('deploy=' + str(code), file=sys.stderr)\n" +
+            "deploy_status = 'deployed' if code in (200, 201) else ('failed-' + str(code))\n" +
+            "if code not in (200, 201):\n" +
+            "    print('deploy failed: ' + body, file=sys.stderr)\n" +
+            "# 5) trigger first run\n" +
             "code, body = om('POST', '/services/ingestionPipelines/trigger/' + pipe_id)\n" +
             "print('trigger=' + str(code), file=sys.stderr)\n" +
             "trigger_status = 'queued' if code in (200, 201) else ('skip-' + str(code))\n" +
@@ -229,6 +249,7 @@ public final class OmAtlasFederationClient {
             "    'metadataServiceId': service_id,\n" +
             "    'databaseServiceName': os.environ['ATLAS_DB_SERVICE_NAME'],\n" +
             "    'pipelineId': pipe_id,\n" +
+            "    'deployStatus': deploy_status,\n" +
             "    'triggerStatus': trigger_status\n" +
             "}))\n" +
             "PY\n";
@@ -286,9 +307,10 @@ public final class OmAtlasFederationClient {
                     json.has("metadataServiceId") ? json.get("metadataServiceId").getAsString() : null,
                     json.has("databaseServiceName") ? json.get("databaseServiceName").getAsString() : dbServiceName,
                     json.has("pipelineId") ? json.get("pipelineId").getAsString() : null,
-                    json.has("triggerStatus") ? json.get("triggerStatus").getAsString() : "unknown");
-            LOG.info("OmAtlasFederationClient: wired Atlas federation — metadataServiceId={} pipelineId={} trigger={}",
-                    r.metadataServiceId, r.pipelineId, r.triggerStatus);
+                    json.has("triggerStatus") ? json.get("triggerStatus").getAsString() : "unknown",
+                    json.has("deployStatus") ? json.get("deployStatus").getAsString() : "unknown");
+            LOG.info("OmAtlasFederationClient: wired Atlas federation — metadataServiceId={} pipelineId={} deploy={} trigger={}",
+                    r.metadataServiceId, r.pipelineId, r.deployStatus, r.triggerStatus);
             return r;
         } catch (Exception ex) {
             throw new IllegalStateException(

@@ -159,6 +159,31 @@ public enum CommandType {
     OM_ATLAS_FEDERATION_REAPPLY,
 
     /**
+     * Registers a <b>base</b> Hive metadata ingestion in OpenMetadata — the first
+     * of the two layers behind Atlas+Hive federation. Creates a real OM
+     * DatabaseService (e.g. {@code hive-clemlab}) plus a metadata ingestion
+     * pipeline that connects directly to HiveServer2 (SPNEGO over the HTTP
+     * transport when Kerberos) and <i>creates the table entities</i>, then
+     * deploys + triggers the pipeline. Runs BEFORE
+     * {@link #OM_ATLAS_FEDERATION_REGISTER}, because the Atlas connector is
+     * enrichment-only — it patches tables that already exist in its
+     * {@code databaseServiceName}, it never creates them.
+     *
+     * <p>Driven by the {@code baseIngestion.hiveEnabled=true} form value in the
+     * OPENMETADATA wizard. Connection auth (kerberos/ldap/basic/none) is derived
+     * from the selected KDPS context's Hive auth mode. Executed by
+     * {@code OmBaseIngestionClient}.
+     */
+    OM_HIVE_BASE_INGESTION_REGISTER,
+
+    /**
+     * Standalone replay of {@link #OM_HIVE_BASE_INGESTION_REGISTER}, triggered by
+     * the "Re-register Hive base ingestion" button on the KDPS release row.
+     * Mirrors the {@link #OM_ATLAS_FEDERATION_REAPPLY} pattern.
+     */
+    OM_HIVE_BASE_INGESTION_REAPPLY,
+
+    /**
      * Provisions the OpenMetadata federation user in an Ambari-managed Atlas
      * (basic-auth mode only). Writes {@code openmetadata.federation.username} +
      * {@code openmetadata.federation.password_hash} into the {@code atlas-env}
@@ -211,6 +236,19 @@ public enum CommandType {
      * already exists for this OM user + Atlas service repo combination.
      */
     RANGER_POLICY_CREATE_ATLAS_OM_READ,
+
+    /**
+     * Grants the OpenMetadata federation user read access on the Atlas service repo by
+     * <em>delegating to the Ambari server</em> (POST {@code /clusters/{c}/ranger_policy}),
+     * which performs the Ranger Admin REST calls with the credentials it holds. Used for a
+     * MANAGED platform context, so the KDPS view never handles the Ranger admin password.
+     *
+     * <p>Issues two grants — one for the entity resource set ({@code entity-read}) and one
+     * for the type resource set ({@code type-read}) — because the Atlas Ranger servicedef
+     * forbids a single policy from spanning both resource sets. The server-side action is
+     * idempotent (append-to-existing-or-create + user pre-registration).
+     */
+    RANGER_POLICY_GRANT_VIA_AMBARI,
 
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,

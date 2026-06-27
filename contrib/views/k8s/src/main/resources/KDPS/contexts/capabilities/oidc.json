@@ -1,0 +1,14 @@
+{
+  "capability": "oidc",
+  "label": "OIDC / Keycloak",
+  "order": 50,
+  "fields": [
+    { "name": "issuerUrl", "label": "OIDC issuer URL", "type": "string",
+      "placeholder": "https://keycloak.example.com/realms/odp",
+      "managedResolver": "oidc.issuerUrl" },
+    { "name": "adminUser", "label": "OIDC admin user", "type": "string",
+      "managedResolver": "oidc.adminUser", "appliesTo": "EXTERNAL" },
+    { "name": "adminPassword", "label": "OIDC admin password", "type": "password",
+      "secret": true, "appliesTo": "EXTERNAL" }
+  ]
+}

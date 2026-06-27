@@ -17,11 +17,13 @@
  */
 
 import React from 'react';
-import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Tooltip, Typography } from 'antd';
+import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
 import ServiceSelect from './ServiceSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
+import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
+import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 
@@ -53,6 +55,22 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // adaptive filtering of select options below. We call the hook unconditionally
   // so React's rule-of-hooks holds regardless of field type.
   const caps = useCapabilities();
+  // When this field is a `requiresContext.when` trigger (e.g. atlasFederation.enabled), wrap it
+  // in a subtle accent + cue so the operator sees it depends on the selected Platform Context.
+  const linked = useIsContextLinked(field.name);
+  // For a `context-resolved` field: the value KDPS derives for this field's `contextField`
+  // (e.g. "hive.hs2HostPort") on the selected Platform Context, plus a local toggle that
+  // lets the operator opt into overriding it. Hooks run unconditionally (rule-of-hooks).
+  const ctxResolved = useResolvedContextValue((field as any).contextField);
+  const [overrideOn, setOverrideOn] = React.useState(false);
+  const wrapLinked = (node: React.ReactNode): React.ReactNode => linked ? (
+    <div style={{ borderLeft: '3px solid #1677ff', background: 'rgba(22,119,255,0.04)', borderRadius: 4, padding: '8px 12px', marginBottom: 16 }}>
+      {node}
+      <Typography.Text style={{ color: '#1677ff', fontSize: 12 }}>
+        <ApiOutlined /> Depends on the selected <strong>Platform context</strong> (right panel) — endpoints &amp; credentials are resolved from there.
+      </Typography.Text>
+    </div>
+  ) : node;
   const capabilityAvailable = (cap?: string): boolean => {
     if (!cap) return true;
     if (!caps) return true; // fail-open while loading
@@ -162,6 +180,60 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           }}
         />
       );
+    case 'context-resolved': {
+      const f = field as any;
+      // No value resolved from the context. For a MANAGED context this means the capability
+      // isn't present; for an EXTERNAL context (no backing Ambari) the operator supplies it
+      // directly and the KDPS engine computes the connection (e.g. scheme) from raw props.
+      if (!ctxResolved.resolved) {
+        // EXTERNAL context + `externalFields` declared: render the raw HiveServer2 properties
+        // (transport / TLS) the operator sets, and the KDPS engine derives the scheme from them —
+        // the operator never hand-types 'hive+https'. The scheme field's own value stays blank so
+        // the backend computes it (computeHiveSchemeFromTransport).
+        const ext = f.externalFields as any[] | undefined;
+        if (ctxResolved.kind === 'EXTERNAL' && Array.isArray(ext) && ext.length) {
+          return wrapLinked(
+            <div style={{ borderLeft: '3px solid #d46b08', background: 'rgba(212,107,8,0.04)', borderRadius: 4, padding: '8px 12px', marginBottom: 16 }}>
+              <Typography.Text strong>{field.label}</Typography.Text>{' '}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                — external context: KDPS computes this from the properties below
+              </Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                {ext.map((sf: any) => <DynamicFormField key={sf.name} field={sf} />)}
+              </div>
+            </div>
+          );
+        }
+        return wrapLinked(
+          <Form.Item name={nameParts} label={field.label} rules={rules} help={f.help}
+            extra={ctxResolved.kind === 'EXTERNAL'
+              ? 'External context — provide this value; KDPS computes the connection from it.'
+              : undefined}>
+            <Input placeholder={f.placeholder} disabled={disabledProp} />
+          </Form.Item>
+        );
+      }
+      // MANAGED / resolved → render the KDPS-derived value read-only in "blue" with an
+      // Override switch. Left off, the override stays blank and the engine uses the context
+      // value (host:port / scheme / auth are all delivered by KDPS, not typed by the operator).
+      return wrapLinked(
+        <Form.Item label={field.label} help={f.help} style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px', margin: 0 }}>
+              <ApiOutlined /> {ctxResolved.value}
+            </Tag>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>computed by KDPS</Typography.Text>
+            <span style={{ flex: 1 }} />
+            <Switch size="small" checked={overrideOn}
+              onChange={(on) => { setOverrideOn(on); if (!on) form.setFieldValue(nameParts, undefined); }} />
+            <Typography.Text style={{ fontSize: 12 }}>Override</Typography.Text>
+          </div>
+          <Form.Item name={nameParts} noStyle hidden={!overrideOn}>
+            <Input style={{ marginTop: 8 }} placeholder={ctxResolved.value} disabled={!overrideOn} />
+          </Form.Item>
+        </Form.Item>
+      );
+    }
     case 'k8s-discovery':
     case 'secret-discovery':
     case 'cluster-issuer-discovery':
@@ -207,7 +279,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Form.Item>
       );
     case 'boolean':
-      return (
+      return wrapLinked(
         <Form.Item name={nameParts} valuePropName="checked" help={field.help} style={{ marginBottom: 8 }}>
           <Checkbox disabled={disabledProp}>{field.label}</Checkbox>
         </Form.Item>

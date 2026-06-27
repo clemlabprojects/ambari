@@ -1,0 +1,17 @@
+{
+  "capability": "ranger",
+  "label": "Apache Ranger",
+  "order": 20,
+  "fields": [
+    { "name": "rangerUrl", "label": "Ranger Admin URL", "type": "string",
+      "placeholder": "https://ranger.example.com:6182",
+      "managedResolver": "ranger.url",
+      "help": "Ranger Admin policy-manager URL." },
+    { "name": "rangerAdminUsername", "label": "Ranger Admin username", "type": "string",
+      "default": "admin", "appliesTo": "EXTERNAL",
+      "help": "Admin user KDPS uses to create policies on an external Ranger." },
+    { "name": "rangerAdminPassword", "label": "Ranger Admin password", "type": "password",
+      "secret": true, "appliesTo": "EXTERNAL",
+      "help": "Admin password for an external Ranger. For a managed context, policy operations are delegated to the Ambari server, which holds the credential — nothing to enter." }
+  ]
+}

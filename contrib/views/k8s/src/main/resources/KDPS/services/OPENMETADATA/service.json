@@ -3,8 +3,29 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.8",
+  "version": "1.13.18",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
+  "requiresContext": [
+    { "capability": "atlas",
+      "fields": ["atlasUrl", "atlasAuthMode", "atlasAclMode", "atlasRangerServiceName"],
+      "when": "atlasFederation.enabled" },
+    { "capability": "atlas",
+      "fields": ["federationUser", "federationPassword"],
+      "when": "atlasFederation.enabled", "appliesTo": "EXTERNAL" },
+    { "capability": "ranger",
+      "fields": ["rangerUrl"],
+      "when": "rangerTagSyncEnabled" },
+    { "capability": "ranger",
+      "fields": ["rangerAdminUsername", "rangerAdminPassword"],
+      "when": "rangerTagSyncEnabled", "appliesTo": "EXTERNAL" },
+    { "capability": "hive",
+      "fields": ["hs2HostPort", "scheme", "authMode"],
+      "when": "baseIngestion.hiveEnabled" }
+  ],
+  "platformOps": [
+    { "op": "hive.baseIngestion", "when": "baseIngestion.hiveEnabled" },
+    { "op": "atlas.federation", "when": "atlasFederation.enabled" }
+  ],
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -249,13 +270,6 @@
       }
     },
     {
-      "name": "adminGroups",
-      "from": {
-        "type": "form",
-        "field": "security.adminGroups"
-      }
-    },
-    {
       "name": "principalDomain",
       "from": {
         "type": "form",
@@ -439,6 +453,13 @@
       "from": {
         "type": "form",
         "field": "atlasFederation.enabled"
+      }
+    },
+    {
+      "name": "baseIngestionHiveEnabled",
+      "from": {
+        "type": "form",
+        "field": "baseIngestion.hiveEnabled"
       }
     },
     {
@@ -658,14 +679,6 @@
           "from": {
             "type": "var",
             "name": "adminUsers"
-          }
-        },
-        {
-          "path": "global.security.adminGroups",
-          "skipIfVarEmpty": "adminGroups",
-          "from": {
-            "type": "var",
-            "name": "adminGroups"
           }
         },
         {
@@ -958,6 +971,38 @@
       ]
     },
     {
+      "name": "base-hive-ingestion-toggle",
+      "_description": "Base Hive ingestion requires Airflow → also flips dependencies.enabled when the operator turns this on (same pattern as atlas-federation-toggle).",
+      "targets": [
+        {
+          "path": "baseIngestion.hiveEnabled",
+          "from": { "type": "form", "field": "baseIngestion.hiveEnabled" }
+        },
+        {
+          "path": "dependencies.enabled",
+          "skipIfVarEmpty": "baseIngestionHiveEnabled",
+          "from": { "type": "template", "template": "true" }
+        }
+      ]
+    },
+    {
+      "name": "base-hive-ingestion-config",
+      "skipIfVarEmpty": "baseIngestionHiveEnabled",
+      "targets": [
+        { "path": "baseIngestion.hiveServiceName",         "from": { "type": "form", "field": "baseIngestion.hiveServiceName" } },
+        { "path": "baseIngestion.hiveHostPort",            "from": { "type": "form", "field": "baseIngestion.hiveHostPort" } },
+        { "path": "baseIngestion.hiveScheme",              "from": { "type": "form", "field": "baseIngestion.hiveScheme" } },
+        { "path": "baseIngestion.hiveTransport",           "from": { "type": "form", "field": "baseIngestion.hiveTransport" } },
+        { "path": "baseIngestion.hiveUseSSL",              "from": { "type": "form", "field": "baseIngestion.hiveUseSSL" } },
+        { "path": "baseIngestion.hiveAuthMode",            "from": { "type": "form", "field": "baseIngestion.hiveAuthMode" } },
+        { "path": "baseIngestion.hiveKerberosServiceName", "from": { "type": "form", "field": "baseIngestion.hiveKerberosServiceName" } },
+        { "path": "baseIngestion.hiveUsername",            "from": { "type": "form", "field": "baseIngestion.hiveUsername" } },
+        { "path": "baseIngestion.hivePassword",            "from": { "type": "form", "field": "baseIngestion.hivePassword" } },
+        { "path": "baseIngestion.hiveSchedule",            "from": { "type": "form", "field": "baseIngestion.hiveSchedule" } },
+        { "path": "baseIngestion.hiveSchemaIncludes",      "from": { "type": "form", "field": "baseIngestion.hiveSchemaIncludes" } }
+      ]
+    },
+    {
       "name": "atlas-federation-toggle",
       "_description": "Atlas federation requires Airflow → also flips dependencies.enabled when the operator turns this on. Express via two targets so the bindings engine sets both atomically.",
       "targets": [
@@ -1088,13 +1133,7 @@
           "label": "Admin users (comma-separated)",
           "type": "string",
           "defaultValue": "admin",
-          "help": "List of usernames granted the Admin role (e.g. admin, john.doe). These map to AUTHORIZER_ADMIN_PRINCIPALS."
-        },
-        {
-          "name": "security.adminGroups",
-          "label": "Admin groups (comma-separated)",
-          "type": "string",
-          "help": "IdP group names (OIDC/LDAP) to map to the Admin role."
+          "help": "Usernames granted the OpenMetadata Admin role (e.g. admin, lbakalian). These expand to AUTHORIZER_ADMIN_PRINCIPALS. OpenMetadata grants admin by username only — group-based admin is not supported, so list each admin user explicitly here."
         },
         {
           "name": "security.principalDomain",
@@ -1277,33 +1316,6 @@
       "type": "group",
       "fields": [
         {
-          "name": "ui_hive_metastore_uri",
-          "label": "Service Hive Metastore",
-          "type": "service-select",
-          "serviceType": "HIVE_METASTORE",
-          "excludeFromValues": true,
-          "help": "Hive Metastore consumed by OM's Hive connector (direct thrift). Independent of Trino — you can have both. Leave empty if OM only consumes via Trino."
-        },
-        {
-          "name": "ui_hive_metastore_uri_override",
-          "label": "URI Hive Metastore (override)",
-          "type": "string",
-          "defaultValue": "",
-          "help": "e.g. thrift://hive-metastore.ns:9083 — overrides auto-discovered value. When set AND Hive is external, an authentication picker appears below."
-        },
-        {
-          "name": "_hive_external_auth",
-          "type": "external-auth-target",
-          "target": "hive",
-          "label": "External Hive authentication",
-          "excludeFromValues": true,
-          "help": "Visible only when the URI override above is set — i.e. Hive Metastore is on a foreign cluster KDPS does not manage. Pick the auth mode the foreign Hive uses (none / kerberos), then reference the K8s Secret carrying credentials.",
-          "condition": {
-            "field": "ui_hive_metastore_uri_override",
-            "operator": "non-empty"
-          }
-        },
-        {
           "name": "ui_trino_host",
           "label": "Trino Coordinator",
           "type": "k8s-discovery",
@@ -1421,65 +1433,7 @@
           "label": "Enable Atlas federation",
           "type": "boolean",
           "defaultValue": false,
-          "help": "When ON, the post-install Job calls OM REST to register the Atlas service + pipeline. Also flips the Ingestion / Airflow toggle ON (Atlas federation needs the runner)."
-        },
-        {
-          "name": "ui_atlas_url",
-          "label": "Atlas service (auto-discovered)",
-          "type": "service-select",
-          "serviceType": "ATLAS",
-          "excludeFromValues": true,
-          "help": "Picked from Ambari's ATLAS service registration. Choose if multiple Atlas hosts are registered.",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          }
-        },
-        {
-          "name": "atlasFederation.hostPort",
-          "label": "Atlas URL (override)",
-          "type": "string",
-          "defaultValue": "",
-          "help": "Override the discovered URL when Atlas is reached via a different FQDN (DMZ, external).",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          }
-        },
-        {
-          "name": "atlasFederation.username",
-          "label": "Atlas local username",
-          "type": "string",
-          "defaultValue": "openmetadata-ingestion",
-          "help": "Local Atlas account (users-credentials.properties). In production Atlas may use SSO/Kerberos/LDAP, but the OM ingestion bot needs a stable local identity. Pre-create with seed-atlas-user.sh.",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          },
-          "required": true
-        },
-        {
-          "name": "atlasFederation.existingSecret",
-          "label": "Existing Kubernetes Secret name",
-          "type": "string",
-          "defaultValue": "",
-          "help": "Name of an existing Secret holding the Atlas password under key 'password'. If empty, the chart auto-creates a Secret named '<release>-atlas-credentials' with a random password on first install; subsequent helm upgrades reuse the same value via helm lookup. For non-basic auth (Kerberos / Knox SSO) to an external Atlas, use the 'External Atlas authentication' picker below.",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          }
-        },
-        {
-          "name": "_atlas_external_auth",
-          "type": "external-auth-target",
-          "target": "atlas",
-          "label": "External Atlas authentication",
-          "excludeFromValues": true,
-          "help": "Visible when the Atlas URL override is set. Pick the auth mode the external Atlas uses (basic / kerberos / knox-sso). For 'basic' you may also use the 'Existing Kubernetes Secret name' field above — they target the same Secret.",
-          "condition": {
-            "field": "atlasFederation.hostPort",
-            "operator": "non-empty"
-          }
+          "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
         },
         {
           "name": "atlasFederation.schedule",
@@ -1496,36 +1450,120 @@
           "name": "atlasFederation.databaseServiceNames",
           "label": "Target OM database services",
           "type": "string",
-          "defaultValue": "trino-clemlab",
-          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. Defaults to 'trino-clemlab'.",
+          "defaultValue": "hive-clemlab",
+          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. For Atlas+Hive federation this must match the base Hive ingestion service name above (default 'hive-clemlab').",
           "condition": {
             "field": "atlasFederation.enabled",
             "value": true
           }
+        }
+      ]
+    },
+    {
+      "name": "baseIngestion",
+      "label": "Base Metadata Ingestion (Hive)",
+      "type": "group",
+      "help": "Ingest Hive table metadata directly into OpenMetadata. This is layer 1 of Atlas+Hive federation: it creates the OM Hive database service and its tables; the Atlas Federation section below then enriches those tables with Atlas lineage and tags. Requires the bundled ingestion runner (Airflow) — enabling this turns it on automatically.",
+      "fields": [
+        {
+          "name": "baseIngestion.hiveEnabled",
+          "label": "Enable Hive base ingestion",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "When ON, KDPS creates an OM Hive databaseService and a scheduled metadata ingestion pipeline that connects directly to HiveServer2. For Atlas+Hive federation, enable this together with Atlas Federation below."
         },
         {
-          "name": "atlasFederation.rangerAdminUsername",
-          "label": "Ranger Admin username",
+          "name": "baseIngestion.hiveServiceName",
+          "label": "OM database service name",
           "type": "string",
-          "defaultValue": "admin",
-          "excludeFromValues": true,
-          "help": "Required only when the Ambari-managed Atlas uses the Ranger authorizer. KDPS calls Ranger Admin REST to create a read-only policy granting the OM federation user access to the Atlas service repo. Defaults to 'admin' (matches the typical ODP install).",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          }
+          "defaultValue": "hive-clemlab",
+          "help": "Name of the OpenMetadata Hive databaseService to create. Atlas Federation's 'Target OM database services' must reference this exact name so Atlas hive_table entities enrich these tables.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
-          "name": "atlasFederation.rangerAdminPassword",
-          "label": "Ranger Admin password",
+          "name": "baseIngestion.hiveHostPort",
+          "label": "HiveServer2 host:port",
+          "type": "context-resolved",
+          "contextField": "hive.hs2HostPort",
+          "placeholder": "hs2.example.com:10001",
+          "help": "Delivered by KDPS from the selected context (HTTP-transport endpoint). Toggle Override only to point at a specific HS2; on an external context without Ambari, enter it here.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hiveScheme",
+          "label": "Connection scheme",
+          "type": "context-resolved",
+          "contextField": "hive.scheme",
+          "placeholder": "hive+https",
+          "help": "Delivered by KDPS (hive+https / hive+http / hive), derived from the context's hive-site transport.mode + use.SSL. Toggle Override only to force a scheme.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true },
+          "externalFields": [
+            {
+              "name": "baseIngestion.hiveTransport",
+              "label": "HiveServer2 transport",
+              "type": "select",
+              "options": [
+                { "label": "HTTP", "value": "http" },
+                { "label": "Binary (thrift)", "value": "binary" }
+              ],
+              "help": "hive.server2.transport.mode on the external HiveServer2."
+            },
+            {
+              "name": "baseIngestion.hiveUseSSL",
+              "label": "Use TLS",
+              "type": "boolean",
+              "help": "hive.server2.use.SSL — with HTTP transport this yields hive+https."
+            }
+          ]
+        },
+        {
+          "name": "baseIngestion.hiveAuthMode",
+          "label": "Authentication",
+          "type": "context-resolved",
+          "contextField": "hive.authMode",
+          "placeholder": "kerberos",
+          "help": "Delivered by KDPS from hive.server2.authentication (kerberos/ldap/none). kerberos uses SPNEGO via the Airflow keytab renewer. Toggle Override only to force it.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hiveKerberosServiceName",
+          "label": "Kerberos service name",
+          "type": "string",
+          "defaultValue": "hive",
+          "help": "SPN service name for HiveServer2 (usually 'hive'). Used only when authentication is kerberos.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hiveUsername",
+          "label": "Username (ldap/basic)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Used only when authentication is ldap or basic.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hivePassword",
+          "label": "Password (ldap/basic)",
           "type": "password",
           "defaultValue": "",
-          "excludeFromValues": true,
-          "help": "Required only when the Ambari-managed Atlas uses the Ranger authorizer. The password Ambari stores as 'ranger-env.admin_password' (Ambari returns this as an opaque SECRET reference that the K8s view cannot decrypt, so the operator must re-enter it here). Leave empty when Atlas uses the file-based 'simple' authorizer.",
-          "condition": {
-            "field": "atlasFederation.enabled",
-            "value": true
-          }
+          "help": "Used only when authentication is ldap or basic.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hiveSchedule",
+          "label": "Ingestion schedule (cron)",
+          "type": "string",
+          "defaultValue": "0 */12 * * *",
+          "help": "Default every 12h.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.hiveSchemaIncludes",
+          "label": "Schema include patterns",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Optional comma-separated regex patterns of schemas/databases to include (e.g. odp_functional_tests). Blank ingests all schemas.",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         }
       ]
     },
@@ -2007,42 +2045,6 @@
           "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags."
         },
         {
-          "name": "ui_ranger_admin_url",
-          "label": "Ranger Admin (auto-discovered)",
-          "type": "service-select",
-          "serviceType": "RANGER",
-          "excludeFromValues": true,
-          "help": "Auto-discovered from this Ambari cluster's RANGER service when installed. Empty list means Ranger is not part of this stack — use the override field below to target an external Ranger.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        },
-        {
-          "name": "rangerTagSync.adminUrlOverride",
-          "label": "Ranger Admin URL (external override)",
-          "type": "string",
-          "excludeFromValues": true,
-          "help": "When set, KDPS treats this as an EXTERNAL Ranger: no Ambari ranger-tagsync-site mutation, no component restart. Instead the rendered ranger-tagsync-site snippet is logged + saved on the command status for the operator to paste into the external Ranger TagSync host's xml. Leave empty when Ranger is part of this Ambari cluster. When set, the authentication picker appears below.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          },
-          "defaultValue": ""
-        },
-        {
-          "name": "_ranger_external_auth",
-          "type": "external-auth-target",
-          "target": "ranger",
-          "label": "External Ranger authentication",
-          "excludeFromValues": true,
-          "help": "Visible only when the Ranger Admin URL override above is set. Pick the auth mode the external Ranger uses (basic / kerberos / knox-sso) then reference the K8s Secret carrying credentials.",
-          "condition": {
-            "field": "rangerTagSync.adminUrlOverride",
-            "operator": "non-empty"
-          }
-        },
-        {
           "name": "rangerTagSyncToken",
           "label": "OM bot JWT (optional — auto-fetched)",
           "type": "password",
@@ -2162,7 +2164,7 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.13.8",
+  "requiredChartVersion": ">=1.13.12",
   "externalServiceTargets": {
     "hive": {
       "label": "Hive Metastore",
@@ -2182,29 +2184,6 @@
             "global.security.kerberos.keytab.secretDataKey": "keytab",
             "global.security.kerberos.principal":            "{{secret.data.principal | b64decode | trim}}"
           }
-        }
-      }
-    },
-    "ranger": {
-      "label": "Ranger Admin (for TagSync)",
-      "discoveryServiceType": "RANGER",
-      "urlOverrideField": "rangerTagSync.adminUrlOverride",
-      "modeField": "rangerTagSync.adminAuthMode",
-      "authModes": {
-        "basic": {
-          "label": "Username + password",
-          "secretField": "rangerTagSync.adminCredsSecret",
-          "secretKeys": ["username", "password"]
-        },
-        "kerberos": {
-          "label": "Kerberos / SPNEGO",
-          "secretField": "rangerTagSync.adminKeytabSecret",
-          "secretKeys": ["keytab", "principal"]
-        },
-        "knox-sso": {
-          "label": "Knox SSO",
-          "secretField": "rangerTagSync.knoxSecret",
-          "secretKeys": ["sso-token"]
         }
       }
     },
@@ -2251,6 +2230,9 @@
     }
   },
   "postDeploy": {
+    "baseIngestionHive": {
+      "_description": "Marker — presence tells CommandService.submitDeploy to queue OM_HIVE_BASE_INGESTION_REGISTER (before Atlas federation) when baseIngestion.hiveEnabled=true. The step reads Hive connection params from the materialised helm values at execute time."
+    },
     "atlasFederation": {
       "_description": "Marker — presence of this block tells CommandService.submitDeploy to queue the OM_ATLAS_FEDERATION_REGISTER step after the chart installs (only when atlasFederation.enabled=true in form values). The step body reads Atlas connection params from the materialised helm values at execute time."
     }

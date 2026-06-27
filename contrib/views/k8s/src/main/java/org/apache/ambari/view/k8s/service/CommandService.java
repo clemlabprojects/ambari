@@ -3031,21 +3031,6 @@ public class CommandService {
                                                         String releaseName,
                                                         MultivaluedMap<String, String> callerHeaders,
                                                         URI baseUri) {
-        return submitReleaseOmAtlasFederationReapply(namespace, releaseName, callerHeaders, baseUri, null, null);
-    }
-
-    /**
-     * Variant that accepts optional Ranger Admin credentials. Used on Ranger-ACL Atlas
-     * clusters where the password ('ranger-env.admin_password') is stored encrypted in
-     * Ambari and not view-resolvable — operator re-supplies it via the reapply REST
-     * endpoint.
-     */
-    public String submitReleaseOmAtlasFederationReapply(String namespace,
-                                                        String releaseName,
-                                                        MultivaluedMap<String, String> callerHeaders,
-                                                        URI baseUri,
-                                                        String rangerAdminUsername,
-                                                        String rangerAdminPassword) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -3104,12 +3089,6 @@ public class CommandService {
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         if (clusterName != null) rootParams.put("_cluster", clusterName);
         rootParams.put("_baseUri", baseUri.toString());
-        if (rangerAdminUsername != null && !rangerAdminUsername.isBlank()) {
-            rootParams.put("_rangerAdminUsername", rangerAdminUsername);
-        }
-        if (rangerAdminPassword != null && !rangerAdminPassword.isBlank()) {
-            rootParams.put("_rangerAdminPassword", rangerAdminPassword);
-        }
 
         // Root needs an empty childListJson before the plan-factory appends to it.
         rootCommand.setParamsJson(gson.toJson(rootParams));
@@ -4073,7 +4052,7 @@ public class CommandService {
         commandStatusEntity.setAttempt(0);
 
         rootCommand.setCommandStatusId(commandStatusEntity.getId());
-        rootCommand.setTitle("Release Installation: "+request.getReleaseName());
+        rootCommand.setTitle("Install release " + request.getReleaseName());
 
         // creates required hadoop related secrets/config map from charts.json for before running the helm chart
         // preparing config map secrets before running commands
@@ -4866,7 +4845,44 @@ public class CommandService {
                     // until the helm install completes. Gating + plumbing of
                     // _tagSyncSettings into params happens inside planRangerTagSyncSources.
                     if (request.getRanger() != null) {
+                        // Thread the selected platform context into params so the TagSync step
+                        // resolves Ranger ownership (managed vs external) from the context — the
+                        // per-service Ranger discovery fields were removed. _cluster/_baseUri/
+                        // _callerHeaders are already present in params (managed branch uses them).
+                        String tagSyncPcId = stringValue(ConfigResolutionService.getByDottedPath(
+                                request.getFormValues() != null ? request.getFormValues()
+                                        : Collections.emptyMap(), "platformContextId"));
+                        if (!tagSyncPcId.isBlank()) params.put("_platformContextId", tagSyncPcId);
                         planRangerTagSyncSources(rootCommand, /* childCommands ignored, method self-persists */ null, request, params);
+                    }
+
+                    // Base Hive ingestion: layer 1 of Atlas+Hive federation. Queue BEFORE the
+                    // Atlas federation step below so the Hive DatabaseService + table entities
+                    // exist before Atlas tries to enrich them (the Atlas connector is
+                    // enrichment-only). Declared via platformOp (op=hive.baseIngestion) or the
+                    // postDeploy.baseIngestionHive marker, gated on baseIngestion.hiveEnabled=true.
+                    boolean hiveBaseDeclared = hasPlatformOp(serviceDef, "hive.baseIngestion")
+                            || (serviceDef.postDeploy != null && serviceDef.postDeploy.get("baseIngestionHive") != null);
+                    if (hiveBaseDeclared) {
+                        Object hiveEnabledRaw = ConfigResolutionService.getByDottedPath(
+                                request.getValues() != null ? request.getValues() : Collections.emptyMap(),
+                                "baseIngestion.hiveEnabled");
+                        if (hiveEnabledRaw != null && "true".equalsIgnoreCase(String.valueOf(hiveEnabledRaw))) {
+                            Map<String, Object> hiveParams = new LinkedHashMap<>();
+                            hiveParams.put("releaseName", request.getReleaseName());
+                            hiveParams.put("namespace", request.getNamespace());
+                            hiveParams.put("serviceKey", request.getServiceKey());
+                            String hivePcId = stringValue(ConfigResolutionService.getByDottedPath(
+                                    request.getFormValues() != null ? request.getFormValues()
+                                            : Collections.emptyMap(), "platformContextId"));
+                            if (!hivePcId.isBlank()) hiveParams.put("_platformContextId", hivePcId);
+                            if (params.get("_cluster") != null) hiveParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) hiveParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) hiveParams.put("_callerHeaders", params.get("_callerHeaders"));
+                            this.commandPlanFactory.createOmHiveBaseIngestionRegister(rootCommand, hiveParams);
+                            LOG.info("Queued OM_HIVE_BASE_INGESTION_REGISTER post-deploy step for release '{}'",
+                                    request.getReleaseName());
+                        }
                     }
 
                     // Atlas federation: queue only when the wizard toggle is on. The step
@@ -4888,8 +4904,12 @@ public class CommandService {
                     //
                     // All paths end with OM_ATLAS_FEDERATION_REGISTER as the FINAL step so
                     // the OM REST call happens AFTER Atlas-side wiring is in place.
-                    Object atlasSpec = serviceDef.postDeploy.get("atlasFederation");
-                    if (atlasSpec != null) {
+                    // Atlas federation fires when declared either as a platformOp
+                    // (op=atlas.federation, the framework path) OR via the legacy
+                    // postDeploy.atlasFederation block (backward compat) — and the toggle is on.
+                    boolean federationDeclared = hasPlatformOp(serviceDef, "atlas.federation")
+                            || (serviceDef.postDeploy != null && serviceDef.postDeploy.get("atlasFederation") != null);
+                    if (federationDeclared) {
                         Object enabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
                                 "atlasFederation.enabled");
@@ -4902,11 +4922,20 @@ public class CommandService {
                                         + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
                                         request.getReleaseName(), ex.toString());
                             }
-                            // Always queue the OM-side REST registration last (auth-mode aware).
+                            // Always queue the OM-side REST registration last. Thread the platform
+                            // context + Ambari params so the register step resolves Atlas URL/creds
+                            // from the context instead of per-service form fields.
                             Map<String, Object> atlasParams = new LinkedHashMap<>();
                             atlasParams.put("releaseName", request.getReleaseName());
                             atlasParams.put("namespace", request.getNamespace());
                             atlasParams.put("serviceKey", request.getServiceKey());
+                            String pcId = stringValue(ConfigResolutionService.getByDottedPath(
+                                    request.getFormValues() != null ? request.getFormValues()
+                                            : Collections.emptyMap(), "platformContextId"));
+                            if (!pcId.isBlank()) atlasParams.put("_platformContextId", pcId);
+                            if (params.get("_cluster") != null) atlasParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) atlasParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) atlasParams.put("_callerHeaders", params.get("_callerHeaders"));
                             this.commandPlanFactory.createOmAtlasFederationRegister(
                                     rootCommand, atlasParams);
                             LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'",
@@ -5024,7 +5053,11 @@ public class CommandService {
         s.hasChildren = (e.getChildListJson() != null && !e.getChildListJson().isBlank());
         s.type = CommandType.valueOf(e.getType());
         s.state = CommandState.valueOf(eStatus.getState());
-        s.message = eStatus.getMessage();
+        // Show the command's stable title as the operation name (immutable across the run),
+        // not the live status text — progress is conveyed by `state`. Mirrors listChildren /
+        // listCommands so every view (header, list, tree) shows the same fixed title rather
+        // than mutating to "Running: …" / "All steps completed." / an error string.
+        s.message = (e.getTitle() != null && !e.getTitle().isBlank()) ? e.getTitle() : eStatus.getMessage();
         s.createdBy = eStatus.getCreatedBy();
         s.createdAt = eStatus.getCreatedAt();
         s.updatedAt = eStatus.getUpdatedAt();
@@ -5977,6 +6010,10 @@ public class CommandService {
                     String result = registerOmAtlasFederation(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
+                case OM_HIVE_BASE_INGESTION_REGISTER -> {
+                    String result = registerOmHiveBaseIngestion(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
                 case ATLAS_USER_PROVISION_OM -> {
                     String result = provisionAtlasUserForOm(childParams);
                     if (result != null) childSt.setResultJson(result);
@@ -5987,6 +6024,10 @@ public class CommandService {
                 }
                 case RANGER_POLICY_CREATE_ATLAS_OM_READ -> {
                     String result = createRangerAtlasReadPolicyForOm(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case RANGER_POLICY_GRANT_VIA_AMBARI -> {
+                    String result = grantRangerAtlasReadViaAmbari(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
                 // ... inside runNextStep ...
@@ -7655,49 +7696,35 @@ public class CommandService {
                 omPort,
                 java.time.Duration.ofSeconds(120));
 
-        // ----- Branch on Ranger ownership via externalServiceTargets schema -----
-        // The URL override lives in formValues (excluded from helm values). Resolve
-        // the form-field path by looking up the service def's `externalServiceTargets`
-        // entry — convention: the key is "ranger" for this consumer, but we accept
-        // any entry whose discoveryServiceType == "RANGER" for forward-compat.
-        Map<String, Object> formValues = (Map<String, Object>) childParams.get("formValues");
-        if (formValues == null) formValues = Collections.emptyMap();
+        // ----- Branch on Ranger ownership via the selected Platform Context -----
+        // The per-service Ranger discovery fields were removed (feedback: TagSync must
+        // "use the selected KDPS context", not per-service service discovery). Ranger now
+        // comes from the context the operator picked in the right-pane selector:
+        //   - EXTERNAL context  → carries the foreign Ranger's URL (+ admin creds). KDPS
+        //     can't mutate a foreign cluster's ranger-tagsync-site, so we render a snippet
+        //     for the operator to apply (the external branch below).
+        //   - MANAGED / VIRTUAL → the Ambari-owned Ranger; KDPS mutates ranger-tagsync-site
+        //     and restarts RANGER_TAGSYNC directly (the managed branch below).
+        // Mirrors the context resolution in registerOmAtlasFederation.
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
         String externalRangerUrl = "";
         String externalRangerMode = "";
         String externalRangerSecretName = "";
-        try {
-            String serviceKey = (String) childParams.get("serviceKey");
-            if (serviceKey != null && !serviceKey.isBlank()) {
-                var def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
-                if (def != null && def.externalServiceTargets != null) {
-                    for (var e : def.externalServiceTargets.entrySet()) {
-                        var t = e.getValue();
-                        if (t == null) continue;
-                        boolean matches = "RANGER".equalsIgnoreCase(t.discoveryServiceType)
-                                || "ranger".equalsIgnoreCase(e.getKey());
-                        if (!matches || t.urlOverrideField == null || t.urlOverrideField.isBlank()) continue;
-                        Object urlRaw = ConfigResolutionService.getByDottedPath(formValues, t.urlOverrideField);
-                        externalRangerUrl = urlRaw == null ? "" : String.valueOf(urlRaw).trim();
-                        if (t.modeField != null && !t.modeField.isBlank()) {
-                            Object modeRaw = ConfigResolutionService.getByDottedPath(formValues, t.modeField);
-                            externalRangerMode = modeRaw == null ? "" : String.valueOf(modeRaw).trim();
-                        }
-                        if (!externalRangerMode.isEmpty() && t.authModes != null) {
-                            var mode = t.authModes.get(externalRangerMode);
-                            if (mode != null && mode.secretField != null && !mode.secretField.isBlank()) {
-                                Object secRaw = ConfigResolutionService.getByDottedPath(formValues, mode.secretField);
-                                externalRangerSecretName = secRaw == null ? "" : String.valueOf(secRaw).trim();
-                            }
-                        }
-                        break;
-                    }
-                }
+        boolean external = rc != null && "EXTERNAL".equalsIgnoreCase(stringValue(rc.getKind()));
+        if (external) {
+            externalRangerUrl = stringValue(rc.getRangerUrl());
+            if (externalRangerUrl.isEmpty()) {
+                throw new IllegalStateException("Selected platform context '" + stringValue(rc.getName())
+                        + "' is EXTERNAL but resolved no Ranger URL — fill the context's Ranger capability "
+                        + "(rangerUrl) before enabling TagSync.");
             }
-        } catch (Exception ex) {
-            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read externalServiceTargets for {}: {}",
-                    childParams.get("serviceKey"), ex.toString());
+            // An external context expresses Ranger creds as admin user/password; surface
+            // that as "basic" on the rendered snippet's advisory metadata. The snippet is
+            // applied by the operator on the foreign TagSync host, so no K8s Secret is read here.
+            if (!stringValue(rc.getRangerAdminUsername()).isEmpty()) {
+                externalRangerMode = "basic";
+            }
         }
-        boolean external = !externalRangerUrl.isEmpty();
 
         // Always compute the property delta — both branches need it. Don't pass currentSources
         // on the external branch (we can't read the foreign cluster's config).
@@ -7786,6 +7813,30 @@ public class CommandService {
      * @throws Exception when any required input is missing or the OM REST flow fails
      */
     @SuppressWarnings("unchecked")
+    /**
+     * Resolve the platform context for a running step from its params
+     * ({@code _platformContextId} / {@code _cluster} / {@code _baseUri} / {@code _callerHeaders}).
+     * Returns null on failure (callers fall back to legacy form values).
+     */
+    private org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
+            Map<String, Object> childParams) {
+        try {
+            String cluster = (String) childParams.get("_cluster");
+            String baseUriStr = (String) childParams.get("_baseUri");
+            String contextId = stringValue(childParams.get("_platformContextId"));
+            AmbariActionClient ambari = null;
+            if (cluster != null && baseUriStr != null) {
+                Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                java.net.URI baseUri = java.net.URI.create(baseUriStr);
+                ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+            }
+            return new ContextService(ctx).resolve(contextId.isBlank() ? null : contextId, ambari, cluster);
+        } catch (Exception e) {
+            LOG.warn("resolvePlatformContextForStep failed: {}", e.toString());
+            return null;
+        }
+    }
+
     String registerOmAtlasFederation(Map<String, Object> childParams) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
         String namespace   = (String) childParams.get("namespace");
@@ -7818,13 +7869,27 @@ public class CommandService {
                     + "after fixing the values.");
         }
 
+        // Atlas URL + bot user now come from the platform context (the per-service form fields
+        // were removed). Resolve the context once; fall back to any legacy form values if present.
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+
         String atlasHostPort = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.hostPort"));
+        if (atlasHostPort.isBlank() && rc != null) {
+            atlasHostPort = stringValue(rc.getAtlasUrl());
+        }
         if (atlasHostPort.isBlank()) {
-            throw new IllegalStateException("atlasFederation.hostPort is empty — set Atlas URL in the wizard.");
+            throw new IllegalStateException("Atlas URL could not be resolved from the platform context "
+                    + "(context id='" + stringValue(childParams.get("_platformContextId")) + "'). "
+                    + "Ensure the context's Atlas capability resolves (managed) or is filled (external).");
         }
         String atlasUsername = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.username"));
+        if (atlasUsername.isBlank() && rc != null) {
+            // EXTERNAL contexts may carry the federation user; otherwise use the canonical default
+            // (the KDPS-provisioned secret below also overrides this with the real provisioned user).
+            atlasUsername = stringValue(rc.getResolvedFields().get("atlas.federationUser"));
+        }
         if (atlasUsername.isBlank()) {
-            throw new IllegalStateException("atlasFederation.username is empty — set Atlas bot user in the wizard.");
+            atlasUsername = "openmetadata-federation";
         }
         String schedule = stringValue(ConfigResolutionService.getByDottedPath(values, "atlasFederation.schedule"));
         if (schedule.isBlank()) {
@@ -7858,6 +7923,12 @@ public class CommandService {
                     credsSource = "operator-secret:" + existingSecret;
                 }
             }
+        }
+        if (atlasPassword.isBlank() && rc != null && rc.getAtlasFederationPassword() != null
+                && !rc.getAtlasFederationPassword().isBlank()) {
+            // EXTERNAL context carries the federation bot password.
+            atlasPassword = rc.getAtlasFederationPassword();
+            credsSource = "external-context:" + stringValue(childParams.get("_platformContextId"));
         }
         if (atlasPassword.isBlank()) {
             // Fallback: the KDPS-provisioned Secret (ATLAS_USER_PROVISION_OM result).
@@ -7941,8 +8012,228 @@ public class CommandService {
         resultMap.put("metadataServiceId", result.metadataServiceId);
         resultMap.put("databaseServiceName", result.databaseServiceName);
         resultMap.put("pipelineId", result.pipelineId);
+        resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
         return gson.toJson(resultMap);
+    }
+
+    /**
+     * Body of the {@code OM_HIVE_BASE_INGESTION_REGISTER} step — layer 1 of
+     * Atlas+Hive federation. Mints an Unlimited-TTL JWT for the OM ingestion-bot,
+     * then calls OM REST to create the Hive DatabaseService (e.g. {@code hive-clemlab}),
+     * a metadata ingestion pipeline, deploys it (generates the Airflow DAG) and
+     * triggers the first run. The Atlas federation step (queued after this) then
+     * enriches the tables this creates.
+     *
+     * <p>Hive connection details come from the materialised helm values (the
+     * {@code baseIngestion.*} form fields) with the selected platform context as
+     * a fallback for host/port and auth mode. When the cluster is Kerberized the
+     * connector uses SPNEGO over the HiveServer2 HTTP transport against the
+     * ambient ccache maintained by the OM-deps Airflow kerberos renewer.
+     *
+     * <p>Idempotent: OM PUTs are upserts, so a replay registers no duplicates.
+     */
+    /**
+     * Derive the OpenMetadata Hive connector scheme from HiveServer2 transport + TLS — the same
+     * rule {@code ManagedContextResolver} applies to hive-site, lifted out so an EXTERNAL context
+     * (no backing Ambari for KDPS to read) can supply raw transport properties and still have the
+     * engine compute the scheme. http+TLS → {@code hive+https}, http → {@code hive+http},
+     * anything else (binary) → {@code hive}.
+     */
+    static String computeHiveSchemeFromTransport(String transport, boolean ssl) {
+        if (transport != null && transport.trim().equalsIgnoreCase("http")) {
+            return ssl ? "hive+https" : "hive+http";
+        }
+        return "hive";
+    }
+
+    String registerOmHiveBaseIngestion(Map<String, Object> childParams) throws Exception {
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        if (releaseName == null || releaseName.isBlank() || namespace == null || namespace.isBlank()) {
+            throw new IllegalStateException("Missing releaseName/namespace in OM_HIVE_BASE_INGESTION_REGISTER params");
+        }
+
+        // Same two value sources as the federation step: deploy-time valuesPath cache,
+        // or live helm release values on a reapply.
+        Map<String, Object> values = this.commandUtils.loadValuesFromParams(childParams);
+        if (values == null || values.isEmpty()) {
+            values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+            if (values == null) values = Collections.emptyMap();
+            LOG.info("OM_HIVE_BASE_INGESTION_REGISTER: read live helm release values for {}/{} ({} keys)",
+                    namespace, releaseName, values.size());
+        }
+
+        Object enabledRaw = ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveEnabled");
+        if (enabledRaw == null || !"true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
+            throw new IllegalStateException("baseIngestion.hiveEnabled is false in the current release values — "
+                    + "enable the toggle in the wizard and upgrade the release, or run a reapply after fixing values.");
+        }
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+
+        String serviceName = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveServiceName"));
+        if (serviceName.isBlank()) serviceName = "hive-clemlab";
+        // Connection scheme/host/auth are DELIVERED BY KDPS from the selected platform context —
+        // computed from Ambari hive-site for a MANAGED context (hive.scheme / hive.hs2HostPort /
+        // hive.authMode), or operator-supplied for an EXTERNAL one. The baseIngestion.* form fields
+        // are optional OVERRIDES: blank means "use the value the context delivered". This is why the
+        // operator never types 'hive+https' — KDPS derives it from transport.mode + use.SSL.
+        java.util.Map<String, String> rf = (rc != null && rc.getResolvedFields() != null)
+                ? rc.getResolvedFields() : java.util.Collections.<String, String>emptyMap();
+
+        String scheme = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveScheme"));
+        if (scheme.isBlank()) scheme = stringValue(rf.get("hive.scheme"));
+        if (scheme.isBlank()) {
+            // EXTERNAL context with no backing Ambari: the operator supplies raw HiveServer2
+            // transport properties (transport.mode + TLS) and the KDPS engine derives the scheme
+            // — the SAME rule ManagedContextResolver applies to hive-site — so the operator never
+            // hand-types 'hive+https'.
+            String transport = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveTransport"));
+            if (!transport.isBlank()) {
+                boolean ssl = "true".equalsIgnoreCase(stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveUseSSL")));
+                scheme = computeHiveSchemeFromTransport(transport, ssl);
+            }
+        }
+        if (scheme.isBlank()) scheme = "hive+https";
+
+        // host:port — override, else the context's HTTP-transport-aware endpoint (hive.hs2HostPort),
+        // else fall back to parsing the legacy hive.hs2JdbcUrl (binary port).
+        String hostPort = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveHostPort"));
+        if (hostPort.isBlank()) hostPort = stringValue(rf.get("hive.hs2HostPort"));
+        if (hostPort.isBlank()) {
+            String hs2 = stringValue(rf.get("hive.hs2JdbcUrl"));
+            if (hs2.startsWith("jdbc:hive2://")) {
+                String hp = hs2.substring("jdbc:hive2://".length());
+                int slash = hp.indexOf('/');
+                if (slash >= 0) hp = hp.substring(0, slash);
+                hostPort = hp.trim();
+            }
+        }
+        if (hostPort.isBlank()) {
+            throw new IllegalStateException("HiveServer2 host:port could not be resolved from the platform context "
+                    + "(hive.hs2HostPort). Select a context whose Hive capability resolves, or set "
+                    + "baseIngestion.hiveHostPort as an override.");
+        }
+
+        // auth mode — override, else the context's computed value, else infer from a kerberized cluster.
+        String authMode = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveAuthMode"));
+        if (authMode.isBlank()) authMode = stringValue(rf.get("hive.authMode"));
+        if (authMode.isBlank()) {
+            authMode = (rc != null && rc.getKerberosRealm() != null && !rc.getKerberosRealm().isBlank())
+                    ? "kerberos" : "none";
+        }
+        String kerberosServiceName = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveKerberosServiceName"));
+        if (kerberosServiceName.isBlank()) kerberosServiceName = "hive";
+
+        // username/password only used for ldap/basic; null for kerberos/none.
+        String username = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveUsername"));
+        String password = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hivePassword"));
+
+        String schedule = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveSchedule"));
+        if (schedule.isBlank()) schedule = "0 */12 * * *";
+        String schemaIncludes = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveSchemaIncludes"));
+
+        LOG.info("OM_HIVE_BASE_INGESTION_REGISTER: service='{}' scheme='{}' hostPort='{}' auth='{}' schedule='{}'",
+                serviceName, scheme, hostPort, authMode, schedule);
+
+        // Layer 1.5: grant the provisioned OM ingestion principal read access in the Hive Ranger
+        // service so its metadata queries aren't denied. Only for kerberos auth (the provisioned
+        // oma-ing principal); ldap/basic deployments use an operator-managed Hive user. Non-fatal —
+        // a grant failure logs a warning but still deploys the pipeline (operator can grant manually).
+        if ("kerberos".equals(authMode)) {
+            grantHiveRangerReadForOmIngestion(childParams, rc, namespace, releaseName);
+        }
+
+        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet override exists).
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, releaseName + "-fernet");
+            if (fernetSec != null && fernetSec.getData() != null
+                    && fernetSec.getData().containsKey("fernet-key")) {
+                fernetKey = new String(
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get("fernet-key")),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_HIVE_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
+                    namespace, releaseName, ex.toString());
+        }
+        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
+                this.kubernetesService.getClient(),
+                namespace, releaseName, fernetKey,
+                java.time.Duration.ofSeconds(120));
+
+        org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
+                org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, jwt,
+                        serviceName, "Hive", scheme, hostPort,
+                        authMode, kerberosServiceName,
+                        username.isBlank() ? null : username,
+                        password.isBlank() ? null : password,
+                        schedule, schemaIncludes,
+                        java.time.Duration.ofSeconds(180));
+
+        Map<String, Object> resultMap = new LinkedHashMap<>();
+        resultMap.put("databaseServiceId", result.databaseServiceId);
+        resultMap.put("databaseServiceName", result.databaseServiceName);
+        resultMap.put("pipelineId", result.pipelineId);
+        resultMap.put("deployStatus", result.deployStatus);
+        resultMap.put("triggerStatus", result.triggerStatus);
+        return gson.toJson(resultMap);
+    }
+
+    /**
+     * Grant the provisioned OM ingestion principal ({@code oma-ing-<ns>}) read access in the Hive
+     * Ranger service so the SPNEGO base-ingestion's metadata queries aren't denied by the Hive
+     * plugin. MANAGED context → delegate to the Ambari server (it holds the Ranger admin creds, the
+     * view never sees them); EXTERNAL context → direct Ranger REST with the context creds; no Ranger
+     * in context → log that the operator must grant it. Non-fatal: any failure is logged and the
+     * ingestion pipeline is still deployed (operator can grant manually).
+     */
+    private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc, String namespace, String releaseName) {
+        // Ranger maps the kerberos principal oma-ing-<ns>@<realm> to user oma-ing-<ns> (KDPS kerberos
+        // block: serviceName 'oma-ing', principalTemplate '{service}-{namespace}@{realm}').
+        String principal = "oma-ing-" + namespace;
+        String cluster = stringValue(childParams.get("_cluster"));
+        String hiveService = cluster.isBlank() ? "hive" : cluster + "_hive";
+        String resources = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
+        String policyName = "kdps-openmetadata-" + releaseName + "-hive-read";
+        try {
+            String baseUriStr = stringValue(childParams.get("_baseUri"));
+            if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
+                Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                AmbariActionClient ambari = new AmbariActionClient(ctx,
+                        java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
+                int req = ambari.submitRangerPolicyGrant(hiveService, principal, "select", resources,
+                        policyName, "KDPS: OpenMetadata Hive metadata-ingestion read access", 60,
+                        "KDPS base ingestion: grant Hive select to " + principal);
+                if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
+                    LOG.info("OM_HIVE_BASE_INGESTION: granted Hive 'select' to '{}' on '{}' via Ambari (req {})",
+                            principal, hiveService, req);
+                } else {
+                    LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
+                            + "grant Hive access manually if ingestion is denied.", req, principal);
+                }
+            } else if (rc != null && rc.getRangerUrl() != null && !rc.getRangerUrl().isBlank()
+                    && rc.getRangerAdminUsername() != null && !rc.getRangerAdminUsername().isBlank()) {
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+                        rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+                LOG.info("OM_HIVE_BASE_INGESTION: external Ranger Hive read policy id={} for '{}' on '{}'",
+                        pid, principal, hiveService);
+            } else {
+                LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive read "
+                        + "access to '{}' manually (Ranger service '{}', database/table/column=* with 'select'), "
+                        + "or the Hive plugin will deny the ingestion's metadata queries.", principal, hiveService);
+            }
+        } catch (Exception e) {
+            LOG.warn("OM_HIVE_BASE_INGESTION: Ranger Hive grant for '{}' failed ({}). Pipeline still deployed; "
+                    + "grant access manually if needed.", principal, e.toString());
+        }
     }
 
     private static String stringValue(Object o) {
@@ -7970,6 +8261,15 @@ public class CommandService {
      * the caller's OM_ATLAS_FEDERATION_REGISTER step uses operator-supplied creds.
      */
     @SuppressWarnings("unchecked")
+    /** True when the service definition declares a {@code platformOps} entry with the given op name. */
+    private static boolean hasPlatformOp(StackServiceDef def, String opName) {
+        if (def == null || def.platformOps == null) return false;
+        for (Map<String, Object> op : def.platformOps) {
+            if (op != null && opName.equals(String.valueOf(op.get("op")))) return true;
+        }
+        return false;
+    }
+
     private void queueAtlasFederationProvisioningSteps(CommandEntity rootCommand,
                                                        HelmDeployRequest request,
                                                        Map<String, Object> params,
@@ -8018,20 +8318,52 @@ public class CommandService {
         String aclMode = (authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger"))
                 ? "ranger" : "simple";
 
-        LOG.info("Atlas federation dispatch: cluster='{}' authMode={} aclMode={} (Ambari-managed Atlas)",
+        LOG.info("Atlas federation dispatch: cluster='{}' detected authMode={} aclMode={} (Ambari-managed Atlas)",
                 cluster, authMode, aclMode);
+
+        // OM's Atlas connector ONLY speaks HTTP Basic (no kerberos/SSO). When Atlas is Ambari-managed
+        // and federation is enabled, KDPS makes the Basic path work regardless of the currently-
+        // detected authMode: the user-provision step asserts atlas.authentication.method.file=true
+        // (idempotent; coexists with kerberos/ldap) and provisions the federation user. So drive the
+        // Basic provisioning path even if file auth is currently off — otherwise federation would be
+        // silently skipped on a kerberos/ldap-only Atlas and OM could never authenticate.
+        if (!"basic".equals(authMode)) {
+            LOG.info("Atlas federation dispatch: current authMode='{}' is not Basic, but OM requires it — KDPS will enable "
+                    + "file auth (coexisting with existing methods) and provision the federation user.", authMode);
+            authMode = "basic";
+        }
 
         // Stash discovered modes on params so each step body can re-read them
         // (e.g. the principal kind decision in RANGER_POLICY_CREATE_ATLAS_OM_READ).
         params.put("_atlasAuthMode", authMode);
         params.put("_atlasAclMode", aclMode);
 
-        // ----- 1) User provision (basic auth only) -----
+        // ----- 1) User provision (KDPS enables file auth + provisions the Basic user) -----
         if ("basic".equals(authMode)) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
             stepParams.put("_atlasFederationRole", "ROLE_USER");
+            // ④ operator-provided federation Secret (e.g. Vault via external-secrets) — the same
+            //    Secret the OM-side connection reads (atlasFederation.existingSecret), keeping the
+            //    Atlas-side hash and OM-side password in sync. Blank ⇒ KDPS generates + manages it.
+            String existingSecret = stringValue(ConfigResolutionService.getByDottedPath(
+                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
+                    "atlasFederation.existingSecret"));
+            if (!existingSecret.isBlank()) stepParams.put("_atlasFederationSecret", existingSecret);
+            // ② operator's deploy-time Atlas-restart authorization (confirmation modal). Default:
+            //    authorized; "false" ⇒ the step writes config but skips the restart (and warns).
+            Object restartAuth = request.getFormValues() != null
+                    ? request.getFormValues().get("_atlasRestartAuthorized") : null;
+            if (restartAuth != null) stepParams.put("_atlasRestartAuthorized", String.valueOf(restartAuth));
+            // Atlas REST URL for the post-write auth-probe — prefer the form's federation hostPort
+            // (exactly what the OM connector will hit); the step derives it from cluster config when blank.
+            String atlasHostPort = stringValue(ConfigResolutionService.getByDottedPath(
+                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
+                    "atlasFederation.hostPort"));
+            if (!atlasHostPort.isBlank()) stepParams.put("_atlasHostPort", atlasHostPort);
             this.commandPlanFactory.createAtlasUserProvisionOm(rootCommand, stepParams);
-            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM");
+            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM (federationSecret={}, restartAuthorized={})",
+                    existingSecret.isBlank() ? "<kdps-managed>" : existingSecret,
+                    restartAuth != null ? restartAuth : "<default:true>");
         }
 
         // ----- 2) ACL grant — simple OR ranger -----
@@ -8055,38 +8387,31 @@ public class CommandService {
         } else if ("ranger".equals(aclMode)) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
 
-            // Ranger Admin credentials: the policy-create body needs to authenticate
-            // to Ranger Admin REST. We can't read `ranger-env.admin_password` from
-            // view context (Ambari returns the SECRET-reference form), so the
-            // operator must supply the password via the wizard.
-            //
-            // Wiring: read from form state (NOT chart values) because both fields are
-            // declared excludeFromValues — the wizard strips them from request.values()
-            // before submit. The full form snapshot is preserved on request.formValues.
-            //   atlasFederation.rangerAdminUsername (optional, defaults to ranger-env admin_username)
-            //   atlasFederation.rangerAdminPassword (required when ACL = ranger)
-            // and forward to step params (_rangerAdminUsername / _rangerAdminPassword).
-            // The handler still tolerates absence (it warns + falls back to admin/admin
-            // for dev clusters where that's the actual password).
+            // Resolve the platform context. The wizard may pass a context id
+            // (formValues.platformContextId); absent → the MANAGED default. A MANAGED
+            // context delegates the Ranger grant to the Ambari server (no password handled
+            // by the view); an EXTERNAL context carries its own Ranger URL + admin creds.
             Map<String, Object> formValues = request.getFormValues() != null
                     ? request.getFormValues()
                     : (request.getValues() != null ? request.getValues() : Collections.emptyMap());
-            String rangerUser = stringValue(
-                    ConfigResolutionService.getByDottedPath(formValues, "atlasFederation.rangerAdminUsername"));
-            if (!rangerUser.isBlank()) stepParams.put("_rangerAdminUsername", rangerUser);
-            String rangerPass = stringValue(
-                    ConfigResolutionService.getByDottedPath(formValues, "atlasFederation.rangerAdminPassword"));
-            if (!rangerPass.isBlank()) stepParams.put("_rangerAdminPassword", rangerPass);
+            String platformContextId = stringValue(
+                    ConfigResolutionService.getByDottedPath(formValues, "platformContextId"));
+            org.apache.ambari.view.k8s.model.ResolvedContext rc =
+                    new ContextService(ctx).resolve(platformContextId, ambariActionClient, cluster);
+            stepParams.put("_platformContextId", platformContextId);
 
-            // Principal to grant depends on auth mode.
+            // Principal to grant depends on Atlas auth mode.
             String principal;
             if ("kerberos".equals(authMode)) {
                 // Reuse the OM ingestion-bot Kerberos principal KDPS already provisions
                 // for the OM-Ranger TagSync source. Pattern: <serviceName>-<namespace>@<realm>.
-                String kerbRealm = ambariActionClient.getDesiredConfigProperty(cluster, "kerberos-env", "realm");
+                String kerbRealm = rc.getKerberosRealm();
                 if (kerbRealm == null || kerbRealm.isBlank()) {
-                    LOG.warn("Atlas federation dispatch: Kerberos auth mode but kerberos-env.realm is empty — "
-                            + "RANGER_POLICY_CREATE_ATLAS_OM_READ will fail at execute time.");
+                    kerbRealm = ambariActionClient.getDesiredConfigProperty(cluster, "kerberos-env", "realm");
+                }
+                if (kerbRealm == null || kerbRealm.isBlank()) {
+                    LOG.warn("Atlas federation dispatch: Kerberos auth mode but realm is empty — "
+                            + "the Ranger grant step will fail at execute time.");
                 }
                 principal = "oma-ing-" + request.getNamespace() + "@"
                         + (kerbRealm == null ? "REALM-MISSING" : kerbRealm.trim());
@@ -8099,9 +8424,31 @@ public class CommandService {
                 if (principal.isBlank()) principal = "openmetadata-federation";
             }
             stepParams.put("_omPrincipal", principal);
-            this.commandPlanFactory.createRangerPolicyCreateAtlasOmRead(rootCommand, stepParams);
-            LOG.info("Atlas federation dispatch: queued RANGER_POLICY_CREATE_ATLAS_OM_READ principal='{}'",
-                    principal);
+
+            String atlasRepo = rc.getAtlasRangerServiceName();
+            if (atlasRepo == null || atlasRepo.isBlank()) {
+                atlasRepo = cluster + "_atlas";
+            }
+            stepParams.put("_atlasRangerServiceName", atlasRepo);
+
+            if (rc.isRangerManaged()) {
+                // MANAGED context → delegate to the Ambari server (server-side action reads
+                // the decrypted ranger-env credentials). No password is handled by the view.
+                this.commandPlanFactory.createRangerPolicyGrantViaAmbari(rootCommand, stepParams);
+                LOG.info("Atlas federation dispatch: queued RANGER_POLICY_GRANT_VIA_AMBARI "
+                        + "principal='{}' service='{}' (managed context)", principal, atlasRepo);
+            } else {
+                // EXTERNAL context → the view calls Ranger Admin REST directly with the
+                // context's stored URL + credentials.
+                stepParams.put("_rangerUrl", rc.getRangerUrl());
+                stepParams.put("_rangerAdminUsername", rc.getRangerAdminUsername());
+                stepParams.put("_rangerAdminPassword", rc.getRangerAdminPassword());
+                stepParams.put("_atlasAuthMode", authMode);
+                this.commandPlanFactory.createRangerPolicyCreateAtlasOmRead(rootCommand, stepParams);
+                LOG.info("Atlas federation dispatch: queued RANGER_POLICY_CREATE_ATLAS_OM_READ "
+                        + "principal='{}' service='{}' (external context '{}')",
+                        principal, atlasRepo, rc.getName());
+            }
         }
     }
 
@@ -8142,6 +8489,164 @@ public class CommandService {
      * @return JSON status: {@code {username, configChanged, secretName}}
      */
     @SuppressWarnings("unchecked")
+    /**
+     * Read-only config-drift check for a deployed OM release's Atlas federation. Compares the LIVE
+     * Ambari Atlas config against what KDPS requires, so an operator who edits Atlas by hand (e.g.
+     * disables file auth, removes the federation user, rotates the password) doesn't silently break
+     * a running OM federation. Never mutates anything — purely diagnostic.
+     *
+     * <p>Checks: (1) {@code atlas.authentication.method.file=true} (OM's connector is Basic-only);
+     * (2) the {@code openmetadata.federation.username} in atlas-env matches the release's K8s Secret;
+     * (3) the password hash in atlas-env matches the Secret's password; (4) whether ATLAS_SERVER has
+     * a pending stale-config restart. Returns a never-null report consumed by the KDPS view.
+     */
+    public Map<String, Object> checkAtlasFederationConfig(String namespace, String releaseName,
+            Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
+        Map<String, Object> report = new LinkedHashMap<>();
+        java.util.List<Map<String, Object>> checks = new java.util.ArrayList<>();
+        report.put("namespace", namespace);
+        report.put("release", releaseName);
+        report.put("checks", checks);
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        // Expected user/hash from the release's federation Secret (operator-provided or KDPS-managed).
+        String secretName = releaseName + "-atlas-federation";
+        String expUser = null, expHash = null, expPlain = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret sec = kubernetesService.getSecret(namespace, secretName);
+            if (sec != null && sec.getData() != null) {
+                java.util.Base64.Decoder dec = java.util.Base64.getDecoder();
+                if (sec.getData().containsKey("username"))
+                    expUser = new String(dec.decode(sec.getData().get("username")), java.nio.charset.StandardCharsets.UTF_8);
+                if (sec.getData().containsKey("password")) {
+                    expPlain = new String(dec.decode(sec.getData().get("password")), java.nio.charset.StandardCharsets.UTF_8);
+                    expHash = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.sha256Hex(expPlain);
+                }
+            }
+        } catch (Exception ignore) { /* secret may be absent on a non-federated release */ }
+        report.put("federationConfigured", expUser != null);
+
+        String fileOn = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.file");
+        boolean fileOk = "true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "");
+        checks.add(driftCheck("atlas.method.file", fileOk, "critical",
+                fileOk ? "Atlas file-based (Basic) auth is enabled."
+                        : "Atlas file-based auth is DISABLED (atlas.authentication.method.file=" + fileOn + "). OM's connector "
+                          + "only speaks HTTP Basic, so ingestion will get 401.",
+                fileOk ? null : "Re-run the OM deploy (KDPS re-asserts it idempotently) or set "
+                          + "atlas.authentication.method.file=true in Ambari and restart Atlas."));
+
+        String liveUser = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
+        String liveHash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
+        boolean userOk = expUser != null && expUser.equals(liveUser);
+        checks.add(driftCheck("atlas.federation.user", userOk, "critical",
+                (liveUser == null || liveUser.isBlank())
+                        ? "No openmetadata.federation.username present in atlas-env."
+                        : "atlas-env user='" + liveUser + "'" + (userOk ? " matches the release Secret."
+                          : " does NOT match the release Secret user '" + expUser + "'."),
+                userOk ? null : "Re-run the OM Atlas-federation step (actions/om-atlas-federation) to re-provision the user."));
+        boolean hashOk = expHash != null && expHash.equals(liveHash);
+        checks.add(driftCheck("atlas.federation.passwordHash", hashOk, "critical",
+                hashOk ? "Federation password hash in atlas-env matches the release Secret."
+                        : "Federation password hash in atlas-env does NOT match the release Secret (password rotated or edited by hand).",
+                hashOk ? null : "Re-run the OM Atlas-federation step so atlas-env and the Secret are re-synced, then restart Atlas."));
+
+        boolean restartPending = ambari.componentRestartRequired(cluster, "ATLAS", "ATLAS_SERVER");
+        report.put("restartPending", restartPending);
+        checks.add(driftCheck("atlas.restartPending", !restartPending, "warning",
+                restartPending ? "Atlas has a pending config-restart (stale configs) — recent changes are not yet loaded, "
+                          + "so the federation user may be inactive."
+                        : "Atlas has no pending config-restart.",
+                restartPending ? "Restart ATLAS_SERVER from Ambari so the latest users-credentials.properties is loaded." : null));
+
+        // DECISIVE runtime check: does the federation user actually authenticate to Atlas RIGHT NOW?
+        // users-credentials.properties is a DERIVED file (ODP metadata.py hook, regenerated only on restart),
+        // so stale_configs above can read "clean" even when the user was never materialized. This probe is the
+        // only signal that catches a config-correct-but-not-loaded Atlas (the exact gap that broke federation).
+        String atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
+                (expUser != null && expPlain != null)
+                        ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(atlasRestUrl, expUser, expPlain)
+                        : org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.UNKNOWN;
+        boolean authActive = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED;
+        boolean authNotLoaded = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED;
+        report.put("federationUserActive", authActive);
+        checks.add(driftCheck("atlas.federation.authProbe", authActive, authNotLoaded ? "critical" : "warning",
+                authActive
+                    ? "Federation user '" + expUser + "' authenticates to Atlas (" + atlasRestUrl + ") — federation is LIVE."
+                : authNotLoaded
+                    ? "Federation user '" + expUser + "' is NOT loaded in Atlas's running store (HTTP 401) at " + atlasRestUrl + ". "
+                      + "atlas-env is correct, but Atlas hasn't materialized users-credentials.properties (regenerated only on restart)."
+                    : "Could not probe Atlas auth at " + atlasRestUrl + " (no creds / unreachable) — inconclusive.",
+                authNotLoaded
+                    ? "Restart ATLAS_SERVER (the ODP hook writes the user into users-credentials.properties), or re-run the OM "
+                      + "Atlas-federation deploy with restart authorized — the deploy now self-heals via this same probe."
+                    : null));
+
+        boolean ok = checks.stream().allMatch(c -> Boolean.TRUE.equals(c.get("ok")) || !"critical".equals(c.get("severity")));
+        report.put("ok", ok);
+        LOG.info("checkAtlasFederationConfig({}/{}): ok={} fileOk={} userOk={} hashOk={} restartPending={} authProbe={}",
+                namespace, releaseName, ok, fileOk, userOk, hashOk, restartPending, probe);
+        return report;
+    }
+
+    private static Map<String, Object> driftCheck(String id, boolean ok, String severity, String detail, String remediation) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("ok", ok);
+        m.put("severity", severity);
+        m.put("detail", detail);
+        if (remediation != null) m.put("remediation", remediation);
+        return m;
+    }
+
+    /**
+     * One-click "Fix &amp; restart Atlas" from the config-check modal. Re-asserts the federation config
+     * idempotently (file auth + atlas-env user/hash from the release Secret) and submits an ATLAS_SERVER
+     * restart, returning the Ambari request id so the UI can poll progress. Non-blocking. The federation
+     * user becomes active once Atlas finishes restarting (the ODP metadata.py hook materializes it).
+     */
+    public Map<String, Object> fixAndRestartAtlasFederation(String namespace, String releaseName,
+            Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.Credentials creds =
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
+                        this.kubernetesService.getClient(), namespace, releaseName, null);
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+        boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
+                ambari, cluster, creds.username, creds.passwordSha256Hex, "ROLE_USER");
+
+        int requestId = ambari.submitComponentRestart(cluster, "ATLAS", "ATLAS_SERVER",
+                "KDPS: fix & restart Atlas to load OpenMetadata federation user '" + creds.username + "'");
+        String atlasUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
+
+        LOG.info("fixAndRestartAtlasFederation({}/{}): user='{}' fileAuthChanged={} envChanged={} atlasRestartRequestId={}",
+                namespace, releaseName, creds.username, fileAuthChanged, envChanged, requestId);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("requestId", requestId);
+        r.put("username", creds.username);
+        r.put("atlasUrl", atlasUrl);
+        r.put("configChanged", fileAuthChanged || envChanged);
+        r.put("message", "Atlas restart submitted (request " + requestId
+                + "). The federation user activates once Atlas finishes restarting.");
+        return r;
+    }
+
+    /** Proxy an Ambari request's live status + progress (for the Fix &amp; restart progress bar). */
+    public Map<String, Object> getAmbariRequestProgress(int requestId,
+            Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        return ambari.getRequestProgress(requestId);
+    }
+
     String provisionAtlasUserForOm(Map<String, Object> childParams) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
         String namespace   = (String) childParams.get("namespace");
@@ -8153,30 +8658,121 @@ public class CommandService {
         String role = stringValue(childParams.get("_atlasFederationRole"));
         if (role.isBlank()) role = "ROLE_USER";
 
-        // 1. Get-or-create credentials in a per-release K8s Secret
+        // 1. Resolve federation credentials. The operator may supply their own Secret
+        //    (e.g. Vault-synced via external-secrets) through atlasFederation.existingSecret; else
+        //    KDPS generates + manages <release>-atlas-federation. Same Secret feeds the OM side.
+        String operatorSecret = stringValue(childParams.get("_atlasFederationSecret"));
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.Credentials creds =
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
-                        this.kubernetesService.getClient(), namespace, releaseName, overrideUsername);
+                        this.kubernetesService.getClient(), namespace, releaseName, overrideUsername, operatorSecret);
 
-        // 2. Write atlas-env props in Ambari
+        // 2. Ambari config (both merge-idempotent → no-op causes no new config version):
+        //    (a) assert file-based auth is enabled — OM's Atlas connector only speaks HTTP Basic;
+        //    (b) write the federation user's hash into atlas-env (→ users-credentials.properties).
         String baseUriStr = (String) childParams.get("_baseUri");
         Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
         java.net.URI baseUri = java.net.URI.create(baseUriStr);
         AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
-        boolean configChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+        boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, role);
 
-        LOG.info("ATLAS_USER_PROVISION_OM: release='{}' user='{}' role='{}' secretName='{}-atlas-federation' "
-                        + "configChanged={} preExistingSecret={} (Atlas restart required after this step)",
-                releaseName, creds.username, role, releaseName, configChanged, creds.preExisting);
+        // 3. Decide if Atlas needs a restart. Atlas loads its file user store only at startup, so the
+        //    federation user is active only after a restart. The DECISIVE signal is a live auth-probe:
+        //    users-credentials.properties is a DERIVED file the ODP metadata.py hook regenerates ONLY on
+        //    restart, so Ambari's stale_configs (which tracks atlas-env, not that file) can read "false"
+        //    even when the user was never materialized into the running store. So probe Atlas directly:
+        //      NOT_LOADED (401) → restart (materializes the user);
+        //      LOADED (200/403) → already active → never restart (idempotent, even if we just rewrote config);
+        //      UNKNOWN (can't reach Atlas) → fall back to the config-change/stale heuristic.
+        //    The restart is gated on the operator's deploy-time authorization; a failed/slow restart is
+        //    logged, not fatal.
+        boolean configChanged = fileAuthChanged || envChanged;
+        boolean staleConfigs = ambari.componentRestartRequired(cluster, "ATLAS", "ATLAS_SERVER");
+        String atlasRestUrl = stringValue(childParams.get("_atlasHostPort"));
+        if (atlasRestUrl.isBlank()) {
+            atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
+        }
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
+                        atlasRestUrl, creds.username, creds.plaintextPassword);
+        boolean needsRestart;
+        String restartReason;
+        switch (probe) {
+            case LOADED:
+                needsRestart = false; restartReason = "auth-probe: user already authenticates (active)"; break;
+            case NOT_LOADED:
+                needsRestart = true;  restartReason = "auth-probe: user NOT loaded in Atlas (401) — restart materializes it"; break;
+            default: // UNKNOWN
+                needsRestart = configChanged || staleConfigs;
+                restartReason = "auth-probe inconclusive — fallback (configChanged=" + configChanged + ", stale=" + staleConfigs + ")";
+        }
+        boolean restartAuthorized = !"false".equalsIgnoreCase(stringValue(childParams.get("_atlasRestartAuthorized")));
+
+        LOG.info("ATLAS_USER_PROVISION_OM: release='{}' user='{}' role='{}' secret='{}' credsSource={} fileAuthChanged={} "
+                        + "envChanged={} staleConfigs={} authProbe={} atlasUrl='{}' needsRestart={} ({}) restartAuthorized={}",
+                releaseName, creds.username, role,
+                (operatorSecret != null && !operatorSecret.isBlank() ? operatorSecret : releaseName + "-atlas-federation"),
+                creds.preExisting ? "operator-or-existing" : "kdps-generated",
+                fileAuthChanged, envChanged, staleConfigs, probe, atlasRestUrl, needsRestart, restartReason, restartAuthorized);
+
+        Integer atlasRestartRequestId = null;
+        boolean restartSkipped = false;
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe postProbe = probe;
+        if (needsRestart && restartAuthorized) {
+            try {
+                int reqId = ambari.submitComponentRestart(cluster, "ATLAS", "ATLAS_SERVER",
+                        "KDPS: restart Atlas to activate the OpenMetadata federation user '" + creds.username + "'");
+                atlasRestartRequestId = reqId;
+                boolean ok = ambari.waitUntilComplete(reqId, 900L, java.util.concurrent.TimeUnit.SECONDS);
+                if (ok) {
+                    // Re-probe to CONFIRM the restart actually materialized + activated the user (closes the loop).
+                    postProbe = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
+                            atlasRestUrl, creds.username, creds.plaintextPassword);
+                    if (postProbe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED) {
+                        LOG.warn("ATLAS_USER_PROVISION_OM: Atlas restarted (requestId={}) but federation user '{}' STILL gets 401 — "
+                                + "verify atlas.authentication.method.file=true is in effect and the ODP metadata.py hook ran.",
+                                reqId, creds.username);
+                    } else {
+                        LOG.info("ATLAS_USER_PROVISION_OM: Atlas restarted (requestId={}); federation user '{}' post-restart probe={} ({}).",
+                                reqId, creds.username, postProbe,
+                                postProbe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED
+                                        ? "now authenticates" : "could not re-probe — assume active once Atlas is fully up");
+                    }
+                } else {
+                    LOG.warn("ATLAS_USER_PROVISION_OM: Atlas restart (requestId={}) did not complete in time; the federation "
+                            + "user may not be active yet — OM ingestion could see 401 until Atlas finishes restarting.", reqId);
+                }
+            } catch (Exception ex) {
+                LOG.warn("ATLAS_USER_PROVISION_OM: could not trigger Atlas restart via Ambari ({}). The user IS written to "
+                        + "atlas-env — restart ATLAS_SERVER manually so Atlas loads the federation user.", ex.toString());
+            }
+        } else if (needsRestart) {
+            restartSkipped = true;
+            LOG.warn("ATLAS_USER_PROVISION_OM: Atlas restart REQUIRED ({}) but the operator chose to SKIP. "
+                    + "Federation user '{}' will NOT be active until ATLAS_SERVER is restarted — OM ingestion will 401 until then.",
+                    restartReason, creds.username);
+        } else {
+            LOG.info("ATLAS_USER_PROVISION_OM: no Atlas restart needed ({}).", restartReason);
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("username", creds.username);
         result.put("role", role);
-        result.put("secretName", releaseName + "-atlas-federation");
+        result.put("secretName", (operatorSecret != null && !operatorSecret.isBlank()) ? operatorSecret : releaseName + "-atlas-federation");
+        result.put("credentialSource", creds.preExisting ? "operator-or-existing" : "kdps-generated");
+        result.put("fileAuthChanged", fileAuthChanged);
         result.put("configChanged", configChanged);
-        result.put("preExistingSecret", creds.preExisting);
+        result.put("authProbe", probe.toString());
+        result.put("needsRestart", needsRestart);
+        result.put("restartAuthorized", restartAuthorized);
         result.put("restartRequiredFor", "ATLAS/ATLAS_SERVER");
+        if (atlasRestartRequestId != null) {
+            result.put("atlasRestartRequestId", atlasRestartRequestId);
+            result.put("federationActiveAfterRestart",
+                    postProbe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED);
+        }
+        if (restartSkipped) result.put("atlasRestartSkipped", true);
         return gson.toJson(result);
     }
 
@@ -8226,112 +8822,43 @@ public class CommandService {
     }
 
     /**
-     * Body of {@code RANGER_POLICY_CREATE_ATLAS_OM_READ}. Resolves Ranger
-     * Admin URL + creds from Ambari config, then delegates to
-     * {@code OmAtlasProvisioning.createOrFindAtlasReadPolicy} which is
-     * idempotent (lookup-by-name first; only POST when absent) and polls
-     * the policy back via GET-by-id to confirm it's queryable (proxy signal
-     * for plugin-pull readiness on the Atlas side).
+     * Body of {@code RANGER_POLICY_CREATE_ATLAS_OM_READ} — the EXTERNAL-context path.
+     * The Ranger Admin URL + credentials come from the resolved external context
+     * (params {@code _rangerUrl} / {@code _rangerAdminUsername} / {@code _rangerAdminPassword}),
+     * since an external cluster has no {@code ranger-env} on this Ambari to read. Delegates
+     * to {@code OmAtlasProvisioning.createOrFindAtlasReadPolicy} (idempotent grant + poll).
+     *
+     * <p>MANAGED contexts never reach here — they use {@code RANGER_POLICY_GRANT_VIA_AMBARI},
+     * which delegates to the Ambari server so the view never handles the Ranger password.
      *
      * @return JSON: {@code {policyId, policyName, principal, atlasServiceName}}
      */
-    @SuppressWarnings("unchecked")
     String createRangerAtlasReadPolicyForOm(Map<String, Object> childParams) throws Exception {
         String cluster = (String) childParams.get("_cluster");
         String releaseName = (String) childParams.get("releaseName");
-        String baseUriStr = (String) childParams.get("_baseUri");
-        if (cluster == null || baseUriStr == null) {
-            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_CREATE_ATLAS_OM_READ params");
-        }
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
 
-        // ----- Ranger Admin URL (mirrors DiscoveryResource RANGER probe) -----
-        String httpsPort = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.https.port");
-        String httpPort  = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.http.port");
-        String tlsRaw    = ambari.getDesiredConfigProperty(cluster, "ranger-admin-site", "ranger.service.https.attrib.ssl.enabled");
-        boolean tls = "true".equalsIgnoreCase(tlsRaw == null ? "" : tlsRaw.trim());
-        String port = tls
-                ? (httpsPort == null || httpsPort.isBlank() ? "6182" : httpsPort.trim())
-                : (httpPort == null || httpPort.isBlank() ? "6080" : httpPort.trim());
-        java.util.List<String> hosts = ambari.getComponentHosts(cluster, "RANGER", "RANGER_ADMIN");
-        if (hosts == null || hosts.isEmpty()) {
-            throw new IllegalStateException("No RANGER_ADMIN hosts found on cluster '" + cluster + "'");
-        }
-        String rangerUrl = (tls ? "https://" : "http://") + hosts.get(0) + ":" + port;
-
-        // ----- Ranger Admin credentials -----
-        // Username + password live in `ranger-env` (`admin_username` is the literal
-        // user, `admin_password` is the SECRET-encoded reference Ambari uses).
-        // Resolution order:
-        //   1. Operator override via params (_rangerAdminUsername / _rangerAdminPassword)
-        //   2. Ambari `ranger-env` values, run through AmbariAliasResolver for
-        //      the password (handles `${alias=…}` form when present)
-        //   3. Dev-cluster fallback `admin/admin` (matches ODP default)
-        //
-        // The pragmatic fallback (3) is intentional: on a real cluster the
-        // operator should already have a non-default Ranger admin password; if
-        // resolution (2) fails it usually means the SECRET reference can't be
-        // resolved via view context, in which case operator override (1) is the
-        // expected path. We log a warning so the cluster admin sees the
-        // fallback path taken.
+        String rangerUrl  = stringValue(childParams.get("_rangerUrl"));
         String rangerUser = stringValue(childParams.get("_rangerAdminUsername"));
-        if (rangerUser.isBlank()) {
-            rangerUser = ambari.getDesiredConfigProperty(cluster, "ranger-env", "admin_username");
-        }
-        if (rangerUser == null || rangerUser.isBlank()) rangerUser = "admin";
-
         String rangerPass = stringValue(childParams.get("_rangerAdminPassword"));
-        if (rangerPass.isBlank()) {
-            String raw = ambari.getDesiredConfigProperty(cluster, "ranger-env", "admin_password");
-            if (raw != null && !raw.isBlank()) {
-                if (raw.startsWith("${alias=") && raw.endsWith("}")) {
-                    AmbariAliasResolver resolver = new AmbariAliasResolver(ctx);
-                    try {
-                        rangerPass = new String(resolver.resolve(ctx, raw));
-                    } catch (Exception ex) {
-                        LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: alias resolution for ranger-env.admin_password "
-                                + "failed ({}). Falling back to dev-default admin/admin.", ex.toString());
-                    }
-                } else if (raw.startsWith("SECRET:")) {
-                    // Ambari returns SECRET:<type>:<version>:<key> for view-context reads
-                    // of sensitive configs — the alias resolver can't directly decode
-                    // this form (it expects ${alias=}). Falling back to default.
-                    LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: ranger-env.admin_password is in SECRET-reference "
-                            + "form (not view-resolvable). Falling back to dev-default admin/admin. "
-                            + "Set _rangerAdminPassword override in step params for non-default clusters.");
-                } else {
-                    rangerPass = raw;
-                }
-            }
-        }
-        if (rangerPass.isBlank()) {
-            LOG.warn("RANGER_POLICY_CREATE_ATLAS_OM_READ: using dev-default Ranger admin password 'admin'. "
-                    + "For non-default clusters provide _rangerAdminPassword in step params.");
-            rangerPass = "admin";
+        if (rangerUrl.isBlank() || rangerUser.isBlank() || rangerPass.isBlank()) {
+            throw new IllegalStateException(
+                    "External-context Ranger grant requires _rangerUrl + _rangerAdminUsername + "
+                    + "_rangerAdminPassword in step params (set on the EXTERNAL platform context). "
+                    + "A MANAGED context should use RANGER_POLICY_GRANT_VIA_AMBARI instead.");
         }
 
-        // ----- Atlas service repo name in Ranger -----
-        // Default convention in ODP installs: <cluster_name>_atlas. Operators may
-        // override via service.json `atlasRangerServiceName` (passed in childParams
-        // by the dispatcher) for the rare case where the repo was renamed.
         String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
-        if (atlasService.isBlank()) atlasService = cluster + "_atlas";
+        if (atlasService.isBlank()) atlasService = (cluster == null ? "" : cluster) + "_atlas";
 
-        // ----- Principal: basic-auth username OR Kerberos principal -----
-        // Dispatcher passes _omPrincipal (the right form for the current auth mode).
         String principal = stringValue(childParams.get("_omPrincipal"));
         boolean isKerberos = "kerberos".equalsIgnoreCase(stringValue(childParams.get("_atlasAuthMode")));
         if (principal.isBlank()) {
-            throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_CREATE_ATLAS_OM_READ params "
-                    + "(the dispatcher should populate this with either the Atlas federation username or the OM "
-                    + "Kerberos principal depending on Atlas auth mode).");
+            throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_CREATE_ATLAS_OM_READ params.");
         }
 
         String policyName = "kdps-openmetadata-" + releaseName + "-read";
-        LOG.info("RANGER_POLICY_CREATE_ATLAS_OM_READ: rangerUrl='{}' atlasService='{}' principal='{}' isKerberos={} policyName='{}'",
-                rangerUrl, atlasService, principal, isKerberos, policyName);
+        LOG.info("RANGER_POLICY_CREATE_ATLAS_OM_READ (external): rangerUrl='{}' atlasService='{}' principal='{}' "
+                + "isKerberos={} policyName='{}'", rangerUrl, atlasService, principal, isKerberos, policyName);
 
         long policyId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindAtlasReadPolicy(
                 rangerUrl, rangerUser, rangerPass, atlasService, policyName, principal, isKerberos,
@@ -8343,6 +8870,82 @@ public class CommandService {
         result.put("atlasServiceName", atlasService);
         result.put("principal", principal);
         result.put("rangerUrl", rangerUrl);
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@code RANGER_POLICY_GRANT_VIA_AMBARI} — the MANAGED-context path. Delegates the
+     * Ranger grant to the Ambari server (POST {@code /clusters/{c}/ranger_policy}), which runs
+     * {@code EnsureRangerPolicyServerAction} with the Ranger admin credentials it holds — the
+     * view never sees the password.
+     *
+     * <p>Issues two grants because the Atlas Ranger servicedef forbids a single policy from
+     * spanning both resource sets:
+     * <ul>
+     *   <li>entities: {@code (entity-type, entity-classification, entity)} → {@code entity-read}</li>
+     *   <li>types: {@code (type-category, type)} → {@code type-read}</li>
+     * </ul>
+     *
+     * @return JSON: {@code {atlasServiceName, principal, entitiesRequestId, typesRequestId}}
+     */
+    String grantRangerAtlasReadViaAmbari(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_VIA_AMBARI params");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx,
+                baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
+        if (atlasService.isBlank()) atlasService = cluster + "_atlas";
+
+        String principal = stringValue(childParams.get("_omPrincipal"));
+        if (principal.isBlank()) {
+            throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_GRANT_VIA_AMBARI params.");
+        }
+
+        String base = "kdps-openmetadata-" + releaseName + "-read";
+        int timeoutSeconds = 60;
+
+        // Grant 1: entity read on the entity resource set.
+        int entitiesReq = ambari.submitRangerPolicyGrant(
+                atlasService, principal, "entity-read",
+                "{\"entity-type\":[\"*\"],\"entity-classification\":[\"*\"],\"entity\":[\"*\"]}",
+                base + "-entities",
+                "KDPS: OpenMetadata federation read access (entities)",
+                timeoutSeconds,
+                "KDPS Atlas federation: grant entity-read to " + principal);
+        if (!ambari.waitUntilComplete(entitiesReq, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ambari ranger_policy request " + entitiesReq
+                    + " (entities) did not complete successfully");
+        }
+
+        // Grant 2: type read on the type resource set.
+        int typesReq = ambari.submitRangerPolicyGrant(
+                atlasService, principal, "type-read",
+                "{\"type-category\":[\"*\"],\"type\":[\"*\"]}",
+                base + "-types",
+                "KDPS: OpenMetadata federation read access (types)",
+                timeoutSeconds,
+                "KDPS Atlas federation: grant type-read to " + principal);
+        if (!ambari.waitUntilComplete(typesReq, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ambari ranger_policy request " + typesReq
+                    + " (types) did not complete successfully");
+        }
+
+        LOG.info("RANGER_POLICY_GRANT_VIA_AMBARI: granted entity-read+type-read to '{}' on '{}' "
+                + "(Ambari requests {} + {})", principal, atlasService, entitiesReq, typesReq);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("atlasServiceName", atlasService);
+        result.put("principal", principal);
+        result.put("entitiesRequestId", entitiesReq);
+        result.put("typesRequestId", typesReq);
+        result.put("via", "ambari-server-action");
         return gson.toJson(result);
     }
 

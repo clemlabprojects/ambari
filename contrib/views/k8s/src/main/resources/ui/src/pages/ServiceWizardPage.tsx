@@ -17,12 +17,13 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal } from 'antd';
+import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider } from 'antd';
+import { ApiOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, type PlatformContext, type ResolvedContext } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -47,6 +48,12 @@ const ServiceWizardPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [repos, setRepos] = useState<HelmRepo[]>([]);
   const [securityProfiles, setSecurityProfiles] = useState<SecurityProfiles>({ defaultProfile: undefined, profiles: {} });
+  // Platform contexts (Atlas/Ranger integration target). Surfaced as a persistent
+  // selector beside the YAML preview so the operator always sees/controls which ODP
+  // platform a context-aware service (e.g. Atlas federation) integrates with.
+  const [contexts, setContexts] = useState<PlatformContext[]>([]);
+  const [resolvedSel, setResolvedSel] = useState<ResolvedContext | null>(null);
+  const [ctxDetailsOpen, setCtxDetailsOpen] = useState(false);
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
@@ -103,6 +110,13 @@ const ServiceWizardPage: React.FC = () => {
             setSecurityProfiles(sec);
             } catch (e: any) {
               console.warn('Security profiles load failed', e);
+            }
+
+            // Load platform contexts (best-effort) for the persistent context selector.
+            try {
+              setContexts(await getContexts());
+            } catch (e: any) {
+              console.warn('Platform contexts load failed', e);
             }
 
             // Initialize defaults
@@ -507,7 +521,43 @@ const ServiceWizardPage: React.FC = () => {
     return null;
   };
 
-  const handleDeploy = async () => {
+  // Resolve the selected platform context (live for managed) so the wizard can show the
+  // target + flag unmet requiresContext fields on an external context.
+  const selectedCtxId = (installValues as any)?.platformContextId || 'default';
+  useEffect(() => {
+    let cancelled = false;
+    getResolvedContext(selectedCtxId).then((r) => { if (!cancelled) setResolvedSel(r); })
+      .catch(() => { if (!cancelled) setResolvedSel(null); });
+    return () => { cancelled = true; };
+  }, [selectedCtxId]);
+
+  // Dotted-path get on the wizard form state (for evaluating requiresContext.when).
+  const dotGet = (obj: any, path: string) =>
+    path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+
+  // Required context fields not satisfied by the selected (external) context.
+  const unmetContextReqs: string[] = React.useMemo(() => {
+    const reqs = (def as any)?.requiresContext as any[] | undefined;
+    if (!reqs || !resolvedSel || resolvedSel.kind === 'MANAGED') return [];
+    const fields = resolvedSel.resolvedFields || {};
+    const secretsSet = resolvedSel.secretFieldsSet || [];
+    const missing: string[] = [];
+    for (const r of reqs) {
+      if (r.appliesTo && r.appliesTo !== resolvedSel.kind) continue;
+      if (r.when && !dotGet(installValues, r.when)) continue;
+      for (const fn of (r.fields || [])) {
+        const key = `${r.capability}.${fn}`;
+        if (!(key in fields) && !secretsSet.includes(key)) missing.push(key);
+      }
+    }
+    return Array.from(new Set(missing));
+  }, [def, resolvedSel, installValues]);
+
+  // Actual deploy submit. `atlasRestartAuthorized` carries the operator's choice from the
+  // pre-deploy restart-confirmation modal (true = let KDPS restart Atlas to activate the OM
+  // federation user; false = skip the restart, operator restarts manually). It is threaded to the
+  // backend via formValues._atlasRestartAuthorized and only affects the Atlas-federation path.
+  const doDeploy = async (atlasRestartAuthorized: boolean = true) => {
       const validationError = validateTlsPayload();
       if (validationError) {
         message.error(validationError);
@@ -620,6 +670,10 @@ const ServiceWizardPage: React.FC = () => {
                 ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
                  'deploymentMode','git',
                  'kerberos','tls','oidc'].forEach(k => { delete snap[k]; });
+                // ② Operator's Atlas-restart authorization from the pre-deploy confirmation modal.
+                // The ATLAS_USER_PROVISION_OM step reads this; "false" makes it write the federation
+                // user but skip the Atlas restart (the operator restarts manually). Default authorized.
+                snap._atlasRestartAuthorized = String(atlasRestartAuthorized);
                 return snap;
               })(),
           }, params);
@@ -633,12 +687,23 @@ const ServiceWizardPage: React.FC = () => {
       }
   };
 
+  // ② Pre-deploy restart confirmation. A federation deploy provisions the OM user in Atlas and must
+  // restart ATLAS_SERVER for Atlas to load it (file/basic auth is read at startup). We warn the
+  // operator and let them authorize the restart or skip it (deploy continues; they restart later).
+  // Non-federation deploys and upgrades are unaffected — they deploy immediately, default authorized.
+  const [atlasRestartModalOpen, setAtlasRestartModalOpen] = React.useState(false);
+  const atlasFederationOn = !!((installValues as any)?.atlasFederation?.enabled);
+  const handleDeploy = () => {
+      if (atlasFederationOn && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
+      void doDeploy(true);
+  };
+
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
       { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
-      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} /> },
     ];
@@ -715,6 +780,64 @@ const ServiceWizardPage: React.FC = () => {
         </Col>
 
         <Col span={8}>
+          {!!(def?.postDeploy?.atlasFederation || def?.atlasFederation) && (() => {
+            const selectedId = (installValues as any)?.platformContextId || 'default';
+            return (
+              <Card style={{ marginBottom: 16 }}
+                title={<span style={{ fontSize: 15 }}><ApiOutlined /> Platform context</span>}
+                extra={<Button size="small" type="link" onClick={() => setCtxDetailsOpen(true)}>Details</Button>}>
+                <Select
+                  size="large"
+                  style={{ width: '100%' }}
+                  value={selectedId}
+                  onChange={(v) => setInstallValues((prev: any) => ({ ...prev, platformContextId: v }))}
+                  options={(contexts.length ? contexts : [{ id: 'default', name: 'Ambari-managed cluster', kind: 'MANAGED' } as PlatformContext])
+                    .map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` }))}
+                  dropdownRender={(menu) => (
+                    <>
+                      {menu}
+                      <Divider style={{ margin: '6px 0' }} />
+                      <Button type="text" icon={<PlusOutlined />} style={{ width: '100%', textAlign: 'left' }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => window.open('#/contexts', '_blank')}>
+                        Add / manage platform contexts
+                      </Button>
+                    </>
+                  )}
+                />
+                {unmetContextReqs.length > 0 && (
+                  <Alert style={{ marginTop: 10 }} type="warning" showIcon
+                    message={<span>Context missing: <b>{unmetContextReqs.join(', ')}</b></span>} />
+                )}
+              </Card>
+            );
+          })()}
+
+          {/* #6: context details on demand (replaces the inline undertitle) */}
+          <Modal title={<span><ApiOutlined /> Platform context details</span>}
+            open={ctxDetailsOpen} onCancel={() => setCtxDetailsOpen(false)}
+            footer={<Button onClick={() => setCtxDetailsOpen(false)}>Close</Button>} width={560}>
+            {resolvedSel ? (
+              <Descriptions column={1} size="small" bordered>
+                <Descriptions.Item label="Context">
+                  {resolvedSel.name} {resolvedSel.kind === 'MANAGED' ? <Tag color="blue">Managed</Tag> : <Tag color="purple">External</Tag>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Atlas">
+                  {resolvedSel.atlasUrl
+                    ? <span>{resolvedSel.atlasUrl}<br/><Text type="secondary" style={{ fontSize: 12 }}>auth: {resolvedSel.atlasAuthMode} · authz: {resolvedSel.atlasAclMode}</Text></span>
+                    : <Text type="secondary">not present</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Ranger">
+                  {resolvedSel.kind === 'MANAGED'
+                    ? <Text type="secondary">managed by Ambari (policies applied server-side)</Text>
+                    : (resolvedSel.rangerUrl || <Text type="secondary">—</Text>)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Kerberos">
+                  {resolvedSel.kerberosRealm ? <Tag color="geekblue">{resolvedSel.kerberosRealm}</Tag> : <Text type="secondary">none</Text>}
+                </Descriptions.Item>
+              </Descriptions>
+            ) : <Text type="secondary">Resolving…</Text>}
+          </Modal>
           <Card
             title={<span>values.yaml preview</span>}
             extra={<Button size="small" onClick={() => setPreviewModalOpen(true)}>Open large view</Button>}
@@ -823,6 +946,36 @@ const ServiceWizardPage: React.FC = () => {
         navigate('/helm');
       }}
     />
+    <Modal
+      open={atlasRestartModalOpen}
+      title={<span><WarningOutlined style={{ color: '#faad14' }} /> Apache Atlas restart required</span>}
+      onCancel={() => setAtlasRestartModalOpen(false)}
+      footer={[
+        <Button key="cancel" onClick={() => setAtlasRestartModalOpen(false)}>Cancel</Button>,
+        <Button key="skip" onClick={() => { setAtlasRestartModalOpen(false); void doDeploy(false); }}>
+          Deploy, skip restart
+        </Button>,
+        <Button key="go" type="primary" onClick={() => { setAtlasRestartModalOpen(false); void doDeploy(true); }}>
+          Authorize restart &amp; deploy
+        </Button>,
+      ]}
+    >
+      <Typography.Paragraph>
+        This deployment enables <strong>OpenMetadata → Apache Atlas federation</strong>. KDPS provisions a
+        federation user in Atlas, but Atlas loads its user store only at startup — so <strong>ATLAS_SERVER
+        must be restarted</strong> for ingestion to authenticate. Without it, ingestion gets HTTP&nbsp;401
+        and no metadata is federated.
+      </Typography.Paragraph>
+      <Alert
+        type="warning" showIcon
+        message="Restarting Atlas briefly interrupts it on this Hadoop cluster"
+        description="The restart runs as an Ambari operation during the post-deploy steps (a couple of minutes) and only if Atlas config actually changed (idempotent). Other running OpenMetadata releases are unaffected."
+      />
+      <ul style={{ marginTop: 12, marginBottom: 0 }}>
+        <li><strong>Authorize restart &amp; deploy</strong> — KDPS restarts ATLAS_SERVER automatically once the federation user is written.</li>
+        <li><strong>Deploy, skip restart</strong> — the user is still provisioned, but federation stays inactive until you restart ATLAS_SERVER yourself (e.g. from Ambari).</li>
+      </ul>
+    </Modal>
     </>
   );
 };

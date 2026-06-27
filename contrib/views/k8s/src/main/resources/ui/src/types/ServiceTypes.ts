@@ -45,13 +45,33 @@ export interface ExternalAuthTargetFormField extends FormFieldBase {
     type: 'external-auth-target';
     target: string;
 }
+/**
+ * Renders the value KDPS derives for {@link contextField} on the selected Platform Context
+ * (e.g. "hive.hs2HostPort") as a read-only "blue" value, with an Override switch that reveals
+ * an editable input bound to {@link name}. On a MANAGED context the value is computed live from
+ * Ambari; on an EXTERNAL context with no resolved value the operator supplies {@link name}
+ * directly and the engine computes the connection from it. Makes it visually explicit that
+ * the endpoint/scheme/auth come from KDPS, not operator free-text.
+ */
+export interface ContextResolvedFormField extends FormFieldBase {
+    type: 'context-resolved';
+    contextField: string;       // "<capability>.<field>", e.g. "hive.hs2HostPort"
+    placeholder?: string;
+    required?: boolean;
+    disabled?: boolean;
+    // For an EXTERNAL context with no resolved value: render these raw-property sub-fields
+    // (e.g. transport + TLS) instead of a free-text box; the KDPS engine derives this field's
+    // value from them. This field's own `name` stays blank so the backend computes it.
+    externalFields?: FormField[];
+}
 export type FormField =
     | StandardFormField
     | ServiceSelectFormField
     | K8sDiscoveryFormField
     | SecretDiscoveryFormField
     | GroupFormField
-    | ExternalAuthTargetFormField;
+    | ExternalAuthTargetFormField
+    | ContextResolvedFormField;
 
 /**
  * One outbound connection the service can make (e.g. "hive", "ranger", "atlas").

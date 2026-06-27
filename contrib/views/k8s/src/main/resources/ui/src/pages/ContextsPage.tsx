@@ -1,0 +1,346 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import React, { useEffect, useState } from "react";
+import type { ColumnsType } from "antd/es/table";
+import {
+  Form, Input, Select, Button, Table, Space, Popconfirm,
+  Tooltip, message, Alert, Tag, Modal, Typography, Descriptions,
+} from "antd";
+import {
+  DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ApiOutlined,
+  DatabaseOutlined, SafetyCertificateOutlined, KeyOutlined,
+} from "@ant-design/icons";
+import {
+  getContexts, saveContext, deleteContext, getResolvedContext, getContextSchema,
+  type PlatformContext, type ResolvedContext, type ContextCapabilitySchema,
+} from "../api/client";
+import "./Page.css";
+
+const { Title, Text, Paragraph } = Typography;
+
+export default function ContextsPage() {
+  const [contexts, setContexts] = useState<PlatformContext[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<PlatformContext | null>(null);
+  const [resolved, setResolved] = useState<Record<string, ResolvedContext>>({});
+  const [detail, setDetail] = useState<{ ctx: PlatformContext; r?: ResolvedContext } | null>(null);
+  const [schema, setSchema] = useState<ContextCapabilitySchema[]>([]);
+  const [form] = Form.useForm();
+
+  useEffect(() => { getContextSchema().then(setSchema).catch(() => setSchema([])); }, []);
+
+  // Form field name for a capability field — flattened "<capability>.<name>".
+  const fieldKey = (cap: string, name: string) => `${cap}__${name}`;
+
+  const fetchContexts = async () => {
+    setLoading(true);
+    try {
+      const data = await getContexts();
+      setContexts(data);
+      // Resolve every context (operational/security view) — best-effort per context.
+      const entries = await Promise.all(data.map(async (c) => {
+        try { return [c.id, await getResolvedContext(c.id)] as const; }
+        catch { return [c.id, undefined] as const; }
+      }));
+      const map: Record<string, ResolvedContext> = {};
+      for (const [id, r] of entries) if (r) map[id] = r;
+      setResolved(map);
+    } catch (err: any) {
+      message.error(`Context loading error: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchContexts(); }, []);
+
+  // External-context schema fields: every capability field that isn't managed-only.
+  const externalFields = () =>
+    schema.flatMap((cap) =>
+      (cap.fields || [])
+        .filter((f) => f.appliesTo !== "MANAGED")
+        .map((f) => ({ cap, f })));
+
+  const openAdd = () => {
+    setEditing(null);
+    form.resetFields();
+    const init: any = { kind: "EXTERNAL" };
+    externalFields().forEach(({ cap, f }) => {
+      if (!f.secret && f.default !== undefined) init[fieldKey(cap.capability, f.name)] = f.default;
+    });
+    form.setFieldsValue(init);
+    setModalOpen(true);
+  };
+
+  const openEdit = (ctx: PlatformContext) => {
+    setEditing(ctx);
+    form.resetFields();
+    const vals: any = { id: ctx.id, name: ctx.name, kind: ctx.kind,
+      clusterName: ctx.clusterName, description: ctx.description };
+    externalFields().forEach(({ cap, f }) => {
+      if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+    });
+    form.setFieldsValue(vals);
+    setModalOpen(true);
+  };
+
+  const onFinish = async (values: any) => {
+    setSaving(true);
+    try {
+      const payload: PlatformContext = {
+        id: values.id, name: values.name, kind: "EXTERNAL",
+        clusterName: values.clusterName, description: values.description,
+        config: {}, secrets: {},
+      };
+      externalFields().forEach(({ cap, f }) => {
+        const v = values[fieldKey(cap.capability, f.name)];
+        if (v === undefined || v === null || v === "") return;
+        if (f.secret) payload.secrets![f.name] = v;       // only sent when typed → no clobber on edit
+        else payload.config![f.name] = v;
+      });
+      await saveContext(payload);
+      message.success(editing ? "Context updated" : "Context created");
+      setModalOpen(false);
+      fetchContexts();
+    } catch (err: any) {
+      message.error(`Save error: ${err}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteContext(id);
+      message.success("Context deleted");
+      fetchContexts();
+    } catch (err: any) {
+      message.error(`Delete error: ${err}`);
+    }
+  };
+
+  const authColor = (m?: string) =>
+    m === "kerberos" ? "geekblue" : m === "ldap" ? "gold" : m === "basic" ? "green" : "default";
+
+  const columns: ColumnsType<PlatformContext> = [
+    { title: "Name", dataIndex: "name", key: "name", render: (n: string, c) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{n}</Text>
+          {c.clusterName && <Text type="secondary" style={{ fontSize: 12 }}>{c.clusterName}</Text>}
+        </Space>
+      ) },
+    {
+      title: "Type", dataIndex: "kind", key: "kind", width: 110,
+      render: (k: string) => k === "MANAGED" ? <Tag color="blue">Managed</Tag> : <Tag color="purple">External</Tag>,
+    },
+    {
+      title: "Components", key: "components",
+      render: (_: any, c: PlatformContext) => {
+        const r = resolved[c.id];
+        if (!r) return <Text type="secondary">resolving…</Text>;
+        const tags = [];
+        if (r.atlasManaged || r.atlasUrl) tags.push(<Tag key="a" icon={<DatabaseOutlined />} color="cyan">Atlas</Tag>);
+        if (r.rangerManaged || r.rangerUrl) tags.push(<Tag key="r" icon={<SafetyCertificateOutlined />} color="volcano">Ranger</Tag>);
+        if (r.kerberosRealm) tags.push(<Tag key="k" icon={<KeyOutlined />} color="geekblue">Kerberos</Tag>);
+        return tags.length ? <Space size={4} wrap>{tags}</Space> : <Text type="secondary">—</Text>;
+      },
+    },
+    {
+      title: "Security", key: "security",
+      render: (_: any, c: PlatformContext) => {
+        const r = resolved[c.id];
+        if (!r) return null;
+        return (
+          <Space size={4} wrap>
+            <Tag color={authColor(r.atlasAuthMode)}>auth: {r.atlasAuthMode || "—"}</Tag>
+            {r.atlasAclMode && <Tag color={r.atlasAclMode === "ranger" ? "volcano" : "default"}>acl: {r.atlasAclMode}</Tag>}
+            {r.kerberosRealm && <Tag color="geekblue">{r.kerberosRealm}</Tag>}
+          </Space>
+        );
+      },
+    },
+    {
+      title: "Actions", key: "actions", fixed: "right", width: 130,
+      render: (_: any, c: PlatformContext) => (
+        <Space onClick={(e) => e.stopPropagation()}>
+          {c.kind === "EXTERNAL" && (
+            <Tooltip title="Edit">
+              <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(c)} />
+            </Tooltip>
+          )}
+          {c.id !== "default" && (
+            <Popconfirm title="Delete this context?" onConfirm={() => handleDelete(c.id)}>
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Title level={2}><ApiOutlined /> Platform Contexts</Title>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={fetchContexts}>Refresh</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>Add external context</Button>
+        </Space>
+      </div>
+
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="What is a platform context?"
+        description={
+          <span>
+            A context is an ODP platform environment (Atlas, Ranger, Kerberos) that KDPS services
+            integrate against. The <b>Managed</b> context is the cluster this Ambari manages — its
+            endpoints and credentials are resolved live, and Ranger operations are delegated to the
+            Ambari server (no admin password handled by KDPS). Add an <b>External</b> context to
+            integrate with a cluster Ambari does not manage (e.g. behind Knox).
+          </span>
+        }
+      />
+
+      <Table
+        columns={columns}
+        dataSource={contexts}
+        rowKey="id"
+        loading={loading}
+        pagination={false}
+        scroll={{ x: 900 }}
+        onRow={(c) => ({
+          onClick: () => setDetail({ ctx: c, r: resolved[c.id] }),
+          style: { cursor: "pointer" },
+        })}
+      />
+
+      <Modal
+        title={detail ? <span><ApiOutlined /> {detail.ctx.name}</span> : null}
+        open={!!detail}
+        footer={<Button onClick={() => setDetail(null)}>Close</Button>}
+        onCancel={() => setDetail(null)}
+        width={620}
+      >
+        {detail && (() => {
+          const r = detail.r;
+          const managed = detail.ctx.kind === "MANAGED";
+          return (
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="Type">
+                {managed ? <Tag color="blue">Managed</Tag> : <Tag color="purple">External</Tag>}
+              </Descriptions.Item>
+              {detail.ctx.clusterName && (
+                <Descriptions.Item label="Cluster">{detail.ctx.clusterName}</Descriptions.Item>
+              )}
+              <Descriptions.Item label="Atlas">
+                {r?.atlasManaged || r?.atlasUrl
+                  ? <Space direction="vertical" size={0}>
+                      <Text copyable>{r?.atlasUrl || "—"}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        auth: {r?.atlasAuthMode || "—"} · authorization: {r?.atlasAclMode || "—"}
+                      </Text>
+                    </Space>
+                  : <Text type="secondary">not present</Text>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Atlas Ranger repo">{r?.atlasRangerServiceName || "—"}</Descriptions.Item>
+              <Descriptions.Item label="Ranger">
+                {managed
+                  ? <Text type="secondary">managed by this Ambari (policies applied server-side)</Text>
+                  : <Space direction="vertical" size={0}>
+                      <Text copyable>{r?.rangerUrl || detail.ctx.config?.rangerUrl || "—"}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        admin user: {r?.rangerAdminUsername || detail.ctx.config?.rangerAdminUsername || "admin"}
+                        {detail.ctx.secretKeys?.includes("rangerAdminPassword") ? " · password set" : " · no password set"}
+                      </Text>
+                    </Space>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Kerberos">
+                {r?.kerberosRealm ? <Tag color="geekblue">{r.kerberosRealm}</Tag> : <Text type="secondary">none</Text>}
+              </Descriptions.Item>
+              {detail.ctx.description && (
+                <Descriptions.Item label="Description">{detail.ctx.description}</Descriptions.Item>
+              )}
+            </Descriptions>
+          );
+        })()}
+      </Modal>
+
+      <Modal
+        title={editing ? `Edit context — ${editing.id}` : "Add external context"}
+        open={modalOpen}
+        onOk={() => form.submit()}
+        confirmLoading={saving}
+        onCancel={() => setModalOpen(false)}
+        width={640}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={onFinish}>
+          <Form.Item name="id" label="ID"
+            rules={[{ required: true, message: "id is required" },
+                    { pattern: /^[a-z0-9-]+$/, message: "lowercase letters, digits and dashes only" }]}>
+            <Input placeholder="e.g. prod-atlas" disabled={!!editing} />
+          </Form.Item>
+          <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+            <Input placeholder="Human-readable name" />
+          </Form.Item>
+          <Form.Item name="description" label="Description">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+
+          {/* Fields rendered from the per-capability context schema (KDPS/contexts/capabilities/*.json).
+              A company adds a capability by dropping a fragment file — this form picks it up. */}
+          {schema.map((cap) => {
+            const fields = (cap.fields || []).filter((f) => f.appliesTo !== "MANAGED");
+            if (!fields.length) return null;
+            return (
+              <div key={cap.capability}>
+                <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 4, fontWeight: 600 }}>
+                  {cap.label || cap.capability}
+                </Paragraph>
+                {fields.map((f) => {
+                  const key = fieldKey(cap.capability, f.name);
+                  let input: React.ReactNode;
+                  if (f.type === "password") {
+                    input = <Input.Password placeholder={editing && f.secret ? "(unchanged)" : f.placeholder} />;
+                  } else if (f.type === "enum") {
+                    input = <Select options={(f.options || []).map((o) => ({ value: o, label: o }))} />;
+                  } else if (f.type === "boolean") {
+                    input = <Select options={[{ value: true, label: "true" }, { value: false, label: "false" }]} />;
+                  } else {
+                    input = <Input placeholder={f.placeholder} />;
+                  }
+                  return (
+                    <Form.Item key={key} name={key} label={f.label || f.name} tooltip={f.help}>
+                      {input}
+                    </Form.Item>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </Form>
+      </Modal>
+    </div>
+  );
+}

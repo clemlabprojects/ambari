@@ -285,6 +285,82 @@ const handleApiResponse = async (response: Response) => {
 export const deleteHelmRepo = (id: string) =>
   fetchJson<void>(`/helm/repos/${id}`, { method: "DELETE" });
 
+// ---------------------------------------------------------------------------
+// Platform contexts: named ODP environments (Atlas/Ranger/Kerberos endpoints +
+// auth) that KDPS services integrate against. The MANAGED default is auto-seeded
+// from the Ambari-managed cluster; EXTERNAL contexts are operator-defined.
+// ---------------------------------------------------------------------------
+
+export interface PlatformContext {
+  id: string;
+  name: string;
+  kind: "MANAGED" | "EXTERNAL";
+  clusterName?: string;
+  description?: string;
+  config?: Record<string, any>;
+  secretKeys?: string[];
+  // write-only: plaintext secrets keyed by name (e.g. { rangerAdminPassword: "..." })
+  secrets?: Record<string, string>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ResolvedContext {
+  id: string;
+  name: string;
+  kind: string;
+  clusterName?: string;
+  atlasUrl?: string;
+  atlasAuthMode?: string;
+  atlasAclMode?: string;
+  atlasManaged?: boolean;
+  atlasRangerServiceName?: string;
+  kerberosRealm?: string;
+  rangerManaged?: boolean;
+  rangerUrl?: string;
+  rangerAdminUsername?: string;
+}
+
+export interface ContextFieldDef {
+  name: string;
+  label?: string;
+  type?: string;        // string | password | enum | boolean
+  secret?: boolean;
+  managedResolver?: string;
+  appliesTo?: string;   // EXTERNAL | MANAGED
+  default?: any;
+  options?: string[];
+  placeholder?: string;
+  help?: string;
+}
+export interface ContextCapabilitySchema {
+  capability: string;
+  label?: string;
+  order?: number;
+  fields: ContextFieldDef[];
+}
+
+export const getContextSchema = (): Promise<ContextCapabilitySchema[]> =>
+  fetchJson<ContextCapabilitySchema[]>("/contexts/schema");
+
+export const getContexts = (): Promise<PlatformContext[]> =>
+  fetchJson<PlatformContext[]>("/contexts");
+
+export const getContext = (id: string): Promise<PlatformContext> =>
+  fetchJson<PlatformContext>(`/contexts/${encodeURIComponent(id)}`);
+
+export const getResolvedContext = (id: string): Promise<ResolvedContext> =>
+  fetchJson<ResolvedContext>(`/contexts/${encodeURIComponent(id)}/resolved`);
+
+export const saveContext = (ctx: PlatformContext): Promise<PlatformContext> =>
+  fetchJson<PlatformContext>("/contexts", {
+    method: "POST",
+    body: JSON.stringify(ctx),
+  });
+
+export const deleteContext = (id: string): Promise<void> =>
+  fetchJson<void>(`/contexts/${encodeURIComponent(id)}`, { method: "DELETE" });
+
 export async function deployHelm(
   payload: {
   chart: string; releaseName: string; namespace: string; values: any; serviceKey?: string;
@@ -652,6 +728,74 @@ export const registerReleaseOidcClient = async (namespace: string, releaseName: 
 export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ranger`;
   return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/** One Atlas-federation config-drift check result. */
+export interface AtlasFederationCheckItem {
+  id: string;
+  ok: boolean;
+  severity: 'critical' | 'warning' | string;
+  detail: string;
+  remediation?: string;
+}
+/** Report returned by the Atlas-federation config-drift check. */
+export interface AtlasFederationCheck {
+  namespace?: string;
+  release?: string;
+  ok: boolean;
+  federationConfigured: boolean;
+  restartPending?: boolean;
+  federationUserActive?: boolean;
+  checks: AtlasFederationCheckItem[];
+}
+/**
+ * Read-only Atlas-federation config-drift check for a deployed release. Surfaces operator-side
+ * Atlas changes (file auth disabled, federation user removed/renamed, password rotated, pending
+ * Atlas restart) that would break a running OM federation. Mutates nothing.
+ */
+export const checkReleaseAtlasFederation = async (
+  namespace: string,
+  releaseName: string,
+): Promise<AtlasFederationCheck> => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/atlas-federation-check`;
+  return fetchJson<AtlasFederationCheck>(requestPath, { method: 'GET' });
+};
+
+/** Result of the one-click "Fix & restart Atlas" action — returns the Ambari request id to poll. */
+export interface AtlasFixRestartResult {
+  requestId: number;
+  username?: string;
+  atlasUrl?: string;
+  configChanged?: boolean;
+  message?: string;
+}
+/** Live status of an Ambari request (for the Fix & restart progress bar). */
+export interface AmbariRequestProgress {
+  requestId: number;
+  status: string;
+  progressPercent: number;
+  completedTasks?: number;
+  totalTasks?: number;
+}
+/**
+ * Re-assert the Atlas federation config (idempotent) and restart ATLAS_SERVER. Returns the Ambari
+ * request id; poll {@link getAmbariRequestProgress} until status is COMPLETED, then re-run the check.
+ */
+export const fixRestartAtlasFederation = async (
+  namespace: string,
+  releaseName: string,
+): Promise<AtlasFixRestartResult> => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/atlas-federation-fix-restart`;
+  return fetchJson<AtlasFixRestartResult>(requestPath, { method: 'POST' });
+};
+/** Poll an Ambari request's status + progress percent. */
+export const getAmbariRequestProgress = async (
+  namespace: string,
+  releaseName: string,
+  requestId: number,
+): Promise<AmbariRequestProgress> => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ambari-request/${requestId}`;
+  return fetchJson<AmbariRequestProgress>(requestPath, { method: 'GET' });
 };
 
 /**

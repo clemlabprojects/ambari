@@ -37,6 +37,7 @@ const GlobalSecurityPage = React.lazy(() => import('./pages/GlobalSecurityPage')
 const GlobalConfigurationsPage = React.lazy(() => import('./pages/GlobalConfigurationsPage'));
 const CertificateAuthoritiesPage = React.lazy(() => import('./pages/CertificateAuthoritiesPage'));
 const ServiceWizardPage = React.lazy(() => import('./pages/ServiceWizardPage'));
+const ContextsPage = React.lazy(() => import('./pages/ContextsPage'));
 import { Spin } from 'antd';
 import '@ant-design/v5-patch-for-react-19';
 
@@ -76,6 +77,7 @@ const AppRouter: React.FC = () => {
         <Route path="/workloads" element={<WorkloadsPage />} />
         <Route path="/repositories" element={<RepositoriesPage />} />
         <Route path="/git-repositories" element={<GitRepositoriesPage />} />
+        <Route path="/contexts" element={<React.Suspense fallback={<Spin />}><ContextsPage /></React.Suspense>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>

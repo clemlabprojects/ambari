@@ -17,11 +17,11 @@
  */
 
 import React from 'react';
-import { Alert, Form, Input, Typography, Divider, Select, Radio, Card, Tag } from 'antd';
+import { Alert, Form, Input, Typography, Divider, Select, Radio, Card } from 'antd';
 import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
-import { ExternalAuthTargetsContext } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
+import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContextValuesContext, type ResolvedContextInfo } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
 
 interface InstallStepProps {
   definition: any;
@@ -30,6 +30,7 @@ interface InstallStepProps {
   mode: string;
   repos?: any[];
   securityProfiles?: Record<string, any>;
+  resolvedContext?: ResolvedContextInfo | null;
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -39,6 +40,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   mode,
   repos = [],
   securityProfiles = {},
+  resolvedContext,
 }) => {
   const [form] = Form.useForm();
 
@@ -100,7 +102,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
 
   if (mode === 'general') {
       return (
-        <Form form={form} layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
+        <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
             <Typography.Title level={4}>Deployment Basics</Typography.Title>
             <Form.Item name="releaseName" label="Release Name" rules={[{ required: true }]}>
                 <Input />
@@ -223,6 +225,14 @@ const InstallStep: React.FC<InstallStepProps> = ({
   const chosenProfileMode: string | undefined = profileName ? securityProfiles?.[profileName]?.mode : undefined;
   const authCascade = resolveAuthCascade(definition, chosenProfileMode);
   const cascadedChartFields = applyAuthCascadeToFields(chartFields, authCascade);
+  // Fields whose behaviour depends on the selected Platform Context — i.e. a field named
+  // as the `when` trigger of a requiresContext rule (e.g. atlasFederation.enabled). We give
+  // these a light accent + a cue so the operator sees the toggle⇄context dependency.
+  const contextLinkedFields = new Set<string>(
+    ((definition as any)?.requiresContext || [])
+      .map((r: any) => r?.when)
+      .filter((w: any): w is string => typeof w === 'string' && w.length > 0)
+  );
   // Step-1 incompatibility: service has authModes declared but no mapping for the chosen mode.
   const authBlock = (definition as any)?.securityCoupling?.authModes;
   const cascadeMismatch = Boolean(
@@ -231,7 +241,9 @@ const InstallStep: React.FC<InstallStepProps> = ({
 
   return (
     <ExternalAuthTargetsContext.Provider value={(definition as any)?.externalServiceTargets}>
-    <Form form={form} layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
+    <ResolvedContextValuesContext.Provider value={resolvedContext || undefined}>
+    <ContextLinkedFieldsContext.Provider value={contextLinkedFields}>
+    <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
         {mode === 'storage' ? (
           <>
             <Typography.Title level={4}>Storage / Mounts</Typography.Title>
@@ -244,59 +256,10 @@ const InstallStep: React.FC<InstallStepProps> = ({
         ) : (
           <>
             <Typography.Title level={4}>Chart Configuration</Typography.Title>
-            {data?.securityProfile && (() => {
-              const coupling: any = (definition as any)?.securityCoupling || {};
-              const requireIngress = coupling.requireIngress !== false;
-              const tlsProvisioning = String(coupling.tlsProvisioning
-                ?? (coupling.requireTls === false ? 'chart-managed' : 'k8s-view'));
-              const viewOwnsTls = tlsProvisioning === 'k8s-view';
-              if (!requireIngress && !viewOwnsTls) return null;
-              const minTlsMode = coupling.minTlsMode || 'signedByAmbariCA';
-              const tlsLabel: Record<string, string> = {
-                signedByAmbariCA: 'Sign with Ambari Internal CA',
-                signedByCompanyCA: 'Sign with Company CA',
-                bringYourOwn: 'Bring your own Secret',
-                uploadLeaf: 'Upload cert + key',
-              };
-              return (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message={`Authentication enforced via security profile "${data.securityProfile}" — TLS is mandatory.`}
-                  description={
-                    <span>
-                      OAuth callbacks reject <code>http://</code> redirect URIs and session cookies need the <code>Secure</code> flag,
-                      so the wizard has pre-selected <strong>Enable Ingress</strong> and TLS mode <strong>{tlsLabel[minTlsMode] || minTlsMode}</strong>.
-                      You can pick a different TLS mode below (<em>Bring your own Secret</em>, <em>Upload cert + key</em>,
-                      or <em>Sign with Company CA</em>), but <em>None</em> is not a valid choice with this profile.
-                    </span>
-                  }
-                />
-              );
-            })()}
-            {authCascade && (
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message={
-                  <span>
-                    Authentication mode set by security profile
-                    {profileName ? <Tag style={{ marginLeft: 8 }}>{profileName}</Tag> : null}
-                    {chosenProfileMode ? <Tag color="blue">mode: {chosenProfileMode}</Tag> : null}
-                  </span>
-                }
-                description={
-                  <span>
-                    The field <code>{authCascade.field}</code> is{' '}
-                    {authCascade.locked ? 'locked' : 'pre-set'} to <strong>{authCascade.value}</strong>.
-                    Server-side overrides enforce this at deploy time regardless of the form value,
-                    so this cascade keeps the display honest.
-                  </span>
-                }
-              />
-            )}
+            {/* Verbose TLS / auth-cascade explanatory alerts removed — the TLS mode + auth
+                field are still pre-selected/locked server-side; the inline field help covers it
+                without a wall of warning text at the top of every step-3 view. The actionable
+                mismatch warning below is kept. */}
             {cascadeMismatch && (
               <Alert
                 type="warning"
@@ -314,6 +277,8 @@ const InstallStep: React.FC<InstallStepProps> = ({
             {cascadedChartFields.length === 0 ? (
               <Typography.Text type="secondary">No chart fields defined.</Typography.Text>
             ) : (
+              // DynamicFormField applies the context-link accent itself (via
+              // ContextLinkedFieldsContext) so it reaches fields nested inside groups too.
               cascadedChartFields.map((f: any) => (
                 <DynamicFormField key={f.name} field={f} />
               ))
@@ -321,6 +286,8 @@ const InstallStep: React.FC<InstallStepProps> = ({
           </>
         )}
     </Form>
+    </ContextLinkedFieldsContext.Provider>
+    </ResolvedContextValuesContext.Provider>
     </ExternalAuthTargetsContext.Provider>
   );
 };

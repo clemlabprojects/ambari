@@ -63,7 +63,7 @@ public final class OmAtlasProvisioning {
     /** Holds the resolved OM federation credentials (one per release). */
     public static final class Credentials {
         public final String username;
-        public final String plaintextPassword;  // only set on freshly-generated creds
+        public final String plaintextPassword;  // populated on all paths (generated, or read back from the Secret) — used for the Atlas auth-probe
         public final String passwordSha256Hex;
         public final boolean preExisting;       // true when read from existing Secret
         Credentials(String u, String pw, String hash, boolean pre) {
@@ -88,9 +88,44 @@ public final class OmAtlasProvisioning {
                                               String namespace,
                                               String releaseName,
                                               String explicitUsername) {
+        return resolveOrCreate(k8s, namespace, releaseName, explicitUsername, null);
+    }
+
+    /**
+     * As {@link #resolveOrCreate(KubernetesClient, String, String, String)} but with an optional
+     * operator-provided Secret name. When set and that Secret carries a {@code password} (and
+     * optionally {@code username}), it is the SOURCE OF TRUTH — typically synced from Hashicorp
+     * Vault by the external-secrets operator, or pre-created by the operator — and KDPS does NOT
+     * generate a password. The same Secret is read by the OM-side connection
+     * ({@code atlasFederation.existingSecret}), keeping the Atlas-side hash and the OM-side
+     * plaintext password in sync. The operator's Secret is never mutated.
+     */
+    public static Credentials resolveOrCreate(KubernetesClient k8s,
+                                              String namespace,
+                                              String releaseName,
+                                              String explicitUsername,
+                                              String operatorSecretName) {
         String secretName = releaseName + "-atlas-federation";
         String defaultUser = (explicitUsername != null && !explicitUsername.isBlank())
                 ? explicitUsername.trim() : "openmetadata-federation";
+
+        if (operatorSecretName != null && !operatorSecretName.isBlank()
+                && !operatorSecretName.trim().equals(secretName)) {
+            Secret op = k8s.secrets().inNamespace(namespace).withName(operatorSecretName.trim()).get();
+            Map<String, String> od = (op != null) ? op.getData() : null;
+            if (od != null && od.containsKey("password")) {
+                String user = od.containsKey("username")
+                        ? new String(Base64.getDecoder().decode(od.get("username")), StandardCharsets.UTF_8)
+                        : defaultUser;
+                String pw = new String(Base64.getDecoder().decode(od.get("password")), StandardCharsets.UTF_8);
+                LOG.info("OmAtlasProvisioning: using operator-provided Secret '{}/{}' (e.g. Vault via external-secrets) "
+                                + "for OM Atlas federation user '{}' — KDPS will not generate a password.",
+                        namespace, operatorSecretName.trim(), user);
+                return new Credentials(user, pw, sha256Hex(pw), true);
+            }
+            LOG.warn("OmAtlasProvisioning: operator secret '{}/{}' missing or has no 'password' key — falling back to the "
+                    + "KDPS-managed Secret '{}'.", namespace, operatorSecretName.trim(), secretName);
+        }
 
         Secret existing = k8s.secrets().inNamespace(namespace).withName(secretName).get();
         if (existing != null && existing.getData() != null) {
@@ -172,6 +207,117 @@ public final class OmAtlasProvisioning {
         props.put("openmetadata.federation.role", role != null && !role.isBlank() ? role : "ROLE_USER");
         return ambari.updateClusterConfig(cluster, "atlas-env", props,
                 "kdps-om-atlas-federation-" + System.currentTimeMillis());
+    }
+
+    /**
+     * Idempotently ensure Atlas accepts the file-based (basic-auth) user store the OM federation
+     * user lives in: asserts {@code application-properties: atlas.authentication.method.file=true}
+     * and sets the user-store filename ONLY if currently unset (so an operator's custom filename is
+     * preserved). {@code updateClusterConfig} merges + diffs, so this is a true no-op (no new config
+     * version, no Atlas restart) when file auth is already enabled.
+     *
+     * <p>Non-breaking by design: Atlas runs file/kerberos/ldap auth simultaneously, so enabling file
+     * auth never disables the others, and KDPS only ever asserts {@code true} (never flips to false).
+     * OM's Atlas connector only speaks HTTP Basic, so file auth is a hard requirement for federation.
+     *
+     * @return {@code true} iff the config actually changed (i.e. an Atlas restart is now warranted).
+     */
+    public static boolean ensureFileAuthEnabled(AmbariActionClient ambari, String cluster) throws Exception {
+        Map<String, String> props = new LinkedHashMap<>();
+        props.put("atlas.authentication.method.file", "true");
+        String curFilename = ambari.getDesiredConfigProperty(
+                cluster, "application-properties", "atlas.authentication.method.file.filename");
+        if (curFilename == null || curFilename.isBlank()) {
+            props.put("atlas.authentication.method.file.filename", "{{conf_dir}}/users-credentials.properties");
+        }
+        boolean changed = ambari.updateClusterConfig(cluster, "application-properties", props,
+                "kdps-om-atlas-fileauth");
+        LOG.info("OmAtlasProvisioning: ensured Atlas file-based auth is enabled for OM federation "
+                + "(method.file=true; existing filename preserved); configChanged={}", changed);
+        return changed;
+    }
+
+    /** Result of a live federation-user auth probe against Atlas. */
+    public enum AtlasAuthProbe {
+        /** HTTP 200/403 — the user authenticates (it IS in Atlas's running user store; 403 = exists, not authorized). */
+        LOADED,
+        /** HTTP 401 — the user is NOT in the running store (given KDPS keeps hash==Secret, "not materialized yet"). */
+        NOT_LOADED,
+        /** Could not determine (no URL/creds, network error, 5xx) — caller should fall back to the config heuristic. */
+        UNKNOWN
+    }
+
+    /**
+     * Resolve the Atlas REST base URL from cluster config: prefer {@code atlas.rest.address}
+     * (the canonical advertised URL), else build {@code scheme://<ATLAS_SERVER host>:<port>}
+     * from {@code atlas.enableTLS} + the http/https port. Returns {@code null} if unresolvable.
+     */
+    public static String resolveAtlasRestUrl(AmbariActionClient ambari, String cluster) {
+        try {
+            String addr = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.rest.address");
+            if (addr != null && !addr.isBlank()) {
+                String first = addr.split(",")[0].trim();
+                if (!first.isEmpty()) return first.replaceAll("/+$", "");
+            }
+            java.util.List<String> hosts = ambari.getComponentHosts(cluster, "ATLAS", "ATLAS_SERVER");
+            if (hosts != null && !hosts.isEmpty()) {
+                String tls = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.enableTLS");
+                boolean https = "true".equalsIgnoreCase(tls != null ? tls.trim() : "");
+                String port = ambari.getDesiredConfigProperty(cluster, "application-properties",
+                        https ? "atlas.server.https.port" : "atlas.server.http.port");
+                if (port == null || port.isBlank()) port = https ? "21443" : "21000";
+                return (https ? "https://" : "http://") + hosts.get(0) + ":" + port.trim();
+            }
+        } catch (Exception e) {
+            LOG.warn("OmAtlasProvisioning: could not resolve Atlas REST URL for cluster '{}' ({})", cluster, e.toString());
+        }
+        return null;
+    }
+
+    /**
+     * Probe whether the OM federation user is ACTUALLY loaded in Atlas's running user store —
+     * the decisive signal for "does Atlas need a restart".
+     *
+     * <p>Atlas's {@code users-credentials.properties} is a DERIVED file the ODP {@code metadata.py}
+     * hook regenerates ONLY on Atlas START/RESTART — never on a plain config push. Ambari's
+     * {@code stale_configs} flag tracks {@code atlas-env} (the managed config), NOT that derived file,
+     * so it can read {@code false} even when the federation user was never materialized into the live
+     * store. A direct auth probe is the only reliable check.
+     *
+     * <p>Given KDPS keeps the {@code atlas-env} password hash equal to the release Secret password
+     * (invariant), the outcome is unambiguous: 200/403 → {@link AtlasAuthProbe#LOADED};
+     * 401 → {@link AtlasAuthProbe#NOT_LOADED} (a restart materializes it); anything else / error →
+     * {@link AtlasAuthProbe#UNKNOWN} (fail-safe — caller keeps current behaviour, no forced restart).
+     * TLS trust matches the existing Ranger calls ({@link #configureSsl}, trust-all in dev).
+     */
+    public static AtlasAuthProbe probeFederationUser(String atlasRestUrl, String username, String plaintextPassword) {
+        if (atlasRestUrl == null || atlasRestUrl.isBlank() || username == null || username.isBlank()
+                || plaintextPassword == null || plaintextPassword.isEmpty()) {
+            return AtlasAuthProbe.UNKNOWN;
+        }
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(atlasRestUrl.trim().replaceAll("/+$", "") + "/api/atlas/admin/version");
+            conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);                 // trust-all (dev) + no-op on plain http
+            conn.setConnectTimeout(5_000);      // tighter than configureSsl's defaults — a probe must not stall a deploy
+            conn.setReadTimeout(8_000);
+            conn.setRequestMethod("GET");
+            String basic = Base64.getEncoder().encodeToString(
+                    (username + ":" + plaintextPassword).getBytes(StandardCharsets.UTF_8));
+            conn.setRequestProperty("Authorization", "Basic " + basic);
+            int code = conn.getResponseCode();
+            if (code == 200 || code == 403) return AtlasAuthProbe.LOADED;
+            if (code == 401) return AtlasAuthProbe.NOT_LOADED;
+            LOG.warn("OmAtlasProvisioning: Atlas federation auth-probe to {} returned HTTP {} — treating as UNKNOWN.", url, code);
+            return AtlasAuthProbe.UNKNOWN;
+        } catch (Exception e) {
+            LOG.warn("OmAtlasProvisioning: Atlas federation auth-probe to {} failed ({}) — UNKNOWN (no forced restart).",
+                    atlasRestUrl, e.toString());
+            return AtlasAuthProbe.UNKNOWN;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     /**
@@ -496,6 +642,134 @@ public final class OmAtlasProvisioning {
         throw new IllegalStateException("Ranger policy id=" + policyId
                 + " updated but did not become readable within " + timeoutMs
                 + "ms — last error: " + (lastErr == null ? "n/a" : lastErr.getMessage()));
+    }
+
+    /**
+     * EXTERNAL-context path: grant {@code omUser} the Hive {@code select} access OpenMetadata
+     * metadata ingestion needs, in the given Hive Ranger service. Appends a policyItem to the
+     * plugin's default "all - database, table, column" policy (avoids Ranger's duplicate-resource
+     * rejection 3010); falls back to creating a dedicated policy if the default is missing.
+     * Idempotent. (MANAGED contexts grant via the Ambari server instead.)
+     */
+    public static long createOrFindHiveReadPolicy(String rangerAdminUrl, String rangerUser,
+                                                  String rangerPassword, String hiveServiceName,
+                                                  String policyName, String omUser,
+                                                  long timeoutMs) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        ensureRangerUserExists(rangerAdminUrl, basic, omUser);
+
+        final String DEFAULT_POLICY = "all - database, table, column";
+        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, hiveServiceName, DEFAULT_POLICY);
+        if (defaultId != null) {
+            return appendHiveSelectToPolicy(rangerAdminUrl, basic, DEFAULT_POLICY, defaultId, omUser, timeoutMs);
+        }
+
+        // Default policy missing (operator deleted it) — create a dedicated one.
+        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, hiveServiceName, policyName);
+        if (existing != null) return existing;
+
+        JsonObject p = new JsonObject();
+        p.addProperty("service", hiveServiceName);
+        p.addProperty("name", policyName);
+        p.addProperty("description", "KDPS-managed: read access for the OpenMetadata Hive metadata ingestion.");
+        p.addProperty("isAuditEnabled", true);
+        p.addProperty("isEnabled", true);
+        p.addProperty("policyType", 0);
+        p.addProperty("policyPriority", 0);
+        JsonObject resources = new JsonObject();
+        for (String t : new String[]{"database", "table", "column"}) {
+            JsonObject r = new JsonObject();
+            r.add("values", arrayOf("*"));
+            r.addProperty("isExcludes", false);
+            r.addProperty("isRecursive", false);
+            resources.add(t, r);
+        }
+        p.add("resources", resources);
+        JsonObject item = new JsonObject();
+        item.add("users", arrayOf(omUser));
+        item.add("groups", new JsonArray());
+        item.add("roles", new JsonArray());
+        item.add("accesses", arrayOfObjects(new String[]{"select"}, "isAllowed", true));
+        item.addProperty("delegateAdmin", false);
+        JsonArray items = new JsonArray();
+        items.add(item);
+        p.add("policyItems", items);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
+        configureSsl(conn);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", basic);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        try (var os = conn.getOutputStream()) {
+            os.write(GSON.toJson(p).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IllegalStateException("Ranger Hive policy create failed: HTTP " + code + " — " + readBody(conn, true));
+        }
+        long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
+        LOG.info("OmAtlasProvisioning: Ranger Hive read policy '{}' created (id={})", policyName, id);
+        return id;
+    }
+
+    /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
+    private static long appendHiveSelectToPolicy(String rangerAdminUrl, String basic, String policyName,
+                                                 long policyId, String omUser, long timeoutMs) throws Exception {
+        HttpURLConnection get = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
+        configureSsl(get);
+        get.setRequestProperty("Authorization", basic);
+        if (get.getResponseCode() != 200) {
+            throw new IllegalStateException("Ranger policy GET id=" + policyId + " failed: " + readBody(get, true));
+        }
+        JsonObject policy = JsonParser.parseString(readBody(get, false)).getAsJsonObject();
+        JsonArray policyItems = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
+                ? policy.getAsJsonArray("policyItems") : new JsonArray();
+        for (int i = 0; i < policyItems.size(); i++) {
+            JsonObject ex = policyItems.get(i).getAsJsonObject();
+            JsonArray users = ex.has("users") ? ex.getAsJsonArray("users") : new JsonArray();
+            boolean hasUser = false;
+            for (int j = 0; j < users.size(); j++) if (omUser.equals(users.get(j).getAsString())) { hasUser = true; break; }
+            if (!hasUser) continue;
+            JsonArray accesses = ex.has("accesses") ? ex.getAsJsonArray("accesses") : new JsonArray();
+            for (int k = 0; k < accesses.size(); k++) {
+                JsonObject a = accesses.get(k).getAsJsonObject();
+                if ("select".equals(a.has("type") ? a.get("type").getAsString() : null)
+                        && a.has("isAllowed") && a.get("isAllowed").getAsBoolean()) {
+                    LOG.info("OmAtlasProvisioning: Hive policy '{}' (id={}) already grants 'select' to '{}' — no-op",
+                            policyName, policyId, omUser);
+                    return policyId;
+                }
+            }
+        }
+        JsonObject newItem = new JsonObject();
+        newItem.add("users", arrayOf(omUser));
+        newItem.add("groups", new JsonArray());
+        newItem.add("roles", new JsonArray());
+        newItem.add("accesses", arrayOfObjects(new String[]{"select"}, "isAllowed", true));
+        newItem.addProperty("delegateAdmin", false);
+        policyItems.add(newItem);
+        policy.add("policyItems", policyItems);
+
+        HttpURLConnection put = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
+        configureSsl(put);
+        put.setRequestMethod("PUT");
+        put.setRequestProperty("Authorization", basic);
+        put.setRequestProperty("Content-Type", "application/json");
+        put.setDoOutput(true);
+        try (var os = put.getOutputStream()) {
+            os.write(GSON.toJson(policy).getBytes(StandardCharsets.UTF_8));
+        }
+        int pc = put.getResponseCode();
+        if (pc < 200 || pc >= 300) {
+            throw new IllegalStateException("Ranger Hive policy update failed: HTTP " + pc + " — " + readBody(put, true));
+        }
+        LOG.info("OmAtlasProvisioning: appended Hive 'select' for '{}' to policy '{}' (id={})", omUser, policyName, policyId);
+        return policyId;
     }
 
     private static Long lookupAtlasPolicyByName(String rangerAdminUrl, String authHeader,

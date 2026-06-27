@@ -18,9 +18,9 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col } from 'antd';
+import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { API_BASE_URL } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
@@ -347,6 +347,61 @@ const HelmReleasesPage: React.FC = () => {
     }
   };
 
+  // Read-only Atlas-federation config-drift check. Surfaces operator-side Atlas changes (file auth
+  // off, federation user removed/renamed, password rotated, pending restart) that break federation.
+  const [atlasCheck, setAtlasCheck] = useState<{ open: boolean; loading: boolean; releaseName: string; report: AtlasFederationCheck | null }>(
+    { open: false, loading: false, releaseName: '', report: null });
+  // Live progress of the one-click "Fix & restart Atlas" action (re-assert config + ATLAS_SERVER restart).
+  const [fixRestart, setFixRestart] = useState<{ running: boolean; requestId: number | null; percent: number; status: string }>(
+    { running: false, requestId: null, percent: 0, status: '' });
+  const runAtlasFederationCheck = async (release: HelmRelease) => {
+    setFixRestart({ running: false, requestId: null, percent: 0, status: '' });
+    setAtlasCheck({ open: true, loading: true, releaseName: release.name, report: null });
+    try {
+      const report = await checkReleaseAtlasFederation(release.namespace, release.name);
+      setAtlasCheck({ open: true, loading: false, releaseName: release.name, report });
+    } catch (e: any) {
+      message.error(e?.message || 'Atlas federation config check failed');
+      setAtlasCheck({ open: false, loading: false, releaseName: '', report: null });
+    }
+  };
+  const runFixRestart = async (namespace: string, releaseName: string) => {
+    setFixRestart({ running: true, requestId: null, percent: 0, status: 'submitting' });
+    try {
+      const res = await fixRestartAtlasFederation(namespace, releaseName);
+      setFixRestart({ running: true, requestId: res.requestId, percent: 0, status: 'IN_PROGRESS' });
+      const poll = async () => {
+        try {
+          const p = await getAmbariRequestProgress(namespace, releaseName, res.requestId);
+          const st = (p.status || '').toUpperCase();
+          const pct = Math.round(p.progressPercent || 0);
+          if (['COMPLETED', 'FAILED', 'ABORTED', 'TIMEDOUT'].includes(st)) {
+            setFixRestart({ running: false, requestId: res.requestId, percent: pct, status: st });
+            if (st === 'COMPLETED') {
+              message.success('Atlas restarted — re-checking federation…');
+            } else {
+              message.error(`Atlas restart ${st}`);
+            }
+            try {
+              const report = await checkReleaseAtlasFederation(namespace, releaseName);
+              setAtlasCheck((prev) => ({ ...prev, open: true, loading: false, report }));
+            } catch { /* leave prior report */ }
+            return;
+          }
+          setFixRestart({ running: true, requestId: res.requestId, percent: pct, status: st || 'IN_PROGRESS' });
+          setTimeout(poll, 4000);
+        } catch (e: any) {
+          setFixRestart({ running: false, requestId: res.requestId, percent: 0, status: 'ERROR' });
+          message.error(e?.message || 'Failed to poll Atlas restart progress');
+        }
+      };
+      setTimeout(poll, 3000);
+    } catch (e: any) {
+      setFixRestart({ running: false, requestId: null, percent: 0, status: 'ERROR' });
+      message.error(e?.message || 'Fix & restart failed');
+    }
+  };
+
     const triggerOidcRegistration = async (release: HelmRelease) => {
     const hide = message.loading(`Registering OIDC client for ${release.name}...`, 0);
     try {
@@ -566,6 +621,12 @@ const HelmReleasesPage: React.FC = () => {
           icon: <SafetyCertificateOutlined />,
           label: 'Reapply Ranger repository',
           onClick: () => triggerRangerRepositoryReapply(record)
+        }] : []),
+        ...(record.serviceKey === 'OPENMETADATA' ? [{
+          key: 'check-atlas-federation',
+          icon: <SafetyCertificateOutlined />,
+          label: 'Check Atlas federation config',
+          onClick: () => runAtlasFederationCheck(record)
         }] : []),
         // Service.json-declared replayable post-deploy actions. The list is empty
         // for services that don't surface any — gate the spread on length so we
@@ -1132,6 +1193,75 @@ const HelmReleasesPage: React.FC = () => {
                 setWatchedCommandId(undefined);
               }}
             />
+            <Modal
+              open={atlasCheck.open}
+              title={`Atlas federation config — ${atlasCheck.releaseName}`}
+              onCancel={() => setAtlasCheck({ open: false, loading: false, releaseName: '', report: null })}
+              footer={[<Button key="close" onClick={() => setAtlasCheck({ open: false, loading: false, releaseName: '', report: null })}>Close</Button>]}
+              width={680}
+            >
+              {atlasCheck.loading ? (
+                <Skeleton active />
+              ) : !atlasCheck.report ? (
+                <Typography.Text type="secondary">No report.</Typography.Text>
+              ) : !atlasCheck.report.federationConfigured ? (
+                <Typography.Paragraph type="secondary">
+                  No KDPS-provisioned Atlas federation user for this release — nothing to drift-check.
+                </Typography.Paragraph>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <Tag color={atlasCheck.report.ok ? 'green' : 'red'} style={{ fontSize: 13, padding: '2px 10px' }}>
+                      {atlasCheck.report.ok ? 'CONFIG CONSISTENT' : 'DRIFT DETECTED'}
+                    </Tag>
+                    {atlasCheck.report.restartPending && <Tag color="orange">Atlas restart pending</Tag>}
+                    {atlasCheck.report.federationUserActive === true && <Tag color="green">Federation LIVE</Tag>}
+                    {atlasCheck.report.federationUserActive === false && <Tag color="red">Federation user NOT loaded</Tag>}
+                  </div>
+                  {(atlasCheck.report.federationUserActive === false || atlasCheck.report.restartPending || !atlasCheck.report.ok) && (
+                    <div style={{ marginBottom: 14 }}>
+                      <Button
+                        type="primary"
+                        danger={atlasCheck.report.federationUserActive === false}
+                        icon={<ReloadOutlined />}
+                        loading={fixRestart.running}
+                        disabled={fixRestart.running}
+                        onClick={() => {
+                          const ns = atlasCheck.report?.namespace;
+                          if (ns) { runFixRestart(ns, atlasCheck.releaseName); }
+                          else { message.error('Release namespace unknown — reopen the check.'); }
+                        }}
+                      >
+                        {fixRestart.running ? `Restarting Atlas… (${fixRestart.status})` : 'Fix & restart Atlas'}
+                      </Button>
+                      <Typography.Text type="secondary" style={{ marginLeft: 10, fontSize: 12 }}>
+                        Re-asserts the federation config and restarts ATLAS_SERVER so the user is loaded.
+                      </Typography.Text>
+                      {fixRestart.requestId && (fixRestart.running || fixRestart.status === 'COMPLETED' || fixRestart.status === 'FAILED' || fixRestart.status === 'ABORTED') && (
+                        <Progress
+                          percent={fixRestart.percent}
+                          size="small"
+                          status={(fixRestart.status === 'FAILED' || fixRestart.status === 'ABORTED') ? 'exception' : (fixRestart.status === 'COMPLETED' ? 'success' : 'active')}
+                          style={{ marginTop: 8 }}
+                        />
+                      )}
+                    </div>
+                  )}
+                  <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                    {atlasCheck.report.checks.map((c) => (
+                      <div key={c.id} style={{ borderLeft: `3px solid ${c.ok ? '#52c41a' : (c.severity === 'critical' ? '#ff4d4f' : '#faad14')}`, paddingLeft: 10 }}>
+                        <Space size={8}>
+                          <Tag color={c.ok ? 'green' : (c.severity === 'critical' ? 'red' : 'orange')}>{c.ok ? 'OK' : String(c.severity).toUpperCase()}</Tag>
+                          <Typography.Text code>{c.id}</Typography.Text>
+                        </Space>
+                        <div><Typography.Text>{c.detail}</Typography.Text></div>
+                        {!c.ok && c.remediation && <div><Typography.Text type="secondary">Fix: {c.remediation}</Typography.Text></div>}
+                      </div>
+                    ))}
+                  </Space>
+                </>
+              )}
+            </Modal>
         </div>
     );
 };

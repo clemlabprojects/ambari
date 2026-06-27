@@ -526,8 +526,6 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/actions/om-atlas-federation")
     public Response reapplyReleaseOmAtlasFederation(@PathParam("namespace") String namespace,
                                                     @PathParam("release") String releaseName,
-                                                    @QueryParam("rangerAdminUsername") String rangerAdminUsername,
-                                                    @QueryParam("rangerAdminPassword") String rangerAdminPassword,
                                                     @Context HttpHeaders requestHeaders,
                                                     @Context UriInfo uriInfo) {
         try {
@@ -539,19 +537,14 @@ public class HelmResource {
             // also fails SSL cert validation when the view is fronted by a different
             // hostname than the loopback API base.
             //
-            // rangerAdminUsername / rangerAdminPassword are optional query params used
-            // ONLY when the Ambari-managed Atlas uses the Ranger authorizer. Passwords
-            // are not persisted on the release (excludeFromValues at install time), so
-            // the operator must re-provide them on reapply. Skipping these on a Ranger
-            // ACL cluster will cause RANGER_POLICY_CREATE_ATLAS_OM_READ to attempt the
-            // dev-default 'admin/admin' and fail with HTTP 401 on real clusters.
+            // Ranger credentials are no longer passed here: a MANAGED platform context
+            // delegates the grant to the Ambari server (which holds the password) and an
+            // EXTERNAL context carries its own stored credentials.
             String commandId = commandService.submitReleaseOmAtlasFederationReapply(
                     namespace,
                     releaseName,
                     requestHeaders.getRequestHeaders(),
-                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext),
-                    rangerAdminUsername,
-                    rangerAdminPassword
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext)
             );
             URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
             return Response.status(Response.Status.ACCEPTED)
@@ -566,6 +559,80 @@ public class HelmResource {
                     .entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
             LOG.warn("OM Atlas federation reapply failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Read-only Atlas-federation config-drift check for a deployed release. Surfaces whether an
+     * operator's manual Atlas edits (file auth disabled, federation user removed, password rotated,
+     * or a pending Atlas restart) would break the running OM federation. Mutates nothing.
+     */
+    @GET
+    @Path("/releases/{namespace}/{release}/actions/atlas-federation-check")
+    public Response checkReleaseAtlasFederationConfig(@PathParam("namespace") String namespace,
+                                                      @PathParam("release") String releaseName,
+                                                      @Context HttpHeaders requestHeaders) {
+        try {
+            authHelper.checkWritePermission();
+            Map<String, Object> report = commandService.checkAtlasFederationConfig(
+                    namespace, releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+            return Response.ok(report).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation config-check failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * One-click "Fix &amp; restart Atlas" from the config-check modal: re-asserts the federation config
+     * idempotently and restarts ATLAS_SERVER, returning the Ambari request id so the UI can poll progress.
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/atlas-federation-fix-restart")
+    public Response fixAndRestartAtlasFederation(@PathParam("namespace") String namespace,
+                                                 @PathParam("release") String releaseName,
+                                                 @Context HttpHeaders requestHeaders) {
+        try {
+            authHelper.checkWritePermission();
+            Map<String, Object> result = commandService.fixAndRestartAtlasFederation(
+                    namespace, releaseName,
+                    requestHeaders.getRequestHeaders(),
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+            return Response.ok(result).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation fix-restart failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /** Poll an Ambari request's live status + progress (used by the Fix &amp; restart progress bar). */
+    @GET
+    @Path("/releases/{namespace}/{release}/actions/ambari-request/{requestId}")
+    public Response getAmbariRequestProgress(@PathParam("namespace") String namespace,
+                                             @PathParam("release") String releaseName,
+                                             @PathParam("requestId") int requestId,
+                                             @Context HttpHeaders requestHeaders) {
+        try {
+            authHelper.checkWritePermission();
+            Map<String, Object> progress = commandService.getAmbariRequestProgress(
+                    requestId,
+                    requestHeaders.getRequestHeaders(),
+                    AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+            return Response.ok(progress).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Ambari request progress poll failed for request {}: {}", requestId, ex.toString());
             return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
         }
     }

@@ -169,6 +169,24 @@ public class AmbariActionClient {
         }
     }
 
+    /** Request status + progress for UI polling (request_status, progress_percent, task counts). */
+    public java.util.Map<String, Object> getRequestProgress(int requestId) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/requests/" + requestId
+                + "?fields=Requests/request_status,Requests/progress_percent,Requests/completed_task_count,Requests/task_count";
+        try (InputStream is = stream.readFrom(url, "GET", (InputStream) null, withStdHeaders(null))) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject r = o.getAsJsonObject("Requests");
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("requestId", requestId);
+            m.put("status", (r != null && r.has("request_status")) ? r.get("request_status").getAsString() : "UNKNOWN");
+            m.put("progressPercent", (r != null && r.has("progress_percent")) ? r.get("progress_percent").getAsDouble() : 0.0);
+            if (r != null && r.has("completed_task_count")) m.put("completedTasks", r.get("completed_task_count").getAsInt());
+            if (r != null && r.has("task_count")) m.put("totalTasks", r.get("task_count").getAsInt());
+            return m;
+        }
+    }
+
     /**
      * Read issued keytab metadata from structured_out of the latest task for this request.
      * The keytab bytes themselves are kept in Ambari's temporary credential store and exposed
@@ -754,6 +772,32 @@ public class AmbariActionClient {
         }
     }
 
+    /**
+     * Returns true if Ambari reports any host-component instance of {@code component} has STALE
+     * configs — i.e. a config it depends on changed since the component last (re)started, so an
+     * Ambari "Restart required" is pending. Lets callers restart only when genuinely needed (e.g. a
+     * prior run wrote the config but never restarted) instead of unconditionally. Fails safe:
+     * returns false on any query error so the caller can fall back to its own change signal.
+     */
+    public boolean componentRestartRequired(String cluster, String service, String component) {
+        try {
+            String url = ambariApiBase + "/clusters/" + encode(cluster)
+                    + "/host_components?HostRoles/component_name=" + encode(component)
+                    + "&HostRoles/stale_configs=true&fields=HostRoles/stale_configs";
+            try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+                JsonObject root = JsonParser.parseString(
+                        new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+                JsonArray items = root.getAsJsonArray("items");
+                boolean stale = items != null && items.size() > 0;
+                LOG.info("componentRestartRequired({} {}/{}): staleConfigs={}", cluster, service, component, stale);
+                return stale;
+            }
+        } catch (Exception e) {
+            LOG.warn("componentRestartRequired({}/{}) query failed: {} — assuming not stale", service, component, e.toString());
+            return false;
+        }
+    }
+
     public String getDesiredConfigProperty(String cluster, String type, String key) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");
@@ -813,6 +857,78 @@ public class AmbariActionClient {
      *   }
      * }
      */
+    /**
+     * Submit a Ranger policy grant to the Ambari server (POST {@code /clusters/{c}/ranger_policy}).
+     * The server-side {@code EnsureRangerPolicyServerAction} grants {@code userName} the given
+     * {@code accessTypes} on {@code rangerServiceName} for the given {@code resourcesJson},
+     * using the Ranger admin credentials it holds — so the caller never needs the password.
+     * Returns the Ambari request id (poll with {@link #waitUntilComplete}).
+     *
+     * @param rangerServiceName target Ranger service repo (e.g. {@code <cluster>_atlas})
+     * @param userName          user to grant
+     * @param accessTypes       comma-separated access types (e.g. {@code entity-read})
+     * @param resourcesJson     JSON object of resourceKey → array of values
+     * @param policyNameHint    policy name to use if a new policy must be created
+     * @param policyDescription optional description
+     * @param timeoutSeconds    propagation-poll budget passed to the server action
+     * @param context           Ambari request context label
+     */
+    public int submitRangerPolicyGrant(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String policyNameHint,
+            String policyDescription,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger policy grant");
+        Objects.requireNonNull(rangerServiceName, "rangerServiceName");
+        Objects.requireNonNull(userName, "userName");
+
+        JsonObject root = new JsonObject();
+
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context",
+                (context == null || context.isBlank()) ? "Ensure Ranger policy" : context);
+        root.add("RequestInfo", requestInfo);
+
+        JsonObject rangerPolicy = new JsonObject();
+        rangerPolicy.addProperty("rangerServiceName", rangerServiceName);
+        rangerPolicy.addProperty("userName", userName);
+        rangerPolicy.addProperty("accessTypes", accessTypes);
+        rangerPolicy.addProperty("resourcesJson", resourcesJson);
+        rangerPolicy.addProperty("policyNameHint", policyNameHint);
+        if (policyDescription != null && !policyDescription.isBlank()) {
+            rangerPolicy.addProperty("policyDescription", policyDescription);
+        }
+        if (timeoutSeconds != null) {
+            rangerPolicy.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPolicy", rangerPolicy);
+
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_policy";
+        String payload = root.toString();
+
+        LOG.info("Submitting Ranger policy grant to {} for service='{}', user='{}', access='{}', policyNameHint='{}'",
+                url, rangerServiceName, userName, accessTypes, policyNameHint);
+
+        try (InputStream is = stream.readFrom(
+                url, "POST", payload, withStdHeaders(Map.of("Content-Type", "application/json")))) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                LOG.error("Unexpected response for Ranger policy grant submission: {}", json);
+                throw new IllegalStateException("Unexpected response for Ranger policy grant submission: " + json);
+            }
+            int id = ro.get("id").getAsInt();
+            LOG.info("Ranger policy grant request accepted by Ambari, request id={}", id);
+            return id;
+        }
+    }
+
     public int submitRangerPluginRepository(
             String rangerRepositoryName,
             String serviceType,
@@ -1149,6 +1265,17 @@ public class AmbariActionClient {
         Objects.requireNonNull(serviceName, "serviceName");
         Objects.requireNonNull(componentName, "componentName");
 
+        // Resolve the host(s) running this component and pass them EXPLICITLY — exactly as the
+        // Ambari UI does. Without an explicit host list, Ambari's RESTART custom-command builder
+        // runs its own host-eligibility filter and rejects with "no healthy eligible hosts"
+        // whenever the host has ANY unhealthy/stopped component (common after reboots). The UI
+        // never hits this because it always names the target host.
+        java.util.List<String> compHosts = getComponentHosts(cluster, serviceName, componentName);
+        if (compHosts == null || compHosts.isEmpty()) {
+            throw new IllegalStateException("No hosts found running " + serviceName + "/" + componentName
+                    + " — cannot build a RESTART request.");
+        }
+
         JsonObject requestInfo = new JsonObject();
         requestInfo.addProperty("context", (context == null || context.isBlank())
                 ? ("Restart " + serviceName + "/" + componentName)
@@ -1158,14 +1285,15 @@ public class AmbariActionClient {
         operationLevel.addProperty("level", "HOST_COMPONENT");
         operationLevel.addProperty("cluster_name", cluster);
         operationLevel.addProperty("service_name", serviceName);
-        operationLevel.addProperty("hosts_predicate",
-                "HostRoles/component_name=" + componentName);
+        if (compHosts.size() == 1) {
+            operationLevel.addProperty("host_name", compHosts.get(0));
+        }
         requestInfo.add("operation_level", operationLevel);
 
         JsonObject resourceFilter = new JsonObject();
         resourceFilter.addProperty("service_name", serviceName);
         resourceFilter.addProperty("component_name", componentName);
-        // hosts left unset → Ambari resolves to every host running the component.
+        resourceFilter.addProperty("hosts", String.join(",", compHosts));   // explicit target host(s) — UI-style
         JsonArray filters = new JsonArray();
         filters.add(resourceFilter);
 

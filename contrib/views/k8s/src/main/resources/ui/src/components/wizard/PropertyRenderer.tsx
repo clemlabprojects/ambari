@@ -81,12 +81,23 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
 
   const handleChange = (v: any) => onChange(configName, property.name, v);
 
+  // A required field is "satisfied" (badge turns green) once it has a valid value:
+  // for passwords that means non-empty + confirmed + matching; booleans always have a
+  // value; everything else just needs to be non-empty.
+  const satisfied = isPassword
+    ? (!passwordEmpty && !mismatch && !confirmEmpty)
+    : (property.type === 'boolean'
+        ? true
+        : (val !== undefined && val !== null && String(val).length > 0));
+
   const label = (
     <div style={{ marginBottom: 4 }}>
       <Space>
         <Text strong>{property.displayName || property.name}</Text>
         {isModified && <Tag color="orange">Modified</Tag>}
-        {property.required && <Tag color="red">Required</Tag>}
+        {property.required && (
+          <Tag color={satisfied ? 'green' : 'red'}>{satisfied ? 'Required ✓' : 'Required'}</Tag>
+        )}
         {property.description && (
           <Tooltip title={property.description}>
             <InfoCircleOutlined style={{ color: '#999' }} />
@@ -102,6 +113,7 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
       <div style={{ marginBottom: 16 }}>
         {label}
         <Input.Password
+          size="large"
           value={val}
           onChange={e => handleChange(e.target.value)}
           prefix={<LockOutlined />}
@@ -110,6 +122,7 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
           style={{ marginBottom: 8 }}
         />
         <Input.Password
+          size="large"
           value={confirm}
           onChange={e => setConfirm(e.target.value)}
           prefix={<LockOutlined />}
@@ -154,7 +167,7 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
     return (
       <div style={{ marginBottom: 16 }}>
         {label}
-        <InputNumber style={{ width: '100%' }} value={val} onChange={handleChange} addonAfter={property.unit} />
+        <InputNumber size="large" style={{ width: '100%' }} value={val} onChange={handleChange} addonAfter={property.unit} />
       </div>
     );
   }
@@ -162,7 +175,7 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
   return (
     <div style={{ marginBottom: 16 }}>
       {label}
-      <Input value={val} onChange={e => handleChange(e.target.value)} />
+      <Input size="large" value={val} onChange={e => handleChange(e.target.value)} />
     </div>
   );
 };

@@ -1,0 +1,25 @@
+{
+  "capability": "hive",
+  "label": "Hive Metastore / HiveServer2",
+  "order": 40,
+  "fields": [
+    { "name": "metastoreUri", "label": "Hive Metastore URI", "type": "string",
+      "placeholder": "thrift://hms.example.com:9083",
+      "managedResolver": "hive.metastoreUri" },
+    { "name": "hs2JdbcUrl", "label": "HiveServer2 JDBC URL", "type": "string",
+      "placeholder": "jdbc:hive2://hs2.example.com:10000/",
+      "managedResolver": "hive.hs2JdbcUrl" },
+    { "name": "hs2HostPort", "label": "HiveServer2 host:port", "type": "string",
+      "placeholder": "hs2.example.com:10001",
+      "help": "HiveServer2 endpoint the OM connector dials. For a MANAGED context KDPS computes the HTTP-transport port from hive-site; for an EXTERNAL context, provide it here.",
+      "managedResolver": "hive.hs2HostPort" },
+    { "name": "scheme", "label": "Connection scheme", "type": "string",
+      "placeholder": "hive+https",
+      "help": "hive+https / hive+http / hive. For a MANAGED context KDPS derives it from hive.server2.transport.mode + use.SSL; for an EXTERNAL context, set it here.",
+      "managedResolver": "hive.scheme" },
+    { "name": "authMode", "label": "Authentication", "type": "string",
+      "placeholder": "kerberos",
+      "help": "kerberos / ldap / none. For a MANAGED context KDPS derives it from hive.server2.authentication.",
+      "managedResolver": "hive.authMode" }
+  ]
+}
