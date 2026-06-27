@@ -31,6 +31,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import conf_select, stack_select
 from resource_management.libraries.functions.version import format_stack_version, get_major_version
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.functions.copy_tarball import get_sysprep_skip_copy_tarballs_hdfs
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.default import default
@@ -80,6 +81,9 @@ stack_root = Script.get_stack_root()
 stack_version_unformatted = config['clusterLevelParams']['stack_version']
 stack_version_formatted = format_stack_version(stack_version_unformatted)
 major_stack_version = get_major_version(stack_version_formatted)
+# Upgrade-aware feature-version (uses commandParams.version during an upgrade so feature gates
+# fire against the target stack, not the cluster's current). Falls back to stack_version_formatted.
+version_for_stack_feature_checks = get_stack_feature_version(config)
 
 sysprep_skip_copy_tarballs_hdfs = get_sysprep_skip_copy_tarballs_hdfs()
 
@@ -265,6 +269,18 @@ hdfs_resource_ignore_file = "/var/lib/ambari-agent/data/.hdfs_resource_ignore"
 
 hive_schematool_bin = format('{stack_root}/current/{hive_component_directory}/bin')
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
+
+# AMBARI-487: Hive 4's schematool is compiled by JDK 21, so the embedded -createCatalog call
+# in spark_service.py needs the secondary JDK on ODP 1.3.2.0+ even though the Spark history
+# server itself runs on the primary (JDK 17). Resolve from ambariLevelParams (always published)
+# with host_level_params fallback. Stays on the primary on older stacks (feature gate off).
+hive_schematool_java_home = java_home
+host_level_params = default("/hostLevelParams", {})
+ambari_level_params = default("/ambariLevelParams", {})
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  secondary = ambari_level_params.get("secondary_java_home") or host_level_params.get("secondary_java_home")
+  if secondary:
+    hive_schematool_java_home = secondary
 
 ats_host = set(default("/clusterHostInfo/app_timeline_server_hosts", []))
 has_ats = len(ats_host) > 0
