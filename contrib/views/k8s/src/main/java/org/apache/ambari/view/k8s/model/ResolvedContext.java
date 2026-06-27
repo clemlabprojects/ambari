@@ -33,8 +33,9 @@ public class ResolvedContext {
 
     private String id;
     private String name;
-    private String kind;            // MANAGED | EXTERNAL
-    private String clusterName;     // Ambari cluster (MANAGED)
+    private String kind;            // MANAGED | EXTERNAL | REMOTE
+    private String clusterName;     // Ambari cluster (MANAGED / REMOTE)
+    private String remoteAmbariUrl; // REMOTE only — the remote Ambari base URL (for display; no creds)
 
     // Atlas
     private String atlasUrl;        // scheme://host:port (no trailing slash)
@@ -75,6 +76,9 @@ public class ResolvedContext {
 
     public String getClusterName() { return clusterName; }
     public void setClusterName(String clusterName) { this.clusterName = clusterName; }
+
+    public String getRemoteAmbariUrl() { return remoteAmbariUrl; }
+    public void setRemoteAmbariUrl(String remoteAmbariUrl) { this.remoteAmbariUrl = remoteAmbariUrl; }
 
     public String getAtlasUrl() { return atlasUrl; }
     public void setAtlasUrl(String atlasUrl) { this.atlasUrl = atlasUrl; }

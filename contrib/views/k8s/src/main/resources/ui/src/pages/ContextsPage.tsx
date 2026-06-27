@@ -44,6 +44,9 @@ export default function ContextsPage() {
   const [detail, setDetail] = useState<{ ctx: PlatformContext; r?: ResolvedContext } | null>(null);
   const [schema, setSchema] = useState<ContextCapabilitySchema[]>([]);
   const [form] = Form.useForm();
+  // Drives the add/edit form: EXTERNAL shows the per-capability fields; REMOTE shows the
+  // "connect to a remote cluster's Ambari" fields.
+  const watchedKind = Form.useWatch("kind", form);
 
   useEffect(() => { getContextSchema().then(setSchema).catch(() => setSchema([])); }, []);
 
@@ -95,9 +98,15 @@ export default function ContextsPage() {
     form.resetFields();
     const vals: any = { id: ctx.id, name: ctx.name, kind: ctx.kind,
       clusterName: ctx.clusterName, description: ctx.description };
-    externalFields().forEach(({ cap, f }) => {
-      if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
-    });
+    if (ctx.kind === "REMOTE") {
+      vals.remoteAmbariUrl = ctx.config?.remoteAmbariUrl;
+      vals.remoteUsername = ctx.config?.remoteUsername;
+      // password intentionally not prefilled — write-only, shown as "(unchanged)"
+    } else {
+      externalFields().forEach(({ cap, f }) => {
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+      });
+    }
     form.setFieldsValue(vals);
     setModalOpen(true);
   };
@@ -105,17 +114,31 @@ export default function ContextsPage() {
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
-      const payload: PlatformContext = {
-        id: values.id, name: values.name, kind: "EXTERNAL",
-        clusterName: values.clusterName, description: values.description,
-        config: {}, secrets: {},
-      };
-      externalFields().forEach(({ cap, f }) => {
-        const v = values[fieldKey(cap.capability, f.name)];
-        if (v === undefined || v === null || v === "") return;
-        if (f.secret) payload.secrets![f.name] = v;       // only sent when typed → no clobber on edit
-        else payload.config![f.name] = v;
-      });
+      let payload: PlatformContext;
+      if (values.kind === "REMOTE") {
+        // "Connect to a remote cluster": KDPS discovers the remote cluster's services from its
+        // Ambari. The password is write-only — sent only when typed (no clobber on edit) and
+        // stored encrypted server-side.
+        payload = {
+          id: values.id, name: values.name, kind: "REMOTE",
+          clusterName: values.clusterName, description: values.description,
+          config: { remoteAmbariUrl: values.remoteAmbariUrl, remoteUsername: values.remoteUsername },
+          secrets: {},
+        };
+        if (values.remotePassword) payload.secrets!.remotePassword = values.remotePassword;
+      } else {
+        payload = {
+          id: values.id, name: values.name, kind: "EXTERNAL",
+          clusterName: values.clusterName, description: values.description,
+          config: {}, secrets: {},
+        };
+        externalFields().forEach(({ cap, f }) => {
+          const v = values[fieldKey(cap.capability, f.name)];
+          if (v === undefined || v === null || v === "") return;
+          if (f.secret) payload.secrets![f.name] = v;     // only sent when typed → no clobber on edit
+          else payload.config![f.name] = v;
+        });
+      }
       await saveContext(payload);
       message.success(editing ? "Context updated" : "Context created");
       setModalOpen(false);
@@ -149,7 +172,9 @@ export default function ContextsPage() {
       ) },
     {
       title: "Type", dataIndex: "kind", key: "kind", width: 110,
-      render: (k: string) => k === "MANAGED" ? <Tag color="blue">Managed</Tag> : <Tag color="purple">External</Tag>,
+      render: (k: string) => k === "MANAGED" ? <Tag color="blue">Managed</Tag>
+        : k === "REMOTE" ? <Tag color="geekblue">Remote Ambari</Tag>
+        : <Tag color="purple">External</Tag>,
     },
     {
       title: "Components", key: "components",
@@ -202,7 +227,7 @@ export default function ContextsPage() {
         <Title level={2}><ApiOutlined /> Platform Contexts</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchContexts}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>Add external context</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>Add context</Button>
         </Space>
       </div>
 
@@ -287,7 +312,7 @@ export default function ContextsPage() {
       </Modal>
 
       <Modal
-        title={editing ? `Edit context — ${editing.id}` : "Add external context"}
+        title={editing ? `Edit context — ${editing.id}` : "Add context"}
         open={modalOpen}
         onOk={() => form.submit()}
         confirmLoading={saving}
@@ -308,9 +333,39 @@ export default function ContextsPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
 
-          {/* Fields rendered from the per-capability context schema (KDPS/contexts/capabilities/*.json).
-              A company adds a capability by dropping a fragment file — this form picks it up. */}
-          {schema.map((cap) => {
+          <Form.Item name="kind" label="Type" initialValue="EXTERNAL"
+            tooltip="External: you provide each service's endpoint and credentials. Remote Ambari: KDPS connects to another cluster's Ambari and discovers its services automatically.">
+            <Select disabled={!!editing} options={[
+              { value: "EXTERNAL", label: "External — manual endpoints & credentials" },
+              { value: "REMOTE", label: "Remote Ambari — connect to another cluster" },
+            ]} />
+          </Form.Item>
+
+          {/* REMOTE: connect to a remote cluster's Ambari; KDPS discovers its services. */}
+          {watchedKind === "REMOTE" && (
+            <>
+              <Form.Item name="remoteAmbariUrl" label="Remote Ambari URL" rules={[{ required: true }]}
+                tooltip="Base URL of the remote cluster's Ambari, e.g. https://ambari.remote.example.com:8443">
+                <Input placeholder="https://ambari-host:8443" />
+              </Form.Item>
+              <Form.Item name="clusterName" label="Remote cluster name" rules={[{ required: true }]}>
+                <Input placeholder="e.g. prod" />
+              </Form.Item>
+              <Form.Item name="remoteUsername" label="Ambari username" rules={[{ required: true }]}>
+                <Input placeholder="admin" autoComplete="off" />
+              </Form.Item>
+              <Form.Item name="remotePassword" label="Ambari password"
+                rules={editing ? [] : [{ required: true }]}
+                tooltip="Stored encrypted; never displayed or returned by the API.">
+                <Input.Password placeholder={editing ? "(unchanged)" : ""} autoComplete="new-password" />
+              </Form.Item>
+            </>
+          )}
+
+          {/* EXTERNAL: fields rendered from the per-capability context schema
+              (KDPS/contexts/capabilities/*.json). A company adds a capability by dropping a
+              fragment file — this form picks it up. */}
+          {watchedKind !== "REMOTE" && schema.map((cap) => {
             const fields = (cap.fields || []).filter((f) => f.appliesTo !== "MANAGED");
             if (!fields.length) return null;
             return (

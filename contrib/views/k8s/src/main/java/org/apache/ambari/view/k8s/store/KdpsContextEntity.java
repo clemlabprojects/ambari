@@ -112,15 +112,24 @@ public class KdpsContextEntity extends BaseModel {
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
 
+    // @Lob on the getter (property access) so the serialized config isn't capped at the default
+    // column length — the field-level @Lob is ignored once @Id is on getId().
+    @Lob
     public String getConfigJson() { return configJson; }
     public void setConfigJson(String configJson) { this.configJson = configJson; }
 
     public String getSecretKeys() { return secretKeys; }
     public void setSecretKeys(String secretKeys) { this.secretKeys = secretKeys; }
 
+    // This entity uses property access (the @Id is on getId()), so @Transient MUST be on the
+    // getters: a getter returning Map cannot be mapped, and leaving it persistent makes EclipseLink
+    // reject the whole entity ("not registered as an entity"), breaking all EXTERNAL/REMOTE context
+    // persistence. config is serialized into configJson; secrets are an inbound-only carrier.
+    @Transient
     public Map<String, Object> getConfig() { return config; }
     public void setConfig(Map<String, Object> config) { this.config = config; }
 
+    @Transient
     public Map<String, String> getSecrets() { return secrets; }
     public void setSecrets(Map<String, String> secrets) { this.secrets = secrets; }
 

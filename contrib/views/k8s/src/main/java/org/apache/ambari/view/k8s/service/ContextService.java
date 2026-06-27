@@ -59,6 +59,9 @@ public class ContextService {
 
     public static final String KIND_MANAGED  = "MANAGED";
     public static final String KIND_EXTERNAL = "EXTERNAL";
+    // REMOTE: like MANAGED but discovery runs against a DIFFERENT cluster's Ambari, reached over
+    // the network with stored credentials (the "connect to remote cluster" context).
+    public static final String KIND_REMOTE   = "REMOTE";
 
     private static final String SECRET_PREFIX = "context.";
     private static final Gson GSON = new Gson();
@@ -195,8 +198,18 @@ public class ContextService {
         if (e.getKind() == null || e.getKind().isBlank()) {
             e.setKind(KIND_EXTERNAL);
         }
-        if (!KIND_MANAGED.equals(e.getKind()) && !KIND_EXTERNAL.equals(e.getKind())) {
-            throw new IllegalArgumentException("kind must be MANAGED or EXTERNAL");
+        if (!KIND_MANAGED.equals(e.getKind()) && !KIND_EXTERNAL.equals(e.getKind())
+                && !KIND_REMOTE.equals(e.getKind())) {
+            throw new IllegalArgumentException("kind must be MANAGED, EXTERNAL or REMOTE");
+        }
+        if (KIND_REMOTE.equals(e.getKind())) {
+            Map<String, Object> cfg = e.getConfig() != null ? e.getConfig() : parseConfig(e.getConfigJson());
+            if (isBlank(str(cfg.get("remoteAmbariUrl")))) {
+                throw new IllegalArgumentException("REMOTE context requires remoteAmbariUrl");
+            }
+            if (e.getClusterName() == null || e.getClusterName().isBlank()) {
+                throw new IllegalArgumentException("REMOTE context requires clusterName (the remote cluster)");
+            }
         }
     }
 
@@ -225,13 +238,65 @@ public class ContextService {
                 ? null
                 : repo.findById(contextId);
 
-        boolean managed = entity == null || KIND_MANAGED.equals(entity.getKind());
-        ResolvedContext rc = managed
-                ? resolveManaged(entity, ambari, clusterName)
-                : resolveExternal(entity);
+        // REMOTE behaves like MANAGED but discovers against a remote cluster's Ambari, reached
+        // with stored credentials. We build a client pointed at that Ambari and run the same
+        // managed-style resolution through it.
+        boolean remote = entity != null && KIND_REMOTE.equals(entity.getKind());
+        AmbariActionClient effectiveAmbari = ambari;
+        String effectiveCluster = clusterName;
+        if (remote) {
+            effectiveAmbari = buildRemoteClient(entity);
+            effectiveCluster = entity.getClusterName();
+        }
+
+        boolean discover = entity == null || KIND_MANAGED.equals(entity.getKind()) || remote;
+        ResolvedContext rc;
+        if (discover) {
+            rc = resolveManaged(entity, effectiveAmbari, effectiveCluster);
+            if (remote) {
+                rc.setKind(KIND_REMOTE);
+                // Privileged operations cannot be delegated to a remote Ambari server, so the view
+                // would perform Ranger ops itself rather than hand them to the (local) server.
+                rc.setRangerManaged(false);
+                rc.setRemoteAmbariUrl(str(parseConfig(entity.getConfigJson()).get("remoteAmbariUrl")));
+            }
+        } else {
+            rc = resolveExternal(entity);
+        }
         // Schema-driven generic field view (what the UI renders) on top of the typed accessors.
-        populateResolvedFields(rc, entity, ambari, clusterName, managed);
+        populateResolvedFields(rc, entity, effectiveAmbari, effectiveCluster, discover);
         return rc;
+    }
+
+    /**
+     * Build an {@link AmbariActionClient} pointed at a REMOTE context's Ambari, authenticated with
+     * the stored credentials. Returns {@code null} when the context is missing the URL, username,
+     * or password, or on any error — resolution then degrades to a skeleton (no capabilities)
+     * rather than failing. The password is read from the encrypted secret store only to build the
+     * request's Basic header; it is never logged nor placed on the {@link ResolvedContext}.
+     */
+    private AmbariActionClient buildRemoteClient(KdpsContextEntity entity) {
+        try {
+            Map<String, Object> cfg = parseConfig(entity.getConfigJson());
+            String url = str(cfg.get("remoteAmbariUrl"));
+            String user = str(cfg.get("remoteUsername"));
+            String pass = readSecret(entity.getId(), "remotePassword");
+            if (isBlank(url) || isBlank(user) || isBlank(pass)) {
+                LOG.warn("ContextService: REMOTE context {} is missing remote Ambari url/username/password; "
+                        + "cannot connect", entity.getId());
+                return null;
+            }
+            String base = url.trim().replaceAll("/+$", "");
+            String apiBase = base.endsWith("/api/v1") ? base : base + "/api/v1";
+            String basic = "Basic " + Base64.getEncoder().encodeToString(
+                    (user + ":" + pass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return new AmbariActionClient(viewContext, apiBase, entity.getClusterName(),
+                    java.util.Collections.singletonMap("Authorization", basic));
+        } catch (Exception e) {
+            LOG.warn("ContextService: failed to build remote Ambari client for {}: {}",
+                    entity.getId(), e.toString());
+            return null;
+        }
     }
 
     /**
