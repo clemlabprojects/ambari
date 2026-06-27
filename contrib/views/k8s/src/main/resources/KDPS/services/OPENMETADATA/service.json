@@ -1433,6 +1433,7 @@
           "label": "Enable Atlas federation",
           "type": "boolean",
           "defaultValue": false,
+          "advisor": "recommend_atlas",
           "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
         },
         {
@@ -1470,6 +1471,7 @@
           "label": "Enable Hive base ingestion",
           "type": "boolean",
           "defaultValue": false,
+          "advisor": "recommend_hive",
           "help": "When ON, KDPS creates an OM Hive databaseService and a scheduled metadata ingestion pipeline that connects directly to HiveServer2. For Atlas+Hive federation, enable this together with Atlas Federation below."
         },
         {

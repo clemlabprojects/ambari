@@ -361,6 +361,28 @@ export const saveContext = (ctx: PlatformContext): Promise<PlatformContext> =>
 export const deleteContext = (id: string): Promise<void> =>
   fetchJson<void>(`/contexts/${encodeURIComponent(id)}`, { method: "DELETE" });
 
+/** A KDPS service-advisor recommendation for one enable/disable toggle. */
+export interface ToggleRecommendation {
+  field: string;
+  recommend: boolean;
+  reason: string;
+}
+
+/**
+ * Ask the KDPS service advisor to recommend on/off defaults for the given advisor-tagged
+ * fields, based on what the selected platform context resolves. Best-effort: the backend
+ * always returns a (possibly empty) list, so callers can apply whatever comes back.
+ */
+export const getContextAdvice = (
+  id: string,
+  service: string,
+  fields: { name: string; advisor: string }[]
+): Promise<{ recommendations: ToggleRecommendation[] }> =>
+  fetchJson(`/contexts/${encodeURIComponent(id)}/advice`, {
+    method: "POST",
+    body: JSON.stringify({ service, fields }),
+  });
+
 export async function deployHelm(
   payload: {
   chart: string; releaseName: string; namespace: string; values: any; serviceKey?: string;

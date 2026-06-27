@@ -38,6 +38,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ContextDTO;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.service.ContextService;
+import org.apache.ambari.view.k8s.service.ServiceAdvisorService;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
@@ -113,6 +114,51 @@ public class ContextResource {
         } catch (Exception e) {
             LOG.warn("Failed to resolve context {}: {}", id, e.toString());
             return Response.serverError().entity(java.util.Map.of("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Recommend on/off defaults for a service's advisor-tagged toggles, given the capabilities
+     * the selected context resolves. Body: {@code {"service": "...", "fields": [{"name": "...",
+     * "advisor": "..."}]}}. Capabilities are detected server-side from the resolved context (the
+     * caller cannot spoof them). Best-effort: always returns 200 with a (possibly empty)
+     * {@code recommendations} list — advice never blocks the wizard.
+     */
+    @POST
+    @Path("{id}/advice")
+    public Response advice(@PathParam("id") String id, java.util.Map<String, Object> body,
+                           @Context HttpHeaders headers) {
+        try {
+            ContextService svc = new ContextService(viewContext);
+            String cluster = resolveClusterName(headers);
+            AmbariActionClient client = ambariClient(headers);
+            ResolvedContext rc = svc.resolve(id, client, cluster);
+
+            String service = body == null ? null : java.util.Objects.toString(body.get("service"), null);
+            List<java.util.Map<String, String>> fields = new ArrayList<>();
+            Object rawFields = body == null ? null : body.get("fields");
+            if (rawFields instanceof List) {
+                for (Object o : (List<?>) rawFields) {
+                    if (!(o instanceof java.util.Map)) {
+                        continue;
+                    }
+                    java.util.Map<?, ?> m = (java.util.Map<?, ?>) o;
+                    Object name = m.get("name");
+                    Object advisor = m.get("advisor");
+                    if (name != null && advisor != null) {
+                        java.util.Map<String, String> f = new java.util.LinkedHashMap<>();
+                        f.put("name", String.valueOf(name));
+                        f.put("advisor", String.valueOf(advisor));
+                        fields.add(f);
+                    }
+                }
+            }
+            List<ServiceAdvisorService.Recommendation> recs =
+                    new ServiceAdvisorService().advise(service, rc, fields);
+            return Response.ok(java.util.Map.of("recommendations", recs)).build();
+        } catch (Exception e) {
+            LOG.warn("Advice failed for context {}: {}", id, e.toString());
+            return Response.ok(java.util.Map.of("recommendations", java.util.Collections.emptyList())).build();
         }
     }
 

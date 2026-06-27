@@ -17,13 +17,13 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout, Steps, Button, message, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider } from 'antd';
+import { Layout, Steps, Button, message, notification, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider } from 'antd';
 import { ApiOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, type PlatformContext, type ResolvedContext } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -534,6 +534,68 @@ const ServiceWizardPage: React.FC = () => {
   // Dotted-path get on the wizard form state (for evaluating requiresContext.when).
   const dotGet = (obj: any, path: string) =>
     path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+
+  // Set a dotted-path value on a (cloned) object, creating intermediate objects.
+  const dotSet = (obj: any, path: string, value: any) => {
+    const parts = path.split('.');
+    let o = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (o[parts[i]] == null || typeof o[parts[i]] !== 'object') o[parts[i]] = {};
+      o = o[parts[i]];
+    }
+    o[parts[parts.length - 1]] = value;
+  };
+
+  // Service-advisor: the form fields (incl. those nested in groups) that declare an `advisor`
+  // key — these are the enable/disable toggles the advisor can recommend on/off.
+  const advisorFields = useMemo(() => {
+    const out: { name: string; advisor: string }[] = [];
+    const walk = (fields: any[]) => (fields || []).forEach((f: any) => {
+      if (f?.advisor && f?.name) out.push({ name: f.name, advisor: f.advisor });
+      if (f?.type === 'group' && Array.isArray(f.fields)) walk(f.fields);
+    });
+    walk((def as any)?.form || []);
+    return out;
+  }, [def]);
+
+  // When the operator selects a platform context, ask the (operator-editable) service advisor
+  // which toggles to recommend on/off for what that context provides, apply them as defaults,
+  // and surface the reasons. Advisory only + once per context selection; the operator can still
+  // override any toggle afterwards.
+  const advisedCtxRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!def || advisorFields.length === 0) return;
+    if (advisedCtxRef.current === selectedCtxId) return;
+    let cancelled = false;
+    getContextAdvice(selectedCtxId, (def as any)?.name || '', advisorFields)
+      .then((res) => {
+        if (cancelled) return;
+        advisedCtxRef.current = selectedCtxId;
+        const recs = res?.recommendations || [];
+        if (!recs.length) return;
+        setInstallValues((prev: any) => {
+          const next = JSON.parse(JSON.stringify(prev || {}));
+          recs.forEach((r) => dotSet(next, r.field, r.recommend));
+          return next;
+        });
+        notification.info({
+          message: 'Service advisor recommendations',
+          description: (
+            <div>
+              {recs.map((r, i) => (
+                <div key={i}>
+                  <Tag color={r.recommend ? 'green' : 'default'}>{r.recommend ? 'ON' : 'OFF'}</Tag>
+                  {r.reason}
+                </div>
+              ))}
+            </div>
+          ),
+          duration: 8,
+        });
+      })
+      .catch(() => { /* advisory only — never block the wizard */ });
+    return () => { cancelled = true; };
+  }, [def, selectedCtxId, advisorFields]);
 
   // Required context fields not satisfied by the selected (external) context.
   const unmetContextReqs: string[] = React.useMemo(() => {
