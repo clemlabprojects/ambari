@@ -28,7 +28,8 @@ from resource_management.core.shell import quote_bash_args
 def check_thrift_port_sasl(address, port, hive_auth="NOSASL", key=None, kinitcmd=None, smokeuser='ambari-qa',
                            hive_user='hive', transport_mode="binary", http_endpoint="cliservice",
                            ssl=False, ssl_keystore=None, ssl_password=None, check_command_timeout=30,
-                           ldap_username="", ldap_password="", pam_username="", pam_password=""):
+                           ldap_username="", ldap_password="", pam_username="", pam_password="",
+                           environment=None):
   """
   Hive thrift SASL port check
   """
@@ -90,9 +91,18 @@ def check_thrift_port_sasl(address, port, hive_auth="NOSASL", key=None, kinitcmd
          "-e 'Connected to:' -e 'Transaction isolation:' -e 'inactive HS2 instance; use service discovery')") % \
         (format(";".join(beeline_url)), format(credential_str))
 
-  Execute(cmd,
+  # AMBARI-488: forward caller-supplied environment (e.g. JAVA_HOME) into the beeline
+  # subprocess. Without this, Hive 4 beeline on a host where the ambari-agent default
+  # JAVA_HOME is JDK 8 dies on launch ("Unrecognized option: --add-opens=...") because
+  # the Hive 4 wrapper passes JDK 9+ module flags. Caller selects the right JDK via the
+  # AMBARI-483 secondary_java_home wiring on ODP 1.3.2.0+; older stacks/callers that
+  # pass nothing keep the legacy behavior.
+  execute_kwargs = dict(
     user=smokeuser,
     path=["/bin/", "/usr/bin/", "/usr/lib/hive/bin/", "/usr/sbin/"],
     timeout=check_command_timeout,
     timeout_kill_strategy=TerminateStrategy.KILL_PROCESS_TREE,
   )
+  if environment:
+    execute_kwargs["environment"] = environment
+  Execute(cmd, **execute_kwargs)

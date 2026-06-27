@@ -87,7 +87,8 @@ class HiveServiceCheck(Script):
                                params.hive_server_principal, kinit_cmd, params.smokeuser,
                                transport_mode=params.hive_transport_mode, http_endpoint=params.hive_http_endpoint,
                                ssl=params.hive_ssl, ssl_keystore=ssl_keystore,
-                               ssl_password=ssl_password)
+                               ssl_password=ssl_password,
+                               environment={'JAVA_HOME': params.java64_home})
         Logger.info("Successfully connected to {0} on port {1}".format(address, server_port))
         workable_server_available = True
       except:
