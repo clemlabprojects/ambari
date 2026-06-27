@@ -526,6 +526,13 @@ public class CommandUtils {
                     StandardCharsets.UTF_8
             );
 
+            // The host krb5.conf is mounted into in-cluster pods whose resolver (ndots:5,
+            // *.svc.cluster.local search domains) canonicalizes external service hostnames to
+            // bogus in-cluster names — which corrupts the Kerberos SPN realm and yields
+            // "krbtgt/<svc>.SVC.CLUSTER.LOCAL not found in Kerberos database" on SPNEGO.
+            // Force hostname canonicalization OFF so GSSAPI uses the literal host as configured.
+            content = hardenKrb5ForInCluster(content);
+
             Map<String, String> data = new LinkedHashMap<>();
             // key name inside the CM; this is what you mount with subPath: "krb5.conf"
             data.put("krb5.conf", content);
@@ -554,5 +561,54 @@ public class CommandUtils {
                     configMapName, namespace, ex.toString(), ex);
             throw new RuntimeException("Unable to create krb5.conf ConfigMap", ex);
         }
+    }
+
+    /**
+     * Ensure a krb5.conf staged for in-cluster pods disables DNS-based hostname
+     * canonicalization (both forward {@code dns_canonicalize_hostname} and reverse
+     * {@code rdns}). Inside Kubernetes the pod resolver rewrites external service
+     * hostnames to {@code *.svc.cluster.local} names, which would otherwise produce a
+     * bogus Kerberos SPN realm and break SPNEGO against backends like HiveServer2.
+     * Keys already present in {@code [libdefaults]} are forced to {@code false}; missing
+     * keys are inserted; a missing section is prepended.
+     */
+    static String hardenKrb5ForInCluster(String content) {
+        if (content == null || content.isBlank()) {
+            return "[libdefaults]\n    dns_canonicalize_hostname = false\n    rdns = false\n";
+        }
+        List<String> out = new ArrayList<>();
+        boolean inLib = false, sawLib = false, canonSet = false, rdnsSet = false;
+        for (String line : content.split("\n", -1)) {
+            String t = line.trim();
+            boolean header = t.startsWith("[") && t.endsWith("]");
+            if (inLib && header) {
+                if (!canonSet) out.add("    dns_canonicalize_hostname = false");
+                if (!rdnsSet)  out.add("    rdns = false");
+                inLib = false;
+            }
+            if (header && t.equalsIgnoreCase("[libdefaults]")) {
+                inLib = true;
+                sawLib = true;
+                out.add(line);
+                continue;
+            }
+            if (inLib && t.contains("=")) {
+                String key = t.substring(0, t.indexOf('=')).trim().toLowerCase();
+                if (key.equals("dns_canonicalize_hostname")) { out.add("    dns_canonicalize_hostname = false"); canonSet = true; continue; }
+                if (key.equals("rdns"))                       { out.add("    rdns = false");                       rdnsSet = true;  continue; }
+            }
+            out.add(line);
+        }
+        if (inLib) {
+            if (!canonSet) out.add("    dns_canonicalize_hostname = false");
+            if (!rdnsSet)  out.add("    rdns = false");
+        }
+        if (!sawLib) {
+            List<String> pre = new ArrayList<>(Arrays.asList(
+                    "[libdefaults]", "    dns_canonicalize_hostname = false", "    rdns = false"));
+            pre.addAll(out);
+            out = pre;
+        }
+        return String.join("\n", out);
     }
 }
