@@ -18,30 +18,40 @@
 
 package org.apache.ambari.view.k8s.store;
 
-import java.util.Map;
-
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.Id;
-import javax.persistence.Lob;
 import javax.persistence.Table;
-import javax.persistence.Transient;
 
 import org.apache.ambari.view.k8s.store.base.BaseModel;
 
 /**
  * A <em>Platform Context</em> — a named ODP platform environment that KDPS services
- * integrate against (Atlas, Ranger, Kerberos, …). Two kinds:
+ * integrate against (Atlas, Ranger, Kerberos, …). Two persisted kinds plus a virtual default:
  *
  * <ul>
- *   <li>{@code MANAGED} — the Ambari-managed ODP cluster. Connection details, auth modes
- *       and credentials are resolved live from Ambari at deploy time, and privileged
- *       Ranger operations are delegated to the Ambari server (which holds the Ranger admin
- *       password). {@link #clusterName} names the Ambari cluster. {@link #configJson} is
- *       typically empty.</li>
- *   <li>{@code EXTERNAL} — a cluster Ambari does not manage (e.g. fronted by Knox). All
- *       connection details live in {@link #configJson} and credentials are stored
- *       encrypted in the view instance data (see {@link #secretKeys}).</li>
+ *   <li>{@code MANAGED} — the Ambari-managed ODP cluster. Synthesized live and never persisted
+ *       (see {@code ContextService.managedDefault}); privileged Ranger operations are delegated
+ *       to the Ambari server.</li>
+ *   <li>{@code EXTERNAL} — a cluster Ambari does not manage. Non-secret connection details live
+ *       in {@link #configJson}; credentials are stored encrypted in the view instance data
+ *       (tracked by {@link #secretKeys}).</li>
+ *   <li>{@code REMOTE} — like MANAGED but discovered against a different cluster's Ambari over the
+ *       network with stored credentials.</li>
+ * </ul>
+ *
+ * <h3>Persistence contract — read before adding fields</h3>
+ * Ambari's view {@code DataStoreImpl} persists this entity by <em>bean-property introspection</em>:
+ * it builds a dynamic EclipseLink type with one {@code DS_<property>} column per read/write bean
+ * property and <strong>ignores all JPA annotations</strong> (@Transient, @Lob, @Column lengths).
+ * Every String property is stored with a fixed 3000-char column. Consequently:
+ * <ul>
+ *   <li>this entity exposes <strong>only scalar (String) bean properties</strong> — a {@code Map}
+ *       or other non-scalar getter would be mapped to an unsupported column type (e.g. PostgreSQL
+ *       {@code hstore}) and break all context persistence;</li>
+ *   <li>the inbound non-secret config map and plaintext secrets are carried on
+ *       {@link org.apache.ambari.view.k8s.model.ContextRequest} (never persisted as-is) and are
+ *       folded into {@link #configJson} / encrypted instance data by {@code ContextService}.</li>
  * </ul>
  *
  * Distinct from any kubeconfig / "kube-context" notion — this is the data-platform side.
@@ -66,39 +76,25 @@ public class KdpsContextEntity extends BaseModel {
     private String name;
 
     @Column(length = 16, nullable = false)
-    private String kind;            // MANAGED | EXTERNAL
+    private String kind;            // MANAGED | EXTERNAL | REMOTE
 
     @Column(length = 255)
-    private String clusterName;     // MANAGED: the Ambari cluster name
+    private String clusterName;     // MANAGED/REMOTE: the (remote) Ambari cluster name
 
     @Column(length = 1024)
     private String description;
 
     /**
-     * JSON object of non-secret connection settings for EXTERNAL contexts, e.g.
-     * {@code {"atlasUrl":"https://...","atlasAuthMode":"basic","atlasAclMode":"ranger",
-     * "rangerUrl":"https://...","rangerAdminUsername":"admin"}}.
+     * JSON object of non-secret connection settings, e.g.
+     * {@code {"atlasUrl":"https://...","atlasAuthMode":"basic","rangerUrl":"https://...",
+     * "rangerAdminUsername":"admin"}}. Stored as a plain String column (Ambari caps it at 3000
+     * chars — far beyond any realistic context config; {@code ContextService} guards the length).
      */
-    @Lob
     private String configJson;
 
     /** Comma-separated names of secrets stored (encrypted) in instance data for this context. */
     @Column(length = 512)
     private String secretKeys;
-
-    /**
-     * Transient inbound carrier: parsed non-secret config (bound from the request body).
-     * Persisted as {@link #configJson}; never read back from the DataStore.
-     */
-    @Transient
-    private Map<String, Object> config;
-
-    /**
-     * Transient inbound carrier: plaintext secrets keyed by name (e.g. {@code rangerAdminPassword}).
-     * Encrypted into instance data by the service layer and never persisted nor echoed back.
-     */
-    @Transient
-    private Map<String, String> secrets;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -112,26 +108,11 @@ public class KdpsContextEntity extends BaseModel {
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
 
-    // @Lob on the getter (property access) so the serialized config isn't capped at the default
-    // column length — the field-level @Lob is ignored once @Id is on getId().
-    @Lob
     public String getConfigJson() { return configJson; }
     public void setConfigJson(String configJson) { this.configJson = configJson; }
 
     public String getSecretKeys() { return secretKeys; }
     public void setSecretKeys(String secretKeys) { this.secretKeys = secretKeys; }
-
-    // This entity uses property access (the @Id is on getId()), so @Transient MUST be on the
-    // getters: a getter returning Map cannot be mapped, and leaving it persistent makes EclipseLink
-    // reject the whole entity ("not registered as an entity"), breaking all EXTERNAL/REMOTE context
-    // persistence. config is serialized into configJson; secrets are an inbound-only carrier.
-    @Transient
-    public Map<String, Object> getConfig() { return config; }
-    public void setConfig(Map<String, Object> config) { this.config = config; }
-
-    @Transient
-    public Map<String, String> getSecrets() { return secrets; }
-    public void setSecrets(Map<String, String> secrets) { this.secrets = secrets; }
 
     @Override
     @Column(length = 40)

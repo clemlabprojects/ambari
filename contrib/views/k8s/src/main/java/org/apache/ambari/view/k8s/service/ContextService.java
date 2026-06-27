@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
@@ -65,6 +66,13 @@ public class ContextService {
 
     private static final String SECRET_PREFIX = "context.";
     private static final Gson GSON = new Gson();
+
+    /**
+     * Max serialized length of {@code configJson}. Matches Ambari view persistence's per-String
+     * column cap ({@code DataStoreImpl.MAX_ENTITY_STRING_FIELD_LENGTH}); a context config is a
+     * handful of URLs/usernames, so this is never reached in practice.
+     */
+    private static final int MAX_CONFIG_JSON_LENGTH = 3000;
 
     private final ViewContext viewContext;
     private final KdpsContextRepo repo;
@@ -122,41 +130,56 @@ public class ContextService {
     }
 
     /**
-     * Create or update a context. For each entry in {@code entity.getSecrets()} the plaintext
-     * is encrypted into instance data and the key recorded in {@code secretKeys}; the
-     * transient secret map is then cleared. Non-secret config is serialized to configJson.
+     * Create or update a context from a {@link ContextRequest}. The non-secret {@link
+     * ContextRequest#config} map is serialized into the entity's {@code configJson}; each plaintext
+     * secret in {@link ContextRequest#secrets} is encrypted into the view instance data and its key
+     * name recorded in {@code secretKeys}. Plaintext secrets are never persisted to the DataStore
+     * nor returned. The persisted {@link KdpsContextEntity} carries only scalar columns (see that
+     * class's persistence contract).
      */
-    public KdpsContextEntity save(KdpsContextEntity entity) {
-        Objects.requireNonNull(entity, "context must not be null");
-        if (DEFAULT_CONTEXT_ID.equals(entity.getId()) || KIND_MANAGED.equals(entity.getKind())) {
+    public KdpsContextEntity save(ContextRequest request) {
+        Objects.requireNonNull(request, "context must not be null");
+        if (DEFAULT_CONTEXT_ID.equals(request.id) || KIND_MANAGED.equals(request.kind)) {
             throw new IllegalArgumentException(
                     "The managed default context is virtual and cannot be created or edited; "
-                    + "only EXTERNAL contexts are persisted.");
+                    + "only EXTERNAL and REMOTE contexts are persisted.");
         }
-        validate(entity);
+        validate(request);
 
-        // Serialize non-secret config.
-        if (entity.getConfig() != null) {
-            entity.setConfigJson(GSON.toJson(entity.getConfig()));
+        KdpsContextEntity entity = new KdpsContextEntity();
+        entity.setId(request.id);
+        entity.setName(request.name);
+        entity.setKind(request.kind);
+        entity.setClusterName(request.clusterName);
+        entity.setDescription(request.description);
+
+        // Serialize non-secret config. Ambari stores String columns up to 3000 chars; guard with a
+        // clear error rather than letting the persistence layer throw an opaque one.
+        Map<String, Object> config = request.config != null ? request.config : new LinkedHashMap<>();
+        String configJson = GSON.toJson(config);
+        if (configJson.length() > MAX_CONFIG_JSON_LENGTH) {
+            throw new IllegalArgumentException("Context configuration is too large ("
+                    + configJson.length() + " chars; max " + MAX_CONFIG_JSON_LENGTH + ").");
         }
+        entity.setConfigJson(configJson);
 
         // Encrypt + store provided secrets; track key names. Merge with existing keys so a
         // partial update (only some secrets re-entered) does not drop previously stored ones.
+        KdpsContextEntity prior = repo.findById(request.id);
         List<String> keys = new ArrayList<>();
-        KdpsContextEntity prior = repo.findById(entity.getId());
         if (prior != null && prior.getSecretKeys() != null && !prior.getSecretKeys().isBlank()) {
             for (String k : prior.getSecretKeys().split(",")) {
                 if (!k.isBlank()) keys.add(k.trim());
             }
         }
-        if (entity.getSecrets() != null) {
-            for (Map.Entry<String, String> e : entity.getSecrets().entrySet()) {
+        if (request.secrets != null) {
+            for (Map.Entry<String, String> e : request.secrets.entrySet()) {
                 String name = e.getKey();
                 String plain = e.getValue();
                 if (name == null || name.isBlank() || plain == null || plain.isBlank()) {
                     continue;
                 }
-                String ref = SECRET_PREFIX + entity.getId() + "." + name;
+                String ref = SECRET_PREFIX + request.id + "." + name;
                 String enc = Base64.getEncoder().encodeToString(encryptionService.encrypt(plain.getBytes()));
                 viewContext.putInstanceData(ref, enc);
                 if (!keys.contains(name)) {
@@ -165,11 +188,10 @@ public class ContextService {
             }
         }
         entity.setSecretKeys(String.join(",", keys));
-        entity.setSecrets(null); // never persist plaintext
 
-        if (entity.getUpdatedAt() == null) {
-            entity.setUpdatedAt(Instant.now().toString());
-        }
+        String now = Instant.now().toString();
+        entity.setCreatedAt(prior != null && prior.getCreatedAt() != null ? prior.getCreatedAt() : now);
+        entity.setUpdatedAt(now);
         return repo.upsert(entity);
     }
 
@@ -188,26 +210,26 @@ public class ContextService {
         repo.deleteById(id);
     }
 
-    private void validate(KdpsContextEntity e) {
-        if (e.getId() == null || e.getId().isBlank()) {
+    private void validate(ContextRequest req) {
+        if (req.id == null || req.id.isBlank()) {
             throw new IllegalArgumentException("id is required");
         }
-        if (e.getName() == null || e.getName().isBlank()) {
+        if (req.name == null || req.name.isBlank()) {
             throw new IllegalArgumentException("name is required");
         }
-        if (e.getKind() == null || e.getKind().isBlank()) {
-            e.setKind(KIND_EXTERNAL);
+        if (req.kind == null || req.kind.isBlank()) {
+            req.kind = KIND_EXTERNAL;
         }
-        if (!KIND_MANAGED.equals(e.getKind()) && !KIND_EXTERNAL.equals(e.getKind())
-                && !KIND_REMOTE.equals(e.getKind())) {
-            throw new IllegalArgumentException("kind must be MANAGED, EXTERNAL or REMOTE");
+        if (!KIND_EXTERNAL.equals(req.kind) && !KIND_REMOTE.equals(req.kind)) {
+            // MANAGED is virtual (rejected earlier); only EXTERNAL/REMOTE are persistable.
+            throw new IllegalArgumentException("kind must be EXTERNAL or REMOTE");
         }
-        if (KIND_REMOTE.equals(e.getKind())) {
-            Map<String, Object> cfg = e.getConfig() != null ? e.getConfig() : parseConfig(e.getConfigJson());
+        if (KIND_REMOTE.equals(req.kind)) {
+            Map<String, Object> cfg = req.config != null ? req.config : new LinkedHashMap<>();
             if (isBlank(str(cfg.get("remoteAmbariUrl")))) {
                 throw new IllegalArgumentException("REMOTE context requires remoteAmbariUrl");
             }
-            if (e.getClusterName() == null || e.getClusterName().isBlank()) {
+            if (req.clusterName == null || req.clusterName.isBlank()) {
                 throw new IllegalArgumentException("REMOTE context requires clusterName (the remote cluster)");
             }
         }

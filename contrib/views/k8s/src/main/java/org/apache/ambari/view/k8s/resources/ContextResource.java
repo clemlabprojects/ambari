@@ -36,6 +36,7 @@ import javax.ws.rs.core.Response;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ContextDTO;
+import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.ServiceAdvisorService;
@@ -163,9 +164,9 @@ public class ContextResource {
     }
 
     @POST
-    public Response save(KdpsContextEntity entity) {
+    public Response save(ContextRequest request) {
         try {
-            KdpsContextEntity saved = new ContextService(viewContext).save(entity);
+            KdpsContextEntity saved = new ContextService(viewContext).save(request);
             return Response.ok(ContextDTO.fromEntity(saved)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
