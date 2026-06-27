@@ -165,7 +165,8 @@ public interface Resource {
     RemoteCluster,
     Auth,
     ADHOC_KEYTAB,
-    RANGER_PLUGIN_REPOSITORY;
+    RANGER_PLUGIN_REPOSITORY,
+    RANGER_POLICY;
 
 
 
@@ -208,6 +209,7 @@ public interface Resource {
     public static final Type Host = InternalType.Host.getType();
     public static final Type ADHOC_KEYTAB = InternalType.ADHOC_KEYTAB.getType();
     public static final Type RANGER_PLUGIN_REPOSITORY = InternalType.RANGER_PLUGIN_REPOSITORY.getType();
+    public static final Type RANGER_POLICY = InternalType.RANGER_POLICY.getType();
     public static final Type Component = InternalType.Component.getType();
     public static final Type HostComponent = InternalType.HostComponent.getType();
     public static final Type Configuration = InternalType.Configuration.getType();

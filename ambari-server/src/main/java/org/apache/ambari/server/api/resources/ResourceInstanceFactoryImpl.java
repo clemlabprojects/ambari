@@ -107,6 +107,9 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
       case RANGER_PLUGIN_REPOSITORY:
         resourceDefinition = new RangerPluginResourceDefinition();
         break;
+      case RANGER_POLICY:
+        resourceDefinition = new RangerPolicyResourceDefinition();
+        break;
       case Cluster:
         resourceDefinition = new ClusterResourceDefinition();
         break;

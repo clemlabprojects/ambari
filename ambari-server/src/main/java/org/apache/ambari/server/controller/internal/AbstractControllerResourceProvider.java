@@ -135,6 +135,8 @@ public abstract class AbstractControllerResourceProvider extends AbstractAuthori
         return new AdhocKeytabResourceProvider(managementController);
       case RANGER_PLUGIN_REPOSITORY:
         return new RangerPluginResourceProvider(managementController);
+      case RANGER_POLICY:
+        return new RangerPolicyResourceProvider(managementController);
       case Cluster:
         return new ClusterResourceProvider(managementController);
       case Service:

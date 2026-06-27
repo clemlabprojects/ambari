@@ -909,6 +909,17 @@ public class ClusterService extends BaseService {
                                            @PathParam("clusterName") String clusterName) {
     return new RangerPluginService(clusterName);
   }
+
+  /**
+   * Ranger policy grant which external ambari views (e.g. the KDPS k8s view) can use to
+   * grant a user access on a Ranger service repository without handling the Ranger admin
+   * password — the server-side action reads the (decrypted) credentials from ranger-env.
+   */
+  @Path("{clusterName}/ranger_policy")
+  public RangerPolicyService configureRangerPolicyService(@Context javax.ws.rs.core.Request request,
+                                           @PathParam("clusterName") String clusterName) {
+    return new RangerPolicyService(clusterName);
+  }
   // ----- helper methods ----------------------------------------------------
 
   /**
