@@ -55,6 +55,33 @@ class HelmServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void expandDotPathsKeepsFileContentMapKeysLiteral() {
+    // extraConfigs is keyed by FILENAME — "import_datasources.yaml" must NOT be split into a
+    // nested {import_datasources:{yaml:...}} map (which breaks the chart's `tpl $config`).
+    String yamlBody = "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://h:10001/default\n";
+    Map<String, Object> in = Map.of(
+        "extraConfigs", new java.util.LinkedHashMap<>(Map.of("import_datasources.yaml", yamlBody)));
+    Map<String, Object> out = service.expandDotPaths(in);
+    Object extra = out.get("extraConfigs");
+    assertTrue(extra instanceof Map, "extraConfigs should be a map");
+    Object val = ((Map<String, Object>) extra).get("import_datasources.yaml");
+    assertTrue(val instanceof String, "file-content value must stay a String, got " + (val == null ? "null" : val.getClass()));
+    assertEquals(yamlBody, val);
+    assertNull(((Map<String, Object>) extra).get("import_datasources"), "dotted filename key must not be expanded");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void expandDotPathsStillExpandsOrdinaryDottedKeys() {
+    // Non-file-content dotted keys must still expand into nested maps.
+    Map<String, Object> out = service.expandDotPaths(new java.util.LinkedHashMap<>(Map.of("ingress.host", "x.example")));
+    Object ingress = out.get("ingress");
+    assertTrue(ingress instanceof Map);
+    assertEquals("x.example", ((Map<String, Object>) ingress).get("host"));
+  }
+
+  @Test
   void deployInstallsWhenReleaseAbsent() throws PersistenceException {
     // given
     HelmDeployRequest req = new HelmDeployRequest();

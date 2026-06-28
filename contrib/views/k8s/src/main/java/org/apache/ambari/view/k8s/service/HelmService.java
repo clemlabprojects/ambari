@@ -519,6 +519,15 @@ public class HelmService {
     private static final java.util.regex.Pattern LIST_SEGMENT =
             java.util.regex.Pattern.compile("^(?<key>[^\\[\\]]+)(\\[(?<idx>\\d+)])?$");
 
+    /**
+     * Chart value keys whose immediate sub-maps are keyed by FILENAME (the keys contain dots that
+     * are part of the filename, e.g. {@code import_datasources.yaml}, {@code superset_config.py}),
+     * not dot-paths. Their sub-maps must be carried through {@code expandDotPaths} verbatim so the
+     * filename keys are preserved and the chart can {@code tpl} each value as a string.
+     */
+    private static final java.util.Set<String> LITERAL_KEY_MAPS =
+            java.util.Set.of("extraConfigs", "configOverrides", "configOverridesFiles");
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> applyOverrides(Map<String, Object> values, Map<String, String> overrideOptions) {
         Map<String, Object> result = (values == null) ? new HashMap<>() : new HashMap<>(values);
@@ -593,7 +602,8 @@ public class HelmService {
      * "prometheus.ingress.enabled" while still shipping the structured YAML the Helm chart expects.
      */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> expandDotPaths(Map<String, Object> source) {
+    // package-private for unit testing
+    Map<String, Object> expandDotPaths(Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return new LinkedHashMap<>();
         }
@@ -657,7 +667,16 @@ public class HelmService {
             Map<String, Object> map = (Map<String, Object>) cursor;
             if (idxStr == null) {
                 if (last) {
-                    map.put(mapKey, expandIfNeeded(value));
+                    // File-content maps (extraConfigs, configOverrides, …) are keyed by FILENAME
+                    // (e.g. "import_datasources.yaml", "superset_config.py"). Their keys' dots are
+                    // part of the filename, NOT path separators — expanding them would turn
+                    // extraConfigs."import_datasources.yaml" into {import_datasources:{yaml:…}} and
+                    // break charts that `tpl` each value as a string. Keep such sub-maps literal.
+                    if (LITERAL_KEY_MAPS.contains(mapKey) && value instanceof Map) {
+                        map.put(mapKey, value);
+                    } else {
+                        map.put(mapKey, expandIfNeeded(value));
+                    }
                 } else {
                     Object next = map.get(mapKey);
                     if (!(next instanceof Map) && !(next instanceof List)) {
