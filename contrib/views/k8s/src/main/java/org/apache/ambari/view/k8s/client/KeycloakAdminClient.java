@@ -345,9 +345,14 @@ public class KeycloakAdminClient {
             // since FAB-based apps land users on /login/ post-logout.
             String postLogoutBase = deriveBaseUrl(redirectUri);
             if (postLogoutBase != null) {
+                // Whitelist the app's own origin AND any path beneath it. Different apps land on
+                // different post-logout paths (FAB → /login/, OpenMetadata → /signin, Trino → /ui/),
+                // so an exact "/" + "/login/" list rejected some with "Invalid redirect uri". A
+                // bare-origin + wildcard pair (Keycloak '*' matches any sub-path) covers them all
+                // while still confining post-logout redirects to the service's own host.
                 rep.put("attributes", new java.util.LinkedHashMap<>(Map.of(
                         "post.logout.redirect.uris",
-                        postLogoutBase + "/##" + postLogoutBase + "/login/"
+                        postLogoutBase + "##" + postLogoutBase + "/*"
                 )));
             }
         }
