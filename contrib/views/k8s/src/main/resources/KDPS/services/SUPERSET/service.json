@@ -81,6 +81,10 @@
       "from": { "type": "form", "field": "ui_trino_port" }
     },
     {
+      "name": "runAsUserOverride",
+      "from": { "type": "form", "field": "runAsUser" }
+    },
+    {
       "name": "hiveHostPort",
       "from": {
         "type": "context",
@@ -647,6 +651,19 @@
           }
         }
       ]
+    },
+    {
+      "name": "openshift-run-as-user",
+      "targets": [
+        {
+          "path": "runAsUser",
+          "skipIfVarEmpty": "runAsUserOverride",
+          "from": {
+            "type": "var",
+            "name": "runAsUserOverride"
+          }
+        }
+      ]
     }
   ],
   "form": [
@@ -1027,6 +1044,22 @@
           "label": "Admin groups (comma-separated)",
           "type": "string",
           "help": "Optional list of IdP groups to map to the Admin role (e.g., LDAP/OIDC groups)."
+        }
+      ]
+    },
+    {
+      "name": "openshiftOptions",
+      "label": "OpenShift",
+      "type": "group",
+      "capability": "openshift",
+      "collapsed": true,
+      "help": "OpenShift-specific options. Only shown when KDPS detects the cluster is OpenShift.",
+      "fields": [
+        {
+          "name": "runAsUser",
+          "label": "Run pods as a specific UID (optional)",
+          "type": "number",
+          "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
         }
       ]
     }
