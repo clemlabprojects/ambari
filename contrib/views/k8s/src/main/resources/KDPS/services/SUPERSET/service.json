@@ -545,7 +545,7 @@
           "from": {
             "type": "template",
             "template": {
-              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
             }
           }
         }

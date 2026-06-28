@@ -17,7 +17,7 @@ const HIVE_BINDING = {
         type: 'template',
         template: {
           'import_datasources.yaml':
-            "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  tables: []\n",
+            "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  tables: []\n",
         },
       },
     },
@@ -37,9 +37,10 @@ describe('Superset → platform Hive import_datasources', () => {
     applyBindingTargets(merged, HIVE_BINDING ? [HIVE_BINDING as any] : [], {}, form, 'superset', varCtx);
     const yaml = merged.extraConfigs?.['import_datasources.yaml'];
     expect(yaml).toBeDefined();
-    expect(yaml).toContain('sqlalchemy_uri: hive://master02.dev01:10001/default');
+    expect(yaml).toContain('sqlalchemy_uri: impala://master02.dev01:10001/default');
     expect(yaml).toContain('impersonate_user: true');
-    expect(yaml).toContain('"auth": "KERBEROS"');
+    expect(yaml).toContain('"auth_mechanism": "GSSAPI"');
+    expect(yaml).toContain('"use_http_transport": true');
   });
 
   it('toggle OFF → no Hive datasource emitted (binding skipped)', () => {
@@ -56,6 +57,6 @@ describe('Superset → platform Hive import_datasources', () => {
     const varCtx = buildVarContext(HIVE_VARS as any, form, {}, resolved);
     const merged: any = {};
     applyBindingTargets(merged, [HIVE_BINDING as any], {}, form, 'superset', varCtx);
-    expect(merged.extraConfigs['import_datasources.yaml']).toContain('hive://my-hs2:10000/default');
+    expect(merged.extraConfigs['import_datasources.yaml']).toContain('impala://my-hs2:10000/default');
   });
 });
