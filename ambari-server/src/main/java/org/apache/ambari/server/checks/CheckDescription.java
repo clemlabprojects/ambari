@@ -386,6 +386,15 @@ public class CheckDescription {
         "Hence need to migrate existing data to newer formats post upgrade. " +
         "To migrate existing data, Kindly refer and follow Apache Atlas documentation for 1.0 release.").build());
 
+  public static CheckDescription SECONDARY_JAVA_HOME = new CheckDescription("SECONDARY_JAVA_HOME",
+    PrereqCheckType.CLUSTER, "Check that a secondary JDK (secondary.java.home) is configured for ODP 1.3.2.0.",
+      new ImmutableMap.Builder<String,String>().put(AbstractCheckDescriptor.DEFAULT,
+        "ODP 1.3.2.0 runs Hive 4, NiFi 2, NiFi-Registry and Polaris on a secondary JDK (Java 21) while the rest of the " +
+        "stack runs the primary JDK, but the 'secondary.java.home' Ambari property is not set. It is required for ODP " +
+        "1.3.2.0 even if those services are not installed yet (they may be added later). Install Java 21 on the hosts that " +
+        "run (or will run) those services and set it before upgrading: run 'ambari-server setup " +
+        "--secondary-java-home=<JDK 21 path>' then restart ambari-server.").build());
+
   public static CheckDescription KERBEROS_ADMIN_CREDENTIAL_CHECK = new CheckDescription("KERBEROS_ADMIN_CREDENTIAL_CHECK",
       PrereqCheckType.CLUSTER,
       "The KDC administrator credentials need to be stored in Ambari persisted credential store.",
