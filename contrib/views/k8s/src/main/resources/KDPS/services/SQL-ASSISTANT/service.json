@@ -4,7 +4,7 @@
   "pattern": "sql-assistant-.*",
   "defaultRepo": "clemlabprojects",
   "secretName": "registry-credentials",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "endpoints": [
     {
       "id": "sql-assistant-api",
