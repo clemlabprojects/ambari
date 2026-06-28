@@ -118,7 +118,7 @@ export const pushUniqueBy = (arr: any[], key: (x: any) => string, entry: any) =>
    ============================================================================================== */
 
 export const toPath = (p: string) => pathToParts(p);
-export const getAt = (obj: any, path: string[]): any => path.reduce((o, k) => (o ? o[k] : undefined), obj);
+export const getAt = (obj: any, path: (string | number)[]): any => path.reduce((o, k) => (o ? o[k] : undefined), obj);
 export const setAt = (obj: any, path: string[], value: any) => {
   let o = obj;
   for (let i = 0; i < path.length - 1; i++) {
