@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.1",
+  "version": "1.43.2",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -371,6 +371,10 @@
   ],
   "variables": [
     {
+      "name": "runAsUserOverride",
+      "from": { "type": "form", "field": "runAsUser" }
+    },
+    {
       "name": "ingressEnabled",
       "from": {
         "type": "form",
@@ -716,6 +720,16 @@
     }
   ],
   "bindings": [
+    {
+      "name": "openshift-run-as-user",
+      "targets": [
+        {
+          "path": "runAsUser",
+          "skipIfVarEmpty": "runAsUserOverride",
+          "from": { "type": "var", "name": "runAsUserOverride" }
+        }
+      ]
+    },
     {
       "name": "ingress-setup",
       "_description": "Writes the canonical ingress shape every KDPS chart accepts. The `hosts[]` entry uses the rich object form `{host, paths[]}` so OpenMetadata- and Trino-style charts work out of the box; the Superset chart's template was made shape-tolerant (accepts string OR object) in chart >= 0.12.25.",
@@ -1514,6 +1528,22 @@
     }
   ],
   "form": [
+    {
+      "name": "openshiftOptions",
+      "label": "OpenShift",
+      "type": "group",
+      "capability": "openshift",
+      "collapsed": true,
+      "help": "OpenShift-specific options. Only shown when KDPS detects the cluster is OpenShift.",
+      "fields": [
+        {
+          "name": "runAsUser",
+          "label": "Run pods as a specific UID (optional)",
+          "type": "number",
+          "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
+        }
+      ]
+    },
     {
       "name": "releaseName",
       "label": "Nom du Release",
