@@ -23,6 +23,7 @@ import { getClusterCapabilities, type ClusterCapabilities } from '../../api/clie
 import ServiceSelect from './ServiceSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
+import { fieldCapabilityAvailable } from './capabilities';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -71,13 +72,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       </Typography.Text>
     </div>
   ) : node;
-  const capabilityAvailable = (cap?: string): boolean => {
-    if (!cap) return true;
-    if (!caps) return true; // fail-open while loading
-    if (cap === 'certManager') return caps.certManager.installed;
-    if (cap === 'externalSecrets') return caps.externalSecrets.installed;
-    return true;
-  };
+  const capabilityAvailable = (cap?: string): boolean => fieldCapabilityAvailable(cap, caps);
 
   const condition = (field as any).condition;
   // Always call useWatch in the same order; pass undefined when no condition.
@@ -99,6 +94,10 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               ? condition.value.includes(watchedValue)
               : watchedValue === condition.value;
   if (!isVisible) return null;
+  // Field-level capability gate (mirrors the option-level `capability` on selects):
+  // hide the whole field when its required cluster capability/platform is absent —
+  // e.g. a field with `"capability": "openshift"` only renders on OpenShift clusters.
+  if (!capabilityAvailable((field as any).capability)) return null;
 
   switch (field.type) {
     case 'group': {
