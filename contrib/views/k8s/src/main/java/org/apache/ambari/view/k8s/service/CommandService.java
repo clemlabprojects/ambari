@@ -3808,6 +3808,7 @@ public class CommandService {
         }
         Map<String, String> resolvedDynamicOverrides = resolveDynamicOverrides(
                 params.get("dynamicValues"),
+                request.getFormValues(),
                 baseUri,
                 AmbariActionClient.toAuthHeaders(callerHeaders)
         );
@@ -9193,14 +9194,41 @@ public class CommandService {
     }
 
     /**
+     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
+     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
+     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
+     * context (or when none is selected), keeping the managed deploy path unchanged.
+     */
+    private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
+                                                               AmbariActionClient ambari, String cluster) {
+        try {
+            if (!(formValuesObj instanceof Map)) {
+                return Collections.emptyMap();
+            }
+            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
+            String pcId = pc == null ? null : String.valueOf(pc);
+            if (pcId == null || pcId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(pcId)) {
+                return Collections.emptyMap();
+            }
+            org.apache.ambari.view.k8s.model.ResolvedContext rc =
+                    new ContextService(ctx).resolve(pcId, ambari, cluster);
+            return (rc != null && rc.getResolvedFields() != null) ? rc.getResolvedFields() : Collections.emptyMap();
+        } catch (Exception e) {
+            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
      * Resolve dynamic override tokens (e.g., AMBARI_KERBEROS_REALM:path) into Helm override map.
      *
      * @param dynamicValuesObj raw dynamicValues object from params (usually a List<String>)
+     * @param formValues       wizard form state (carries platformContextId for context-aware tokens)
      * @param baseUri          Ambari base URI for property lookup
      * @param callerHeaders    headers to propagate to Ambari
      * @return map of helmPath -> value or null when nothing resolved
      */
-    private Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, URI baseUri, Map<String, String> callerHeaders) {
+    private Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, Object formValues, URI baseUri, Map<String, String> callerHeaders) {
         if (dynamicValuesObj == null) {
             return null;
         }
@@ -9221,6 +9249,8 @@ public class CommandService {
         try {
             String cluster = commandUtils.resolveClusterName(baseUri.toString(), callerHeaders);
             AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, callerHeaders);
+            // When a non-managed platform context is selected, source tokens from it.
+            Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(formValues, ambariActionClient, cluster);
             for (String token : tokens) {
                 String[] parts = token.split(":", 2);
                 if (parts.length != 2) {
@@ -9249,7 +9279,11 @@ public class CommandService {
                     continue;
                 }
                 try {
-                    String value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                    // Non-managed platform context takes precedence over local Ambari config.
+                    String value = CommandUtils.contextValueForToken(sourceKey, ctxResolved);
+                    if (value == null || value.isBlank()) {
+                        value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                    }
                     // AMBARI_OIDC_ISSUER_URL fallback: in many clusters oidc-env.oidc_issuer_url
                     // is left blank because operators only set oidc_admin_url + oidc_realm.
                     // resolveOidcIssuerUrl() composes admin_url + "/realms/" + realm; reuse it

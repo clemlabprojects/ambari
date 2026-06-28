@@ -83,6 +83,33 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
+     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
+     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
+     * context (or when none is selected), which keeps the managed deploy path unchanged.
+     */
+    private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
+                                                               AmbariActionClient ambari, String cluster) {
+        try {
+            if (!(formValuesObj instanceof Map)) {
+                return java.util.Collections.emptyMap();
+            }
+            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
+            String pcId = pc == null ? null : String.valueOf(pc);
+            if (pcId == null || pcId.isBlank() || "default".equals(pcId)) {
+                return java.util.Collections.emptyMap();
+            }
+            org.apache.ambari.view.k8s.model.ResolvedContext rc =
+                    new ContextService(ctx).resolve(pcId, ambari, cluster);
+            return (rc != null && rc.getResolvedFields() != null)
+                    ? rc.getResolvedFields() : java.util.Collections.emptyMap();
+        } catch (Exception e) {
+            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
+            return java.util.Collections.emptyMap();
+        }
+    }
+
+    /**
      * The method is a submethod of submitRequest deploy command
      * it does create the helm install/upgrade command of the requested chart
      * it does execute a dry run and a real execution if the dryRun does successfully execute
@@ -125,6 +152,8 @@ public class CommandPlanFactory {
                 Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(params.get("_callerHeaders"));
                 String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
                 var ambariActionClient = new AmbariActionClient(ctx, baseUriStr, cluster, authHeaders);
+                // When a non-managed platform context is selected, source tokens from it.
+                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(params.get("formValues"), ambariActionClient, cluster);
 
                 resolvedDynamicOverrides = new LinkedHashMap<>();
                 for (String dynamic : dynamicValues) {
@@ -155,7 +184,12 @@ public class CommandPlanFactory {
                         continue;
                     }
                     try {
-                        String v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        // A non-managed platform context (external/remote) takes precedence: use the
+                        // value it resolved for this token rather than the local Ambari config.
+                        String v = CommandUtils.contextValueForToken(token, ctxResolved);
+                        if (v == null || v.isBlank()) {
+                            v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        }
                         // AMBARI_OIDC_ISSUER_URL fallback (matches the sister code in
                         // CommandService.resolveDynamicOverrides): if oidc-env.oidc_issuer_url
                         // is blank, compose it from oidc_admin_url + "/realms/" + oidc_realm.
@@ -465,6 +499,18 @@ public class CommandPlanFactory {
                 var ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
                 LOG.info("Dynamic Values will be set with cluster name {}", cluster);
 
+                // Dependency charts inherit the parent deploy's platform context (carried in the
+                // root command's formValues); source tokens from it when it is non-managed.
+                Object parentFormValues = null;
+                try {
+                    Map<String, Object> rootP = gson.fromJson(CommandUtils.resolveParamsPayload(cmd.getParamsJson()),
+                            new TypeToken<Map<String, Object>>(){}.getType());
+                    if (rootP != null) parentFormValues = rootP.get("formValues");
+                } catch (Exception ignore) {
+                    // no parent form values → managed/default behaviour
+                }
+                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(parentFormValues, ambariActionClient, cluster);
+
                 resolvedDynamicOverrides = new LinkedHashMap<>();
                 for (String dynamic : dynamicValues) {
                     String[] parts = dynamic.split(":", 2); // IMPORTANT: limit=2
@@ -494,7 +540,11 @@ public class CommandPlanFactory {
                         continue;
                     }
                     try {
-                        String v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        // Non-managed platform context takes precedence over local Ambari config.
+                        String v = CommandUtils.contextValueForToken(token, ctxResolved);
+                        if (v == null || v.isBlank()) {
+                            v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
+                        }
                         // AMBARI_OIDC_ISSUER_URL fallback — mirrors the sister loop above.
                         if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
                             v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);

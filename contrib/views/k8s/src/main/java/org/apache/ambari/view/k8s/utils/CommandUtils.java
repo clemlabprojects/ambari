@@ -130,6 +130,28 @@ public class CommandUtils {
             "AMBARI_OIDC_PRINCIPAL_DOMAIN", new AmbariConfigRef("oidc-env", "oidc_principal_domain")
     );
 
+    /**
+     * Maps a dynamic-value token to the {@code <capability>.<field>} key the platform-context
+     * engine resolves for it. When a deploy selects a non-managed platform context, the token's
+     * value is taken from that context's resolved fields instead of the local Ambari config, so a
+     * service deployed against an external/remote context gets that context's Kerberos realm / OIDC
+     * issuer rather than this cluster's. Tokens absent here keep resolving from {@link #DYNAMIC_SOURCE_MAP}.
+     */
+    public static final Map<String, String> DYNAMIC_TOKEN_CONTEXT_MAP = Map.of(
+            "AMBARI_KERBEROS_REALM",  "kerberos.realm",
+            "AMBARI_OIDC_ISSUER_URL", "oidc.issuerUrl",
+            "AMBARI_OIDC_REALM",      "oidc.realm"
+    );
+
+    /** The resolved-field value a non-managed context provides for a dynamic token, or null. */
+    public static String contextValueForToken(String token, Map<String, String> contextResolvedFields) {
+        if (contextResolvedFields == null || contextResolvedFields.isEmpty()) {
+            return null;
+        }
+        String capField = DYNAMIC_TOKEN_CONTEXT_MAP.get(token);
+        return capField == null ? null : contextResolvedFields.get(capField);
+    }
+
     public static final class AmbariConfigRef {
         public final String type;
         public final String key;
