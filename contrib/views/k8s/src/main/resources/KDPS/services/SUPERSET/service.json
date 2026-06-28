@@ -81,6 +81,24 @@
       "from": { "type": "form", "field": "ui_trino_port" }
     },
     {
+      "name": "hiveHostPort",
+      "from": {
+        "type": "context",
+        "key": "hive.hs2HostPort",
+        "enabledField": "hiveDb.enabled",
+        "overrideFields": ["hiveDb.hostPort"]
+      }
+    },
+    {
+      "name": "hiveAuthMode",
+      "from": {
+        "type": "context",
+        "key": "hive.authMode",
+        "enabledField": "hiveDb.enabled",
+        "overrideFields": ["hiveDb.authMode"]
+      }
+    },
+    {
       "name": "ingressEnabled",
       "from": {
         "type": "form",
@@ -518,6 +536,22 @@
       ]
     },
     {
+      "name": "superset-hive-datasource",
+      "skipIfVarEmpty": "hiveHostPort",
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "trust-proxy-headers",
       "targets": [
         {
@@ -652,6 +686,31 @@
       "defaultValue": 8080,
       "excludeFromValues": true,
       "help": "Trino coordinator port (default 8080)."
+    },
+    {
+      "name": "hiveDb.enabled",
+      "label": "Connect to platform Hive",
+      "type": "boolean",
+      "defaultValue": false,
+      "help": "When ON, KDPS creates a Superset database connection to the HiveServer2 of the selected Platform Context (right panel). Auth follows the context (Kerberos uses the keytab/ccache already mounted in the Superset pod)."
+    },
+    {
+      "name": "hiveDb.hostPort",
+      "label": "HiveServer2 host:port",
+      "type": "context-resolved",
+      "contextField": "hive.hs2HostPort",
+      "condition": { "field": "hiveDb.enabled", "value": true },
+      "excludeFromValues": true,
+      "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point at a specific HiveServer2."
+    },
+    {
+      "name": "hiveDb.authMode",
+      "label": "Hive authentication",
+      "type": "context-resolved",
+      "contextField": "hive.authMode",
+      "condition": { "field": "hiveDb.enabled", "value": true },
+      "excludeFromValues": true,
+      "help": "Delivered by KDPS from the context (kerberos / ldap / none). The Superset Hive connection is built to match it."
     },
     {
       "name": "ingressConfig",
@@ -977,7 +1036,8 @@
   "requiredChartVersion": ">=0.12.29",
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl", "realm"] },
-    { "capability": "kerberos", "fields": ["realm"] }
+    { "capability": "kerberos", "fields": ["realm"] },
+    { "capability": "hive", "fields": ["hs2HostPort", "authMode"], "when": "hiveDb.enabled" }
   ],
   "securityCoupling": {
     "requireIngress": true,
