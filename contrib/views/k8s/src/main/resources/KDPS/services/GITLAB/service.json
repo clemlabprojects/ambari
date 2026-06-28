@@ -322,6 +322,9 @@
     }
   ],
   "requiredChartVersion": ">=8.11.2",
+  "requiresContext": [
+    { "capability": "oidc", "fields": ["issuerUrl", "realm"] }
+  ],
   "securityCoupling": {
     "requireIngress": false,
     "minTlsMode": "signedByAmbariCA",

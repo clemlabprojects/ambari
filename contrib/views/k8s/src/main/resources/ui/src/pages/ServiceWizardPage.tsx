@@ -395,8 +395,8 @@ const ServiceWizardPage: React.FC = () => {
     try {
       const merged = JSON.parse(JSON.stringify(installValues || {}));
 
-      // Apply bindings same way as the modal
-      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {});
+      // Apply bindings same way as the modal. resolvedSel.resolvedFields feeds `context` variables.
+      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {});
       applyBindingTargets(merged, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
 
       // Drop fields that should not end up in values.yaml
@@ -416,7 +416,7 @@ const ServiceWizardPage: React.FC = () => {
     } catch (e) {
       return '# (preview unavailable)';
     }
-  }, [installValues, def]);
+  }, [installValues, def, resolvedSel]);
 
   useEffect(() => {
     if (!editMode && !isDirtyRef.current) {
@@ -443,8 +443,8 @@ const ServiceWizardPage: React.FC = () => {
     // Start from form values
     const base = JSON.parse(JSON.stringify(installValues || {}));
 
-    // Apply bindings same way as preview
-    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {});
+    // Apply bindings same way as preview. resolvedSel.resolvedFields feeds `context` variables.
+    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {});
     applyBindingTargets(base, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
 
     // Drop fields that should not end up in values.yaml
@@ -842,7 +842,11 @@ const ServiceWizardPage: React.FC = () => {
         </Col>
 
         <Col span={8}>
-          {!!(def?.postDeploy?.atlasFederation || def?.atlasFederation) && (() => {
+          {/* The platform context is a GLOBAL KDPS concept: every service is deployed wired to one,
+              and the engine resolves that context's capabilities (Atlas, Ranger, Hive, Kerberos,
+              OIDC, …) into whichever fields the service's service.json declares as context-resolved.
+              So the selector is shown for ALL services, not just those declaring atlasFederation. */}
+          {(() => {
             const selectedId = (installValues as any)?.platformContextId || 'default';
             return (
               <Card style={{ marginBottom: 16 }}
@@ -897,6 +901,19 @@ const ServiceWizardPage: React.FC = () => {
                 <Descriptions.Item label="Kerberos">
                   {resolvedSel.kerberosRealm ? <Tag color="geekblue">{resolvedSel.kerberosRealm}</Tag> : <Text type="secondary">none</Text>}
                 </Descriptions.Item>
+                {/* Generic view of every capability.field the KDPS engine resolved for this
+                    context — so services beyond Atlas (Hive, Trino, OIDC, …) are visible too. */}
+                {resolvedSel.resolvedFields && Object.keys(resolvedSel.resolvedFields).length > 0 && (
+                  <Descriptions.Item label="Resolved fields">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {Object.entries(resolvedSel.resolvedFields).map(([k, v]) => (
+                        <Text key={k} style={{ fontSize: 12 }}>
+                          <Text code style={{ fontSize: 11 }}>{k}</Text> {String(v)}
+                        </Text>
+                      ))}
+                    </div>
+                  </Descriptions.Item>
+                )}
               </Descriptions>
             ) : <Text type="secondary">Resolving…</Text>}
           </Modal>

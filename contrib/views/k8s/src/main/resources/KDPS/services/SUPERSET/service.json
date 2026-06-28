@@ -950,6 +950,10 @@
   "description": "Modern data exploration and visualisation platform. Build dashboards and charts directly from your data warehouse.",
   "valueAliases": {},
   "requiredChartVersion": ">=0.12.29",
+  "requiresContext": [
+    { "capability": "oidc", "fields": ["issuerUrl", "realm"] },
+    { "capability": "kerberos", "fields": ["realm"] }
+  ],
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",

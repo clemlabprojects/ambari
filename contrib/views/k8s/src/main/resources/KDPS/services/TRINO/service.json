@@ -659,8 +659,9 @@
     {
       "name": "hiveMetastoreUri",
       "from": {
-        "type": "form",
-        "field": "ui_hive_metastore_uri"
+        "type": "context",
+        "key": "hive.metastoreUri",
+        "overrideFields": ["ui_hive_metastore_uri_override", "ui_hive_metastore_uri"]
       }
     },
     {
@@ -2381,6 +2382,12 @@
     "ingress.ingressClassName": "ingress.className"
   },
   "requiredChartVersion": ">=1.43.0",
+  "requiresContext": [
+    {
+      "capability": "hive",
+      "fields": ["metastoreUri"]
+    }
+  ],
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",

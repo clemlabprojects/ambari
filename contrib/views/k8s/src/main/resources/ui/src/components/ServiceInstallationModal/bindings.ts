@@ -166,20 +166,33 @@ export const interpolate = (tpl: string, ctx: Record<string, any>): string =>
 export type VariableSpec =
     | { name: string; from: { type: 'form'; field: string } }
     | { name: string; from: { type: 'mountPath'; mountKey: string; suffix?: string } }
+    // `context` reads a value the KDPS engine resolved for the selected Platform Context, keyed
+    // `<capability>.<field>` (e.g. `hive.metastoreUri`, `ranger.rangerUrl`, `kerberos.realm`).
+    // This is the generic primitive that lets ANY service consume the platform context: the
+    // resolved value flows into a variable and then into chart values via the normal bindings.
+    // `overrideFields` (in precedence order) let operator-supplied form fields take priority over
+    // the resolved value — e.g. an explicit URI or a discovered-service picker overrides the
+    // platform default. The resolved value is used only when every override field is blank.
+    | { name: string; from: { type: 'context'; key: string; overrideFields?: string[] } }
     | { name: string; template: string };
 
 /**
  * Builds a dictionary of variables (key-value pairs) based on charts.json definitions.
  * Process runs in two phases to allow variables to depend on form values or other variables.
+ *
+ * @param resolvedFields the selected Platform Context's resolved `<capability>.<field>` values
+ *        (from `GET /contexts/{id}/resolved`); consumed by `from.type === 'context'` variables.
  */
 export const buildVarContext = (
     vars: VariableSpec[] | undefined,
     formVals: any,
-    mounts: Record<string, any>
+    mounts: Record<string, any>,
+    resolvedFields: Record<string, string> = {}
 ): Record<string, any> => {
   const ctx: Record<string, any> = {};
+  const nonBlank = (x: any) => x != null && String(x).trim() !== '';
 
-  // PHASE 1: Materialize direct values (Form fields and Mount paths)
+  // PHASE 1: Materialize direct values (Form fields, Mount paths, Platform Context values)
   (vars || []).forEach(v => {
     if ('from' in v) {
       if (v.from.type === 'form') {
@@ -188,6 +201,15 @@ export const buildVarContext = (
         const m = mounts?.[v.from.mountKey];
         const base = m?.mountPath || '/data';
         setAtStr(ctx, v.name, base + (v.from.suffix || ''));
+      } else if (v.from.type === 'context') {
+        // Operator override fields win (in declared order); otherwise the engine-resolved value.
+        let val: any;
+        for (const of of (v.from.overrideFields || [])) {
+          const o = getAtStr(formVals, of);
+          if (nonBlank(o)) { val = o; break; }
+        }
+        if (!nonBlank(val)) val = resolvedFields?.[v.from.key];
+        if (nonBlank(val)) setAtStr(ctx, v.name, val);
       }
     }
   });
