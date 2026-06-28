@@ -24,7 +24,7 @@ import {
 } from "antd";
 import {
   DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ApiOutlined,
-  DatabaseOutlined, SafetyCertificateOutlined, KeyOutlined,
+  DatabaseOutlined, SafetyCertificateOutlined, KeyOutlined, LockOutlined,
 } from "@ant-design/icons";
 import {
   getContexts, saveContext, deleteContext, getResolvedContext, getContextSchema,
@@ -160,9 +160,6 @@ export default function ContextsPage() {
     }
   };
 
-  const authColor = (m?: string) =>
-    m === "kerberos" ? "geekblue" : m === "ldap" ? "gold" : m === "basic" ? "green" : "default";
-
   const columns: ColumnsType<PlatformContext> = [
     { title: "Name", dataIndex: "name", key: "name", render: (n: string, c) => (
         <Space direction="vertical" size={0}>
@@ -189,35 +186,52 @@ export default function ContextsPage() {
       },
     },
     {
+      // The platform's security posture — NOT Atlas's own login mode. A cluster can run
+      // Kerberos + OIDC + Ranger while Atlas's internal auth is "basic"; surfacing only
+      // atlasAuthMode here read as "the context is insecure", which it isn't. We show the
+      // real platform auth/authorization and relegate Atlas's own mode to a labelled detail.
       title: "Security", key: "security",
       render: (_: any, c: PlatformContext) => {
         const r = resolved[c.id];
-        if (!r) return null;
-        return (
-          <Space size={4} wrap>
-            <Tag color={authColor(r.atlasAuthMode)}>auth: {r.atlasAuthMode || "—"}</Tag>
-            {r.atlasAclMode && <Tag color={r.atlasAclMode === "ranger" ? "volcano" : "default"}>acl: {r.atlasAclMode}</Tag>}
-            {r.kerberosRealm && <Tag color="geekblue">{r.kerberosRealm}</Tag>}
-          </Space>
-        );
+        if (!r) return <Text type="secondary">resolving…</Text>;
+        const oidc = r.resolvedFields?.["oidc.issuerUrl"];
+        const ranger = r.rangerManaged || !!r.rangerUrl || r.atlasAclMode === "ranger";
+        const tags = [];
+        if (r.kerberosRealm) tags.push(<Tag key="k" color="geekblue"><KeyOutlined /> Kerberos · {r.kerberosRealm}</Tag>);
+        if (oidc) tags.push(<Tag key="o" color="green">OIDC SSO</Tag>);
+        if (ranger) tags.push(<Tag key="r" color="volcano">Ranger authz</Tag>);
+        if (!r.kerberosRealm && !oidc) tags.push(<Tag key="n" color="default">no platform auth</Tag>);
+        if (r.atlasManaged && r.atlasAuthMode) {
+          tags.push(<Tag key="aa" color="default" style={{ opacity: 0.75 }}>Atlas login: {r.atlasAuthMode}</Tag>);
+        }
+        return <Space size={4} wrap>{tags}</Space>;
       },
     },
     {
-      title: "Actions", key: "actions", fixed: "right", width: 130,
-      render: (_: any, c: PlatformContext) => (
-        <Space onClick={(e) => e.stopPropagation()}>
-          {c.kind === "EXTERNAL" && (
+      title: "Actions", key: "actions", fixed: "right", width: 150,
+      render: (_: any, c: PlatformContext) => {
+        // MANAGED is virtual: connection + security are resolved live from Ambari and ops are
+        // delegated to the Ambari server, so there is nothing to edit here (edit the cluster in
+        // Ambari). Show that explicitly rather than an empty cell that looks broken.
+        if (c.kind === "MANAGED") {
+          return (
+            <Tooltip title="Managed by Ambari — connection and security are resolved live; manage the cluster in Ambari.">
+              <Tag icon={<LockOutlined />} color="default">Ambari-managed</Tag>
+            </Tooltip>
+          );
+        }
+        // EXTERNAL and REMOTE are operator-defined → editable and deletable.
+        return (
+          <Space onClick={(e) => e.stopPropagation()}>
             <Tooltip title="Edit">
               <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(c)} />
             </Tooltip>
-          )}
-          {c.id !== "default" && (
             <Popconfirm title="Delete this context?" onConfirm={() => handleDelete(c.id)}>
               <Button size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
-          )}
-        </Space>
-      ),
+          </Space>
+        );
+      },
     },
   ];
 

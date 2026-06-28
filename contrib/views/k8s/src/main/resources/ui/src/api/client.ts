@@ -319,6 +319,10 @@ export interface ResolvedContext {
   rangerManaged?: boolean;
   rangerUrl?: string;
   rangerAdminUsername?: string;
+  /** Generic <capability>.<field> → resolved value map (e.g. oidc.issuerUrl, hive.metastoreUri). */
+  resolvedFields?: Record<string, string>;
+  /** Names (<capability>.<field>) of secret fields that have a value set. */
+  secretFieldsSet?: string[];
 }
 
 export interface ContextFieldDef {

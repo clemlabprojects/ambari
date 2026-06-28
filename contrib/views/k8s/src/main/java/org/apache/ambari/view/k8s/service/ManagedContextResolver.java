@@ -79,6 +79,7 @@ public class ManagedContextResolver {
                 case "hive.scheme":             return hiveScheme();
                 case "hive.authMode":           return hiveAuthMode();
                 case "oidc.issuerUrl":          return oidcIssuer();
+                case "oidc.realm":              return oidcRealm();
                 default:
                     return null;
             }
@@ -213,9 +214,27 @@ public class ManagedContextResolver {
     // ----- OIDC (best-effort) -----
 
     private String oidcIssuer() {
-        // Not all clusters expose a single canonical issuer config key; best-effort.
-        String v = cfg("sso-configuration", "ambari.sso.provider.originalUrl");
-        return v;
+        // KDPS clusters carry the OIDC issuer in oidc-env/oidc_issuer_url — the same source the
+        // service dynamicValues (AMBARI_OIDC_ISSUER_URL) read, so the context stays consistent with
+        // what services actually deploy with.
+        String explicit = cfg("oidc-env", "oidc_issuer_url");
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit;
+        }
+        // Many clusters set only oidc_admin_url + oidc_realm; compose the issuer exactly as the
+        // service dynamicValues fallback does (CommandService.resolveOidcIssuerUrl), so the context
+        // matches what services deploy with.
+        String adminUrl = cfg("oidc-env", "oidc_admin_url");
+        String realm    = cfg("oidc-env", "oidc_realm");
+        if (adminUrl != null && !adminUrl.isBlank() && realm != null && !realm.isBlank()) {
+            return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
+        }
+        // Fall back to Ambari SSO config for non-KDPS clusters.
+        return cfg("sso-configuration", "ambari.sso.provider.originalUrl");
+    }
+
+    private String oidcRealm() {
+        return cfg("oidc-env", "oidc_realm");
     }
 
     // ----- helpers -----
