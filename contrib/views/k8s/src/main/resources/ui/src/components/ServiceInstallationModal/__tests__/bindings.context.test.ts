@@ -50,6 +50,25 @@ describe('buildVarContext — context variable source', () => {
     expect(ctx.x).toBeUndefined();
   });
 
+  it('leaves the variable unset when the enable toggle is off (so the binding is skipped)', () => {
+    const vars = [{ name: 'hiveMetastoreUri', from: { type: 'context' as const, key: 'hive.metastoreUri', enabledField: 'hiveCatalog.enabled' } }];
+    const ctx = buildVarContext(vars as any, { hiveCatalog: { enabled: false } }, {}, resolved);
+    expect(ctx.hiveMetastoreUri).toBeUndefined();
+  });
+
+  it('resolves the context value when the enable toggle is on', () => {
+    const vars = [{ name: 'hiveMetastoreUri', from: { type: 'context' as const, key: 'hive.metastoreUri', enabledField: 'hiveCatalog.enabled' } }];
+    const ctx = buildVarContext(vars as any, { hiveCatalog: { enabled: true } }, {}, resolved);
+    expect(ctx.hiveMetastoreUri).toBe('thrift://platform-hms.odp:9083');
+  });
+
+  it('toggle on + override field set → override wins over the context value', () => {
+    const vars = [{ name: 'hiveMetastoreUri', from: { type: 'context' as const, key: 'hive.metastoreUri', enabledField: 'hiveCatalog.enabled', overrideFields: ['hiveCatalog.metastoreUri'] } }];
+    const form = { hiveCatalog: { enabled: true, metastoreUri: 'thrift://manual:9083' } };
+    const ctx = buildVarContext(vars as any, form, {}, resolved);
+    expect(ctx.hiveMetastoreUri).toBe('thrift://manual:9083');
+  });
+
   it('a template variable can consume a context variable', () => {
     const vars = [
       { name: 'hiveMetastoreUri', from: { type: 'context' as const, key: 'hive.metastoreUri' } },

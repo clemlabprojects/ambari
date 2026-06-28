@@ -661,7 +661,8 @@
       "from": {
         "type": "context",
         "key": "hive.metastoreUri",
-        "overrideFields": ["ui_hive_metastore_uri_override", "ui_hive_metastore_uri"]
+        "enabledField": "hiveCatalog.enabled",
+        "overrideFields": ["hiveCatalog.metastoreUri"]
       }
     },
     {
@@ -1556,6 +1557,15 @@
           "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
         },
         {
+          "name": "rangerAdminUrl",
+          "label": "Ranger admin",
+          "type": "context-resolved",
+          "contextField": "ranger.rangerUrl",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "excludeFromValues": true,
+          "help": "The Ranger of the selected Platform Context (right panel) whose policies Trino's plugin enforces. Resolved by KDPS from the context."
+        },
+        {
           "name": "nodePort.port",
           "label": "Port du Nœud (Optionnel)",
           "type": "number",
@@ -2231,19 +2241,20 @@
       "type": "group",
       "fields": [
         {
-          "name": "ui_hive_metastore_uri",
-          "label": "Service Hive Metastore",
-          "type": "service-select",
-          "serviceType": "HIVE_METASTORE",
-          "excludeFromValues": true,
-          "help": "Sélectionnez un service Hive Metastore existant pour créer un catalogue."
+          "name": "hiveCatalog.enabled",
+          "label": "Enable Hive catalog",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "When ON, KDPS creates a Trino 'hive' catalog connected to the Hive Metastore of the selected Platform Context (right panel)."
         },
         {
-          "name": "ui_hive_metastore_uri_override",
-          "label": "URI Hive Metastore personnalisé",
-          "type": "string",
-          "defaultValue": "",
-          "help": "Exemple : thrift://hive-metastore.ns:9083. Si renseigné, remplace la valeur découverte."
+          "name": "hiveCatalog.metastoreUri",
+          "label": "Hive Metastore URI",
+          "type": "context-resolved",
+          "contextField": "hive.metastoreUri",
+          "condition": { "field": "hiveCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point the catalog at a specific metastore (for example an external context without an Ambari to resolve it)."
         }
       ]
     },
@@ -2385,7 +2396,8 @@
   "requiresContext": [
     {
       "capability": "hive",
-      "fields": ["metastoreUri"]
+      "fields": ["metastoreUri"],
+      "when": "hiveCatalog.enabled"
     }
   ],
   "securityCoupling": {

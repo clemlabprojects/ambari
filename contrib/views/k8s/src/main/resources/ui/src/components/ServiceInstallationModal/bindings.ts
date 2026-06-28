@@ -173,7 +173,10 @@ export type VariableSpec =
     // `overrideFields` (in precedence order) let operator-supplied form fields take priority over
     // the resolved value — e.g. an explicit URI or a discovered-service picker overrides the
     // platform default. The resolved value is used only when every override field is blank.
-    | { name: string; from: { type: 'context'; key: string; overrideFields?: string[] } }
+    // `enabledField` gates the whole variable on a boolean toggle: when that form field is not
+    // truthy the variable is left unset, so a `skipIfVarEmpty` binding (e.g. the Hive catalog) is
+    // skipped entirely — i.e. "use the context's Hive only when the operator turned it on".
+    | { name: string; from: { type: 'context'; key: string; overrideFields?: string[]; enabledField?: string } }
     | { name: string; template: string };
 
 /**
@@ -202,6 +205,11 @@ export const buildVarContext = (
         const base = m?.mountPath || '/data';
         setAtStr(ctx, v.name, base + (v.from.suffix || ''));
       } else if (v.from.type === 'context') {
+        // Gated by an enable toggle: leave the variable unset when the toggle is off.
+        if (v.from.enabledField) {
+          const en = getAtStr(formVals, v.from.enabledField);
+          if (en !== true && en !== 'true') return;
+        }
         // Operator override fields win (in declared order); otherwise the engine-resolved value.
         let val: any;
         for (const of of (v.from.overrideFields || [])) {
