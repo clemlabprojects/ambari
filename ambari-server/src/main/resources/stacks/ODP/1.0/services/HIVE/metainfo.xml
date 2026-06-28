@@ -402,6 +402,12 @@
       <configuration-dependencies>
         <config-type>ozone-core-site</config-type>
         <config-type>core-site</config-type>
+        <!-- rendered into the Hive-private hadoop-conf dir (hive_isolated_hadoop_conf);
+             listed here so Ambari flags Hive stale when the hadoop config changes -->
+        <config-type>hdfs-site</config-type>
+        <config-type>yarn-site</config-type>
+        <config-type>ozone-site</config-type>
+        <config-type>hdfs-log4j</config-type>
         <config-type>viewfs-mount-table</config-type>
         <config-type>hive-log4j</config-type>
         <config-type>hive-exec-log4j</config-type>

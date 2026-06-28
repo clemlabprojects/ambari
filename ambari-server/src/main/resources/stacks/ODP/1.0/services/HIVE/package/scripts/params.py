@@ -459,6 +459,14 @@ if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_sta
   if resolved_java_home:
     java64_home = resolved_java_home
 
+# When active (ODP 1.3.2.0+), Hive renders its own hadoop conf dir
+# (<hive conf>/hadoop-conf) carrying java64_home via its own hadoop-env.sh, and
+# the Hive launcher points HADOOP_CONF_DIR there - so Hive runs under java64_home
+# (the secondary JDK for Hive 4 / Ozone) without a conditional in the shared
+# /etc/hadoop/conf hadoop-env. See hive.py:setup_isolated_hadoop_conf. On older
+# stacks the dir is not rendered and the launcher falls back to /etc/hadoop/conf.
+hive_isolated_hadoop_conf = check_stack_feature(StackFeature.HIVE_ISOLATED_HADOOP_CONF, version_for_stack_feature_checks)
+
 ##### MYSQL
 db_name = config['configurations']['hive-env']['hive_database_name']
 mysql_group = 'mysql'

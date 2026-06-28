@@ -682,6 +682,85 @@ def fill_conf_dir(component_conf_dir):
       mode=0o644
     )
 
+  setup_isolated_hadoop_conf(component_conf_dir)
+
+def setup_isolated_hadoop_conf(component_conf_dir):
+  """
+  Render a Hive-private hadoop conf dir (<component_conf_dir>/hadoop-conf) so the
+  Hive launcher (bigtop install_hive.sh) can point HADOOP_CONF_DIR at it and run
+  'hadoop jar' under the JDK Hive needs - the secondary_java_home for Hive 4 /
+  Ozone, carried in this dir's own hadoop-env.sh - WITHOUT making the shared
+  /etc/hadoop/conf hadoop-env conditional. Site files are regenerated from the
+  config dict (same pattern as HBASE/ATLAS), not symlinked, so they stay in sync
+  via Ambari's normal stale-config detection.
+
+  Gated by the hive_isolated_hadoop_conf stack feature (ODP 1.3.2.0+). On older
+  stacks (or non-Ambari installs) the dir is absent and the launcher falls back
+  to /etc/hadoop/conf, so behaviour is unchanged.
+  """
+  import params
+
+  hadoop_conf_dir = os.path.join(component_conf_dir, "hadoop-conf")
+
+  if not params.hive_isolated_hadoop_conf:
+    # Feature off / downgrade: drop any stale dir so the launcher falls back.
+    Directory(hadoop_conf_dir, action="delete")
+    return
+
+  Directory(hadoop_conf_dir,
+            owner=params.hive_user,
+            group=params.user_group,
+            create_parents=True,
+            mode=0o755)
+
+  # core-site (HDFS or Ozone variant) - reuse the existing helper
+  create_core_site_xml(hadoop_conf_dir)
+
+  if 'hdfs-site' in params.config['configurations']:
+    XmlConfig("hdfs-site.xml", conf_dir=hadoop_conf_dir,
+              configurations=params.config['configurations']['hdfs-site'],
+              configuration_attributes=params.config['configurationAttributes'].get('hdfs-site', {}),
+              owner=params.hive_user, group=params.user_group, mode=0o644)
+  else:
+    File(os.path.join(hadoop_conf_dir, "hdfs-site.xml"), action="delete")
+
+  # yarn-site: RM address for Tez/MR job submission
+  if 'yarn-site' in params.config['configurations']:
+    XmlConfig("yarn-site.xml", conf_dir=hadoop_conf_dir,
+              configurations=params.config['configurations']['yarn-site'],
+              configuration_attributes=params.config['configurationAttributes'].get('yarn-site', {}),
+              owner=params.hive_user, group=params.user_group, mode=0o644)
+
+  if 'mapred-site' in params.config['configurations']:
+    XmlConfig("mapred-site.xml", conf_dir=hadoop_conf_dir,
+              configurations=params.config['configurations']['mapred-site'],
+              configuration_attributes=params.config['configurationAttributes'].get('mapred-site', {}),
+              owner=params.hive_user, group=params.user_group, mode=0o644)
+
+  # ozone-site when Ozone is installed (hive_filesystem_type=OZONE), else drop stale
+  if 'ozone-site' in params.config['configurations']:
+    XmlConfig("ozone-site.xml", conf_dir=hadoop_conf_dir,
+              configurations=params.config['configurations']['ozone-site'],
+              configuration_attributes=params.config['configurationAttributes'].get('ozone-site', {}),
+              owner=params.hive_user, group=params.user_group, mode=0o644)
+  else:
+    File(os.path.join(hadoop_conf_dir, "ozone-site.xml"), action="delete")
+
+  # hadoop log4j so 'hadoop jar' does not warn about a missing log4j.properties
+  if 'hdfs-log4j' in params.config['configurations']:
+    File(os.path.join(hadoop_conf_dir, "log4j.properties"),
+         owner=params.hive_user, group=params.user_group, mode=0o644,
+         content=InlineTemplate(params.config['configurations']['hdfs-log4j']['content']))
+
+  # hadoop-env: inherit the shared hadoop-env (OPTS / krb5 / native / classpath)
+  # then pin the JDK this Hive component must run under. java64_home is already
+  # resolved to the secondary JDK when secondary_java_home is active.
+  File(os.path.join(hadoop_conf_dir, "hadoop-env.sh"),
+       owner=params.hive_user, group=params.user_group, mode=0o755,
+       content=("if [ -f %s/hadoop-env.sh ]; then . %s/hadoop-env.sh; fi\n"
+                "export JAVA_HOME=%s\n"
+                % (params.hadoop_conf_dir, params.hadoop_conf_dir, params.java64_home)))
+
 def jdbc_connector(target, hive_previous_jdbc_jar):
   """
   Shared by Hive Batch, Hive Metastore, and Hive Interactive

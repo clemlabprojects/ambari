@@ -44,8 +44,12 @@ class HivePostUpgrade(Script):
     
     hive_script = format("/usr/odp/{target_version}/hive/bin/hive")
     cmd = format("{hive_script} --config /etc/hive/conf --service  strictmanagedmigration --hiveconf hive.strict.managed.tables=true  -m automatic  --modifyManagedTables --oldWarehouseRoot /apps/hive/warehouse")
+    # Set HIVE_CONF_DIR in the env (parsed by the Hive launcher before --config) so the
+    # wrapper points HADOOP_CONF_DIR at the rendered Hive-private hadoop-conf and this
+    # 'hadoop jar'-based migration runs under java64_home (hive_isolated_hadoop_conf),
+    # instead of the inner exec re-sourcing the shared hadoop-env at the primary JDK.
     Execute(cmd,
-            environment = { 'JAVA_HOME': params.java64_home },
+            environment = { 'JAVA_HOME': params.java64_home, 'HIVE_CONF_DIR': '/etc/hive/conf' },
             user = params.hdfs_user)
 
 if __name__ == "__main__":

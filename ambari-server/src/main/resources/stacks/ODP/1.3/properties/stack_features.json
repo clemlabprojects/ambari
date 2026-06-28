@@ -33,6 +33,11 @@
         "min_version": "1.3.2.0"
       },
       {
+        "name": "hive_isolated_hadoop_conf",
+        "description": "Render a Hive-private hadoop conf dir (own HADOOP_CONF_DIR) so Hive runs under its secondary JDK without a conditional in the shared hadoop-env",
+        "min_version": "1.3.2.0"
+      },
+      {
         "name": "kafka_acl_migration_support",
         "description": "ACL migration support",
         "min_version": "1.0.0.0"
