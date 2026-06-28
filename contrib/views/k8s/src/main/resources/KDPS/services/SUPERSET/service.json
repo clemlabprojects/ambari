@@ -73,6 +73,14 @@
   "mounts": [],
   "variables": [
     {
+      "name": "trinoHost",
+      "from": { "type": "form", "field": "ui_trino_host" }
+    },
+    {
+      "name": "trinoPort",
+      "from": { "type": "form", "field": "ui_trino_port" }
+    },
+    {
       "name": "ingressEnabled",
       "from": {
         "type": "form",
@@ -505,7 +513,7 @@
       "targets": [
         {
           "path": "extraEnv.TRINO_URL",
-          "value": "trino://${trinoHost}"
+          "from": { "type": "template", "template": "trino://${trinoHost}:${trinoPort}" }
         }
       ]
     },
@@ -626,7 +634,24 @@
       "label": "Connect to Trino",
       "type": "k8s-discovery",
       "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
-      "help": "Select a running Trino instance to auto-connect."
+      "targetHost": "ui_trino_host",
+      "targetPort": "ui_trino_port",
+      "help": "Select a running Trino instance to auto-fill the host/port below. Trino discovered here is normally one deployed by an Ambari K8s view."
+    },
+    {
+      "name": "ui_trino_host",
+      "label": "Trino host",
+      "type": "string",
+      "excludeFromValues": true,
+      "help": "Auto-filled when you pick a discovered Trino above. Set it manually if Trino was deployed outside KDPS. Leave blank to skip the Trino database connection."
+    },
+    {
+      "name": "ui_trino_port",
+      "label": "Trino port",
+      "type": "number",
+      "defaultValue": 8080,
+      "excludeFromValues": true,
+      "help": "Trino coordinator port (default 8080)."
     },
     {
       "name": "ingressConfig",
