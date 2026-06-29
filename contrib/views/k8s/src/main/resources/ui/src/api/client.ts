@@ -319,10 +319,25 @@ export interface ResolvedContext {
   rangerManaged?: boolean;
   rangerUrl?: string;
   rangerAdminUsername?: string;
+  /** REMOTE only — the remote Ambari base URL (display; no creds). */
+  remoteAmbariUrl?: string;
+  /** REMOTE only — discovered remote-cluster info (Ambari version, running stack, last contact). */
+  ambariVersion?: string;
+  stackName?: string;
+  stackVersion?: string;
+  lastContactAt?: string;
   /** Generic <capability>.<field> → resolved value map (e.g. oidc.issuerUrl, hive.metastoreUri). */
   resolvedFields?: Record<string, string>;
   /** Names (<capability>.<field>) of secret fields that have a value set. */
   secretFieldsSet?: string[];
+}
+
+/** Result of a live "test connection & list clusters" probe against a remote Ambari. */
+export interface RemoteProbeResult {
+  ok: boolean;
+  clusters?: string[];
+  ambariVersion?: string;
+  error?: string;
 }
 
 export interface ContextFieldDef {
@@ -364,6 +379,22 @@ export const saveContext = (ctx: PlatformContext): Promise<PlatformContext> =>
 
 export const deleteContext = (id: string): Promise<void> =>
   fetchJson<void>(`/contexts/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/**
+ * Live "test connection & list clusters" for a remote Ambari, before saving a REMOTE context.
+ * Returns the clusters the remote Ambari manages + its version, or {ok:false, error} on failure.
+ * The password is sent only to authenticate this probe and is never persisted.
+ */
+export const probeRemoteContext = (req: {
+  remoteAmbariUrl: string;
+  remoteUsername: string;
+  remotePassword: string;
+  verifySsl: boolean;
+}): Promise<RemoteProbeResult> =>
+  fetchJson<RemoteProbeResult>("/contexts/probe-remote", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 
 /** A KDPS service-advisor recommendation for one enable/disable toggle. */
 export interface ToggleRecommendation {

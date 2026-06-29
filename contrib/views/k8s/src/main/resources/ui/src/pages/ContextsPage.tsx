@@ -20,15 +20,18 @@ import React, { useEffect, useState } from "react";
 import type { ColumnsType } from "antd/es/table";
 import {
   Form, Input, Select, Button, Table, Space, Popconfirm,
-  Tooltip, message, Alert, Tag, Modal, Typography, Descriptions,
+  Tooltip, message, Alert, Tag, Modal, Typography, Descriptions, Switch,
 } from "antd";
 import {
   DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ApiOutlined,
   DatabaseOutlined, SafetyCertificateOutlined, KeyOutlined, LockOutlined,
+  CloudServerOutlined,
 } from "@ant-design/icons";
 import {
   getContexts, saveContext, deleteContext, getResolvedContext, getContextSchema,
+  probeRemoteContext,
   type PlatformContext, type ResolvedContext, type ContextCapabilitySchema,
+  type RemoteProbeResult,
 } from "../api/client";
 import "./Page.css";
 
@@ -47,6 +50,44 @@ export default function ContextsPage() {
   // Drives the add/edit form: EXTERNAL shows the per-capability fields; REMOTE shows the
   // "connect to a remote cluster's Ambari" fields.
   const watchedKind = Form.useWatch("kind", form);
+  // REMOTE "test connection & list clusters": result populates the cluster picker + shows the
+  // remote Ambari version. Reset whenever the modal (re)opens.
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<RemoteProbeResult | null>(null);
+
+  /** Live-test the remote Ambari connection and list its clusters (REMOTE form helper). */
+  const doProbe = async () => {
+    const v = form.getFieldsValue(["remoteAmbariUrl", "remoteUsername", "remotePassword", "verifySsl"]);
+    if (!v.remoteAmbariUrl || !v.remoteUsername || !v.remotePassword) {
+      message.warning("Enter the Ambari URL, username and password first.");
+      return;
+    }
+    setProbing(true);
+    try {
+      const res = await probeRemoteContext({
+        remoteAmbariUrl: v.remoteAmbariUrl,
+        remoteUsername: v.remoteUsername,
+        remotePassword: v.remotePassword,
+        verifySsl: v.verifySsl !== false,
+      });
+      setProbeResult(res);
+      if (res.ok) {
+        message.success(`Connected — ${res.clusters?.length ?? 0} cluster(s) found.`);
+        // Auto-select the single cluster, or keep the current value if it is in the list.
+        const list = res.clusters ?? [];
+        const cur = form.getFieldValue("clusterName");
+        if (list.length === 1) form.setFieldsValue({ clusterName: list[0] });
+        else if (cur && !list.includes(cur)) { /* keep typed value */ }
+      } else {
+        message.error(res.error || "Connection failed.");
+      }
+    } catch (e: any) {
+      setProbeResult({ ok: false, error: e?.message || "Connection failed." });
+      message.error(e?.message || "Connection failed.");
+    } finally {
+      setProbing(false);
+    }
+  };
 
   useEffect(() => { getContextSchema().then(setSchema).catch(() => setSchema([])); }, []);
 
@@ -84,8 +125,9 @@ export default function ContextsPage() {
 
   const openAdd = () => {
     setEditing(null);
+    setProbeResult(null);
     form.resetFields();
-    const init: any = { kind: "EXTERNAL" };
+    const init: any = { kind: "EXTERNAL", verifySsl: true };
     externalFields().forEach(({ cap, f }) => {
       if (!f.secret && f.default !== undefined) init[fieldKey(cap.capability, f.name)] = f.default;
     });
@@ -95,12 +137,14 @@ export default function ContextsPage() {
 
   const openEdit = (ctx: PlatformContext) => {
     setEditing(ctx);
+    setProbeResult(null);
     form.resetFields();
     const vals: any = { id: ctx.id, name: ctx.name, kind: ctx.kind,
       clusterName: ctx.clusterName, description: ctx.description };
     if (ctx.kind === "REMOTE") {
       vals.remoteAmbariUrl = ctx.config?.remoteAmbariUrl;
       vals.remoteUsername = ctx.config?.remoteUsername;
+      vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       // password intentionally not prefilled — write-only, shown as "(unchanged)"
     } else {
       externalFields().forEach(({ cap, f }) => {
@@ -122,7 +166,11 @@ export default function ContextsPage() {
         payload = {
           id: values.id, name: values.name, kind: "REMOTE",
           clusterName: values.clusterName, description: values.description,
-          config: { remoteAmbariUrl: values.remoteAmbariUrl, remoteUsername: values.remoteUsername },
+          config: {
+            remoteAmbariUrl: values.remoteAmbariUrl,
+            remoteUsername: values.remoteUsername,
+            verifySsl: values.verifySsl !== false, // default true; false = ignore self-signed cert
+          },
           secrets: {},
         };
         if (values.remotePassword) payload.secrets!.remotePassword = values.remotePassword;
@@ -284,13 +332,39 @@ export default function ContextsPage() {
         {detail && (() => {
           const r = detail.r;
           const managed = detail.ctx.kind === "MANAGED";
+          const remote = detail.ctx.kind === "REMOTE";
+          // remote-cluster info: prefer the freshly-resolved values, fall back to the cached config.
+          const ambariVersion = r?.ambariVersion || detail.ctx.config?.ambariVersion;
+          const stackName = r?.stackName || detail.ctx.config?.stackName;
+          const stackVersion = r?.stackVersion || detail.ctx.config?.stackVersion;
+          const lastContactAt = r?.lastContactAt || detail.ctx.config?.lastContactAt;
           return (
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="Type">
-                {managed ? <Tag color="blue">Managed</Tag> : <Tag color="purple">External</Tag>}
+                {managed ? <Tag color="blue">Managed</Tag>
+                  : remote ? <Tag color="geekblue">Remote Ambari</Tag>
+                  : <Tag color="purple">External</Tag>}
               </Descriptions.Item>
               {detail.ctx.clusterName && (
                 <Descriptions.Item label="Cluster">{detail.ctx.clusterName}</Descriptions.Item>
+              )}
+              {remote && (
+                <Descriptions.Item label="Remote Ambari">
+                  <Space direction="vertical" size={0}>
+                    <Text copyable>{r?.remoteAmbariUrl || detail.ctx.config?.remoteAmbariUrl || "—"}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Ambari {ambariVersion || "—"}
+                      {stackName ? ` · stack ${stackName}` : ""}
+                      {stackVersion ? ` (${stackVersion})` : ""}
+                      {detail.ctx.config?.verifySsl === false ? " · ⚠ SSL verification off" : ""}
+                    </Text>
+                    {lastContactAt && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        last contact: {new Date(lastContactAt).toLocaleString()}
+                      </Text>
+                    )}
+                  </Space>
+                </Descriptions.Item>
               )}
               <Descriptions.Item label="Atlas">
                 {r?.atlasManaged || r?.atlasUrl
@@ -362,9 +436,6 @@ export default function ContextsPage() {
                 tooltip="Base URL of the remote cluster's Ambari, e.g. https://ambari.remote.example.com:8443">
                 <Input placeholder="https://ambari-host:8443" />
               </Form.Item>
-              <Form.Item name="clusterName" label="Remote cluster name" rules={[{ required: true }]}>
-                <Input placeholder="e.g. prod" />
-              </Form.Item>
               <Form.Item name="remoteUsername" label="Ambari username" rules={[{ required: true }]}>
                 <Input placeholder="admin" autoComplete="off" />
               </Form.Item>
@@ -372,6 +443,34 @@ export default function ContextsPage() {
                 rules={editing ? [] : [{ required: true }]}
                 tooltip="Stored encrypted; never displayed or returned by the API.">
                 <Input.Password placeholder={editing ? "(unchanged)" : ""} autoComplete="new-password" />
+              </Form.Item>
+              <Form.Item name="verifySsl" label="Verify TLS certificate" valuePropName="checked"
+                initialValue={true}
+                tooltip="Turn OFF to accept a self-signed / untrusted certificate on the remote Ambari (trust-all). Leave ON for a CA-signed certificate.">
+                <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
+              </Form.Item>
+
+              <Form.Item>
+                <Button icon={<CloudServerOutlined />} loading={probing} onClick={doProbe}>
+                  Test connection &amp; list clusters
+                </Button>
+              </Form.Item>
+              {probeResult && (
+                <Form.Item>
+                  {probeResult.ok
+                    ? <Alert type="success" showIcon
+                        message={`Connected${probeResult.ambariVersion ? ` — Ambari ${probeResult.ambariVersion}` : ""}`}
+                        description={`${probeResult.clusters?.length ?? 0} cluster(s) discovered. Pick the remote cluster below.`} />
+                    : <Alert type="error" showIcon message="Connection failed" description={probeResult.error} />}
+                </Form.Item>
+              )}
+
+              <Form.Item name="clusterName" label="Remote cluster name" rules={[{ required: true }]}
+                tooltip="The cluster on the remote Ambari to source the context from. Run the test above to pick from the discovered list, or type it.">
+                {probeResult?.ok && (probeResult.clusters?.length ?? 0) > 0
+                  ? <Select showSearch placeholder="Select a discovered cluster"
+                      options={(probeResult.clusters || []).map((c) => ({ value: c, label: c }))} />
+                  : <Input placeholder="e.g. prod" />}
               </Form.Item>
             </>
           )}

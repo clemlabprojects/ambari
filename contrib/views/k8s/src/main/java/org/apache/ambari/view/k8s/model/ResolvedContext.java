@@ -37,6 +37,12 @@ public class ResolvedContext {
     private String clusterName;     // Ambari cluster (MANAGED / REMOTE)
     private String remoteAmbariUrl; // REMOTE only — the remote Ambari base URL (for display; no creds)
 
+    // REMOTE-cluster info (for display): discovered live on resolve, cached into the context config.
+    private String ambariVersion;   // remote Ambari server version (e.g. 2.7.11.0)
+    private String stackName;       // remote running stack name (e.g. ODP-1.3)
+    private String stackVersion;    // remote running stack repository version (e.g. 1.3.2.0-1)
+    private String lastContactAt;   // ISO-8601 timestamp of the last successful contact with the remote Ambari
+
     // Atlas
     private String atlasUrl;        // scheme://host:port (no trailing slash)
     private String atlasAuthMode;   // basic | ldap | kerberos | none
@@ -79,6 +85,18 @@ public class ResolvedContext {
 
     public String getRemoteAmbariUrl() { return remoteAmbariUrl; }
     public void setRemoteAmbariUrl(String remoteAmbariUrl) { this.remoteAmbariUrl = remoteAmbariUrl; }
+
+    public String getAmbariVersion() { return ambariVersion; }
+    public void setAmbariVersion(String ambariVersion) { this.ambariVersion = ambariVersion; }
+
+    public String getStackName() { return stackName; }
+    public void setStackName(String stackName) { this.stackName = stackName; }
+
+    public String getStackVersion() { return stackVersion; }
+    public void setStackVersion(String stackVersion) { this.stackVersion = stackVersion; }
+
+    public String getLastContactAt() { return lastContactAt; }
+    public void setLastContactAt(String lastContactAt) { this.lastContactAt = lastContactAt; }
 
     public String getAtlasUrl() { return atlasUrl; }
     public void setAtlasUrl(String atlasUrl) { this.atlasUrl = atlasUrl; }

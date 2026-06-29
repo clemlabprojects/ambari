@@ -106,7 +106,15 @@ public class ContextResource {
     public Response resolved(@PathParam("id") String id, @Context HttpHeaders headers) {
         try {
             ContextService svc = new ContextService(viewContext);
-            String cluster = resolveClusterName(headers);
+            // The local cluster name is only needed to resolve the MANAGED default; EXTERNAL and
+            // REMOTE contexts carry their own. Don't let a local-cluster lookup failure (e.g. a
+            // view instance that isn't bound to a cluster) block resolving those.
+            String cluster = null;
+            try {
+                cluster = resolveClusterName(headers);
+            } catch (Exception ce) {
+                LOG.warn("resolved({}): could not resolve local cluster name (fine for EXTERNAL/REMOTE): {}", id, ce.toString());
+            }
             AmbariActionClient client = ambariClient(headers);
             ResolvedContext rc = svc.resolve(id, client, cluster);
             // Never expose the (external) Ranger admin password over REST.
@@ -160,6 +168,32 @@ public class ContextResource {
         } catch (Exception e) {
             LOG.warn("Advice failed for context {}: {}", id, e.toString());
             return Response.ok(java.util.Map.of("recommendations", java.util.Collections.emptyList())).build();
+        }
+    }
+
+    /**
+     * Live "test connection &amp; list clusters" for a remote Ambari, used by the Contexts UI before
+     * a REMOTE context is saved. Body: {@code {"remoteAmbariUrl": "...", "remoteUsername": "...",
+     * "remotePassword": "...", "verifySsl": true|false}}. Returns {@code {ok, clusters[],
+     * ambariVersion}} on success or {@code {ok:false, error}} with a friendly message. The password
+     * is used only to authenticate this probe — never persisted nor echoed.
+     */
+    @POST
+    @Path("probe-remote")
+    public Response probeRemote(java.util.Map<String, Object> body) {
+        try {
+            String url = body == null ? null : java.util.Objects.toString(body.get("remoteAmbariUrl"), null);
+            String user = body == null ? null : java.util.Objects.toString(body.get("remoteUsername"), null);
+            String pass = body == null ? null : java.util.Objects.toString(body.get("remotePassword"), null);
+            // verifySsl defaults to true unless explicitly false.
+            boolean verifySsl = body == null || !"false".equalsIgnoreCase(
+                    java.util.Objects.toString(body.get("verifySsl"), "true"));
+            java.util.Map<String, Object> result =
+                    new ContextService(viewContext).probeRemote(url, user, pass, verifySsl);
+            return Response.ok(result).build();
+        } catch (Exception e) {
+            LOG.warn("probe-remote failed: {}", e.toString());
+            return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
         }
     }
 

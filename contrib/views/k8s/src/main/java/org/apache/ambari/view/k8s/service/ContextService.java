@@ -281,6 +281,23 @@ public class ContextService {
                 // would perform Ranger ops itself rather than hand them to the (local) server.
                 rc.setRangerManaged(false);
                 rc.setRemoteAmbariUrl(str(parseConfig(entity.getConfigJson()).get("remoteAmbariUrl")));
+                // Discover remote-cluster info (Ambari version, running stack) for display, stamp the
+                // last-contact time, and cache it into the context config so the list/detail can show
+                // it without another live call. Best-effort: never fails resolution.
+                if (effectiveAmbari != null) {
+                    try {
+                        Map<String, String> info = effectiveAmbari.getServerAndStackInfo(effectiveCluster);
+                        rc.setAmbariVersion(info.get("ambariVersion"));
+                        rc.setStackName(info.get("stackName"));
+                        rc.setStackVersion(info.get("stackVersion"));
+                        String now = Instant.now().toString();
+                        rc.setLastContactAt(now);
+                        persistRemoteInfo(entity, info, now);
+                    } catch (Exception e) {
+                        LOG.debug("ContextService.resolve: remote info fetch failed for {}: {}",
+                                entity.getId(), e.toString());
+                    }
+                }
             }
         } else {
             rc = resolveExternal(entity);
@@ -308,17 +325,81 @@ public class ContextService {
                         + "cannot connect", entity.getId());
                 return null;
             }
-            String base = url.trim().replaceAll("/+$", "");
-            String apiBase = base.endsWith("/api/v1") ? base : base + "/api/v1";
-            String basic = "Basic " + Base64.getEncoder().encodeToString(
-                    (user + ":" + pass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return new AmbariActionClient(viewContext, apiBase, entity.getClusterName(),
-                    java.util.Collections.singletonMap("Authorization", basic));
+            // verifySsl defaults to true; a context that opted into "ignore self-signed" stores false.
+            boolean verifySsl = !"false".equalsIgnoreCase(str(cfg.get("verifySsl")));
+            return buildClient(url, user, pass, entity.getClusterName(), verifySsl);
         } catch (Exception e) {
             LOG.warn("ContextService: failed to build remote Ambari client for {}: {}",
                     entity.getId(), e.toString());
             return null;
         }
+    }
+
+    /**
+     * Build an {@link AmbariActionClient} for a remote Ambari from raw connection details (used by
+     * both {@link #buildRemoteClient} and {@link #probeRemote}). Normalises the URL to end in
+     * {@code /api/v1}, sets a Basic auth header, and toggles TLS verification per {@code verifySsl}.
+     */
+    private AmbariActionClient buildClient(String url, String user, String pass, String clusterName, boolean verifySsl) {
+        String base = url.trim().replaceAll("/+$", "");
+        String apiBase = base.endsWith("/api/v1") ? base : base + "/api/v1";
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (user + ":" + pass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        AmbariActionClient client = (clusterName != null && !clusterName.isBlank())
+                ? new AmbariActionClient(viewContext, apiBase, clusterName,
+                        java.util.Collections.singletonMap("Authorization", basic))
+                : new AmbariActionClient(viewContext, apiBase,
+                        java.util.Collections.singletonMap("Authorization", basic));
+        return client.verifySsl(verifySsl);
+    }
+
+    /**
+     * Live "test connection &amp; discover" for a remote Ambari, used by the Contexts UI before a
+     * REMOTE context is saved. Connects with the given credentials (honouring {@code verifySsl}),
+     * lists the clusters the remote Ambari manages, and reads the Ambari server version. The result
+     * doubles as the connection test: {@code ok=false} with a human error message on any failure.
+     * Never persists anything and never echoes the password.
+     */
+    public Map<String, Object> probeRemote(String url, String user, String pass, boolean verifySsl) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (isBlank(url) || isBlank(user) || isBlank(pass)) {
+            out.put("ok", false);
+            out.put("error", "remoteAmbariUrl, remoteUsername and remotePassword are required");
+            return out;
+        }
+        try {
+            AmbariActionClient client = buildClient(url, user, pass, null, verifySsl);
+            List<String> clusters = client.listClusters();
+            Map<String, String> info = client.getServerAndStackInfo(null); // ambari version (no cluster yet)
+            out.put("ok", true);
+            out.put("clusters", clusters != null ? clusters : new ArrayList<>());
+            if (info.get("ambariVersion") != null) out.put("ambariVersion", info.get("ambariVersion"));
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", humanizeConnError(e));
+            LOG.info("ContextService.probeRemote failed for {}: {}", url, e.toString());
+        }
+        return out;
+    }
+
+    /** Map a connection exception to a short, operator-friendly hint. */
+    private static String humanizeConnError(Exception e) {
+        String msg = String.valueOf(e.getMessage());
+        if (msg.contains("401") || msg.contains("403")) {
+            return "Authentication failed — check the username and password.";
+        }
+        if (e instanceof javax.net.ssl.SSLException || msg.contains("PKIX") || msg.contains("certificate")
+                || msg.contains("SSL") || msg.contains("unable to find valid certification path")) {
+            return "TLS error reaching the Ambari URL — for a self-signed certificate, enable \"Ignore SSL\".";
+        }
+        if (e instanceof java.net.UnknownHostException || msg.contains("UnknownHost")) {
+            return "Host not found — check the Ambari URL.";
+        }
+        if (e instanceof java.net.ConnectException || msg.contains("Connection refused")
+                || e instanceof java.net.http.HttpConnectTimeoutException || msg.contains("timed out")) {
+            return "Cannot reach the Ambari URL (connection refused or timed out) — check host/port and network.";
+        }
+        return "Could not connect to the remote Ambari: " + msg;
     }
 
     /**
@@ -435,6 +516,28 @@ public class ContextService {
         r.setAtlasFederationUser(str(config.get("federationUser")));
         r.setAtlasFederationPassword(readSecret(entity.getId(), "federationPassword"));
         return r;
+    }
+
+    /**
+     * Cache the discovered remote-cluster info + last-contact time into the context's non-secret
+     * {@code configJson} so the list/detail views can show it without another live call. Best-effort:
+     * any failure (oversized config, persistence hiccup) is swallowed — it must never break resolve.
+     */
+    private void persistRemoteInfo(KdpsContextEntity entity, Map<String, String> info, String now) {
+        try {
+            Map<String, Object> cfg = parseConfig(entity.getConfigJson());
+            if (info.get("ambariVersion") != null) cfg.put("ambariVersion", info.get("ambariVersion"));
+            if (info.get("stackName") != null) cfg.put("stackName", info.get("stackName"));
+            if (info.get("stackVersion") != null) cfg.put("stackVersion", info.get("stackVersion"));
+            cfg.put("lastContactAt", now);
+            String json = GSON.toJson(cfg);
+            if (json.length() <= MAX_CONFIG_JSON_LENGTH) {
+                entity.setConfigJson(json);
+                repo.upsert(entity);
+            }
+        } catch (Exception e) {
+            LOG.debug("ContextService.persistRemoteInfo failed for {}: {}", entity.getId(), e.toString());
+        }
     }
 
     private Map<String, Object> parseConfig(String json) {

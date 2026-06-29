@@ -58,6 +58,30 @@ public class AmbariActionClient {
     private Map<String,AmbariConfigPropertiesTypes> defaultConfigTypes;
     public record WebhookCreds(String username, String password) {}
 
+    /**
+     * When false, the read-path methods used against a REMOTE context's Ambari
+     * (listClusters / getDesiredConfigPropert* / getComponentHosts / getServerAndStackInfo)
+     * bypass the View's truststore-backed URLStreamProvider and use a trust-all HTTPS client
+     * instead — the "ignore self-signed cert" toggle for a remote Ambari. Defaults to true
+     * (verify), so the local-Ambari paths and every write path are unaffected.
+     */
+    private boolean verifySsl = true;
+
+    /** Trust manager that accepts any server certificate — used ONLY when {@link #verifySsl} is false. */
+    private static final javax.net.ssl.TrustManager[] TRUST_ALL = new javax.net.ssl.TrustManager[] {
+        new javax.net.ssl.X509TrustManager() {
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+        }
+    };
+
+    /** Fluent toggle for TLS verification on the remote read-path (see {@link #verifySsl}). */
+    public AmbariActionClient verifySsl(boolean verify) {
+        this.verifySsl = verify;
+        return this;
+    }
+
 
     private static final Logger LOG = LoggerFactory.getLogger(AmbariActionClient.class);
     private static final Gson GSON = new Gson();
@@ -311,7 +335,7 @@ public class AmbariActionClient {
         String url = ambariApiBase + "/clusters?fields=Clusters/cluster_name";
         LOG.info("Listing clusters from {}", url);
         LOG.debug("Using header keys: {}", this.defaultHeaders.keySet());
-        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 
@@ -389,6 +413,115 @@ public class AmbariActionClient {
         if (extra != null) h.putAll(extra);                              // e.g., Content-Type
         h.putIfAbsent("X-Requested-By", "ambari");
         return h;
+    }
+
+    /**
+     * Read-path dispatch that honours {@link #verifySsl}. When verification is on (default), reads
+     * go through the View's {@link URLStreamProvider} exactly as before (server-wide truststore).
+     * When off, reads go through a trust-all HTTPS client — used only for the remote-Ambari
+     * discovery path of a REMOTE context that opted into "ignore self-signed". GET bodies are null.
+     */
+    private InputStream readVia(String url, String method, String body, Map<String,String> headers) throws Exception {
+        if (verifySsl) {
+            return stream.readFrom(url, method, body, headers);
+        }
+        return insecureReadFrom(url, method, body, headers);
+    }
+
+    /** Trust-all HTTPS read (no cert/hostname verification). Throws with the HTTP status in the
+     * message on non-2xx, so callers' existing 401/403/404 string checks keep working. */
+    private InputStream insecureReadFrom(String url, String method, String body, Map<String,String> headers) throws Exception {
+        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+        sc.init(null, TRUST_ALL, new java.security.SecureRandom());
+        javax.net.ssl.SSLParameters sp = new javax.net.ssl.SSLParameters();
+        sp.setEndpointIdentificationAlgorithm(null); // also skip hostname verification (self-signed/IP hosts)
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .sslContext(sc).sslParameters(sp)
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .build();
+        java.net.http.HttpRequest.BodyPublisher pub = (body == null)
+                ? java.net.http.HttpRequest.BodyPublishers.noBody()
+                : java.net.http.HttpRequest.BodyPublishers.ofString(body);
+        java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(30))
+                .method(method == null ? "GET" : method, pub);
+        if (headers != null) {
+            for (Map.Entry<String,String> e : headers.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                try { b.header(e.getKey(), e.getValue()); } catch (IllegalArgumentException ignore) { /* restricted header */ }
+            }
+        }
+        java.net.http.HttpResponse<byte[]> resp =
+                client.send(b.build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        int code = resp.statusCode();
+        if (code < 200 || code >= 300) {
+            throw new IOException("HTTP " + code + " from " + url);
+        }
+        return new java.io.ByteArrayInputStream(resp.body());
+    }
+
+    /**
+     * Best-effort remote-cluster info for display: the Ambari server version (root service, no
+     * cluster needed) plus the running stack name + current repository version for {@code cluster}
+     * (when non-null). Never throws — missing pieces are simply omitted from the returned map.
+     * Honours {@link #verifySsl}. Keys: {@code ambariVersion}, {@code stackName}, {@code stackVersion}.
+     */
+    public Map<String,String> getServerAndStackInfo(String cluster) {
+        Map<String,String> info = new LinkedHashMap<>();
+        // Ambari server version — RootServiceComponents, independent of any cluster.
+        try {
+            String url = ambariApiBase + "/services/AMBARI/components/AMBARI_SERVER"
+                    + "?fields=RootServiceComponents/component_version";
+            try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
+                JsonObject root = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+                JsonObject rsc = root.getAsJsonObject("RootServiceComponents");
+                if (rsc != null && rsc.has("component_version") && !rsc.get("component_version").isJsonNull()) {
+                    info.put("ambariVersion", rsc.get("component_version").getAsString());
+                }
+            }
+        } catch (Exception e) {
+            LOG.debug("getServerAndStackInfo: Ambari version fetch failed: {}", e.toString());
+        }
+        if (cluster != null && !cluster.isBlank()) {
+            // Stack name, e.g. "ODP-1.3"
+            try {
+                String url = ambariApiBase + "/clusters/" + encode(cluster) + "?fields=Clusters/version";
+                try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
+                    JsonObject root = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+                    JsonObject c = root.getAsJsonObject("Clusters");
+                    if (c != null && c.has("version") && !c.get("version").isJsonNull()) {
+                        info.put("stackName", c.get("version").getAsString());
+                    }
+                }
+            } catch (Exception e) {
+                LOG.debug("getServerAndStackInfo: stack name fetch failed: {}", e.toString());
+            }
+            // Current stack repository version, e.g. "1.3.2.0-25". NOTE: ClusterStackVersions/
+            // repository_version is the internal repo-version ID (e.g. 151); the human-readable
+            // version string lives on the nested repository_versions/RepositoryVersions resource.
+            try {
+                String url = ambariApiBase + "/clusters/" + encode(cluster)
+                        + "/stack_versions?ClusterStackVersions/state=CURRENT"
+                        + "&fields=repository_versions/RepositoryVersions/repository_version";
+                try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
+                    JsonObject root = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+                    JsonArray items = root.getAsJsonArray("items");
+                    if (items != null && items.size() > 0) {
+                        JsonArray rvs = items.get(0).getAsJsonObject().getAsJsonArray("repository_versions");
+                        if (rvs != null && rvs.size() > 0) {
+                            JsonObject rv = rvs.get(0).getAsJsonObject().getAsJsonObject("RepositoryVersions");
+                            if (rv != null && rv.has("repository_version") && !rv.get("repository_version").isJsonNull()) {
+                                info.put("stackVersion", rv.get("repository_version").getAsString());
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                LOG.debug("getServerAndStackInfo: stack version fetch failed: {}", e.toString());
+            }
+        }
+        return info;
     }
 
     /**
@@ -755,7 +888,7 @@ public class AmbariActionClient {
                 + "/services/" + encode(service)
                 + "/components/" + encode(component)
                 + "?fields=host_components/HostRoles/host_name";
-        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             List<String> hosts = new ArrayList<>();
@@ -808,7 +941,7 @@ public class AmbariActionClient {
         String url1 = ambariApiBase + "/clusters/" + encode(cluster)
                 + "?fields=" + encode("Clusters/desired_configs/" + type);
         String json1;
-        try (InputStream is = stream.readFrom(url1, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(url1, "GET", null, withStdHeaders(null))) {
             json1 = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
         JsonObject root1 = JsonParser.parseString(json1).getAsJsonObject();
@@ -821,7 +954,7 @@ public class AmbariActionClient {
         String url2 = ambariApiBase + "/clusters/" + encode(cluster)
                 + "/configurations?type=" + encode(type) + "&tag=" + encode(tag);
         String json2;
-        try (InputStream is = stream.readFrom(url2, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(url2, "GET", null, withStdHeaders(null))) {
             json2 = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
         JsonObject root2 = JsonParser.parseString(json2).getAsJsonObject();
@@ -1108,7 +1241,7 @@ public class AmbariActionClient {
         final String urlDesired = ambariApiBase + "/clusters/" + encode(cluster)
                 + "?fields=" + encode("Clusters/desired_configs/" + type);
         String jsonDesired;
-        try (InputStream is = stream.readFrom(urlDesired, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(urlDesired, "GET", null, withStdHeaders(null))) {
             jsonDesired = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
 
@@ -1128,7 +1261,7 @@ public class AmbariActionClient {
         final String urlCfg = ambariApiBase + "/clusters/" + encode(cluster)
                 + "/configurations?type=" + encode(type) + "&tag=" + encode(tag);
         String jsonCfg;
-        try (InputStream is = stream.readFrom(urlCfg, "GET", (String) null, withStdHeaders(null))) {
+        try (InputStream is = readVia(urlCfg, "GET", null, withStdHeaders(null))) {
             jsonCfg = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
 
