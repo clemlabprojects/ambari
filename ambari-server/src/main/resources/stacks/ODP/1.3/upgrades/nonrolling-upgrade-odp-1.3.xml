@@ -1218,6 +1218,7 @@
         <pre-upgrade>
           <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag"/>
           <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs"/>
+          <task xsi:type="configure" id="odp_1_3_2_0_spark3_secondary_jdk_java_home"/>
         </pre-upgrade>
         <pre-downgrade copy-upgrade="true" />
         <upgrade>

@@ -201,6 +201,16 @@
             <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleName" value="com.sun.security.auth.module.Krb5LoginModule"/>
             <set key="atlas.jaas.ticketBased-KafkaClient.option.useTicketCache" value="true"/>
           </definition>
+          <!-- ODP 1.3.2.0 (AMBARI-491): Spark is built against Hive 4.2 (class-file 65) and must run
+               the secondary JDK 21. The stack default now renders spark-env JAVA_HOME from
+               {{spark_java_home}}, but an already-deployed cluster keeps its stored content with
+               {{java_home}} (the primary JDK), so spark-shell/pyspark would still launch on JDK 17.
+               Rewrite the stored content so the CLI uses the secondary JDK after upgrade. The history
+               and thrift servers and the YARN driver/executors are already routed via the scripts. -->
+          <definition xsi:type="configure" id="odp_1_3_2_0_spark3_secondary_jdk_java_home" summary="Spark runs on the secondary JDK 21 (built against Hive 4.2): point spark-env JAVA_HOME at the secondary JDK">
+            <type>spark3-env</type>
+            <replace key="content" find="export JAVA_HOME={{java_home}}" replace-with="export JAVA_HOME={{spark_java_home}}"/>
+          </definition>
         </changes>
       </component>
     </service>
