@@ -428,37 +428,39 @@ public class AmbariActionClient {
         return insecureReadFrom(url, method, body, headers);
     }
 
-    /** Trust-all HTTPS read (no cert/hostname verification). Throws with the HTTP status in the
-     * message on non-2xx, so callers' existing 401/403/404 string checks keep working. */
+    /** Trust-all HTTPS read (no cert AND no hostname verification). Uses HttpsURLConnection with a
+     * per-connection trust-all socket factory + allow-all hostname verifier — NOT java.net.http.HttpClient,
+     * which ignores a null endpointIdentificationAlgorithm and always verifies the hostname, so a self-signed
+     * cert reached by IP (whose CN won't match) would still fail. Throws with the HTTP status in the message
+     * on non-2xx so callers' existing 401/403/404 string checks keep working. */
     private InputStream insecureReadFrom(String url, String method, String body, Map<String,String> headers) throws Exception {
         javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
         sc.init(null, TRUST_ALL, new java.security.SecureRandom());
-        javax.net.ssl.SSLParameters sp = new javax.net.ssl.SSLParameters();
-        sp.setEndpointIdentificationAlgorithm(null); // also skip hostname verification (self-signed/IP hosts)
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .sslContext(sc).sslParameters(sp)
-                .connectTimeout(java.time.Duration.ofSeconds(15))
-                .build();
-        java.net.http.HttpRequest.BodyPublisher pub = (body == null)
-                ? java.net.http.HttpRequest.BodyPublishers.noBody()
-                : java.net.http.HttpRequest.BodyPublishers.ofString(body);
-        java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder()
-                .uri(java.net.URI.create(url))
-                .timeout(java.time.Duration.ofSeconds(30))
-                .method(method == null ? "GET" : method, pub);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        if (conn instanceof javax.net.ssl.HttpsURLConnection https) {
+            https.setSSLSocketFactory(sc.getSocketFactory());
+            https.setHostnameVerifier((hostname, session) -> true); // allow-all: self-signed / IP-addressed hosts
+        }
+        conn.setRequestMethod(method == null ? "GET" : method);
+        conn.setConnectTimeout(15_000);
+        conn.setReadTimeout(30_000);
         if (headers != null) {
             for (Map.Entry<String,String> e : headers.entrySet()) {
-                if (e.getKey() == null || e.getValue() == null) continue;
-                try { b.header(e.getKey(), e.getValue()); } catch (IllegalArgumentException ignore) { /* restricted header */ }
+                if (e.getKey() != null && e.getValue() != null) conn.setRequestProperty(e.getKey(), e.getValue());
             }
         }
-        java.net.http.HttpResponse<byte[]> resp =
-                client.send(b.build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
-        int code = resp.statusCode();
+        if (body != null) {
+            conn.setDoOutput(true);
+            try (java.io.OutputStream os = conn.getOutputStream()) { os.write(body.getBytes(StandardCharsets.UTF_8)); }
+        }
+        int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
+            try (InputStream es = conn.getErrorStream()) { if (es != null) es.readAllBytes(); } catch (Exception ignore) {}
             throw new IOException("HTTP " + code + " from " + url);
         }
-        return new java.io.ByteArrayInputStream(resp.body());
+        byte[] data;
+        try (InputStream is = conn.getInputStream()) { data = is.readAllBytes(); }
+        return new java.io.ByteArrayInputStream(data);
     }
 
     /**

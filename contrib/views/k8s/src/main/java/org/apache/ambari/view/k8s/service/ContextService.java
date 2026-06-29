@@ -287,12 +287,16 @@ public class ContextService {
                 if (effectiveAmbari != null) {
                     try {
                         Map<String, String> info = effectiveAmbari.getServerAndStackInfo(effectiveCluster);
-                        rc.setAmbariVersion(info.get("ambariVersion"));
-                        rc.setStackName(info.get("stackName"));
-                        rc.setStackVersion(info.get("stackVersion"));
-                        String now = Instant.now().toString();
-                        rc.setLastContactAt(now);
-                        persistRemoteInfo(entity, info, now);
+                        // Only treat it as a successful contact when we actually got something back
+                        // (ambariVersion is the no-cluster-needed signal that the remote answered).
+                        if (info != null && info.get("ambariVersion") != null) {
+                            rc.setAmbariVersion(info.get("ambariVersion"));
+                            rc.setStackName(info.get("stackName"));
+                            rc.setStackVersion(info.get("stackVersion"));
+                            String now = Instant.now().toString();
+                            rc.setLastContactAt(now);
+                            persistRemoteInfo(entity, info, now);
+                        }
                     } catch (Exception e) {
                         LOG.debug("ContextService.resolve: remote info fetch failed for {}: {}",
                                 entity.getId(), e.toString());
