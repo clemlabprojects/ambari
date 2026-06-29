@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.21",
+  "version": "1.13.22",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -128,6 +128,18 @@
     {
       "name": "runAsUserOverride",
       "from": { "type": "form", "field": "runAsUser" }
+    },
+    {
+      "name": "externalOpensearchHost",
+      "from": { "type": "form", "field": "externalOpensearch.host" }
+    },
+    {
+      "name": "externalOpensearchPort",
+      "from": { "type": "form", "field": "externalOpensearch.port" }
+    },
+    {
+      "name": "externalOpensearchScheme",
+      "from": { "type": "form", "field": "externalOpensearch.scheme" }
     },
     {
       "name": "ingressEnabled",
@@ -489,6 +501,31 @@
           "path": "runAsUser",
           "skipIfVarEmpty": "runAsUserOverride",
           "from": { "type": "var", "name": "runAsUserOverride" }
+        }
+      ]
+    },
+    {
+      "name": "external-opensearch",
+      "targets": [
+        {
+          "path": "opensearch.enabled",
+          "value": false,
+          "skipIfVarEmpty": "externalOpensearchHost"
+        },
+        {
+          "path": "externalSearch.host",
+          "skipIfVarEmpty": "externalOpensearchHost",
+          "from": { "type": "var", "name": "externalOpensearchHost" }
+        },
+        {
+          "path": "externalSearch.port",
+          "skipIfVarEmpty": "externalOpensearchPort",
+          "from": { "type": "var", "name": "externalOpensearchPort" }
+        },
+        {
+          "path": "externalSearch.scheme",
+          "skipIfVarEmpty": "externalOpensearchScheme",
+          "from": { "type": "var", "name": "externalOpensearchScheme" }
         }
       ]
     },
@@ -1135,6 +1172,42 @@
           "label": "Run pods as a specific UID (optional)",
           "type": "number",
           "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
+        }
+      ]
+    },
+    {
+      "name": "externalOpensearchOptions",
+      "label": "External OpenSearch (OpenShift)",
+      "type": "group",
+      "capability": "openshift",
+      "collapsed": true,
+      "help": "On OpenShift the bundled OpenSearch needs root + privileged (sysctl vm.max_map_count) init containers that the restricted-v2 SCC rejects. Point OpenMetadata at an EXTERNAL OpenSearch instead — entering a host below disables the bundled OpenSearch. The external endpoint must be network-reachable from the OpenMetadata pod; the chart connects over plain host:port with no username/password and no custom-CA truststore, so use an unauthenticated endpoint (or an in-cluster service) for now.",
+      "fields": [
+        {
+          "name": "externalOpensearch.host",
+          "label": "OpenSearch host",
+          "type": "string",
+          "help": "Hostname or in-cluster Service of the external OpenSearch (e.g. opensearch.search.svc.cluster.local). Leave blank to keep the bundled OpenSearch — note it will NOT schedule under restricted-v2."
+        },
+        {
+          "name": "externalOpensearch.port",
+          "label": "Port",
+          "type": "number",
+          "defaultValue": 9200,
+          "condition": { "field": "externalOpensearch.host", "operator": "non-empty" },
+          "help": "External OpenSearch port (default 9200)."
+        },
+        {
+          "name": "externalOpensearch.scheme",
+          "label": "Scheme",
+          "type": "select",
+          "defaultValue": "http",
+          "options": [
+            { "label": "http", "value": "http" },
+            { "label": "https", "value": "https" }
+          ],
+          "condition": { "field": "externalOpensearch.host", "operator": "non-empty" },
+          "help": "http or https. https against an endpoint with a private CA is not yet supported (no JVM truststore wiring on the OpenMetadata side)."
         }
       ]
     },
