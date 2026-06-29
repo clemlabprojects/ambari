@@ -164,7 +164,9 @@ export HADOOP_HOME=${HADOOP_HOME:-{{hadoop_home}}}
 export HADOOP_CONF_DIR=${HADOOP_CONF_DIR:-{{hadoop_conf_dir}}}
 
 # The java implementation to use.
-export JAVA_HOME={{java_home}}
+# ODP 1.3.2.0+: spark_java_home is the secondary JDK 21 (Spark is built against Hive 4.2 =>
+# class-file 65); falls back to the primary JDK on older stacks. See params.py.
+export JAVA_HOME={{spark_java_home}}
 
 # Add hadoop native libraries support for better performance
 export LD_LIBRARY_PATH=$HADOOP_HOME/lib/native/:$LD_LIBRARY_PATH

@@ -242,18 +242,32 @@ hdfs_resource_ignore_file = "/var/lib/ambari-agent/data/.hdfs_resource_ignore"
 hive_schematool_bin = format('{stack_root}/current/{hive_component_directory}/bin')
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
 
-# AMBARI-487: Hive 4's schematool is compiled by JDK 21, so the embedded -createCatalog call
-# in spark_service.py needs the secondary JDK on ODP 1.3.2.0+ even though the Spark history
-# server itself runs on the primary (JDK 17). Resolve from ambariLevelParams (always published)
-# with host_level_params fallback. Stays on the primary on older stacks (feature gate off).
+# AMBARI-491: ODP 1.3.2.0 runs the whole Spark tier on the secondary JDK (Java 21). Spark 3.5.6
+# is built against Hive 4.2 (class-file 65), so every Spark JVM - the history server, the Spark
+# thrift server, spark-submit/spark-shell, Livy, and the YARN driver/AM + executors - must run
+# the secondary JDK 21, not the primary 17 (which raises UnsupportedClassVersionError). On stacks
+# that advertise secondary_java_home_support (1.3.2.0+) the metainfo javaHomeSelector points us at
+# the secondary JDK; Ambari 2.8.x routes it through any of three param maps, so resolve from all.
+# Stays on the primary on older stacks (feature gate off) - zero behaviour change there.
 version_for_stack_feature_checks = get_stack_feature_version(config)
-hive_schematool_java_home = java_home
 host_level_params = default("/hostLevelParams", {})
 ambari_level_params = default("/ambariLevelParams", {})
+command_params_map = default("/commandParams", {})
+java_home_selector = (
+  host_level_params.get("java_home_selector")
+  or command_params_map.get("java_home_selector")
+  or ambari_level_params.get("java_home_selector")
+  or "java_home"
+)
+spark_java_home = java_home
 if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
-  secondary = ambari_level_params.get("secondary_java_home") or host_level_params.get("secondary_java_home")
-  if secondary:
-    hive_schematool_java_home = secondary
+  resolved_java_home = host_level_params.get(java_home_selector) or ambari_level_params.get(java_home_selector)
+  if resolved_java_home:
+    spark_java_home = resolved_java_home
+
+# AMBARI-487: Hive 4's schematool (the embedded -createCatalog call in spark_service.py) is also
+# compiled by JDK 21, so it shares the same secondary JDK as the Spark tier on 1.3.2.0+.
+hive_schematool_java_home = spark_java_home
 
 ats_host = set(default("/clusterHostInfo/app_timeline_server_hosts", []))
 has_ats = len(ats_host) > 0

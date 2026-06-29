@@ -84,6 +84,14 @@ def setup_spark(env, type, upgrade_type = None, action = None):
     spark3_defaults.pop("history.server.spnego.keytab.file")
     spark3_defaults['spark.history.kerberos.principal'] = spark3_defaults['spark.history.kerberos.principal'].replace('_HOST', socket.getfqdn().lower())
 
+  # AMBARI-491: on ODP 1.3.2.0+ pin the YARN application master / driver and the executors to the
+  # same secondary JDK 21 as the local Spark JVMs (Spark is built against Hive 4.2 => class-file 65).
+  # Without this, YARN containers launch on the NodeManager's primary JDK (17) and fail to load
+  # Spark. No-op when spark_java_home == java_home (older stacks / secondary JDK not configured).
+  if params.spark_java_home != params.java_home:
+    spark3_defaults['spark.yarn.appMasterEnv.JAVA_HOME'] = params.spark_java_home
+    spark3_defaults['spark.executorEnv.JAVA_HOME'] = params.spark_java_home
+
   PropertiesFile(format("{spark_conf}/spark-defaults.conf"),
     properties = spark3_defaults,
     key_value_delimiter = " ",
@@ -129,6 +137,13 @@ def setup_spark(env, type, upgrade_type = None, action = None):
 
     if params.security_enabled and 'spark.yarn.principal' in spark3_thrift_sparkconf:
       spark3_thrift_sparkconf['spark.yarn.principal'] = spark3_thrift_sparkconf['spark.yarn.principal'].replace('_HOST', socket.getfqdn().lower())
+
+    # AMBARI-491: the thrift server is launched with --properties-file <this file>, which bypasses
+    # spark-defaults.conf, so the secondary-JDK env for the YARN AM/driver + executors must be set
+    # here too (see the spark-defaults injection above for the rationale).
+    if params.spark_java_home != params.java_home:
+      spark3_thrift_sparkconf['spark.yarn.appMasterEnv.JAVA_HOME'] = params.spark_java_home
+      spark3_thrift_sparkconf['spark.executorEnv.JAVA_HOME'] = params.spark_java_home
 
     PropertiesFile(params.spark_thrift_server_conf_file,
       properties = spark3_thrift_sparkconf,

@@ -34,7 +34,7 @@ def livy2_service(name, upgrade_type=None, action=None):
   if action == 'start':
     Execute(format('{livy2_server_start}'),
             user=params.livy2_user,
-            environment={'JAVA_HOME': params.java_home},
+            environment={'JAVA_HOME': params.spark_java_home},
             not_if=process_id_exists_command)
   elif action == 'stop':
     Execute(format('{livy2_server_stop}'),
@@ -42,4 +42,4 @@ def livy2_service(name, upgrade_type=None, action=None):
             only_if=process_id_exists_command,
             timeout=10,
             on_timeout=format("! ( {process_id_exists_command} ) || {sudo} -H -E kill -9 {livy2_server_pid}"),
-            environment={'JAVA_HOME': params.java_home})
+            environment={'JAVA_HOME': params.spark_java_home})

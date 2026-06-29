@@ -110,7 +110,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(params.spark_history_server_start,
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home},
+                environment={'JAVA_HOME': params.spark_java_home},
                 not_if=historyserver_no_op_test)
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)
@@ -125,7 +125,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_thrift_server_start} --properties-file {spark_thrift_server_conf_file} {spark_thrift_cmd_opts_properties}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home},
+                environment={'JAVA_HOME': params.spark_java_home},
                 not_if=thriftserver_no_op_test
         )
       except:
@@ -136,7 +136,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_history_server_stop}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home}
+                environment={'JAVA_HOME': params.spark_java_home}
         )
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)
@@ -149,7 +149,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_thrift_server_stop}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home}
+                environment={'JAVA_HOME': params.spark_java_home}
         )
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)
