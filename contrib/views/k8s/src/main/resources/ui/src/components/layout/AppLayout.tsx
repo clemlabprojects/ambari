@@ -44,7 +44,7 @@ import {
 import { useClusterStatus } from '../../context/ClusterStatusContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import NamespaceSelector from './NamespaceSelector';
-import { listCommands } from '../../api/client';
+import { listCommands, getClusterCapabilities } from '../../api/client';
 import './AppLayout.css';
 
 const { Header, Content, Sider } = Layout;
@@ -93,6 +93,18 @@ const ROUTE_SECTIONS: Record<string, string> = {
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { status, error, fetchData } = useClusterStatus();
+
+  // Detected target platform (kubernetes | openshift) from the same /cluster/capabilities probe
+  // that gates the OpenShift-only deploy fields. Surfaced in the brand so the operator can see at
+  // a glance which platform KDPS detected — and so a mis-detection is immediately visible.
+  const [platform, setPlatform] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    getClusterCapabilities()
+      .then(c => { if (alive) setPlatform(c?.platform ?? null); })
+      .catch(() => { if (alive) setPlatform(null); });
+    return () => { alive = false; };
+  }, []);
 
   // Collapse state survives reloads. Read once on mount; ignore parse errors.
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
@@ -216,6 +228,14 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <div className="app-sider-brand-text">
               <div className="brand-title">KDPS</div>
               <div className="brand-subtitle">kubernetes platform</div>
+              {platform && (
+                <Tag
+                  color={platform === 'openshift' ? 'red' : 'blue'}
+                  style={{ marginTop: 4, fontSize: 11, lineHeight: '16px', padding: '0 6px' }}
+                >
+                  {platform === 'openshift' ? 'OpenShift' : 'Kubernetes'}
+                </Tag>
+              )}
             </div>
           )}
         </div>
