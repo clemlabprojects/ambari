@@ -78,19 +78,16 @@ limitations under the License.
         <label>View Operator Users</label>
         <required>false</required>
     </parameter>
-    <parameter>
-        <name>k8s.view.vault.address</name>
-        <description>Base URL of the HashiCorp Vault server the view writes service secrets to (e.g. https://vault.vault-csi.svc:8200). When set together with k8s.view.vault.token, credentials whose service.json declares a vaultPath (currently OIDC client secrets) are written to Vault's KV v2 store IN ADDITION to the in-cluster Kubernetes Secret — the Kubernetes Secret is always created. Leave empty to keep secrets only as Kubernetes Secrets (the default).</description>
-        <label>Vault Address (optional)</label>
-        <required>false</required>
-    </parameter>
-    <parameter>
-        <name>k8s.view.vault.token</name>
-        <description>Vault token the view uses to write service secrets; needs create/update capability on the configured KV v2 paths. Required only when k8s.view.vault.address is set. IMPORTANT: vaultPath values in service.json must be KV v2 DATA paths (e.g. secret/data/kdps/&lt;release&gt;-oidc), because the view POSTs to {address}/v1/{vaultPath}. The Secrets Store CSI driver then mounts the same path into the pod (see the superset chart's vault.csi.* values).</description>
-        <label>Vault Token (optional)</label>
-        <required>false</required>
-        <masked>true</masked>
-    </parameter>
+    <!--
+      NOTE: the Vault address/token view parameters were intentionally removed. A `<masked>`
+      parameter that has no value makes Ambari's ViewContextImpl.getProperties() call
+      DefaultMasker.unmask(null) → `new String(Base64.decodeBase64(null))` → NullPointerException,
+      and that NPE is uncaught (the framework only catches MaskException), so EVERY view endpoint
+      that reads properties (e.g. /commands) 500s. The backend (CommandService.writeOidcToVault)
+      still reads k8s.view.vault.address/token from the view context and is a no-op when they are
+      absent, so Vault writes simply stay disabled. Re-introduce these via a secret mechanism that
+      does not depend on an unset masked parameter when Vault-backed secret storage is wired for real.
+    -->
 
     <persistence>
         <!-- Fully qualified name of your @Entity class -->
