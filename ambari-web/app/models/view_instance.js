@@ -77,5 +77,16 @@ App.ViewInstance = Em.Object.extend({
       return '#/main/view/' + viewName + '/' + shortUrl;
     }
     return '#/main/views/' + viewName + '/' + version + '/' + instanceName;
-  }.property('shortUrl', 'viewName', 'version', 'instanceName')
+  }.property('shortUrl', 'viewName', 'version', 'instanceName'),
+
+  /**
+   * Some views render their own full-page chrome and read best standalone,
+   * without the Ambari shell wrapped around their iframe. The menu opens these
+   * in a new tab using their direct context-path URL ({@link href}) instead of
+   * the in-shell route. Matched by view name (type), not instance label.
+   * @type {boolean}
+   */
+  opensStandalone: function () {
+    return ['K8S-VIEW'].indexOf(this.get('viewName')) !== -1;
+  }.property('viewName')
 });
