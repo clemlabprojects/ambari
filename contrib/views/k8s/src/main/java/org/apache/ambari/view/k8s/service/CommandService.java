@@ -4886,6 +4886,49 @@ public class CommandService {
                         }
                     }
 
+                    // Superset (or any service building a Hive database connection) needs its
+                    // Kerberos principal granted SELECT on the Hive Ranger repo: Superset runs
+                    // schema/column reflection as the SERVICE principal (queries impersonate the
+                    // end-user, but reflection does not), so without this grant Ranger denies
+                    // DESCRIBE and tables list with no columns. Declared via platformOp
+                    // (op=ranger.hiveGrant), gated on hiveDb.enabled=true. Delegated to the Ambari
+                    // server so the view never handles the Ranger admin password.
+                    if (hasPlatformOp(serviceDef, "ranger.hiveGrant")) {
+                        Object hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
+                                request.getValues() != null ? request.getValues() : Collections.emptyMap(),
+                                "hiveDb.enabled");
+                        if (hiveDbEnabledRaw == null) {
+                            hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
+                                    request.getFormValues() != null ? request.getFormValues()
+                                            : Collections.emptyMap(), "hiveDb.enabled");
+                        }
+                        if (hiveDbEnabledRaw != null && "true".equalsIgnoreCase(String.valueOf(hiveDbEnabledRaw))) {
+                            // Ranger short name = <kerberos serviceName>-<namespace> (the realm is
+                            // stripped by Ranger's auth_to_local). serviceName comes from the
+                            // service.json kerberos[] block (e.g. "superset-dashboard").
+                            String kerbServiceName = request.getReleaseName();
+                            if (serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
+                                kerbServiceName = resolveStringValue(
+                                        serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
+                            }
+                            String principal = kerbServiceName + "-" + request.getNamespace();
+
+                            Map<String, Object> grantParams = new LinkedHashMap<>();
+                            grantParams.put("releaseName", request.getReleaseName());
+                            grantParams.put("namespace", request.getNamespace());
+                            grantParams.put("serviceKey", request.getServiceKey());
+                            grantParams.put("_principal", principal);
+                            grantParams.put("_hiveRangerServiceName", cluster + "_hive");
+                            if (params.get("_cluster") != null) grantParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) grantParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) grantParams.put("_callerHeaders", params.get("_callerHeaders"));
+                            this.commandPlanFactory.createRangerPolicyGrantHiveRead(rootCommand, grantParams);
+                            LOG.info("Queued RANGER_POLICY_GRANT_HIVE_READ post-deploy step for release '{}' "
+                                    + "(principal='{}', hiveService='{}')",
+                                    request.getReleaseName(), principal, cluster + "_hive");
+                        }
+                    }
+
                     // Atlas federation: queue only when the wizard toggle is on. The step
                     // body re-checks atlasFederation.enabled at execute time so a reapply
                     // after the toggle was flipped off still fails loudly instead of
@@ -6029,6 +6072,10 @@ public class CommandService {
                 }
                 case RANGER_POLICY_GRANT_VIA_AMBARI -> {
                     String result = grantRangerAtlasReadViaAmbari(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case RANGER_POLICY_GRANT_HIVE_READ -> {
+                    String result = grantRangerHiveReadViaAmbari(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
                 // ... inside runNextStep ...
@@ -8946,6 +8993,67 @@ public class CommandService {
         result.put("principal", principal);
         result.put("entitiesRequestId", entitiesReq);
         result.put("typesRequestId", typesReq);
+        result.put("via", "ambari-server-action");
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@link CommandType#RANGER_POLICY_GRANT_HIVE_READ}: grants the deploying service's
+     * Kerberos principal {@code select} on the Hive Ranger service repo, delegating to the Ambari
+     * server (POST {@code /clusters/{c}/ranger_policy}) so the KDPS view never handles the Ranger
+     * admin password. A single grant covers the full database/table/column resource set, which is
+     * what Hive needs for {@code DESCRIBE}/column reflection.
+     *
+     * <p>Params (threaded from the post-deploy dispatch): {@code _cluster}, {@code _baseUri},
+     * {@code _callerHeaders} (Ambari plumbing), {@code _principal} (Ranger short name, e.g.
+     * {@code superset-dashboard-<ns>}), {@code _hiveRangerServiceName} (defaults to
+     * {@code <cluster>_hive}), {@code releaseName} (policy-name uniqueness).
+     */
+    String grantRangerHiveReadViaAmbari(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_HIVE_READ params");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx,
+                baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+
+        String hiveService = stringValue(childParams.get("_hiveRangerServiceName"));
+        if (hiveService.isBlank()) hiveService = cluster + "_hive";
+
+        String principal = stringValue(childParams.get("_principal"));
+        if (principal.isBlank()) {
+            throw new IllegalStateException("Missing _principal in RANGER_POLICY_GRANT_HIVE_READ params.");
+        }
+
+        String policyName = "kdps-" + releaseName + "-hive-read";
+        int timeoutSeconds = 60;
+
+        // One grant: select on database/table/column. Hive maps DESCRIBE (and thus Superset's
+        // column reflection) to the select privilege, so this is the minimum that unblocks
+        // "tables list but show no columns".
+        int req = ambari.submitRangerPolicyGrant(
+                hiveService, principal, "select",
+                "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}",
+                policyName,
+                "KDPS: Superset service user Hive read (table/column reflection)",
+                timeoutSeconds,
+                "KDPS Superset->Hive: grant select to " + principal);
+        if (!ambari.waitUntilComplete(req, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ambari ranger_policy request " + req
+                    + " (hive read) did not complete successfully");
+        }
+
+        LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' (Ambari request {})",
+                principal, hiveService, req);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("hiveServiceName", hiveService);
+        result.put("principal", principal);
+        result.put("requestId", req);
         result.put("via", "ambari-server-action");
         return gson.toJson(result);
     }

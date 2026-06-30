@@ -882,6 +882,21 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans a single {@code RANGER_POLICY_GRANT_HIVE_READ} child command — grants the deploying
+     * service's Kerberos principal {@code select} on the Hive Ranger service repo by delegating
+     * to the Ambari server (which holds the Ranger admin password). Used so a Superset-style Hive
+     * database connection can reflect table columns (reflection runs as the service principal, not
+     * the impersonated end-user). Reuses {@link #queueAtlasFederationStep} — a generic single-step
+     * queuer despite the Atlas-flavoured name.
+     */
+    public void createRangerPolicyGrantHiveRead(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.RANGER_POLICY_GRANT_HIVE_READ,
+                "Ranger: grant Superset service user read (select) on Hive service repo (via Ambari)",
+                "-ranger-hive-grant-");
+    }
+
+    /**
      * Shared queue-step helper for the three Atlas federation provisioning step
      * types. All follow the same shape (one child, no children of their own,
      * params snapshot from the dispatcher, self-persisting root child list).

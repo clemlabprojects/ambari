@@ -250,6 +250,18 @@ public enum CommandType {
      */
     RANGER_POLICY_GRANT_VIA_AMBARI,
 
+    /**
+     * Grants a service's Kerberos principal {@code select} on the Hive Ranger service repo by
+     * <em>delegating to the Ambari server</em> (POST {@code /clusters/{c}/ranger_policy}), which
+     * holds the Ranger admin password. Queued post-deploy for services that build a Superset-style
+     * Hive database connection (declared via platformOp {@code ranger.hiveGrant}, gated on
+     * {@code hiveDb.enabled}). Without it, schema/column reflection — which Superset runs as the
+     * service principal, not the impersonated end-user — is denied by Ranger ("does not have
+     * [SELECT] privilege"), so tables list but show no columns. The server-side action is
+     * idempotent (append-to-existing-or-create + user pre-registration).
+     */
+    RANGER_POLICY_GRANT_HIVE_READ,
+
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
 

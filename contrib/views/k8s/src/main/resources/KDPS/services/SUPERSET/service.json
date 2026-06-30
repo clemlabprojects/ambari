@@ -1072,6 +1072,9 @@
     { "capability": "kerberos", "fields": ["realm"] },
     { "capability": "hive", "fields": ["hs2HostPort", "authMode"], "when": "hiveDb.enabled" }
   ],
+  "platformOps": [
+    { "op": "ranger.hiveGrant", "when": "hiveDb.enabled" }
+  ],
   "securityCoupling": {
     "requireIngress": true,
     "minTlsMode": "signedByAmbariCA",
