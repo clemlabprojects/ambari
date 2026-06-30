@@ -587,7 +587,12 @@ App.ChartLinearTimeView = Ember.View.extend(App.ExportMetricsMixin, {
       popup_path.children().each(function () {
         $(this).children().remove();
       });
-      this.set('isPopup', true);
+      // Do NOT infer isPopup from the presence of the popup DOM here. isPopup is
+      // owned by showGraphInPopup() (open) and the popup's onPrimary() (close).
+      // Re-setting it true on every refresh left it stuck true after the popup was
+      // closed (the popup container can still match while it is being torn down),
+      // which routed the inline periodic refresh to the popup request set / container
+      // and silently stopped the in-page graphs from updating.
     }
     else {
       graph_container.children().each(function () {
