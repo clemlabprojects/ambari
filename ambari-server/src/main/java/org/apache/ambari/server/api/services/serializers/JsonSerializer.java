@@ -40,6 +40,7 @@ import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 
 /**
  * JSON serializer.
@@ -52,7 +53,10 @@ public class JsonSerializer implements ResultSerializer {
    */
   JsonFactory m_factory = new JsonFactory();
 
-  ObjectMapper m_mapper = new ObjectMapper(m_factory);
+  // Register the JDK8 module so java.util.Optional getters (e.g.
+  // MetricDefinition.getJmxSourceUri()) serialize correctly. Without it, the
+  // stack metrics_descriptor artifact response (Add Widget) fails with HTTP 500.
+  ObjectMapper m_mapper = new ObjectMapper(m_factory).registerModule(new Jdk8Module());
 
   /**
    * Generator which writes JSON.

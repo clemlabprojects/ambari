@@ -1552,6 +1552,15 @@
       <version>${fasterxml.jackson.databind.version}</version>
     </dependency>
     <dependency>
+      <!-- Enables the API response ObjectMapper (JsonSerializer) to serialize
+           java.util.Optional fields such as MetricDefinition.getJmxSourceUri();
+           without it the stacks .../artifacts?artifact_name=metrics_descriptor
+           request (Add Widget) fails with HTTP 500. -->
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jdk8</artifactId>
+      <version>${fasterxml.jackson.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
       <version>${fasterxml.jackson.version}</version>
