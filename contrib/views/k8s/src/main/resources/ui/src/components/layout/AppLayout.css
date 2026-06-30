@@ -16,15 +16,10 @@
  * limitations under the License.
  */
 
-/* ui/src/components/layout/AppLayout.css */
-
-:root {
-  --surface-muted: #f5f7fa;
-  --surface-sidebar: #fafbfd;
-  --surface-sidebar-active: #eaf2ff;
-  --border: #e8e8e8;
-  --accent: #1677ff;
-}
+/* ui/src/components/layout/AppLayout.css
+   Palette tokens (--void/--panel/--ink/--accent/…) live in index.css and switch
+   with <html data-theme="light|dark">. This file consumes them so the custom
+   chrome tracks antd's light/dark algorithm. */
 
 /* Fill the iframe body height — contribview pins the container to viewport height */
 :global(html),
@@ -41,23 +36,48 @@
   --sider-width: 232px;
   --sider-collapsed-width: 64px;
   height: 100%;
-  background-color: #f5f7fa;
+  background-color: var(--void);
   display: flex;
   overflow: hidden;
   min-width: 1024px;
 }
 
-.app-loading {
+.app-loading,
+.app-splash {
   display: flex;
+  flex-direction: column;
+  gap: 16px;
   justify-content: center;
   align-items: center;
   height: 100vh;
+  background: var(--void);
+}
+
+/* Branded loading splash mark (shown while the cluster-status probe resolves) */
+.app-splash-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--grad);
+  color: var(--brand-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.22);
+}
+.app-splash-text {
+  color: var(--ink-dim);
+  font-size: 13px;
+  letter-spacing: 0.3px;
 }
 
 /* Sidebar */
 .app-sider {
-  background: var(--surface-sidebar) !important;
-  border-right: 1px solid var(--border);
+  background: var(--panel) !important;
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -76,7 +96,7 @@
   align-items: center;
   gap: 10px;
   padding: 16px 18px 14px 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-soft);
   height: var(--header-height);
   box-sizing: border-box;
 }
@@ -84,15 +104,18 @@
 .app-sider-brand-logo {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #1677ff, #6cb9ff);
-  color: #fff;
+  border-radius: 7px;
+  background: var(--grad);
+  color: var(--brand-ink);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 13px;
+  letter-spacing: -0.3px;
   flex-shrink: 0;
+  /* Restrained glow (toned down per design review) — a soft lift, not a halo. */
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.18);
 }
 
 .app-sider-brand-text {
@@ -105,13 +128,13 @@
 .app-sider-brand-text .brand-title {
   font-weight: 600;
   font-size: 14px;
-  color: #1a1a1a;
+  color: var(--ink);
   white-space: nowrap;
 }
 
 .app-sider-brand-text .brand-subtitle {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--ink-faint);
   white-space: nowrap;
 }
 
@@ -131,6 +154,8 @@
   background-color: var(--surface-sidebar-active) !important;
   color: var(--accent) !important;
   font-weight: 600;
+  /* Glowing accent rail on the left edge (control-plane look). */
+  box-shadow: inset 2px 0 0 var(--accent), 0 0 14px rgba(var(--accent-rgb), 0.10);
 }
 
 .app-sider-menu-wrap .ant-menu-item-selected::after {
@@ -144,12 +169,24 @@
   width: calc(100% - 16px) !important;
 }
 
+/* Flat section headers (antd Menu type:'group') — uppercase, mono, tracked,
+   matching the control-plane mockup's CATALOG / SECURITY / ADMINISTRATION labels. */
+.app-sider-menu-wrap .ant-menu-item-group-title {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 15px 18px 5px;
+}
+
 .app-sider-footer {
   flex-shrink: 0;
   padding: 10px 14px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line-soft);
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--ink-faint);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -164,15 +201,15 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  background: #f5f7fa;
+  background: var(--void);
 }
 
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
   padding: 0 16px;
   height: var(--header-height);
   flex-shrink: 0;
@@ -196,7 +233,7 @@
   border: none !important;
   box-shadow: none !important;
   font-size: 16px;
-  color: #4b5563 !important;
+  color: var(--ink-dim) !important;
 }
 
 .header-collapse-btn:hover {
@@ -209,14 +246,15 @@
 }
 
 .app-breadcrumb a {
-  color: #6b7280;
+  color: var(--ink-dim);
 }
 
 .app-breadcrumb a:hover {
   color: var(--accent);
 }
 
-/* Content area */
+/* Content area — faint dot-grid "HUD" ground + a soft accent glow in the corner,
+   matching the control-plane mockup. Subtle in light, a touch more present in dark. */
 .app-content {
   flex: 1 1 auto;
   min-height: 0;
@@ -224,6 +262,103 @@
   flex-direction: column;
   padding: 12px 16px 16px 16px;
   overflow: hidden;
+  background-image:
+    radial-gradient(620px 360px at 12% -8%, rgba(var(--accent-rgb), 0.06), transparent 60%),
+    radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+  background-position: 0 0, -1px -1px;
+}
+
+/* ===== Signature theme elements (match the Clemlab control-plane mockup) ===== */
+
+/* Monospace for technical/tabular data cells (versions, namespaces, chart refs,
+   endpoints). Applied via antd column className. */
+.kdps-mono,
+.kdps-mono * {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* Glowing status pills — the StatusTag antd tags get a soft halo in their own hue. */
+.kdps-status-pill.ant-tag {
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.kdps-status-pill.ant-tag-success { box-shadow: 0 0 12px rgba(52, 211, 153, 0.22); }
+.kdps-status-pill.ant-tag-error { box-shadow: 0 0 12px rgba(251, 113, 133, 0.22); }
+.kdps-status-pill.ant-tag-warning { box-shadow: 0 0 12px rgba(251, 191, 36, 0.20); }
+
+/* Pulsing "live" connection dot in the header. */
+.kdps-live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: kdps-pulse 2.4s infinite;
+}
+@keyframes kdps-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kdps-live-dot { animation: none; }
+}
+
+/* KPI metric strip (Releases page) — matches the control-plane mockup's stat cards. */
+.kdps-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 6px 0 16px;
+}
+.kdps-kpi {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 13px 14px;
+  min-height: 78px;
+}
+.kdps-kpi-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.kdps-kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 6px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.kdps-kpi-value small {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-left: 4px;
+  font-weight: 600;
+}
+.kdps-kpi-warn { color: #fbbf24; }
+.kdps-kpi-spark {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 84px;
+  height: 30px;
+  opacity: 0.9;
+}
+@media (max-width: 1100px) {
+  .kdps-kpis { grid-template-columns: repeat(2, 1fr); }
 }
 
 .main-scroll {
@@ -240,9 +375,7 @@
   padding-bottom: 56px;
 }
 
-/* Scoped to the new /catalog page only. The legacy install-picker modal in
-   HelmReleasesPage uses its own .catalog-card class with row-flex semantics
-   (icon left, text right); naming this kdps- avoids stomping on it. */
+/* Scoped to the new /catalog page only. */
 .kdps-catalog-card {
   display: flex;
   flex-direction: column;
@@ -254,20 +387,20 @@
 }
 
 .page-content {
-  background: #fff;
+  background: var(--panel);
   padding: 20px;
   border-radius: 10px;
   min-height: 100%;
   width: 100%;
   margin: 0 auto;
   box-sizing: border-box;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-card);
 }
 
 /* Topbar pieces */
 .topbar-badge {
   background: var(--accent);
-  color: #fff;
+  color: var(--brand-ink);
   border-radius: 10px;
   padding: 0 6px;
   font-size: 10px;
@@ -279,10 +412,10 @@
 
 /* Shared action button styling (compact, rounded) */
 .action-button {
-  border: 1px solid #d0d5dd !important;
+  border: 1px solid var(--line) !important;
   border-radius: 6px !important;
-  background: #fff !important;
-  color: #27364b !important;
+  background: var(--panel) !important;
+  color: var(--ink) !important;
   padding: 4px 10px !important;
   box-shadow: none !important;
   font-weight: 500;
@@ -306,10 +439,10 @@
 }
 .stat-card-label {
   font-weight: 600;
-  color: #333;
+  color: var(--ink);
 }
 .stat-card-value {
   margin-top: 2px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--ink-dim);
 }

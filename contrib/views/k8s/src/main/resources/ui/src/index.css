@@ -17,6 +17,57 @@
  */
 
 /* ui/src/index.css */
+
+/* ===== Clemlab theme tokens for the custom (non-antd) chrome. Mirrored to
+   <html data-theme="…"> by ThemeModeContext, in lock-step with antd's algorithm.
+   Default (no attribute yet) = dark, matching the default preference, so there is
+   no light flash before React mounts. ===== */
+:root,
+:root[data-theme="dark"] {
+  --void: #0c111b;
+  --panel: #121a2a;
+  --panel-2: #11161f;
+  --inset: #0f1520;
+  --line: #283041;
+  --line-soft: #1d2433;
+  --ink: #e8edf4;
+  --ink-dim: #8a97a9;
+  --ink-faint: #5c6878;
+  --accent: #00ffbc;
+  --accent-strong: #00ffbc;
+  --accent-rgb: 0, 255, 188;
+  --grad: linear-gradient(135deg, #00ffbc, #00d9a8);
+  --brand-ink: #03201a;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --mono: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --grid-dot: rgba(255, 255, 255, 0.028);
+  /* aliases kept for existing rules */
+  --surface-muted: var(--void);
+  --surface-sidebar: var(--panel);
+  --surface-sidebar-active: rgba(0, 217, 168, 0.14);
+  --border: var(--line);
+}
+
+:root[data-theme="light"] {
+  --void: #f5f7fa;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+  --inset: #f1f5f9;
+  --line: #e4e9f0;
+  --line-soft: #eef2f6;
+  --ink: #0f1722;
+  --ink-dim: #566072;
+  --ink-faint: #94a0b0;
+  --accent: #00b88f;
+  --accent-strong: #008e6e;
+  --accent-rgb: 0, 170, 132;
+  --grad: linear-gradient(135deg, #00d9a8, #00b88f);
+  --brand-ink: #ffffff;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --surface-sidebar-active: #e9fbf5;
+  --grid-dot: rgba(15, 23, 42, 0.035);
+}
+
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -26,10 +77,9 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
+    Roboto, 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f0f2f5;
+  background-color: var(--void);
 }

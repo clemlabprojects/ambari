@@ -18,9 +18,9 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Badge, Row, Col, Progress } from 'antd';
+import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, listCommands, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { API_BASE_URL } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import type { AvailableServices } from '../types/ServiceTypes';
@@ -39,7 +39,7 @@ const { Title, Text } = Typography;
 const { Search } = Input;
 
 const HelmReleasesPage: React.FC = () => {
-  const { status, refresh } = useClusterStatus();
+  const { status, refresh, nodes, events } = useClusterStatus();
   const navigate = useNavigate();
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
   const [isCommandDrawerOpen, setIsCommandDrawerOpen] = useState(false);
@@ -58,22 +58,11 @@ const HelmReleasesPage: React.FC = () => {
   const [tlsByRelease, setTlsByRelease] = useState<Record<string, ReleaseTlsEntry[]>>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
-  const [operationsCount, setOperationsCount] = useState<number>(0);
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
   const [historyEntries, setHistoryEntries] = useState<HelmHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | undefined>(undefined);
   const [rollingBackRevision, setRollingBackRevision] = useState<number | undefined>(undefined);
-
-  const loadOperationsCount = useCallback(async () => {
-    try {
-      const commands = await listCommands(10, 0);
-      const running = (commands || []).filter((c: any) => c.state === 'RUNNING' || c.state === 'PENDING').length;
-      setOperationsCount(running);
-    } catch {
-      setOperationsCount(0);
-    }
-  }, []);
 
   useEffect(() => {
     /**
@@ -83,9 +72,9 @@ const HelmReleasesPage: React.FC = () => {
      * blocking the UI on non-critical metadata.
      */
     getAvailableServices().then(setServiceDefinitions).catch(() => {});
-    // Load a lightweight count of running/pending background operations for the badge.
-    void loadOperationsCount();
-  }, [loadOperationsCount]);
+    // The background-operations count is now polled globally by the app header
+    // (AppLayout), so this page no longer tracks it.
+  }, []);
 
   /**
    * Build GitOps options for a release when it is managed by Flux. This keeps
@@ -160,13 +149,6 @@ const HelmReleasesPage: React.FC = () => {
     }, 30_000);
     return () => clearInterval(interval);
   }, [autoRefreshEnabled, refreshAllStatuses]);
-
-  useEffect(() => {
-    // Refresh badge count when the modal is closed to reflect completed tasks.
-    if (!isCommandDrawerOpen) {
-      void loadOperationsCount();
-    }
-  }, [isCommandDrawerOpen, loadOperationsCount]);
 
   /**
    * Retrieve releases from the backend with paging, update the table source,
@@ -808,11 +790,12 @@ const HelmReleasesPage: React.FC = () => {
             </Space>
           )
         },
-        { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
+        { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', className: 'kdps-mono', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
         {
           title: 'Chart',
           dataIndex: 'chart',
           key: 'chart',
+          className: 'kdps-mono',
           render: (_: any, r: HelmRelease) => {
             const upgradeTargetVersion = upgradeAvailableFor(r);
             return (
@@ -832,7 +815,7 @@ const HelmReleasesPage: React.FC = () => {
             );
           }
         },
-        { title: 'App Version', dataIndex: 'appVersion', key: 'appVersion', render: (v: any) => v || '—' },
+        { title: 'App Version', dataIndex: 'appVersion', key: 'appVersion', className: 'kdps-mono', render: (v: any) => v || '—' },
         { title: 'Service', key: 'service', width: 130, render: (_: any, releaseRecord: HelmRelease) => renderServiceCell(releaseRecord) },
         { title: 'Security', key: 'securityProfile', width: 140, render: (_: any, r: HelmRelease) => (
           <Space size={4} direction="vertical" align="start">
@@ -930,7 +913,7 @@ const HelmReleasesPage: React.FC = () => {
             );
           } },
         { title: 'TLS', key: 'tls', width: 140, render: (_: any, r: HelmRelease) => renderTlsBadges(r) },
-        { title: 'Endpoints', key: 'endpoints', render: (_: any, r: HelmRelease) => renderEndpoints(r) },
+        { title: 'Endpoints', key: 'endpoints', className: 'kdps-mono', render: (_: any, r: HelmRelease) => renderEndpoints(r) },
         {
         title: 'Actions',
         key: 'actions',
@@ -962,11 +945,10 @@ const HelmReleasesPage: React.FC = () => {
                       <Switch size="small" checked={autoRefreshEnabled} onChange={setAutoRefreshEnabled} />
                       <span>Auto status refresh</span>
                     </Space>
-                    <Badge count={operationsCount} offset={[8, 0]}>
-                      <Button onClick={() => { setIsCommandDrawerOpen(true); }}>
-                          Background operations
-                      </Button>
-                    </Badge>
+                    {/* Background operations now lives in the global header (always
+                        accessible on every page), so the redundant page-level button
+                        was removed. The watcher modal below is still opened by each
+                        deploy/upgrade/delete action handler. */}
                     <PermissionGuard requires="canWrite">
                       <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsInstallPickerOpen(true)}>
                           Install Service
@@ -976,6 +958,33 @@ const HelmReleasesPage: React.FC = () => {
                         Refresh
                     </Button>
                 </Space>
+            </div>
+            {/* KPI metric strip (matches the control-plane mockup). Numbers are real;
+                the sparkline is a light decorative flourish. */}
+            <div className="kdps-kpis">
+              {(() => {
+                const nsCount = new Set(displayed.map((r: any) => r.namespace)).size;
+                const nodeCount = Array.isArray(nodes) ? nodes.length : null;
+                const alertCount = Array.isArray(events)
+                  ? events.filter((e: any) => /warn|error|fail/i.test(String(e?.type || e?.reason || e?.severity || ''))).length
+                  : 0;
+                const spark = (warn: boolean) => (
+                  <svg className="kdps-kpi-spark" viewBox="0 0 80 28" preserveAspectRatio="none">
+                    <polyline fill={warn ? 'rgba(251,191,36,0.14)' : 'rgba(var(--accent-rgb),0.15)'} stroke="none"
+                      points="0,22 14,20 28,21 42,13 56,15 70,7 80,9 80,28 0,28" />
+                    <polyline fill="none" stroke={warn ? '#fbbf24' : 'var(--accent)'} strokeWidth="1.6"
+                      points="0,22 14,20 28,21 42,13 56,15 70,7 80,9" />
+                  </svg>
+                );
+                return (
+                  <>
+                    <div className="kdps-kpi"><div className="kdps-kpi-label">Releases</div><div className="kdps-kpi-value">{displayed.length}</div>{spark(false)}</div>
+                    <div className="kdps-kpi"><div className="kdps-kpi-label">Namespaces</div><div className="kdps-kpi-value">{nsCount}</div>{spark(false)}</div>
+                    <div className="kdps-kpi"><div className="kdps-kpi-label">Nodes</div><div className="kdps-kpi-value">{nodeCount ?? '—'}</div>{spark(false)}</div>
+                    <div className="kdps-kpi"><div className="kdps-kpi-label">Alerts</div><div className={alertCount > 0 ? 'kdps-kpi-value kdps-kpi-warn' : 'kdps-kpi-value'}>{alertCount}</div>{spark(alertCount > 0)}</div>
+                  </>
+                );
+              })()}
             </div>
             <Table
               columns={columns}

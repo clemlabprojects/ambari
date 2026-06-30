@@ -53,6 +53,22 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   const commandsRef = React.useRef<CommandStatus[]>([]);
   useEffect(() => { commandsRef.current = commands; }, [commands]);
 
+  // #8: logs are verbose and secondary to the step tree, so they are opt-in per
+  // row (collapsed by default) and only fetched/auto-appended when shown.
+  const [showLogs, setShowLogs] = useState<Record<string, boolean>>({});
+  const showLogsRef = React.useRef<Record<string, boolean>>({});
+  useEffect(() => { showLogsRef.current = showLogs; }, [showLogs]);
+
+  // #7: only auto-scroll a log pane to the bottom when the user is already
+  // parked there ("tail -f" behavior). Once they scroll up to read, the 2s log
+  // refresh must NOT yank them back to the bottom. Pinned defaults to true.
+  const logPinnedRef = React.useRef<Record<string, boolean>>({});
+  const isPinned = (id: string) => logPinnedRef.current[id] !== false;
+  const handleLogScroll = (id: string) => (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    logPinnedRef.current[id] = (el.scrollHeight - el.scrollTop - el.clientHeight) < 24;
+  };
+
   const isTerminal = (c?: CommandStatus | null): boolean => {
     if (!c || !c.state) return false;
     return c.state === 'SUCCEEDED' || c.state === 'FAILED' || c.state === 'CANCELED' || c.state === 'CANCELLED';
@@ -60,11 +76,17 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   useEffect(() => {
     Object.entries(logState).forEach(([id, state]) => {
       const el = logRefs.current[id];
-      if (el && state?.content) {
+      if (el && state?.content && isPinned(id)) {
         el.scrollTop = el.scrollHeight;
       }
     });
   }, [logState]);
+
+  // #9: collapse over-precise ISO timestamps in raw log lines to
+  // "YYYY-MM-DD HH:MM:SS" — drop sub-second precision and the trailing Z/offset.
+  const LOG_TS_RE = /(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
+  const formatLogContent = (raw?: string): string =>
+    (raw || '').replace(LOG_TS_RE, '$1 $2');
 
   const displayPercent = (cmd?: CommandStatus | null): number => {
     if (!cmd) return 0;
@@ -165,6 +187,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       setExpandedRowKeys([]);
       loadPage(true);
       setLogState({});
+      setShowLogs({});
+      logPinnedRef.current = {};
       setWatchCommandCompleted(false);
 
       // start lightweight polling for status refresh without rebuilding the table
@@ -213,12 +237,15 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               } catch {
                 // ignore child refresh errors
               }
-              // auto-append logs when expanded (force if still running)
-              const logInfo = logStateRef.current[row.id];
-              const forceLogs = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
-              const needsLogs = (!logInfo?.eof) || forceLogs;
-              if (needsLogs && !logInfo?.loading) {
-                void loadLogs(row.id, false, true, forceLogs);
+              // auto-append logs only when the user has opened the (opt-in) log
+              // pane for this row — and force a tail while it is still running.
+              if (showLogsRef.current[row.id]) {
+                const logInfo = logStateRef.current[row.id];
+                const forceLogs = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
+                const needsLogs = (!logInfo?.eof) || forceLogs;
+                if (needsLogs && !logInfo?.loading) {
+                  void loadLogs(row.id, false, true, forceLogs);
+                }
               }
             }
           }
@@ -304,8 +331,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       return;
     }
     setExpandedRowKeys(keys => [...keys, record.id]);
-    // kick off log load on expand
-    void loadLogs(record.id, true);
+    // Logs are opt-in (see #8) — no auto-load on expand; the step tree is the
+    // primary view. The user reveals logs via the "Show logs" toggle below.
     try {
       const st = await getCommandStatus(record.id);
       setSelectedId(record.id);
@@ -407,20 +434,37 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                     )}
                     <div style={{ marginTop: 10 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography.Text strong>Logs</Typography.Text>
+                        <Space size={6}>
+                          <Typography.Text strong>Logs</Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>(detailed output)</Typography.Text>
+                        </Space>
                         <Space>
-                          <Button size="small" onClick={() => loadLogs(record.id, true)}>Refresh</Button>
-                          <Button size="small" onClick={() => loadLogs(record.id, false)} disabled={logs?.eof} loading={logs?.loading}>
-                            {logs?.eof ? 'End' : 'Load more'}
-                          </Button>
+                          {showLogs[record.id] ? (
+                            <>
+                              <Button size="small" onClick={() => { logPinnedRef.current[record.id] = true; loadLogs(record.id, true); }}>Refresh</Button>
+                              <Button size="small" onClick={() => loadLogs(record.id, false)} disabled={logs?.eof} loading={logs?.loading}>
+                                {logs?.eof ? 'End' : 'Load more'}
+                              </Button>
+                              <Button size="small" type="text" onClick={() => setShowLogs(s => ({ ...s, [record.id]: false }))}>Hide</Button>
+                            </>
+                          ) : (
+                            <Button size="small" onClick={() => {
+                              logPinnedRef.current[record.id] = true;
+                              setShowLogs(s => ({ ...s, [record.id]: true }));
+                              if (!logState[record.id]?.content) void loadLogs(record.id, true);
+                            }}>Show logs</Button>
+                          )}
                         </Space>
                       </div>
-                      <div
-                        ref={(el) => { logRefs.current[record.id] = el; }}
-                        style={{ background: '#0d1117', color: '#c9d1d9', padding: 8, borderRadius: 6, marginTop: 6, minHeight: 80, maxHeight: 220, overflow: 'auto', fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}
-                      >
-                        {logs?.content ? logs.content : (logs?.loading ? 'Loading…' : 'No logs yet.')}
-                      </div>
+                      {showLogs[record.id] && (
+                        <div
+                          ref={(el) => { logRefs.current[record.id] = el; }}
+                          onScroll={handleLogScroll(record.id)}
+                          style={{ background: '#0d1117', color: '#c9d1d9', padding: 8, borderRadius: 6, marginTop: 6, minHeight: 80, maxHeight: 220, overflow: 'auto', fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}
+                        >
+                          {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : 'No logs yet.')}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -498,7 +542,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
           <Button onClick={() => loadPage(false)}>Load more</Button>
         </div>
       )}
-      <div style={{ marginTop: 8, textAlign: 'space-between', display: 'flex' }}>
+      <div style={{ marginTop: 8, justifyContent: 'space-between', display: 'flex' }}>
         <Button size="small" onClick={async () => {
           try {
             await refreshDependencies();

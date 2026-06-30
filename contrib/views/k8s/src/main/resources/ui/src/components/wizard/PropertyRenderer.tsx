@@ -147,8 +147,8 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
     return (
       <div style={{ marginBottom: 24 }}>
         {label}
-        <div style={{ border: '1px solid #d9d9d9', borderRadius: 4 }}>
-          <div style={{ padding: '4px 8px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', fontSize: 12 }}>
+        <div style={{ border: '1px solid var(--line)', borderRadius: 4 }}>
+          <div style={{ padding: '4px 8px', background: 'var(--inset)', borderBottom: '1px solid var(--line-soft)', fontSize: 12 }}>
             <FileTextOutlined /> {property.language || 'text'} content
           </div>
           <Editor

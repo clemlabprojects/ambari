@@ -72,7 +72,7 @@ const ExternalAuthTargetField: React.FC<{ field: ExternalAuthTargetFormField }> 
         <Card
             size="small"
             title={field.label || `External ${targetEntry.label} authentication`}
-            style={{ marginBottom: 16, background: '#fafafa' }}
+            style={{ marginBottom: 16, background: 'var(--inset)' }}
         >
             {field.help && (
                 <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>

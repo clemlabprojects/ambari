@@ -18,10 +18,9 @@
 
 // ui/src/components/layout/AppLayout.tsx
 import React from 'react';
-import { Layout, Menu, Spin, Tag, Alert, Button, Breadcrumb, Tooltip, Space } from 'antd';
+import { Layout, Menu, Tag, Alert, Button, Breadcrumb, Tooltip, Space, Badge, Skeleton } from 'antd';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  AppstoreOutlined,
   BellOutlined,
   ContainerOutlined,
   CloudServerOutlined,
@@ -34,14 +33,15 @@ import {
   NodeIndexOutlined,
   ProfileOutlined,
   SafetyCertificateOutlined,
-  SafetyOutlined,
   SettingOutlined,
   ShopOutlined,
   ThunderboltOutlined,
-  ToolOutlined,
   ApiOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
+import { useThemeMode } from '../../context/ThemeModeContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import NamespaceSelector from './NamespaceSelector';
 import { listCommands, getClusterCapabilities } from '../../api/client';
@@ -93,6 +93,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { status, error, fetchData } = useClusterStatus();
+  const { mode, toggle: toggleTheme } = useThemeMode();
 
   // Detected target platform (kubernetes | openshift) from the same /cluster/capabilities probe
   // that gates the OpenShift-only deploy fields. Surfaced in the brand so the operator can see at
@@ -146,29 +147,37 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
    * click. Order is intentional: top of nav is what most users hit on every
    * session (Dashboard, Catalog, Releases), bottom is admin / one-off setup.
    */
+  // Flat, always-open sections (antd Menu type:'group') instead of collapsible
+  // sub-menus — matches the control-plane design: every destination visible at a
+  // glance under an uppercase section label, no expand/collapse.
   const menuItems = React.useMemo(() => ([
     { key: '/', icon: <HomeOutlined />, label: <NavLink to="/">Dashboard</NavLink> },
     {
-      key: '/catalog-group', icon: <AppstoreOutlined />, label: 'Catalog',
+      type: 'group' as const, label: 'Catalog',
       children: [
         { key: '/catalog', icon: <ShopOutlined />, label: <NavLink to="/catalog">Service Catalog</NavLink> },
+        { key: '/helm', icon: <DeploymentUnitOutlined />, label: <NavLink to="/helm">Releases</NavLink> },
+        { key: '/workloads', icon: <NodeIndexOutlined />, label: <NavLink to="/workloads">Workloads</NavLink> },
         { key: '/repositories', icon: <ContainerOutlined />, label: <NavLink to="/repositories">Helm Repositories</NavLink> },
         { key: '/git-repositories', icon: <ContainerOutlined />, label: <NavLink to="/git-repositories">Git Repositories</NavLink> },
       ],
     },
-    { key: '/helm', icon: <DeploymentUnitOutlined />, label: <NavLink to="/helm">Releases</NavLink> },
-    { key: '/workloads', icon: <NodeIndexOutlined />, label: <NavLink to="/workloads">Workloads</NavLink> },
     {
-      key: '/security-group', icon: <SafetyOutlined />, label: 'Security',
+      type: 'group' as const, label: 'Security',
       children: [
         { key: '/global-security', icon: <LockOutlined />, label: <NavLink to="/global-security">Security Profile</NavLink> },
         { key: '/certificate-authorities', icon: <SafetyCertificateOutlined />, label: <NavLink to="/certificate-authorities">Certificate Authorities</NavLink> },
         { key: '/truststores', icon: <DatabaseOutlined />, label: <NavLink to="/truststores">Truststores</NavLink> },
       ],
     },
-    { key: '/operators', icon: <ThunderboltOutlined />, label: <NavLink to="/operators">Operators</NavLink> },
     {
-      key: '/admin-group', icon: <ToolOutlined />, label: 'Administration',
+      type: 'group' as const, label: 'Operators',
+      children: [
+        { key: '/operators', icon: <ThunderboltOutlined />, label: <NavLink to="/operators">Operators</NavLink> },
+      ],
+    },
+    {
+      type: 'group' as const, label: 'Administration',
       children: [
         { key: '/nodes', icon: <CloudServerOutlined />, label: <NavLink to="/nodes">Nodes</NavLink> },
         { key: '/contexts', icon: <ApiOutlined />, label: <NavLink to="/contexts">Platform Contexts</NavLink> },
@@ -177,19 +186,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       ],
     },
   ]), []);
-
-  /**
-   * Find which sub-menu contains the currently active route so antd can
-   * auto-open it. Without this, navigating to /global-security via URL leaves
-   * the Security submenu collapsed and the active item invisible.
-   */
-  const openKeys = React.useMemo(() => {
-    const path = location.pathname;
-    for (const item of menuItems as any[]) {
-      if (item.children?.some((c: any) => c.key === path)) return [item.key];
-    }
-    return [];
-  }, [location.pathname, menuItems]);
 
   const breadcrumbItems = React.useMemo(() => {
     const currentPath = location.pathname;
@@ -200,10 +196,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (label && label !== section) items.push({ title: label });
     return items;
   }, [location.pathname]);
-
-  if (status === 'loading') {
-    return <div className="app-loading"><Spin size="large" /></div>;
-  }
 
   const isConfigPage = location.pathname.startsWith('/configuration');
   if (isConfigPage) {
@@ -227,15 +219,10 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           {!collapsed && (
             <div className="app-sider-brand-text">
               <div className="brand-title">KDPS</div>
-              <div className="brand-subtitle">kubernetes platform</div>
-              {platform && (
-                <Tag
-                  color={platform === 'openshift' ? 'red' : 'blue'}
-                  style={{ marginTop: 4, fontSize: 11, lineHeight: '16px', padding: '0 6px' }}
-                >
-                  {platform === 'openshift' ? 'OpenShift' : 'Kubernetes'}
-                </Tag>
-              )}
+              {/* Detected platform moved to the header (next to the connection
+                  status) so it is visible on every page and the brand block
+                  stays a clean two lines inside the fixed-height header. */}
+              <div className="brand-subtitle">Data Platform</div>
             </div>
           )}
         </div>
@@ -243,7 +230,6 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <Menu
             mode="inline"
             selectedKeys={[location.pathname]}
-            defaultOpenKeys={openKeys}
             items={menuItems as any}
             inlineIndent={18}
           />
@@ -273,20 +259,39 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <div className="header-right">
             <Space size={8} align="center">
               <NamespaceSelector />
-              {status === 'connected' && <Tag color="green" style={{ margin: 0 }}>CONNECTED</Tag>}
+              {platform && (
+                <Tooltip title="Detected target platform">
+                  <Tag
+                    color={platform === 'openshift' ? 'red' : 'blue'}
+                    style={{ margin: 0 }}
+                  >
+                    {platform === 'openshift' ? 'OpenShift' : 'Kubernetes'}
+                  </Tag>
+                </Tooltip>
+              )}
+              {status === 'connected' && <Tag color="green" style={{ margin: 0 }}><span className="kdps-live-dot" />CONNECTED</Tag>}
               {status === 'error' && <Tag color="red" style={{ margin: 0 }}>CONNECTION ERROR</Tag>}
-              <Tooltip title="Background Operations">
+              <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+                <Button
+                  icon={mode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
+                  onClick={toggleTheme}
+                  className="action-button"
+                  aria-label="toggle color mode"
+                />
+              </Tooltip>
+              {/* Global, always-accessible entry to background operations. Labeled
+                  (not a bare bell) so it reads as the operations center on every
+                  page; the count badge surfaces in-flight work at a glance. */}
+              <Badge count={operationsCount} size="small" offset={[-2, 2]}>
                 <Button
                   icon={<BellOutlined />}
                   onClick={() => setIsOperationsModalOpen(true)}
                   className="action-button"
                   aria-label="background operations"
                 >
-                  {operationsCount > 0 && (
-                    <span className="topbar-badge">{operationsCount}</span>
-                  )}
+                  Operations
                 </Button>
-              </Tooltip>
+              </Badge>
             </Space>
           </div>
         </Header>
@@ -310,7 +315,15 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 style={{ marginBottom: 12 }}
               />
             )}
-            <div className="page-content">{children}</div>
+            {/* #6: render the branded shell (sider + header) immediately and
+                show a content skeleton while the cluster-status probe resolves,
+                instead of blocking the whole app behind a full-screen spinner.
+                The view feels instant and the operator sees where they are. */}
+            <div className="page-content">
+              {status === 'loading'
+                ? <Skeleton active paragraph={{ rows: 8 }} title style={{ padding: 8 }} />
+                : children}
+            </div>
           </div>
         </Content>
       </Layout>

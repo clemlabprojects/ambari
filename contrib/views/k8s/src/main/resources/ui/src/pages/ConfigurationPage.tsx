@@ -511,7 +511,7 @@ const ConfigurationPage: React.FC = () => {
 
     return (
         <>
-            <Layout style={{ background: '#f0f2f5' }}>
+            <Layout style={{ background: 'var(--void)' }}>
                 <Content style={{ padding: '24px', maxWidth: '1280px', minWidth: '1200px', margin: '0 auto' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                         <Space>

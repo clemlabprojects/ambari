@@ -767,7 +767,7 @@ const ServiceWizardPage: React.FC = () => {
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
-      { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} /> },
+      { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
   }, [def, installValues, repos, configs, configOverrides]);
 
@@ -794,7 +794,7 @@ const ServiceWizardPage: React.FC = () => {
 
   return (
     <>
-    <Layout style={{ padding: '24px', background: '#fff', maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', position: 'relative' }}>
+    <Layout style={{ padding: '24px', background: 'var(--panel)', maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', position: 'relative' }}>
       {(loading || !def) && (
         <>
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }}>
@@ -819,24 +819,14 @@ const ServiceWizardPage: React.FC = () => {
               items={steps.map(s => ({ title: s.title }))}
             />
           </Card>
-          <div style={{ minHeight: 440, border: `1px solid ${token.colorBorderSecondary}`, padding: 16, borderRadius: 8 }}>
+          <div style={{ minHeight: 440, border: `1px solid ${token.colorBorderSecondary}`, padding: 16, borderRadius: 8, marginBottom: 76 }}>
             {steps[current].content}
           </div>
-
-          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
-      {current < steps.length - 1 && 
-       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
-            {current === steps.length - 1 && 
-             <Button
-               type="primary"
-               style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
-               onClick={handleDeploy}
-               loading={submitting}
-             >
-               Deploy
-             </Button>}
-          </div>
+          {/* Inline nav buttons removed: navigation lives in the single sticky
+              action bar below (see the fixed wizard-action-bar). Keeping both
+              produced duplicate Previous/Next/Deploy and the inline set scrolled
+              under the Ambari footer. The marginBottom above reserves space so
+              the bar never covers the last form field. */}
           </>
           )}
         </Col>
@@ -958,11 +948,26 @@ const ServiceWizardPage: React.FC = () => {
         </Col>
       </Row>
     </Layout>
-    <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 1000, display: 'flex', gap: 8 }}>
+    {/* Single sticky action bar. bottom is lifted above Ambari's ~56px host
+        footer overlay so the primary actions are never swallowed by it and the
+        operator no longer has to scroll the page to reach Next/Deploy. The
+        pill background + shadow make it read as a real action bar rather than
+        buttons floating over content. */}
+    <div
+      style={{
+        position: 'fixed', right: 24, bottom: 72, zIndex: 1000,
+        display: 'flex', alignItems: 'center', gap: 10,
+        background: 'var(--panel)', padding: '10px 14px', borderRadius: 10,
+        border: '1px solid var(--line)', boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+      }}
+    >
+      <Text type="secondary" style={{ fontSize: 12, marginRight: 2 }}>
+        Step {current + 1} of {steps.length}
+      </Text>
       {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
-      {current < steps.length - 1 && 
+      {current < steps.length - 1 &&
        <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
-      {current === steps.length - 1 && 
+      {current === steps.length - 1 &&
        <Button
          type="primary"
          style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}

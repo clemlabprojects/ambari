@@ -49,7 +49,8 @@ const DashboardPage: React.FC = () => {
         { name: 'Pending', value: stats.helm.pending },
         { name: 'Failed', value: stats.helm.failed },
     ] : [];
-    const COLORS = ['#52c41a', '#faad14', '#ff4d4f'];
+    // Clemlab palette: mint (deployed) / amber (pending) / rose (failed).
+    const COLORS = ['#00d9a8', '#fbbf24', '#fb7185'];
 
     const getEventTimelineItem = (event: (typeof events)[0]) => {
         switch (event.type) {
@@ -141,7 +142,7 @@ const DashboardPage: React.FC = () => {
                                         const x = cx + radius * Math.cos(-midAngle * (Math.PI / 180));
                                         const y = cy + radius * Math.sin(-midAngle * (Math.PI / 180));
                                         return (
-                                          <text x={x} y={y} fill="#000" fontSize={12} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
+                                          <text x={x} y={y} fill="#08231d" fontSize={12} fontWeight={600} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
                                             {`${Math.round(percent * 100)}% (${value})`}
                                           </text>
                                         );
@@ -187,7 +188,7 @@ const DashboardPage: React.FC = () => {
                                     title="Healthy components"
                                     value={healthyComponents}
                                     suffix={`/ ${safeComponents.length}`}
-                                    valueStyle={{ color: healthyComponents === safeComponents.length ? '#3f8600' : '#cf1322' }}
+                                    valueStyle={{ color: healthyComponents === safeComponents.length ? '#00d9a8' : '#fb7185' }}
                                 />
                             </div>
                             <List
