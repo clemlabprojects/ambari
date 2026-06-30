@@ -126,6 +126,12 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
   },
 
   willDestroyElement: function() {
+    // Disconnect the MutationObserver(s) registered by makeSortable() so they do not
+    // keep observing the document after this view is torn down (see makeSortable).
+    (this._mutationObservers || []).forEach(function (observer) {
+      observer.disconnect();
+    });
+    this._mutationObservers = [];
     $("[rel='add-widget-tooltip']").tooltip('destroy');
     $('.img-thumbnail').off();
     $('#widget_layout').sortable('destroy');
@@ -319,5 +325,11 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
       subtree: true     // Observe the entire document subtree
     });
 
+    // Track the observer so willDestroyElement() can disconnect it. Without this it
+    // leaks: it keeps observing the whole document after the Metrics view is destroyed,
+    // and a fresh one is created on every visit (and per layout). The accumulating
+    // document-wide observers kept the view bound after a route change, so navigating
+    // away updated the URL/breadcrumb but left the page stuck on Metrics.
+    (this._mutationObservers = this._mutationObservers || []).push(observer);
   }
 });
