@@ -976,12 +976,26 @@ const HelmReleasesPage: React.FC = () => {
                       points="0,22 14,20 28,21 42,13 56,15 70,7 80,9" />
                   </svg>
                 );
+                const card = (label: string, value: React.ReactNode, target: string, warn = false) => (
+                  <div
+                    className="kdps-kpi kdps-kpi-clickable"
+                    role="button"
+                    tabIndex={0}
+                    title={`Go to ${label}`}
+                    onClick={() => navigate(target)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(target); } }}
+                  >
+                    <div className="kdps-kpi-label">{label}</div>
+                    <div className={warn ? 'kdps-kpi-value kdps-kpi-warn' : 'kdps-kpi-value'}>{value}</div>
+                    {spark(warn)}
+                  </div>
+                );
                 return (
                   <>
-                    <div className="kdps-kpi"><div className="kdps-kpi-label">Releases</div><div className="kdps-kpi-value">{displayed.length}</div>{spark(false)}</div>
-                    <div className="kdps-kpi"><div className="kdps-kpi-label">Namespaces</div><div className="kdps-kpi-value">{nsCount}</div>{spark(false)}</div>
-                    <div className="kdps-kpi"><div className="kdps-kpi-label">Nodes</div><div className="kdps-kpi-value">{nodeCount ?? '—'}</div>{spark(false)}</div>
-                    <div className="kdps-kpi"><div className="kdps-kpi-label">Alerts</div><div className={alertCount > 0 ? 'kdps-kpi-value kdps-kpi-warn' : 'kdps-kpi-value'}>{alertCount}</div>{spark(alertCount > 0)}</div>
+                    {card('Releases', displayed.length, '/catalog')}
+                    {card('Namespaces', nsCount, '/workloads')}
+                    {card('Nodes', nodeCount ?? '—', '/nodes')}
+                    {card('Alerts', alertCount, '/', alertCount > 0)}
                   </>
                 );
               })()}

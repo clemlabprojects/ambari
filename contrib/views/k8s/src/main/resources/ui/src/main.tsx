@@ -74,8 +74,8 @@ const ThemedRoot: React.FC = () => {
             ? { itemSelectedBg: 'rgba(0,217,168,0.14)', itemSelectedColor: '#00ffbc', itemHoverBg: 'rgba(0,217,168,0.08)', itemBorderRadius: 6 }
             : { itemSelectedBg: '#e9fbf5', itemSelectedColor: '#008e6e', itemHoverBg: '#f0faf6', itemBorderRadius: 6 },
           Table: dark
-            ? { headerBg: '#11161f', headerColor: '#8a97a9', headerSplitColor: 'transparent', borderColor: '#1d2433', rowHoverBg: 'rgba(0,217,168,0.06)', headerBorderRadius: 8 }
-            : { headerBg: '#f7f9fc', headerColor: '#5b6675', headerSplitColor: 'transparent', borderColor: '#eef1f5', rowHoverBg: '#f5f8ff', headerBorderRadius: 8 },
+            ? { headerBg: '#11161f', headerColor: '#8a97a9', headerSplitColor: 'transparent', borderColor: '#1d2433', rowHoverBg: 'rgba(0,217,168,0.06)', headerBorderRadius: 8, fontSize: 13, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 }
+            : { headerBg: '#f7f9fc', headerColor: '#5b6675', headerSplitColor: 'transparent', borderColor: '#eef1f5', rowHoverBg: '#f5f8ff', headerBorderRadius: 8, fontSize: 13, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 },
           Card: { borderRadiusLG: 10, headerFontSize: 15 },
           Modal: { borderRadiusLG: 12, titleFontSize: 16 },
           Button: { borderRadius: 8, fontWeight: 500, primaryShadow: 'none', defaultShadow: 'none' },

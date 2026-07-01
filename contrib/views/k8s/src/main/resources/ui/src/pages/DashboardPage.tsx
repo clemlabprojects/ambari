@@ -21,6 +21,7 @@ import React from 'react';
 import { Row, Col, Typography, Card, List, Tag, Skeleton, Empty, Statistic, Timeline, Result, Space, Alert, Button, message } from 'antd';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTone, ClockCircleOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { installMonitoring, getMonitoringDiscovery } from '../api/client';
 import './Page.css';
@@ -29,6 +30,7 @@ const { Title, Text, Paragraph } = Typography;
 
 const DashboardPage: React.FC = () => {
     const { status, stats, components, events, monitoringState, refresh } = useClusterStatus();
+    const navigate = useNavigate();
 
     // If the connection failed, display a message instead of content.
     if (status === 'error') {
@@ -65,6 +67,27 @@ const DashboardPage: React.FC = () => {
     };
 
     const healthyComponents = safeComponents.filter(c => c.status === 'Healthy').length;
+
+    // Compact, clickable capacity tiles (real utilization, not a fake sparkline).
+    const pct = (m?: { used: number; total: number }) => (m && m.total ? Math.round((m.used / m.total) * 100) : 0);
+    const capTile = (label: string, value: React.ReactNode, ratio: number, target: string) => {
+        const r = Math.max(0, Math.min(1, isFinite(ratio) ? ratio : 0));
+        const warn = r > 0.85;
+        return (
+            <div
+                className="kdps-kpi kdps-kpi-clickable"
+                role="button"
+                tabIndex={0}
+                title={`Go to ${label}`}
+                onClick={() => navigate(target)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(target); } }}
+            >
+                <div className="kdps-kpi-label">{label}</div>
+                <div className={warn ? 'kdps-kpi-value kdps-kpi-warn' : 'kdps-kpi-value'}>{value}</div>
+                <div className={warn ? 'kdps-kpi-bar warn' : 'kdps-kpi-bar'}><span style={{ width: `${Math.round(r * 100)}%` }} /></div>
+            </div>
+        );
+    };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -114,6 +137,14 @@ const DashboardPage: React.FC = () => {
                   </Space>
                 }
               />
+            )}
+            {stats && (
+              <div className="kdps-kpis">
+                {capTile('Nodes Ready', `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes')}
+                {capTile('CPU', `${pct(stats.cpu)}%`, stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0, '/nodes')}
+                {capTile('Memory', `${pct(stats.memory)}%`, stats.memory.total ? stats.memory.used / stats.memory.total : 0, '/nodes')}
+                {capTile('Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads')}
+              </div>
             )}
             <Row gutter={[24, 24]}>
                 <Col xs={24} lg={8}>
@@ -215,9 +246,10 @@ const DashboardPage: React.FC = () => {
                              ? <Skeleton active paragraph={{ rows: 4 }} />
                              : <Empty description="No recent events" />
                          ) : (
+                           <div style={{ maxHeight: 360, overflowY: 'auto', paddingRight: 8 }}>
                            <Timeline
                               mode="left"
-                              items={safeEvents.map(event => ({
+                              items={safeEvents.slice(0, 50).map(event => ({
                                   ...getEventTimelineItem(event),
                                   children: (
                                       <>
@@ -228,6 +260,7 @@ const DashboardPage: React.FC = () => {
                                   )
                               }))}
                            />
+                           </div>
                          )}
                     </Card>
                 </Col>
