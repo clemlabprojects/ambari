@@ -24,6 +24,12 @@ export JAVA_HOME={{java_home}}
 export RANGER_ADMIN_LOG_DIR={{admin_log_dir}}
 export RANGER_PID_DIR_PATH={{ranger_pid_dir}}
 export RANGER_USER={{unix_user}}
+# Ranger Admin JVM max heap (Ambari: Advanced ranger-env > Ranger Admin Maximum Memory).
+# ranger-admin-services.sh sources this file after its own `ranger_admin_max_heap_size=1g`
+# default and then builds `-Xmx${ranger_admin_max_heap_size}`, so exporting it here is what
+# actually takes effect (RANGER_ADMIN_JAVA_OPTS is not read, and a -Xmx in JAVA_OPTS would be
+# overridden by that trailing default).
+export ranger_admin_max_heap_size={{ranger_admin_max_heap_size}}
 {% if security_enabled %}
 export JAVA_OPTS=" ${JAVA_OPTS} -Dzookeeper.sasl.client.username={{zookeeper_principal_primary}} "
 {% endif %}
