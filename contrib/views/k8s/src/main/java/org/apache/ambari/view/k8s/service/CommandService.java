@@ -2384,6 +2384,26 @@ public class CommandService {
             return directValue;
         }
 
+        // valueFromContext: resolve a "<capability>.<field>" key from the selected platform
+        // context's resolved fields (e.g. an EXTERNAL CDP context's hive.servicePrincipal).
+        // Preferred over valueFromAmbari so a property can declare BOTH — the context value wins
+        // for external contexts, and it falls through to valueFromAmbari/valueFromTemplate for the
+        // MANAGED (Ambari-hosting) path, leaving managed deploys unchanged.
+        String contextLookup = resolveStringValue(propertySpec.get("valueFromContext"), null);
+        if (contextLookup != null && !contextLookup.isBlank()) {
+            try {
+                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(
+                        params == null ? null : params.get("formValues"), ambariActionClient, clusterName);
+                String ctxValue = (ctxResolved == null) ? null : ctxResolved.get(contextLookup);
+                if (ctxValue != null && !ctxValue.isBlank()) {
+                    return ctxValue;
+                }
+                LOG.info("Catalog enrichment valueFromContext '{}' not set on the selected context; falling back to other sources.", contextLookup);
+            } catch (Exception ex) {
+                LOG.warn("Failed to resolve valueFromContext {} for catalog enrichment: {}", contextLookup, ex.toString());
+            }
+        }
+
         String ambariLookup = resolveStringValue(propertySpec.get("valueFromAmbari"), null);
         if (ambariLookup != null && !ambariLookup.isBlank()) {
             if (ambariActionClient == null || clusterName == null || clusterName.isBlank()) {
@@ -4101,15 +4121,33 @@ public class CommandService {
         } else {
             LOG.warn("Kerberos detection unavailable; leaving global.security.kerberos.enabled unchanged");
         }
-        if (kerberosEnabled) {
-            LOG.info("Kerberos is enabled on cluster {}, preparing krb5.conf ConfigMap for Helm Chart", cluster);
+        // A selected EXTERNAL platform context may target a backend (e.g. CDP) in a DIFFERENT
+        // Kerberos realm than the Ambari-hosting cluster. When that context supplies a krb5.conf,
+        // use it for this deploy (and enable Kerberos wiring) regardless of the hosting cluster's
+        // own security state — the deployed pods must speak the backend realm, not ours.
+        String contextKrb5 = null;
+        try {
+            Map<String, String> ctxResolvedKrb =
+                    contextResolvedFieldsForDeploy(request.getFormValues(), ambariActionClient, cluster);
+            if (ctxResolvedKrb != null) {
+                contextKrb5 = ctxResolvedKrb.get("kerberos.krb5Conf");
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve platform-context krb5.conf for deploy: {}", ex.toString());
+        }
+        boolean contextKerberos = (contextKrb5 != null && !contextKrb5.isBlank());
+
+        if (kerberosEnabled || contextKerberos) {
+            LOG.info("Kerberos enabled for this deploy (hostingCluster={}, fromContext={}); preparing krb5.conf ConfigMap for Helm Chart",
+                    kerberosEnabled, contextKerberos);
 
             // Derive a unique ConfigMap name per release to avoid collisions across multiple installs
             String releaseName = request.getReleaseName() != null ? request.getReleaseName().trim() : "";
             String krb5ConfigMapName = (releaseName.isEmpty() ? "krb5-conf" : (releaseName + "-krb5-conf"));
 
-            // 1) Create/update the ConfigMap from /etc/krb5.conf
-            this.commandUtils.ensureKrb5ConfConfigMap(request.getNamespace(), krb5ConfigMapName);
+            // 1) Create/update the ConfigMap — from the selected context's krb5.conf when supplied,
+            //    otherwise from the hosting cluster's /etc/krb5.conf.
+            this.commandUtils.ensureKrb5ConfConfigMap(request.getNamespace(), krb5ConfigMapName, contextKrb5);
 
             // 2) Inject Helm overrides so the chart mounts it:
             //    global.security.kerberos.enabled = true
@@ -4117,9 +4155,10 @@ public class CommandService {
             this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "true");
             this.commandUtils.addOverride(params, "global.security.kerberos.configMapName", krb5ConfigMapName);
         } else if (kerberosDetectionAvailable) {
-            // Explicitly disable Kerberos in chart values when the Ambari cluster is not secured.
+            // Explicitly disable Kerberos in chart values when neither the Ambari cluster nor the
+            // selected context provides Kerberos.
             this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "false");
-            LOG.info("Kerberos is disabled on cluster {}; overriding chart values with global.security.kerberos.enabled=false", cluster);
+            LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
         }
 
         // Build Kerberos template variables for later templating (catalog enrichments, etc.).
@@ -4336,6 +4375,12 @@ public class CommandService {
                             params.get("kerberosClusterEnabled"),
                             kerberosEnabled
                     );
+                }
+                // A selected EXTERNAL context (e.g. CDP) supplies its own realm/krb5, so Kerberos-only
+                // catalog enrichments must apply even when the Ambari-hosting cluster itself is not
+                // Kerberized (or is in a different realm).
+                if (contextKerberos) {
+                    kerberosEnabledForCatalogEnrichments = true;
                 }
                 LOG.info("Catalog enrichment Kerberos flag resolved to {} (detected={}, paramsOverridePresent={})",
                         kerberosEnabledForCatalogEnrichments,
@@ -4559,7 +4604,14 @@ public class CommandService {
         }
 
         // 2a. Pre-provision Kerberos keytabs if the view is configured for it.
-        if (preProvisionedKerberosMode) {
+        // Skip Ambari keytab issuance when the operator supplied an external keytab (via a service's
+        // externalServiceTargets kerberos mode): the pods use that operator-provided keytab
+        // (PRE_PROVISIONED), and principals in a backend (e.g. CDP) realm are not issuable by the
+        // hosting KDC anyway.
+        boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
+        if (preProvisionedKerberosMode && externalKeytabProvided) {
+            LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
+        } else if (preProvisionedKerberosMode) {
             boolean keytabStepsAdded = false;
             if (!kerberosEnabled) {
                 LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
@@ -9325,6 +9377,25 @@ public class CommandService {
             LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
             return Collections.emptyMap();
         }
+    }
+
+    /**
+     * True when the deploy form supplied an external Kerberos keytab secret via a service's
+     * {@code externalServiceTargets} kerberos mode (e.g. {@code hive.externalKeytabSecret} for
+     * Trino or {@code hiveDb.externalKeytabSecret} for Superset). When set, the deployed pods use
+     * that operator-provided keytab, so the view must NOT issue an Ambari keytab.
+     */
+    private boolean deployUsesExternalKeytab(Map<String, Object> formValues) {
+        if (formValues == null) {
+            return false;
+        }
+        for (String path : new String[]{"hive.externalKeytabSecret", "hiveDb.externalKeytabSecret"}) {
+            Object v = ConfigResolutionService.getByDottedPath(formValues, path);
+            if (v != null && !String.valueOf(v).isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -730,6 +730,14 @@
       "help": "Delivered by KDPS from the context (kerberos / ldap / none). The Superset Hive connection is built to match it."
     },
     {
+      "name": "hiveDb.externalKeytabSecret",
+      "label": "External Hive keytab Secret",
+      "type": "secret-discovery",
+      "condition": { "field": "hiveDb.enabled", "value": true },
+      "excludeFromValues": true,
+      "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'keytab' (the service keytab issued by the backend realm's KDC) and 'principal' (e.g. superset/host@CDP.REALM). Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab --from-literal=principal=superset/host@CDP.EXAMPLE.COM. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+    },
+    {
       "name": "ingressConfig",
       "label": "HTTP(S) ingress",
       "type": "group",
@@ -1066,6 +1074,28 @@
   ],
   "description": "Modern data exploration and visualisation platform. Build dashboards and charts directly from your data warehouse.",
   "valueAliases": {},
+  "externalServiceTargets": {
+    "hive": {
+      "label": "Platform Hive (external Kerberos keytab)",
+      "discoveryServiceType": "HIVE_METASTORE",
+      "urlOverrideField": "hiveDb.hostPort",
+      "modeField": "hiveDb.authMode",
+      "authModes": {
+        "none": { "label": "No authentication (dev only)" },
+        "ldap": { "label": "LDAP (username/password in the connection)" },
+        "kerberos": {
+          "label": "Kerberos / SASL GSSAPI (external keytab)",
+          "secretField": "hiveDb.externalKeytabSecret",
+          "secretKeys": ["keytab", "principal"],
+          "applyTo": {
+            "global.security.kerberos.keytab.secretName":      "{{secret.name}}",
+            "global.security.kerberos.keytab.secretDataKey":   "keytab",
+            "global.security.kerberos.kinitSidecar.principal": "{{secret.data.principal | b64decode | trim}}"
+          }
+        }
+      }
+    }
+  },
   "requiredChartVersion": ">=0.12.29",
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl", "realm"] },

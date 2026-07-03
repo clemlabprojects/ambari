@@ -252,15 +252,21 @@
       },
       "properties": [
         {
+          "key": "hive.metastore.uri",
+          "valueFromContext": "hive.metastoreUri"
+        },
+        {
           "key": "hive.metastore.authentication.type",
           "value": "KERBEROS"
         },
         {
           "key": "hive.metastore.service.principal",
+          "valueFromContext": "hive.servicePrincipal",
           "valueFromAmbari": "hive-site/hive.metastore.kerberos.principal"
         },
         {
           "key": "hive.metastore.client.principal",
+          "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
         },
         {
@@ -273,6 +279,7 @@
         },
         {
           "key": "hive.hdfs.trino.principal",
+          "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
         },
         {
@@ -295,15 +302,21 @@
       },
       "properties": [
         {
+          "key": "hive.metastore.uri",
+          "valueFromContext": "hive.metastoreUri"
+        },
+        {
           "key": "hive.metastore.authentication.type",
           "value": "KERBEROS"
         },
         {
           "key": "hive.metastore.service.principal",
+          "valueFromContext": "hive.servicePrincipal",
           "valueFromAmbari": "hive-site/hive.metastore.kerberos.principal"
         },
         {
           "key": "hive.metastore.client.principal",
+          "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
         },
         {
@@ -316,6 +329,7 @@
         },
         {
           "key": "hive.hdfs.trino.principal",
+          "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
         },
         {
@@ -2416,11 +2430,39 @@
           }
         }
       ]
+    },
+    {
+      "name": "hive.externalKeytabSecret",
+      "label": "External Hive keytab Secret",
+      "type": "secret-discovery",
+      "excludeFromValues": true,
+      "help": "Only for an EXTERNAL platform context whose Hive is in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino service keytab issued by the backend realm's KDC) and 'principal' (must match the context's Hive client principal). Providing it switches the Hive catalog to the external keytab (PRE_PROVISIONED) instead of an Ambari-issued one; leave blank for a same-realm MANAGED context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
     }
   ],
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
+  },
+  "externalServiceTargets": {
+    "hive": {
+      "label": "Platform Hive (external Kerberos keytab)",
+      "discoveryServiceType": "HIVE_METASTORE",
+      "urlOverrideField": "hive.externalKeytabSecret",
+      "authModes": {
+        "kerberos": {
+          "label": "Kerberos / SASL GSSAPI (external keytab)",
+          "secretField": "hive.externalKeytabSecret",
+          "secretKeys": ["service.keytab", "principal"],
+          "applyTo": {
+            "global.security.kerberos.injectionMode":              "PRE_PROVISIONED",
+            "global.security.kerberos.keytab.secretName":          "{{secret.name}}",
+            "global.security.kerberos.keytab.secretDataKey":       "service.keytab",
+            "global.security.kerberos.workerKeytab.secretName":    "{{secret.name}}",
+            "global.security.kerberos.workerKeytab.secretDataKey": "service.keytab"
+          }
+        }
+      }
+    }
   },
   "requiredChartVersion": ">=1.43.0",
   "requiresContext": [
