@@ -495,6 +495,8 @@ export default function ContextsPage() {
                     input = <Select options={(f.options || []).map((o) => ({ value: o, label: o }))} />;
                   } else if (f.type === "boolean") {
                     input = <Select options={[{ value: true, label: "true" }, { value: false, label: "false" }]} />;
+                  } else if (f.type === "textarea") {
+                    input = <Input.TextArea rows={8} placeholder={f.placeholder} style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }} />;
                   } else {
                     input = <Input placeholder={f.placeholder} />;
                   }

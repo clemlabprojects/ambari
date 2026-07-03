@@ -7,6 +7,10 @@
       "placeholder": "EXAMPLE.COM",
       "managedResolver": "kerberos.realm" },
     { "name": "kdcHost", "label": "KDC host", "type": "string",
-      "managedResolver": "kerberos.kdcHost", "appliesTo": "EXTERNAL" }
+      "managedResolver": "kerberos.kdcHost", "appliesTo": "EXTERNAL" },
+    { "name": "krb5Conf", "label": "krb5.conf", "type": "textarea",
+      "appliesTo": "EXTERNAL",
+      "placeholder": "[libdefaults]\n  default_realm = CDP.EXAMPLE.COM\n[realms]\n  CDP.EXAMPLE.COM = {\n    kdc = kdc.cdp.example.com\n  }\n[domain_realm]\n  .cdp.example.com = CDP.EXAMPLE.COM",
+      "help": "Optional. Paste the krb5.conf for this platform's realm(s). When set, services deployed against this context mount THIS krb5.conf (with in-cluster hostname canonicalization disabled) instead of the hosting cluster's /etc/krb5.conf — required when the backend (e.g. CDP) is in a different Kerberos realm than the Ambari cluster." }
   ]
 }

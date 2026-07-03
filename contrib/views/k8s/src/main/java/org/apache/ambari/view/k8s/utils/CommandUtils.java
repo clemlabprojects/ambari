@@ -530,25 +530,43 @@ public class CommandUtils {
      * @param configMapName
      */
     public void ensureKrb5ConfConfigMap(String namespace, String configMapName) {
+        ensureKrb5ConfConfigMap(namespace, configMapName, null);
+    }
+
+    /**
+     * Same as {@link #ensureKrb5ConfConfigMap(String, String)}, but when {@code krb5Override}
+     * is non-blank the ConfigMap is built from that content (supplied by the selected external
+     * platform context's {@code kerberos.krb5Conf}) instead of the host's /etc/krb5.conf.
+     * Used when a service is deployed against a backend (e.g. CDP) whose Kerberos realm differs
+     * from the Ambari-hosting cluster.
+     */
+    public void ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override) {
+        final boolean fromContext = (krb5Override != null && !krb5Override.isBlank());
         final String krb5Path = "/etc/krb5.conf";
         File f = new File(krb5Path);
 
-        if (!f.exists() || !f.isFile()) {
-            LOG.warn("Kerberos enabled but {} not found on this host; skipping krb5.conf ConfigMap creation (cm={})",
+        if (!fromContext && (!f.exists() || !f.isFile())) {
+            LOG.warn("Kerberos enabled but {} not found on this host and no context krb5.conf supplied; skipping krb5.conf ConfigMap creation (cm={})",
                     krb5Path, configMapName);
             return;
         }
 
         try {
-            LOG.info("Reading Kerberos config from {} to create/update ConfigMap {} in namespace {}",
-                    krb5Path, configMapName, namespace);
+            String content;
+            if (fromContext) {
+                LOG.info("Using krb5.conf supplied by the selected platform context to create/update ConfigMap {} in namespace {}",
+                        configMapName, namespace);
+                content = krb5Override;
+            } else {
+                LOG.info("Reading Kerberos config from {} to create/update ConfigMap {} in namespace {}",
+                        krb5Path, configMapName, namespace);
+                content = Files.readString(
+                        f.toPath(),
+                        StandardCharsets.UTF_8
+                );
+            }
 
-            String content = Files.readString(
-                    f.toPath(),
-                    StandardCharsets.UTF_8
-            );
-
-            // The host krb5.conf is mounted into in-cluster pods whose resolver (ndots:5,
+            // The krb5.conf is mounted into in-cluster pods whose resolver (ndots:5,
             // *.svc.cluster.local search domains) canonicalizes external service hostnames to
             // bogus in-cluster names — which corrupts the Kerberos SPN realm and yields
             // "krbtgt/<svc>.SVC.CLUSTER.LOCAL not found in Kerberos database" on SPNEGO.
