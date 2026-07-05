@@ -58,6 +58,7 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.openshift.client.OpenShiftClient;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.okhttp.OkHttpClientFactory;
 import io.fabric8.kubernetes.client.internal.SSLUtils;
 import io.fabric8.kubernetes.client.utils.Serialization;
@@ -315,20 +316,21 @@ public class KubernetesService {
                     String kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
                     
                     LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
-                    Config baseConfiguration = Config.fromKubeconfig(kubeconfigContent);
+                    Config baseConfiguration = buildConfigForSelectedContext(kubeconfigContent);
                     ConfigBuilder configurationBuilder = new ConfigBuilder(baseConfiguration);
                     LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n");
 
                     LOG.info("Overriding view properties from ambari.properties into system properties for Kubernetes client.");
                     loadK8sPropsAsSystemProperties(viewContext);
 
-                    // Parse kubeconfig to extract certificate
+                    // Parse kubeconfig and trust the CA of EVERY cluster it defines (not just the
+                    // current-context's), so operations against any selected context succeed.
                     io.fabric8.kubernetes.api.model.Config kubeconfigModel = Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
-                    String certificateAuthorityData = kubeconfigModel.getClusters().get(0).getCluster().getCertificateAuthorityData();
+                    java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
                     Config finalConfiguration = configurationBuilder.build();
 
-                    if (certificateAuthorityData != null && !certificateAuthorityData.isEmpty()) {
-                        installKubeconfigCaIntoJvmDefaultSslContext(certificateAuthorityData);
+                    if (!allClusterCaData.isEmpty()) {
+                        installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
                     } else if (viewContext.getAmbariProperty("k8s.view.ssl.truststore.path") != null) {
                         String trustStorePath = viewContext.getAmbariProperty("k8s.view.ssl.truststore.path");
                         String trustStorePassword = viewContext.getAmbariProperty("k8s.view.ssl.truststore.password");
@@ -341,8 +343,8 @@ public class KubernetesService {
                         LOG.info("No custom SSL configuration found. Using default JVM TrustStore.");
                     }
 
-                    this.client = new DefaultKubernetesClient(finalConfiguration);
-                    
+                    this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
+
                     if (false) { // Disabled OpenShift detection
                         LOG.info("OpenShift cluster detected. Adapting the client.");
                         this.client.adapt(OpenShiftClient.class);
@@ -351,8 +353,8 @@ public class KubernetesService {
                     }
                     this.isConfigured = true;
                     LOG.info("Kubernetes client initialized successfully.");
-                    
-                } catch (IOException | java.security.NoSuchAlgorithmException | java.security.KeyStoreException | java.security.cert.CertificateException | java.security.KeyManagementException e) {
+
+                } catch (Exception e) {
                     LOG.error("Failed to read the kubeconfig file at: {}", kubeconfigPath, e);
                     throw new IllegalStateException("Failed to read the Kubernetes configuration file.", e);
                 }
@@ -2093,27 +2095,216 @@ public class KubernetesService {
      *
      * @param certificateAuthorityData base64-encoded PEM CA cert from the kubeconfig
      */
-    private void installKubeconfigCaIntoJvmDefaultSslContext(String certificateAuthorityData)
+    /**
+     * Resolve the {@code certificate-authority-data} for the kubeconfig's current-context cluster.
+     * A kubeconfig may define several clusters (e.g. CRC + docker-desktop); blindly taking
+     * {@code clusters[0]} can grab the wrong CA. Falls back to the first cluster's CA when the
+     * current-context cannot be resolved.
+     */
+    /**
+     * Build the fabric8 Config for the operator-selected kubeconfig context (persisted per view
+     * instance). Falls back to the kubeconfig's current-context when no context has been selected.
+     */
+    private Config buildConfigForSelectedContext(String kubeconfigContent) {
+        String selectedContext = configurationService.getSelectedContext();
+        Config cfg;
+        if (selectedContext != null && !selectedContext.isBlank()) {
+            LOG.info("Building Kubernetes client for selected kubeconfig context '{}'.", selectedContext);
+            cfg = Config.fromKubeconfig(selectedContext, kubeconfigContent, null);
+        } else {
+            LOG.info("No kubeconfig context selected; using the kubeconfig current-context.");
+            cfg = Config.fromKubeconfig(kubeconfigContent);
+        }
+        // Pin the target cluster's CA onto the Config as INLINE caCertData so the fabric8 client's
+        // OWN SSLContext trusts the api-server. Two reasons this is required:
+        //  (1) the fabric8 OkHttp client does NOT use the JVM-default SSLContext we set elsewhere;
+        //  (2) Config.fromKubeconfig may stage the CA into a temp caCertFile the sandboxed view
+        //      cannot read — leaving the client with no usable trust and failing with PKIX.
+        // Setting caCertData inline (and clearing caCertFile) makes the CA authoritative.
+        try {
+            io.fabric8.kubernetes.api.model.Config model =
+                    Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
+            String caData = clusterCaForContext(model, selectedContext);
+            if (caData != null && !caData.isBlank()) {
+                cfg = new ConfigBuilder(cfg).withCaCertFile(null).withCaCertData(caData).build();
+                LOG.info("Pinned target-cluster CA onto the client Config (caCertData {} base64 chars).", caData.length());
+            } else {
+                LOG.warn("No certificate-authority-data for the target context; relying on Config defaults.");
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not pin CA onto the client Config: {}", e.toString());
+        }
+        return cfg;
+    }
+
+    /**
+     * Build the Kubernetes client with the kubeconfig CA(s) injected DIRECTLY into the HTTP client's
+     * SSLContext. Necessary because fabric8's own Config-based trust (caCertData / caCertFile) and the
+     * JVM-default SSLContext are both NOT honored by the OkHttp client in this sandboxed view — TLS
+     * kept failing with PKIX despite the CA being present. Here we hand fabric8 an explicit
+     * TrustManager (JVM defaults + every kubeconfig cluster CA, each possibly a bundle) and preserve
+     * client-certificate auth via the Config's key managers.
+     */
+    private KubernetesClient buildTrustingClient(Config config, java.util.List<String> caDataList) throws Exception {
+        KeyStore ts = KeyStore.getInstance(KeyStore.getDefaultType());
+        ts.load(null, null);
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        int i = 0;
+        for (String caData : caDataList) {
+            for (java.security.cert.Certificate c :
+                    cf.generateCertificates(new ByteArrayInputStream(Base64.getDecoder().decode(caData)))) {
+                if (c instanceof X509Certificate) {
+                    LOG.info("Trusting kubeconfig CA subject: {}", ((X509Certificate) c).getSubjectX500Principal().getName());
+                }
+                ts.setCertificateEntry("k8s-ca-" + (i++), c);
+            }
+        }
+        TrustManagerFactory customTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        customTmf.init(ts);
+        X509TrustManager customTm = (X509TrustManager) customTmf.getTrustManagers()[0];
+        TrustManagerFactory defTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        defTmf.init((KeyStore) null);
+        X509TrustManager defTm = (X509TrustManager) defTmf.getTrustManagers()[0];
+        final TrustManager[] trustManagers = new TrustManager[]{ new CompositeTrustManager(defTm, customTm) };
+
+        KeyManager[] km = null;
+        try {
+            km = SSLUtils.keyManagers(config);
+        } catch (Exception e) {
+            LOG.debug("No client key managers from kubeconfig (token auth?): {}", e.toString());
+        }
+        final KeyManager[] keyManagers = km;
+
+        LOG.info("Building Kubernetes client with {} kubeconfig CA cert(s) injected into the HTTP client SSLContext.", i);
+        return new KubernetesClientBuilder()
+                .withConfig(config)
+                .withHttpClientBuilderConsumer(b -> b.sslContext(keyManagers, trustManagers))
+                .build();
+    }
+
+    /** CA data of the cluster referenced by {@code contextName} (or the current-context when null). */
+    private String clusterCaForContext(io.fabric8.kubernetes.api.model.Config model, String contextName) {
+        if (model == null) {
+            return null;
+        }
+        String ctxName = (contextName != null && !contextName.isBlank()) ? contextName : model.getCurrentContext();
+        String clusterName = null;
+        if (ctxName != null && model.getContexts() != null) {
+            for (io.fabric8.kubernetes.api.model.NamedContext nc : model.getContexts()) {
+                if (ctxName.equals(nc.getName()) && nc.getContext() != null) {
+                    clusterName = nc.getContext().getCluster();
+                    break;
+                }
+            }
+        }
+        if (clusterName != null && model.getClusters() != null) {
+            for (io.fabric8.kubernetes.api.model.NamedCluster ncl : model.getClusters()) {
+                if (clusterName.equals(ncl.getName()) && ncl.getCluster() != null) {
+                    return ncl.getCluster().getCertificateAuthorityData();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * List the contexts available in the uploaded kubeconfig so the operator can pick which cluster
+     * this view instance targets. Each entry carries: name, cluster, namespace, server, {@code current}
+     * (the kubeconfig's current-context) and {@code selected} (the persisted pick for this instance).
+     */
+    public java.util.List<java.util.Map<String, Object>> listAvailableContexts() {
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        String content;
+        try {
+            content = configurationService.getKubeconfigContents();
+        } catch (Exception e) {
+            LOG.warn("listAvailableContexts: kubeconfig not available: {}", e.toString());
+            return out;
+        }
+        io.fabric8.kubernetes.api.model.Config model =
+                Serialization.unmarshal(content, io.fabric8.kubernetes.api.model.Config.class);
+        if (model == null || model.getContexts() == null) {
+            return out;
+        }
+        String current = model.getCurrentContext();
+        String selected = configurationService.getSelectedContext();
+        java.util.Map<String, io.fabric8.kubernetes.api.model.Cluster> clusters = new java.util.HashMap<>();
+        if (model.getClusters() != null) {
+            for (io.fabric8.kubernetes.api.model.NamedCluster nc : model.getClusters()) {
+                if (nc.getName() != null && nc.getCluster() != null) {
+                    clusters.put(nc.getName(), nc.getCluster());
+                }
+            }
+        }
+        for (io.fabric8.kubernetes.api.model.NamedContext nc : model.getContexts()) {
+            if (nc.getContext() == null) {
+                continue;
+            }
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("name", nc.getName());
+            m.put("cluster", nc.getContext().getCluster());
+            m.put("namespace", nc.getContext().getNamespace());
+            io.fabric8.kubernetes.api.model.Cluster cl = clusters.get(nc.getContext().getCluster());
+            m.put("server", cl != null ? cl.getServer() : null);
+            m.put("current", nc.getName() != null && nc.getName().equals(current));
+            m.put("selected", nc.getName() != null && nc.getName().equals(selected));
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * Collect the {@code certificate-authority-data} of EVERY cluster defined in the kubeconfig.
+     * A kubeconfig may define multiple clusters (e.g. CRC + docker-desktop); trusting all of their
+     * CAs means TLS to any selected context/cluster succeeds — not just the current-context one.
+     */
+    private java.util.List<String> collectAllClusterCaData(io.fabric8.kubernetes.api.model.Config kubeconfigModel) {
+        java.util.List<String> caDataList = new java.util.ArrayList<>();
+        if (kubeconfigModel == null || kubeconfigModel.getClusters() == null) {
+            return caDataList;
+        }
+        for (io.fabric8.kubernetes.api.model.NamedCluster ncl : kubeconfigModel.getClusters()) {
+            if (ncl.getCluster() != null) {
+                String ca = ncl.getCluster().getCertificateAuthorityData();
+                if (ca != null && !ca.isEmpty()) {
+                    caDataList.add(ca);
+                    LOG.info("Kubeconfig cluster '{}' contributes a certificate-authority-data entry.", ncl.getName());
+                }
+            }
+        }
+        return caDataList;
+    }
+
+    private void installKubeconfigCasIntoJvmDefaultSslContext(java.util.List<String> caDataList)
             throws java.security.NoSuchAlgorithmException,
                    java.security.KeyStoreException,
                    java.security.cert.CertificateException,
                    java.security.KeyManagementException,
                    IOException {
-        LOG.info("Found 'certificate-authority-data' in kubeconfig. Adding it to the JVM's default SSL context.");
+        LOG.info("Adding {} kubeconfig cluster CA entry(ies) to the JVM's default SSL context.", caDataList.size());
 
         // Default JVM trust manager — preserves trust for the platform cacerts bundle.
         TrustManagerFactory defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         defaultTrustManagerFactory.init((KeyStore) null);
         X509TrustManager defaultTrustManager = (X509TrustManager) defaultTrustManagerFactory.getTrustManagers()[0];
 
-        // Custom trust manager loaded with the kubeconfig CA.
-        byte[] decodedCertificateBytes = Base64.getDecoder().decode(certificateAuthorityData);
-        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-        X509Certificate caCertificate = (X509Certificate) certificateFactory.generateCertificate(new ByteArrayInputStream(decodedCertificateBytes));
-
         KeyStore customTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         customTrustStore.load(null, null);
-        customTrustStore.setCertificateEntry("k8s-ca", caCertificate);
+
+        // Each certificate-authority-data may itself be a BUNDLE of multiple PEM certs (OpenShift/CRC
+        // ships the ingress cert plus several kube-apiserver signers). generateCertificates (plural)
+        // loads them ALL — generateCertificate (singular) would trust only the first and miss the
+        // api-server's actual signer, causing "PKIX path building failed" on the API handshake.
+        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+        int caIndex = 0;
+        for (String caData : caDataList) {
+            byte[] decoded = Base64.getDecoder().decode(caData);
+            for (java.security.cert.Certificate cert :
+                    certificateFactory.generateCertificates(new ByteArrayInputStream(decoded))) {
+                customTrustStore.setCertificateEntry("k8s-ca-" + (caIndex++), cert);
+            }
+        }
+        LOG.info("Loaded {} CA certificate(s) from the kubeconfig into the trust store.", caIndex);
 
         TrustManagerFactory customTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         customTrustManagerFactory.init(customTrustStore);
@@ -2123,7 +2314,7 @@ public class KubernetesService {
         sslContext.init(null, new TrustManager[]{new CompositeTrustManager(defaultTrustManager, customTrustManager)}, null);
         SSLContext.setDefault(sslContext);
 
-        LOG.info("JVM default SSL context has been updated to trust the Kubernetes CA.");
+        LOG.info("JVM default SSL context updated to trust {} kubeconfig CA certificate(s).", caIndex);
     }
 
     /**
@@ -2237,15 +2428,14 @@ public class KubernetesService {
             // configured" path had skipped this work).  See KubernetesService(ViewContext).
             io.fabric8.kubernetes.api.model.Config kubeconfigModel =
                 Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
-            String certificateAuthorityData =
-                kubeconfigModel.getClusters().get(0).getCluster().getCertificateAuthorityData();
-            if (certificateAuthorityData != null && !certificateAuthorityData.isEmpty()) {
-                installKubeconfigCaIntoJvmDefaultSslContext(certificateAuthorityData);
+            java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
+            if (!allClusterCaData.isEmpty()) {
+                installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
             }
 
-            Config finalConfiguration = Config.fromKubeconfig(kubeconfigContent);
+            Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
             loadK8sPropsAsSystemProperties(viewContext);
-            this.client = new DefaultKubernetesClient(finalConfiguration);
+            this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
             this.isConfigured = true;
             this.prometheusClientCache.clear();
             LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");

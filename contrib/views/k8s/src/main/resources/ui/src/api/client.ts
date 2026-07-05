@@ -380,6 +380,27 @@ export const saveContext = (ctx: PlatformContext): Promise<PlatformContext> =>
 export const deleteContext = (id: string): Promise<void> =>
   fetchJson<void>(`/contexts/${encodeURIComponent(id)}`, { method: "DELETE" });
 
+/** A context entry from the uploaded kubeconfig (which cluster this view instance can target). */
+export interface KubeconfigContext {
+  name: string;
+  cluster?: string;
+  namespace?: string;
+  server?: string;
+  current?: boolean;
+  selected?: boolean;
+}
+
+/** Contexts available in the uploaded kubeconfig — for choosing which cluster this view targets. */
+export const getKubeconfigContexts = (): Promise<KubeconfigContext[]> =>
+  fetchJson<KubeconfigContext[]>("/cluster/contexts");
+
+/** Persist the chosen kubeconfig context for this view instance (rebuilds the Kubernetes client). */
+export const selectKubeconfigContext = (context: string): Promise<{ message: string }> =>
+  fetchJson<{ message: string }>("/cluster/context", {
+    method: "POST",
+    body: JSON.stringify({ context }),
+  });
+
 /**
  * Live "test connection & list clusters" for a remote Ambari, before saving a REMOTE context.
  * Returns the clusters the remote Ambari manages + its version, or {ok:false, error} on failure.

@@ -197,6 +197,45 @@ public class KubeService {
         }
     }
 
+    /**
+     * List the contexts available in the uploaded kubeconfig so the operator can choose which
+     * cluster/context this view instance targets.
+     */
+    @GET
+    @Path("/cluster/contexts")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listKubeconfigContexts() {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        try {
+            return Response.ok(this.getKubernetesService().listAvailableContexts()).build();
+        } catch (Exception e) {
+            LOG.warn("/cluster/contexts: failed to list kubeconfig contexts: {}", e.toString());
+            return Response.ok(Collections.emptyList()).build();
+        }
+    }
+
+    /**
+     * Persist the operator's chosen kubeconfig context for this view instance and rebuild the
+     * Kubernetes client against it. Body: {@code {"context": "<name>"}} (null/blank ⇒ current-context).
+     */
+    @POST
+    @Path("/cluster/context")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response selectKubeconfigContext(java.util.Map<String, String> body) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        String context = body == null ? null : body.get("context");
+        LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
+        this.getConfigService().saveSelectedContext(context);
+        try {
+            this.getKubernetesService().reloadClientIfConfigured();
+        } catch (Exception e) {
+            LOG.warn("/cluster/context: client reload after context selection failed: {}", e.toString());
+        }
+        return Response.ok(Collections.singletonMap(
+                "message", "Context set to: " + (context == null || context.isBlank() ? "current-context" : context))).build();
+    }
+
     @GET
     @Path("/cluster/configured")
     @Produces(MediaType.APPLICATION_JSON)

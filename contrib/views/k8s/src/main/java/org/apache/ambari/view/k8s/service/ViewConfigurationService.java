@@ -48,6 +48,7 @@ public class ViewConfigurationService {
     
     private static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
     private static final String KUBECONFIG_UPLOADED = "kubeconfig.uploaded";
+    private static final String KUBECONFIG_CONTEXT_KEY = "kubeconfig.context";
     
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
@@ -253,6 +254,42 @@ public class ViewConfigurationService {
             LOG.info("Successfully removed instance data for key '{}'", KUBECONFIG_PATH_KEY);
         } catch (Exception e) {
             LOG.error("An error occurred while calling removeInstanceData", e);
+        }
+    }
+
+    /**
+     * Persist the operator-selected kubeconfig context — the single cluster/context this view
+     * instance targets. When unset, the client falls back to the kubeconfig's {@code current-context}.
+     *
+     * @param contextName the kubeconfig context name to use, or {@code null}/blank to clear it
+     */
+    public void saveSelectedContext(String contextName) {
+        try {
+            if (contextName == null || contextName.isBlank()) {
+                viewContext.removeInstanceData(KUBECONFIG_CONTEXT_KEY);
+                LOG.info("Cleared selected kubeconfig context (will use current-context).");
+            } else {
+                viewContext.putInstanceData(KUBECONFIG_CONTEXT_KEY, contextName);
+                LOG.info("Saved selected kubeconfig context '{}'.", contextName);
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to persist selected kubeconfig context", e);
+        }
+    }
+
+    /**
+     * The operator-selected kubeconfig context for this view instance, or {@code null} to use the
+     * kubeconfig's {@code current-context}.
+     */
+    public String getSelectedContext() {
+        return viewContext.getInstanceData(KUBECONFIG_CONTEXT_KEY);
+    }
+
+    public void removeSelectedContext() {
+        try {
+            viewContext.removeInstanceData(KUBECONFIG_CONTEXT_KEY);
+        } catch (Exception e) {
+            LOG.error("Failed to remove selected kubeconfig context", e);
         }
     }
 

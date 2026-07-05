@@ -25,7 +25,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -66,6 +66,47 @@ const ConfigurationPage: React.FC = () => {
     const [authStepSaved, setAuthStepSaved] = React.useState(false);
     const [goToDashboardLoading, setGoToDashboardLoading] = React.useState(false);
     const navigate = useNavigate();
+    const [contextModalOpen, setContextModalOpen] = React.useState(false);
+    const [availableContexts, setAvailableContexts] = React.useState<KubeconfigContext[]>([]);
+    const [chosenContext, setChosenContext] = React.useState<string | undefined>(undefined);
+    const [savingContext, setSavingContext] = React.useState(false);
+
+    // After a kubeconfig is uploaded, offer the operator a choice of which context (cluster) this
+    // view instance should target. A single context is selected silently; multiple opens a picker.
+    const promptContextSelection = React.useCallback(async () => {
+        try {
+            const ctxs = await getKubeconfigContexts();
+            setAvailableContexts(ctxs || []);
+            if (!ctxs || ctxs.length === 0) {
+                return; // single-cluster / no named contexts — nothing to pick
+            }
+            if (ctxs.length === 1) {
+                await selectKubeconfigContext(ctxs[0].name);
+                void fetchData(true);
+                return;
+            }
+            const preferred = ctxs.find(c => c.selected) || ctxs.find(c => c.current) || ctxs[0];
+            setChosenContext(preferred?.name);
+            setContextModalOpen(true);
+        } catch (e) {
+            console.warn('Could not load kubeconfig contexts', e);
+        }
+    }, [fetchData]);
+
+    const handleSelectContext = async () => {
+        if (!chosenContext) { setContextModalOpen(false); return; }
+        setSavingContext(true);
+        try {
+            await selectKubeconfigContext(chosenContext);
+            message.success(`This view now targets context "${chosenContext}".`);
+            setContextModalOpen(false);
+            void fetchData(true);
+        } catch (e) {
+            message.error('Failed to set the selected context.');
+        } finally {
+            setSavingContext(false);
+        }
+    };
 
     const monitoringRepoSelectOptions = React.useMemo(() => {
         return [...helmRepositoryOptions, { value: '__add_repo__', label: '+ Add repository' }];
@@ -265,6 +306,7 @@ const ConfigurationPage: React.FC = () => {
                 setCurrentStep(1);
                 setClusterStepCompleted(true);
                 void fetchData(true);
+                void promptContextSelection();
             } else if (uploadInfo.file.status === 'error') {
                 message.error(`Failed to upload ${uploadInfo.file.name}.`);
             }
@@ -631,6 +673,31 @@ const ConfigurationPage: React.FC = () => {
                     )}
                 </Content>
             </Layout>
+
+            <Modal
+                title="Select the target cluster (kubeconfig context)"
+                open={contextModalOpen}
+                confirmLoading={savingContext}
+                okText="Use this context"
+                onOk={handleSelectContext}
+                onCancel={() => setContextModalOpen(false)}
+            >
+                <Typography.Paragraph type="secondary">
+                    Your kubeconfig defines multiple contexts. Choose which cluster this view instance
+                    manages — all deployments target it. You can change it later by re-uploading the
+                    kubeconfig.
+                </Typography.Paragraph>
+                <Select
+                    style={{ width: '100%' }}
+                    value={chosenContext}
+                    onChange={setChosenContext}
+                    placeholder="Select a context…"
+                    options={availableContexts.map(c => ({
+                        value: c.name,
+                        label: `${c.name}${c.current ? ' (current-context)' : ''}${c.server ? ' — ' + c.server : (c.cluster ? ' — ' + c.cluster : '')}`,
+                    }))}
+                />
+            </Modal>
 
             <Modal
                 title="Add Helm Repository"
