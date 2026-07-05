@@ -70,6 +70,9 @@ const DashboardPage: React.FC = () => {
 
     // Compact, clickable capacity tiles (real utilization, not a fake sparkline).
     const pct = (m?: { used: number; total: number }) => (m && m.total ? Math.round((m.used / m.total) * 100) : 0);
+    // Backend emits used < 0 (a sentinel) when no metrics source is available (e.g. OpenShift with no
+    // reachable/authorized Thanos and no metrics-server). Render "N/A" rather than a bogus negative %.
+    const metricUnavailable = (m?: { used: number; total: number }) => !m || m.used < 0 || !isFinite(m.used);
     const capTile = (label: string, value: React.ReactNode, ratio: number, target: string) => {
         const r = Math.max(0, Math.min(1, isFinite(ratio) ? ratio : 0));
         const warn = r > 0.85;
@@ -141,8 +144,8 @@ const DashboardPage: React.FC = () => {
             {stats && (
               <div className="kdps-kpis">
                 {capTile('Nodes Ready', `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes')}
-                {capTile('CPU', `${pct(stats.cpu)}%`, stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0, '/nodes')}
-                {capTile('Memory', `${pct(stats.memory)}%`, stats.memory.total ? stats.memory.used / stats.memory.total : 0, '/nodes')}
+                {capTile('CPU', metricUnavailable(stats.cpu) ? 'N/A' : `${pct(stats.cpu)}%`, metricUnavailable(stats.cpu) ? 0 : (stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0), '/nodes')}
+                {capTile('Memory', metricUnavailable(stats.memory) ? 'N/A' : `${pct(stats.memory)}%`, metricUnavailable(stats.memory) ? 0 : (stats.memory.total ? stats.memory.used / stats.memory.total : 0), '/nodes')}
                 {capTile('Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads')}
               </div>
             )}

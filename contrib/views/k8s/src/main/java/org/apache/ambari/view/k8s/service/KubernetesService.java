@@ -43,8 +43,14 @@ import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.ServiceAccount;
+import io.fabric8.kubernetes.api.model.ServiceAccountBuilder;
 import io.fabric8.kubernetes.api.model.ServiceList;
 import io.fabric8.kubernetes.api.model.Status;
+import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
+import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
+import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
+import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.WatchEvent;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.api.model.ComponentCondition;
@@ -151,6 +157,28 @@ public class KubernetesService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicReference<Boolean> runningInsideKubernetesCache = new AtomicReference<>(null);
     private final AtomicReference<String> lastPrometheusProxyUrlLogged = new AtomicReference<>(null);
+    // Cached OpenShift-vs-vanilla-k8s detection for the current client; reset on client reload.
+    private final AtomicReference<Boolean> openShiftDetectionCache = new AtomicReference<>(null);
+
+    // Auto-minted OpenShift monitoring bearer token (for kubeconfigs that authenticate with a client
+    // certificate and therefore carry no token — Thanos Querier's oauth-proxy requires a Bearer token
+    // with cluster-monitoring-view). Cached with its expiry and renewed lazily before it expires.
+    private final AtomicReference<MintedToken> monitoringTokenCache = new AtomicReference<>(null);
+    private final Object monitoringTokenMintLock = new Object();
+    private static final String MONITORING_VIEWER_CLUSTER_ROLE = "cluster-monitoring-view";
+    private static final String MONITORING_VIEWER_CRB_NAME = "ambari-monitoring-viewer";
+    private static final long MONITORING_TOKEN_TTL_SECONDS = 3600L;          // request 1-hour tokens
+    private static final long MONITORING_TOKEN_RENEW_BUFFER_MS = 300_000L;   // renew when < 5 min remain
+
+    /** A bearer token together with the epoch-millis instant at which it expires. */
+    private static final class MintedToken {
+        final String token;
+        final long expiresAtMs;
+        MintedToken(String token, long expiresAtMs) {
+            this.token = token;
+            this.expiresAtMs = expiresAtMs;
+        }
+    }
 
     private MountManager mountManager;
 
@@ -474,6 +502,7 @@ public class KubernetesService {
 
         double totalCpuCapacity = 0;
         double totalMemoryCapacity = 0;
+        double totalPodCapacity = 0;
         long readyNodesCount = 0;
 
         for (Node node : nodeList.getItems()) {
@@ -483,6 +512,9 @@ public class KubernetesService {
             }
             if (nodeCapacity.containsKey("memory")) {
                 totalMemoryCapacity += nodeCapacity.get("memory").getNumericalAmount().doubleValue() / (1024 * 1024 * 1024); // To GiB
+            }
+            if (nodeCapacity.containsKey("pods")) {
+                totalPodCapacity += nodeCapacity.get("pods").getNumericalAmount().doubleValue();
             }
             
             boolean isNodeReady = node.getStatus().getConditions().stream()
@@ -586,7 +618,11 @@ public class KubernetesService {
         
         ClusterStats.ResourceStat cpuStatistics = new ClusterStats.ResourceStat(usedCpuTotal, totalCpuCapacity); // Usage requires metrics
         ClusterStats.ResourceStat memoryStatistics = new ClusterStats.ResourceStat(usedMemoryTotal, totalMemoryCapacity);
-        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podList.getItems().size());
+        // Pods card denominator is schedulable pod CAPACITY (sum of node "pods" capacity), NOT the count
+        // of all pod objects — on OpenShift the latter includes thousands of Completed/Failed pods and is
+        // meaningless as a denominator. Fall back to the object count only if capacity is unavailable.
+        double podDenominator = totalPodCapacity > 0 ? totalPodCapacity : podList.getItems().size();
+        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podDenominator);
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
         
         // Helm stats (best-effort): list releases using the helm client. If it fails, keep zeros.
@@ -1276,7 +1312,7 @@ public class KubernetesService {
     /**
      * Parsed service endpoint information for an in-cluster Prometheus service.
      */
-    private record PrometheusServiceEndpoint(String namespace, String serviceName, int servicePort) { }
+    private record PrometheusServiceEndpoint(String namespace, String serviceName, int servicePort, String scheme) { }
 
     /**
      * Resolve a Prometheus URL that is reachable from this Ambari process.
@@ -1355,7 +1391,11 @@ public class KubernetesService {
             String serviceName = hostSegments[0];
             String namespace = hostSegments[1];
             int servicePort = parsedUri.getPort() > 0 ? parsedUri.getPort() : 9090;
-            return new PrometheusServiceEndpoint(namespace, serviceName, servicePort);
+            // Preserve the scheme: OpenShift Thanos/Prometheus services serve HTTPS (behind oauth-proxy),
+            // vanilla kube-prometheus-stack serves HTTP. The API service-proxy path encodes this as
+            // services/<scheme>:<name>:<port>/proxy.
+            String scheme = "https".equalsIgnoreCase(parsedUri.getScheme()) ? "https" : "http";
+            return new PrometheusServiceEndpoint(namespace, serviceName, servicePort, scheme);
         } catch (Exception parseException) {
             LOG.warn("Unable to parse Prometheus URL for service proxying ({}): {}", prometheusUrl, parseException.getMessage());
             return null;
@@ -1381,8 +1421,9 @@ public class KubernetesService {
                 ? apiServerUrl.substring(0, apiServerUrl.length() - 1)
                 : apiServerUrl;
         String proxyPath = String.format(
-                "/api/v1/namespaces/%s/services/http:%s:%d/proxy",
+                "/api/v1/namespaces/%s/services/%s:%s:%d/proxy",
                 prometheusServiceEndpoint.namespace(),
+                prometheusServiceEndpoint.scheme(),
                 prometheusServiceEndpoint.serviceName(),
                 prometheusServiceEndpoint.servicePort()
         );
@@ -1784,14 +1825,61 @@ public class KubernetesService {
     }
 
     private boolean isOpenShift(KubernetesClient client) {
-        // Attempts to list a resource that only exists on OpenShift.
-        // If the request does not throw a 404 exception, it is an OpenShift cluster.
-        try {
-            return client.isAdaptable(OpenShiftClient.class);
-        } catch (Exception e) {
-            LOG.warn("OpenShift detection failed (likely vanilla k8s): {}", e.toString());
-            return false;
+        // Detect OpenShift by probing for an OpenShift-only API group (e.g. route.openshift.io).
+        // NOTE: isAdaptable(OpenShiftClient.class) is NOT used — only openshift-client-api (interfaces)
+        // is on the classpath, not the openshift-client impl that registers the adapter, so that call
+        // always throws "No adapter available". The API-group probe needs no extra dependency and works
+        // over the same authenticated/trusted connection.
+        Boolean cached = openShiftDetectionCache.get();
+        if (cached != null) {
+            return cached;
         }
+        boolean result = false;
+        try {
+            io.fabric8.kubernetes.api.model.APIGroupList apiGroups = client.getApiGroups();
+            if (apiGroups != null && apiGroups.getGroups() != null) {
+                for (io.fabric8.kubernetes.api.model.APIGroup group : apiGroups.getGroups()) {
+                    String name = group.getName();
+                    if (name != null && name.endsWith("openshift.io")) {
+                        result = true;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s): {}", e.toString());
+        }
+        LOG.info("OpenShift detection: cluster {} OpenShift (*.openshift.io API group present={}).",
+                result ? "IS" : "is NOT", result);
+        openShiftDetectionCache.compareAndSet(null, result);
+        return result;
+    }
+
+    /**
+     * Send a single PromQL query, applying the kubeconfig credential first. If the backend rejects it
+     * with 401/403 on an OpenShift target (e.g. the kubeconfig token lacks cluster-monitoring-view, or
+     * there was no token at all), retry ONCE with a freshly minted/renewed cluster-monitoring-view token.
+     * This keeps working kubeconfigs untouched while auto-recovering for cert-only or under-privileged ones.
+     */
+    private HttpResponse<String> runMonitoringQuery(HttpClient http, String promUrl, String query) throws Exception {
+        String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        URI uri = URI.create(promUrl + "/api/v1/query?query=" + encoded);
+        HttpRequest.Builder builder = HttpRequest.newBuilder().GET().uri(uri).timeout(Duration.ofSeconds(8));
+        applyPrometheusAuth(builder);
+        HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        if ((response.statusCode() == 401 || response.statusCode() == 403)
+                && isOpenShift(client) && monitoringAutoTokenEnabled()) {
+            String mintedToken = getMonitoringBearerToken();
+            if (mintedToken != null && !mintedToken.isBlank()) {
+                LOG.info("Monitoring query returned {} with the kubeconfig credential; retrying with a minted "
+                        + "cluster-monitoring-view token.", response.statusCode());
+                HttpRequest retry = HttpRequest.newBuilder().GET().uri(uri).timeout(Duration.ofSeconds(8))
+                        .header("Authorization", "Bearer " + mintedToken)
+                        .build();
+                response = http.send(retry, HttpResponse.BodyHandlers.ofString());
+            }
+        }
+        return response;
     }
 
     /**
@@ -1801,24 +1889,10 @@ public class KubernetesService {
     private double[] queryPrometheusClusterUsage(String promUrl) {
         try {
             HttpClient prometheusHttpClient = buildPrometheusHttpClient(promUrl);
-            String cpuQuery = java.net.URLEncoder.encode("sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))", StandardCharsets.UTF_8);
-            String memQuery = java.net.URLEncoder.encode("sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)", StandardCharsets.UTF_8);
-            String cpuUrl = promUrl + "/api/v1/query?query=" + cpuQuery;
-            String memUrl = promUrl + "/api/v1/query?query=" + memQuery;
-
-            HttpRequest.Builder cpuRequestBuilder = HttpRequest.newBuilder()
-                    .GET()
-                    .uri(URI.create(cpuUrl))
-                    .timeout(Duration.ofSeconds(8));
-            HttpRequest.Builder memoryRequestBuilder = HttpRequest.newBuilder()
-                    .GET()
-                    .uri(URI.create(memUrl))
-                    .timeout(Duration.ofSeconds(8));
-            // Add auth headers if kubeconfig provides a token.
-            applyPrometheusAuth(cpuRequestBuilder);
-            applyPrometheusAuth(memoryRequestBuilder);
-            HttpResponse<String> cpuResponse = prometheusHttpClient.send(cpuRequestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            HttpResponse<String> memoryResponse = prometheusHttpClient.send(memoryRequestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> cpuResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
+                    "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))");
+            HttpResponse<String> memoryResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
+                    "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)");
             if (cpuResponse.statusCode() >= 300 || memoryResponse.statusCode() >= 300) {
                 LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}",
                         cpuResponse.statusCode(), memoryResponse.statusCode(), promUrl, cpuResponse.body(), memoryResponse.body());
@@ -1906,13 +1980,7 @@ public class KubernetesService {
     private Map<String, Double> queryPrometheusVector(String promUrl, String query) {
         try {
             HttpClient http = buildPrometheusHttpClient(promUrl);
-            String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .GET()
-                    .uri(URI.create(promUrl + "/api/v1/query?query=" + encoded))
-                    .timeout(Duration.ofSeconds(8));
-            applyPrometheusAuth(builder);
-            HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = runMonitoringQuery(http, promUrl, query);
             if (response.statusCode() >= 300) {
                 LOG.warn("Prometheus vector query failed ({}): {}", response.statusCode(), response.body());
                 return Collections.emptyMap();
@@ -1978,10 +2046,144 @@ public class KubernetesService {
     }
 
     /**
+     * Return a valid bearer token for querying OpenShift cluster monitoring (Thanos), minting a fresh
+     * one via the TokenRequest API when the cache is empty or within the renewal buffer of expiry.
+     * Thread-safe: concurrent callers share a single mint under {@link #monitoringTokenMintLock}.
+     *
+     * @return a currently-valid bearer token, or {@code null} if one could not be obtained
+     */
+    private boolean monitoringAutoTokenEnabled() {
+        String value = viewContext.getAmbariProperty("openshift.monitoring.autoToken");
+        return value == null || value.isBlank() || Boolean.parseBoolean(value);  // default: enabled
+    }
+
+    private String getMonitoringBearerToken() {
+        MintedToken cached = monitoringTokenCache.get();
+        long now = System.currentTimeMillis();
+        if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+            return cached.token;
+        }
+        synchronized (monitoringTokenMintLock) {
+            // Re-check under the lock: another thread may have just minted one.
+            cached = monitoringTokenCache.get();
+            now = System.currentTimeMillis();
+            if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+                return cached.token;
+            }
+            try {
+                MintedToken fresh = mintMonitoringToken();
+                if (fresh != null && fresh.token != null && !fresh.token.isBlank()) {
+                    monitoringTokenCache.set(fresh);
+                    return fresh.token;
+                }
+            } catch (Exception e) {
+                LOG.warn("Failed to mint OpenShift monitoring token: {}", e.toString());
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the monitoring service account (namespace/name), ensure it exists and is bound to
+     * cluster-monitoring-view, then mint a short-lived token for it via the TokenRequest API.
+     *
+     * @return the minted token plus its expiry, or {@code null} on failure
+     */
+    private MintedToken mintMonitoringToken() {
+        String saRef = viewContext.getAmbariProperty("openshift.monitoring.serviceaccount");
+        if (saRef == null || saRef.isBlank()) {
+            saRef = "default/" + MONITORING_VIEWER_CRB_NAME;
+        }
+        String[] parts = saRef.split("/", 2);
+        String saNamespace = parts.length == 2 ? parts[0].trim() : "default";
+        String saName = parts.length == 2 ? parts[1].trim() : parts[0].trim();
+
+        ensureMonitoringServiceAccount(saNamespace, saName);
+
+        TokenRequest request = new TokenRequestBuilder()
+                .withNewSpec()
+                .withExpirationSeconds(MONITORING_TOKEN_TTL_SECONDS)
+                .endSpec()
+                .build();
+        TokenRequest response = client.serviceAccounts()
+                .inNamespace(saNamespace)
+                .withName(saName)
+                .tokenRequest(request);
+        if (response == null || response.getStatus() == null || response.getStatus().getToken() == null) {
+            LOG.warn("TokenRequest for {}/{} returned no token", saNamespace, saName);
+            return null;
+        }
+        String token = response.getStatus().getToken();
+        long expiresAtMs = System.currentTimeMillis() + (MONITORING_TOKEN_TTL_SECONDS * 1000L);
+        String expTs = response.getStatus().getExpirationTimestamp();
+        if (expTs != null && !expTs.isBlank()) {
+            try {
+                expiresAtMs = Instant.parse(expTs).toEpochMilli();
+            } catch (Exception parseEx) {
+                LOG.debug("Could not parse token expirationTimestamp '{}', using TTL default: {}", expTs, parseEx.toString());
+            }
+        }
+        LOG.info("Minted OpenShift monitoring token for service account {}/{} (expires {}).",
+                saNamespace, saName, expTs != null ? expTs : "in " + MONITORING_TOKEN_TTL_SECONDS + "s");
+        return new MintedToken(token, expiresAtMs);
+    }
+
+    /**
+     * Best-effort: create the monitoring service account and its cluster-monitoring-view
+     * ClusterRoleBinding if they do not already exist. Requires the kubeconfig identity to have
+     * permission to create these objects (cluster-admin does); logged and ignored otherwise.
+     */
+    private void ensureMonitoringServiceAccount(String namespace, String name) {
+        try {
+            ServiceAccount existing = client.serviceAccounts().inNamespace(namespace).withName(name).get();
+            if (existing == null) {
+                client.serviceAccounts().inNamespace(namespace).resource(
+                        new ServiceAccountBuilder()
+                                .withNewMetadata().withName(name).withNamespace(namespace).endMetadata()
+                                .build()
+                ).create();
+                LOG.info("Created monitoring service account {}/{}", namespace, name);
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not ensure monitoring service account {}/{} (may already exist or lack RBAC): {}",
+                    namespace, name, e.toString());
+        }
+        try {
+            ClusterRoleBinding crb = client.rbac().clusterRoleBindings().withName(MONITORING_VIEWER_CRB_NAME).get();
+            if (crb == null) {
+                client.rbac().clusterRoleBindings().resource(
+                        new ClusterRoleBindingBuilder()
+                                .withNewMetadata().withName(MONITORING_VIEWER_CRB_NAME).endMetadata()
+                                .withNewRoleRef()
+                                    .withApiGroup("rbac.authorization.k8s.io")
+                                    .withKind("ClusterRole")
+                                    .withName(MONITORING_VIEWER_CLUSTER_ROLE)
+                                .endRoleRef()
+                                .addNewSubject()
+                                    .withKind("ServiceAccount")
+                                    .withName(name)
+                                    .withNamespace(namespace)
+                                .endSubject()
+                                .build()
+                ).create();
+                LOG.info("Bound {} to {}/{} via ClusterRoleBinding {}",
+                        MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, MONITORING_VIEWER_CRB_NAME);
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not ensure ClusterRoleBinding {} -> {} for {}/{} (may already exist or lack RBAC): {}",
+                    MONITORING_VIEWER_CRB_NAME, MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, e.toString());
+        }
+    }
+
+    /**
      * Apply bearer tokens to Prometheus requests if the kubeconfig provides one.
      */
     private void applyPrometheusAuth(HttpRequest.Builder builder) {
         Config currentConfig = client.getConfiguration();
+        // Prefer the kubeconfig's own credential when it carries a token (no regression for kubeconfigs
+        // that already work). For a client-certificate-only kubeconfig there is no token, so on OpenShift
+        // fall back to a minted, auto-renewed cluster-monitoring-view token. If a present token turns out
+        // to lack monitoring RBAC, the query layer retries once with a minted token (see runMonitoringQuery).
         String token = currentConfig.getOauthToken();
         if (token == null || token.isBlank()) {
             token = currentConfig.getAutoOAuthToken();
@@ -1989,6 +2191,13 @@ public class KubernetesService {
         if (token != null && !token.isBlank()) {
             builder.header("Authorization", "Bearer " + token);
             return;
+        }
+        if (isOpenShift(client) && monitoringAutoTokenEnabled()) {
+            String mintedToken = getMonitoringBearerToken();
+            if (mintedToken != null && !mintedToken.isBlank()) {
+                builder.header("Authorization", "Bearer " + mintedToken);
+                return;
+            }
         }
         String username = currentConfig.getUsername();
         String password = currentConfig.getPassword();
@@ -2438,6 +2647,8 @@ public class KubernetesService {
             this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
             this.isConfigured = true;
             this.prometheusClientCache.clear();
+            this.openShiftDetectionCache.set(null);
+            this.monitoringTokenCache.set(null);
             LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
             return true;
         } catch (Exception e) {

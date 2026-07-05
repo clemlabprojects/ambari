@@ -50,7 +50,11 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
       promise = getClusterServices(field.serviceType);
     } else if (field.type === 'monitoring-discovery') {
       promise = getMonitoringDiscovery().then((res) => {
-        if (!res) return [];
+        // The endpoint returns a monitoring stack {namespace, release, url} only when one is discovered;
+        // otherwise it returns a bootstrap-state object ({state, message}) with no release/namespace.
+        // Only surface an option when we actually found a stack — otherwise the selector must be empty
+        // (previously this rendered a bogus "undefined (undefined)" entry).
+        if (!res || !res.release || !res.namespace) return [];
         return [{ label: `${res.release} (${res.namespace})`, value: JSON.stringify(res) }];
       }).catch(() => []);
     } else if (field.type === 'secret-discovery') {
