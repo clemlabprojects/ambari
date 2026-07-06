@@ -119,8 +119,11 @@ body {
 .bgops-steps .ant-tree-treenode {
   width: 100%;
   border-bottom: 1px solid var(--line-soft);   /* distinguish each step from the next */
-  padding: 3px 0;
+  padding: 8px 4px;                              /* taller, roomier rows */
   align-items: center;
+}
+.bgops-steps .ant-tree-node-content-wrapper:hover {
+  background: rgba(var(--accent-rgb), 0.06);     /* affordance: rows are clickable */
 }
 .bgops-steps .ant-tree-node-content-wrapper {
   flex: 1;

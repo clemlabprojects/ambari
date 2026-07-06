@@ -18,6 +18,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
+import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { cancelCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
 
 type BackgroundOperationsModalProps = {
@@ -322,9 +323,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     } catch {
       children = [];
     }
-    children.sort((a, b) =>
-      (a.createdAt || '').localeCompare(b.createdAt || '') || String(a.id).localeCompare(String(b.id))
-    );
+    // Do NOT re-sort: the backend returns children in execution order (childListJson). Sorting by
+    // createdAt scrambled them because steps are planned with near-identical timestamps.
     const childNodes = await Promise.all(children.map((ch) => buildStepData(ch)));
     return {
       key: node.id,
@@ -347,9 +347,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     } catch {
       return;
     }
-    kids.sort((a, b) =>
-      (a.createdAt || '').localeCompare(b.createdAt || '') || String(a.id).localeCompare(String(b.id))
-    );
+    // Preserve backend execution order (childListJson) — no createdAt re-sort.
     const fresh = await Promise.all(kids.map((ch) => buildStepData(ch)));
     const rootCmd = commandsRef.current.find((c) => c.id === opId);
     let extras: StepNode[] = [];
@@ -443,13 +441,22 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
 
   // Render StepNode data → antd Tree nodes. Keys are stable command ids so antd reconciles in place
   // (no remount / no lost expansion) across refreshes — only each title's status/percent changes.
+  const stepIcon = (state?: string) => {
+    if (state === 'SUCCEEDED') return <CheckCircleTwoTone twoToneColor="#52c41a" />;
+    if (state === 'FAILED') return <CloseCircleTwoTone twoToneColor="#ff4d4f" />;
+    if (state === 'RUNNING') return <LoadingOutlined style={{ color: 'var(--accent, #1677ff)' }} />;
+    return <ClockCircleOutlined style={{ color: 'var(--ink-dim, #8a97a9)' }} />; // PENDING / other
+  };
+
   const stepToTreeData = (nodes: StepNode[]): any[] => nodes.map((n) => ({
     key: n.key,
     // width:100% + right-aligned fixed columns → the state Tag and progress bar line up on the panel's
     // right edge at EVERY tree depth (paired with the .bgops-steps CSS that makes the node fill the row).
+    // The leading status icon signals this is a tracked step executed by Ambari.
     title: (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 24 }}>
-        <Typography.Text ellipsis title={n.message} style={{ minWidth: 0 }}>{n.message}</Typography.Text>
+      <div style={{ display: 'grid', gridTemplateColumns: '18px 1fr 96px 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 34 }}>
+        <span style={{ fontSize: 14, lineHeight: 1 }}>{stepIcon(n.state)}</span>
+        <Typography.Text ellipsis title={n.message} style={{ minWidth: 0, fontWeight: 500 }}>{n.message}</Typography.Text>
         <Tag color={stateColor(n.state)} style={{ margin: 0, textAlign: 'center', width: '100%' }}>{n.state}</Tag>
         <Progress percent={n.percent} size="small" status={progressStatus(n.state) as any} showInfo style={{ marginBottom: 0, width: 130 }} />
       </div>
@@ -505,7 +512,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
         <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
           {/* Steps panel */}
           <div style={{ flex: '0 0 42%', minWidth: 0, maxHeight: '50vh', overflow: 'auto', borderRight: '1px solid var(--line)', paddingRight: 12 }}>
-            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Steps <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>(click a step to see its logs)</Typography.Text></Typography.Text>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Execution steps <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>(run by Ambari, in order — click one to see its logs)</Typography.Text></Typography.Text>
             {steps.length > 0 ? (
               <Tree
                 className="bgops-steps"

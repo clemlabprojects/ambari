@@ -205,11 +205,23 @@ public class CommandService {
      * Append a line to the per-command log with minimal risk of throwing.
      * Uses async writer inside CommandLogService.
      */
+    // While a child step is executing, its command id is set here so that everything logged to the root
+    // operation is ALSO tee'd into that step's own log — giving each sub-step its own logs in the UI.
+    private final ThreadLocal<String> activeStepLogId = new ThreadLocal<>();
+
     private void appendCommandLog(String commandId, String message) {
         try {
             commandLogService.append(commandId, message);
         } catch (Exception ex) {
             LOG.debug("Failed to append command log for {}: {}", commandId, ex.toString());
+        }
+        String stepId = activeStepLogId.get();
+        if (stepId != null && !stepId.equals(commandId)) {
+            try {
+                commandLogService.append(stepId, message);
+            } catch (Exception ex) {
+                LOG.debug("Failed to tee command log to step {}: {}", stepId, ex.toString());
+            }
         }
     }
 
@@ -5564,6 +5576,8 @@ public class CommandService {
         refreshCurrentStepSnapshot(root);
 
         // 7) Execute the selected child step
+        // Tee everything logged during this step into the step's own log (see appendCommandLog).
+        activeStepLogId.set(child.getId());
         try {
             // Build a HelmDeployRequest from root params for the generic step methods you already have
             HelmDeployRequest rootReq = this.commandUtils.buildRequestFromRootParams(root);
@@ -7359,9 +7373,11 @@ public class CommandService {
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
             LOG.error("Step execution failed: {}", ex.toString(), ex);
-            try { commandLogService.append(id, "Step failed: " + trim(ex.getMessage())); } catch (Exception ignored) {}
+            appendCommandLog(id, "Step failed: " + trim(ex.getMessage()));
             fail(rootSt, "Failed at step '" + stepTitle + "': " + trim(ex.getMessage()));
             refreshCurrentStepSnapshot(root);
+        } finally {
+            activeStepLogId.remove();
         }
     }
 
