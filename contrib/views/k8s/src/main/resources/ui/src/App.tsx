@@ -62,7 +62,15 @@ const AppRouter: React.FC = () => {
     // Branded, theme-aware splash instead of a bare spinner on a white page.
     return (
       <div className="app-splash">
-        <div className="app-splash-mark">K8</div>
+        <div className="app-splash-mark" style={{ background: 'var(--panel)' }}>
+          <svg width="42" height="42" viewBox="0 0 64 64" fill="none" stroke="var(--accent)"
+               strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+            <path d="M32 10 L49.2 18.3 L53.4 36.9 L41.55 51.8 L22.45 51.8 L10.6 36.9 L14.8 18.3 Z"/>
+            <path d="M32 32 L32 10 M32 32 L49.2 18.3 M32 32 L53.4 36.9 M32 32 L41.55 51.8 M32 32 L22.45 51.8 M32 32 L10.6 36.9 M32 32 L14.8 18.3"/>
+            <circle cx="32" cy="32" r="7" fill="var(--accent)" stroke="none"/>
+            <circle cx="32" cy="32" r="3" fill="var(--panel)" stroke="none"/>
+          </svg>
+        </div>
         <Spin />
         <div className="app-splash-text">Connecting to cluster…</div>
       </div>
