@@ -77,11 +77,15 @@ public class ClusterCapabilitiesResource {
         Map<String, Object> result = new LinkedHashMap<>();
 
         // ---- OpenShift platform detection ----
-        boolean routeCrd = safeCrdExists("routes.route.openshift.io");
+        // Detect via the OpenShift API GROUPS (route.openshift.io), NOT a CRD named
+        // routes.route.openshift.io: on a real OpenShift cluster routes are served by the
+        // openshift-apiserver as an AGGREGATED API group, so the CRD lookup returns false and the
+        // platform was mis-reported as "kubernetes". isOpenShiftCluster() uses the API-group probe.
+        boolean isOcp = kubernetesService.isOpenShiftCluster();
         Map<String, Object> openshift = new LinkedHashMap<>();
-        openshift.put("routeCrd", routeCrd);
+        openshift.put("routeCrd", isOcp || safeCrdExists("routes.route.openshift.io"));
         result.put("openshift", openshift);
-        result.put("platform", routeCrd ? "openshift" : "kubernetes");
+        result.put("platform", isOcp ? "openshift" : "kubernetes");
 
         // ---- cert-manager (https://cert-manager.io) ----
         // We only check the GA v1 CRDs. Old v1alpha2/v1beta1 are deprecated and

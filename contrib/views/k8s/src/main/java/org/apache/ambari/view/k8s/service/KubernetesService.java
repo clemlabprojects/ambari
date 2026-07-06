@@ -1854,6 +1854,11 @@ public class KubernetesService {
         }
     }
 
+    /** Public accessor: whether the connected cluster is OpenShift (API-group probe, cached). */
+    public boolean isOpenShiftCluster() {
+        return client != null && isOpenShift(client);
+    }
+
     private boolean isOpenShift(KubernetesClient client) {
         // Detect OpenShift by probing for an OpenShift-only API group (e.g. route.openshift.io).
         // NOTE: isAdaptable(OpenShiftClient.class) is NOT used — only openshift-client-api (interfaces)
