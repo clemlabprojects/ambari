@@ -49,7 +49,10 @@ const ThemedRoot: React.FC = () => {
         token: {
           fontFamily: FONT_SANS,
           fontFamilyCode: FONT_MONO,
-          fontSize: 12,
+          // Outfit is a light-ish variable font; 12px read too thin. Bump the base size and make
+          // "strong" text properly bold so field titles, headings and buttons are legible.
+          fontSize: 13,
+          fontWeightStrong: 700,
           borderRadius: 8,
           borderRadiusLG: 10,
           borderRadiusSM: 6,
@@ -64,7 +67,7 @@ const ThemedRoot: React.FC = () => {
           colorBgLayout: dark ? '#0c111b' : '#f5f7fa',
           ...(dark
             ? { colorBgBase: '#0c111b', colorTextBase: '#e8edf4', colorBorder: '#283041', colorBorderSecondary: '#1d2433' }
-            : { colorTextHeading: '#0f1722', colorBorder: '#e4e9f0', colorBorderSecondary: '#eef1f5' }),
+            : { colorTextHeading: '#0f1722', colorBorder: '#cbd3df', colorBorderSecondary: '#dbe1ea' }),
         },
         components: {
           Layout: dark
@@ -78,7 +81,8 @@ const ThemedRoot: React.FC = () => {
             : { headerBg: '#f7f9fc', headerColor: '#5b6675', headerSplitColor: 'transparent', borderColor: '#eef1f5', rowHoverBg: '#f5f8ff', headerBorderRadius: 8, fontSize: 13, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 },
           Card: { borderRadiusLG: 10, headerFontSize: 15 },
           Modal: { borderRadiusLG: 12, titleFontSize: 16 },
-          Button: { borderRadius: 8, fontWeight: 500, primaryShadow: 'none', defaultShadow: 'none' },
+          Button: { borderRadius: 8, fontWeight: 600, primaryShadow: 'none', defaultShadow: 'none' },
+          Form: { labelFontSize: 13 },
           Input: { borderRadius: 8 },
           Select: { borderRadius: 8 },
           Tag: { borderRadiusSM: 6 },

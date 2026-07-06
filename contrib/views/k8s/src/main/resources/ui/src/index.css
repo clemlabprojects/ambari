@@ -30,6 +30,10 @@
   --inset: #0f1520;
   --line: #283041;
   --line-soft: #1d2433;
+  /* Cue colour for KDPS context-dependent fields. In dark mode antd's #1677ff blends into the
+   * navy panels, so use a brighter blue that stands out against the dark surfaces. */
+  --linked: #5aa2ff;
+  --linked-rgb: 90, 162, 255;
   --ink: #e8edf4;
   --ink-dim: #8a97a9;
   --ink-faint: #5c6878;
@@ -53,8 +57,11 @@
   --panel: #ffffff;
   --panel-2: #f8fafc;
   --inset: #f1f5f9;
-  --line: #e4e9f0;
-  --line-soft: #eef2f6;
+  /* Light-mode borders were near-white (#e4e9f0 / #eef2f6) and hard to see; darken to a visible slate. */
+  --line: #cbd3df;
+  --line-soft: #dbe1ea;
+  --linked: #1677ff;
+  --linked-rgb: 22, 119, 255;
   --ink: #0f1722;
   --ink-dim: #566072;
   --ink-faint: #94a0b0;
@@ -82,4 +89,27 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--void);
+}
+
+/* --- Readability (AMBARI-524 UX): Outfit is a light variable font and read too thin at small
+ * sizes. Firm up field titles and action buttons so they are comfortably legible, incl. the
+ * wizard footer controls (bottom-right). Colours use the theme tokens so both light/dark work. */
+/* !important: antd v5 injects its own `.ant-form-item-label > label {font-weight:400}` at runtime via
+ * CSS-in-JS, after this static sheet, so an equal-specificity rule would lose the cascade. Label size
+ * is handled reliably by the Form.labelFontSize theme token in main.tsx. */
+.ant-form-item-label > label {
+  font-weight: 600 !important;
+  color: var(--ink);
+}
+.ant-btn {
+  font-weight: 600;
+}
+.ant-btn-sm {
+  font-size: 13px;
+}
+/* Modal / drawer footer = the bottom-right Next / Back / Deploy / Cancel buttons */
+.ant-modal-footer .ant-btn,
+.ant-drawer-footer .ant-btn {
+  font-weight: 600;
+  font-size: 13px;
 }

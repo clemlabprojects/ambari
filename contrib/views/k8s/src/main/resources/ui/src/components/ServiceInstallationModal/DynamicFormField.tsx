@@ -65,9 +65,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   const ctxResolved = useResolvedContextValue((field as any).contextField);
   const [overrideOn, setOverrideOn] = React.useState(false);
   const wrapLinked = (node: React.ReactNode): React.ReactNode => linked ? (
-    <div style={{ borderLeft: '3px solid #1677ff', background: 'rgba(22,119,255,0.04)', borderRadius: 4, padding: '8px 12px', marginBottom: 16 }}>
+    <div style={{ borderLeft: '3px solid var(--linked)', background: 'rgba(var(--linked-rgb), 0.10)', borderRadius: 4, padding: '8px 12px', marginBottom: 16 }}>
       {node}
-      <Typography.Text style={{ color: '#1677ff', fontSize: 12 }}>
+      <Typography.Text style={{ color: 'var(--linked)', fontSize: 12 }}>
         <ApiOutlined /> Depends on the selected <strong>Platform context</strong> (right panel) — endpoints &amp; credentials are resolved from there.
       </Typography.Text>
     </div>
