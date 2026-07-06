@@ -1048,6 +1048,22 @@ public class KubernetesService {
      * This is the method the GET discovery endpoint should call — it never triggers installs.
      */
     public MonitoringInfo discoverAndHealMonitoringState() {
+        // On OpenShift the view uses the built-in monitoring stack, so monitoring is always "present" —
+        // heal any stale FAILED/PENDING state (e.g. left by a Trino/KEDA kube-prometheus-stack attempt)
+        // to COMPLETED and never surface a private-stack bootstrap failure on the dashboard.
+        if (isOpenShift(client)) {
+            try {
+                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                if (!"COMPLETED".equals(storedState) && !"SKIPPED".equals(storedState)) {
+                    updateMonitoringBootstrapState("COMPLETED", "Using OpenShift built-in monitoring (openshift-monitoring)");
+                }
+            } catch (Exception e) {
+                LOG.warn("Could not heal OpenShift monitoring state: {}", e.getMessage());
+            }
+            // Return null: there is no kube-prometheus-stack to auto-fill, so the "Discover monitoring
+            // stack" selector stays empty (only the dashboard bootstrap state is healed above).
+            return null;
+        }
         MonitoringInfo info = discoverMonitoringPrometheus();
         if (info != null) {
             try {
@@ -1102,12 +1118,16 @@ public class KubernetesService {
             updateMonitoringBootstrapState("SKIPPED", "Auto-bootstrap disabled");
             return null;
         }
-        if (settings.preferOpenShiftMonitoring && isOpenShift(client)) {
-            LOG.info("OpenShift detected and preferOpenShiftMonitoring=true -> will not install private kube-prometheus-stack.");
+        if (isOpenShift(client)) {
+            // The view's OWN dashboard metrics come from OpenShift's built-in monitoring (Thanos). Never
+            // install — nor report the failure of — a private kube-prometheus-stack for the view's
+            // monitoring here, and never fall through to the install path below (that used to let a
+            // Trino/KEDA kube-prometheus-stack dependency attempt flip this state to FAILED). A
+            // kube-prometheus-stack needed by KEDA is installed separately by the deploy pipeline.
+            LOG.info("OpenShift detected -> view monitoring uses the built-in stack; skipping private kube-prometheus-stack bootstrap.");
             MonitoringInfo osInfo = discoverOpenShiftMonitoring();
-            if (osInfo != null) {
-                return osInfo;
-            }
+            return osInfo != null ? osInfo
+                    : new MonitoringInfo("openshift-monitoring", "openshift-monitoring", OPENSHIFT_THANOS_URL_DEFAULT);
         }
 
         String ns = viewContext.getAmbariProperty("monitoring.namespace");
