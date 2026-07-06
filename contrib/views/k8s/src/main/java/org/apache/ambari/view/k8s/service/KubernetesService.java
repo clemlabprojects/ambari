@@ -51,6 +51,10 @@ import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
+import io.fabric8.kubernetes.api.model.rbac.Role;
+import io.fabric8.kubernetes.api.model.rbac.RoleBuilder;
+import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
+import io.fabric8.kubernetes.api.model.rbac.RoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.WatchEvent;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.api.model.ComponentCondition;
@@ -2254,6 +2258,155 @@ public class KubernetesService {
         } catch (Exception e) {
             LOG.warn("Could not ensure ClusterRoleBinding {} -> {} for {}/{} (may already exist or lack RBAC): {}",
                     MONITORING_VIEWER_CRB_NAME, MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, e.toString());
+        }
+    }
+
+    /**
+     * KEDA/Thanos autoscaling on OpenShift needs a bearer token to read the platform's built-in
+     * (user-workload) monitoring via the thanos-querier tenancy endpoint. The chart's KEDA
+     * TriggerAuthentication reads that token from a Secret in the release namespace. This ensures the
+     * whole chain exists — a ServiceAccount bound (cluster-scoped) to {@code cluster-monitoring-view}
+     * plus a long-lived {@code kubernetes.io/service-account-token} Secret the platform keeps populated
+     * (unlike a TokenRequest token, which would expire out from under a long-running ScaledObject).
+     *
+     * <p>"Detect, else request": when the connected credential is allowed to create the objects they
+     * are created idempotently and this returns {@code null} (deploy may proceed). When it is not — or
+     * the monitoring stack (and thus {@code cluster-monitoring-view}) is absent — this returns a
+     * human-readable message describing exactly what a cluster admin must create first, so the caller
+     * can block the deploy with actionable guidance instead of shipping a broken autoscaler.
+     *
+     * @return {@code null} when the token Secret is present/created; otherwise an operator instruction.
+     */
+    public String ensureKedaThanosTokenSecret(String namespace, String secretName, String saName) {
+        if (client == null) return "No cluster connection.";
+        if (namespace == null || namespace.isBlank() || secretName == null || secretName.isBlank()) {
+            return "Namespace and secret name are required for the KEDA/Thanos monitoring token.";
+        }
+        if (saName == null || saName.isBlank()) saName = secretName;
+
+        // Already provisioned? A populated (or freshly-created) service-account-token Secret is enough.
+        try {
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing != null) {
+                boolean hasToken = existing.getData() != null && existing.getData().containsKey("token");
+                if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) return null;
+            }
+        } catch (Exception ignore) { /* fall through to (re)create */ }
+
+        // cluster-monitoring-view is created by the monitoring operator; if it is absent, monitoring is
+        // disabled and Thanos autoscaling cannot work regardless of RBAC.
+        boolean roleExists = false;
+        try { roleExists = client.rbac().clusterRoles().withName(MONITORING_VIEWER_CLUSTER_ROLE).get() != null; }
+        catch (Exception ignore) { }
+        if (!roleExists) {
+            return "Cluster monitoring is not enabled on this cluster (ClusterRole '" + MONITORING_VIEWER_CLUSTER_ROLE
+                 + "' not found). Enable the built-in monitoring stack and user-workload monitoring, then retry.";
+        }
+
+        boolean canSa  = canI("create", "", "serviceaccounts", null, namespace);
+        boolean canSec = canI("create", "", "secrets", null, namespace);
+        boolean canCrb = canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null);
+        boolean canRole = canI("create", "rbac.authorization.k8s.io", "roles", null, namespace);
+        boolean canRb  = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
+        String crbName = "kdps-monview-" + namespace + "-" + saName;
+        String tenancyRoleName = saName + "-thanos-tenancy";
+        if (!(canSa && canSec && canCrb && canRole && canRb)) {
+            StringBuilder missing = new StringBuilder();
+            if (!canSa)   missing.append("create serviceaccounts in ").append(namespace).append("; ");
+            if (!canSec)  missing.append("create secrets in ").append(namespace).append("; ");
+            if (!canCrb)  missing.append("create clusterrolebindings (cluster-scoped); ");
+            if (!canRole) missing.append("create roles in ").append(namespace).append("; ");
+            if (!canRb)   missing.append("create rolebindings in ").append(namespace).append("; ");
+            return "The view's account cannot provision the KEDA/Thanos monitoring token (missing: "
+                 + missing.toString().trim()
+                 + "). Ask a cluster administrator to run, before deploying:\n"
+                 + "  oc -n " + namespace + " create serviceaccount " + saName + "\n"
+                 + "  oc create clusterrolebinding " + crbName
+                 + " --clusterrole=" + MONITORING_VIEWER_CLUSTER_ROLE
+                 + " --serviceaccount=" + namespace + ":" + saName + "\n"
+                 // The thanos-querier tenancy endpoint (:9092) authorizes each query with a
+                 // `get pods` SubjectAccessReview in the tenant namespace; cluster-monitoring-view
+                 // grants only `get namespaces`, so a namespaced pods-read binding is also required.
+                 + "  oc -n " + namespace + " create role " + tenancyRoleName + " --verb=get,list --resource=pods\n"
+                 + "  oc -n " + namespace + " create rolebinding " + tenancyRoleName
+                 + " --role=" + tenancyRoleName + " --serviceaccount=" + namespace + ":" + saName + "\n"
+                 + "  oc -n " + namespace + " apply -f - <<'EOF'\n"
+                 + "  apiVersion: v1\n  kind: Secret\n  metadata:\n    name: " + secretName + "\n"
+                 + "    annotations: { kubernetes.io/service-account.name: " + saName + " }\n"
+                 + "  type: kubernetes.io/service-account-token\n  EOF";
+        }
+
+        // We hold the rights — create everything idempotently.
+        try {
+            if (client.serviceAccounts().inNamespace(namespace).withName(saName).get() == null) {
+                client.serviceAccounts().inNamespace(namespace).resource(
+                        new ServiceAccountBuilder()
+                                .withNewMetadata().withName(saName).withNamespace(namespace).endMetadata()
+                                .build()).create();
+                LOG.info("Created KEDA monitoring service account {}/{}", namespace, saName);
+            }
+            if (client.rbac().clusterRoleBindings().withName(crbName).get() == null) {
+                client.rbac().clusterRoleBindings().resource(
+                        new ClusterRoleBindingBuilder()
+                                .withNewMetadata().withName(crbName).endMetadata()
+                                .withNewRoleRef()
+                                    .withApiGroup("rbac.authorization.k8s.io")
+                                    .withKind("ClusterRole")
+                                    .withName(MONITORING_VIEWER_CLUSTER_ROLE)
+                                .endRoleRef()
+                                .addNewSubject()
+                                    .withKind("ServiceAccount").withName(saName).withNamespace(namespace)
+                                .endSubject()
+                                .build()).create();
+                LOG.info("Bound {}/{} to {} via ClusterRoleBinding {}",
+                        namespace, saName, MONITORING_VIEWER_CLUSTER_ROLE, crbName);
+            }
+            // The thanos-querier tenancy port (:9092) authorizes every query by running a
+            // `get pods` SubjectAccessReview in the namespace passed as the tenancy scope.
+            // cluster-monitoring-view grants only `get namespaces`, so without this the query
+            // returns 403 (verb=get, resource=pods). Grant a minimal namespaced pods-read Role.
+            if (client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
+                client.rbac().roles().inNamespace(namespace).resource(
+                        new RoleBuilder()
+                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                                .addNewRule()
+                                    .withApiGroups("")
+                                    .withResources("pods")
+                                    .withVerbs("get", "list")
+                                .endRule()
+                                .build()).create();
+                LOG.info("Created KEDA/Thanos tenancy Role {}/{} (get,list pods)", namespace, tenancyRoleName);
+            }
+            if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
+                client.rbac().roleBindings().inNamespace(namespace).resource(
+                        new RoleBindingBuilder()
+                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                                .withNewRoleRef()
+                                    .withApiGroup("rbac.authorization.k8s.io")
+                                    .withKind("Role")
+                                    .withName(tenancyRoleName)
+                                .endRoleRef()
+                                .addNewSubject()
+                                    .withKind("ServiceAccount").withName(saName).withNamespace(namespace)
+                                .endSubject()
+                                .build()).create();
+                LOG.info("Bound {}/{} to tenancy Role {} via RoleBinding", namespace, saName, tenancyRoleName);
+            }
+            if (client.secrets().inNamespace(namespace).withName(secretName).get() == null) {
+                Map<String, String> ann = new LinkedHashMap<>();
+                ann.put("kubernetes.io/service-account.name", saName);
+                client.secrets().inNamespace(namespace).resource(
+                        new SecretBuilder()
+                                .withNewMetadata().withName(secretName).withNamespace(namespace)
+                                    .withAnnotations(ann)
+                                .endMetadata()
+                                .withType("kubernetes.io/service-account-token")
+                                .build()).create();
+                LOG.info("Created KEDA/Thanos service-account-token Secret {}/{}", namespace, secretName);
+            }
+            return null;
+        } catch (Exception e) {
+            return "Failed to provision the KEDA/Thanos monitoring token in namespace '" + namespace + "': " + e.getMessage();
         }
     }
 

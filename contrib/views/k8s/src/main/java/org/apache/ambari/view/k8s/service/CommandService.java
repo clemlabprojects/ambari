@@ -315,6 +315,11 @@ public class CommandService {
         return defaultValue;
     }
 
+    /** Null-safe nested-map lookup: returns {@code map.get(key)} when {@code node} is a Map, else null. */
+    private static Object mapGet(Object node, String key) {
+        return (node instanceof Map) ? ((Map<?, ?>) node).get(key) : null;
+    }
+
     /**
      * Check if a dependency release already exists in the target namespace.
      *
@@ -4629,6 +4634,34 @@ public class CommandService {
             }
         } catch (Exception ex) {
             LOG.warn("Failed to refresh child list after dependencies, continuing with existing list: {}", ex.toString());
+        }
+
+        // 2b. KEDA/Thanos autoscaling on OpenShift: the chart's TriggerAuthentication reads a bearer
+        // token from a Secret in the release namespace so worker autoscaling can query the platform's
+        // built-in (user-workload) monitoring. Ensure that Secret (SA bound to cluster-monitoring-view +
+        // a service-account-token Secret) exists — create it when the view has the rights, otherwise
+        // BLOCK the deploy with an actionable message so a cluster admin can provision it first, rather
+        // than shipping a Trino that never scales. (detect, else request — see ensureKedaThanosTokenSecret)
+        if (this.kubernetesService.isOpenShiftCluster()) {
+            Map<String, Object> deployValues = request.getValues();
+            Object kedaNode = mapGet(mapGet(deployValues, "server"), "keda");
+            Object triggerAuthNode = mapGet(kedaNode, "triggerAuthentication");
+            if (triggerAuthNode instanceof Map
+                    && asBoolean(((Map<?, ?>) triggerAuthNode).get("enabled"), false)) {
+                String tokenSecretName = resolveStringValue(((Map<?, ?>) triggerAuthNode).get("secretName"), null);
+                if (tokenSecretName == null || tokenSecretName.isBlank()) {
+                    throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
+                            + " with OpenShift KEDA autoscaling: server.keda.triggerAuthentication.secretName is not set.");
+                }
+                String problem = this.kubernetesService.ensureKedaThanosTokenSecret(
+                        request.getNamespace(), tokenSecretName, tokenSecretName);
+                if (problem != null) {
+                    throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
+                            + " with OpenShift KEDA autoscaling: " + problem);
+                }
+                LOG.info("KEDA/Thanos monitoring token Secret '{}' ensured for release {} in namespace {}",
+                        tokenSecretName, request.getReleaseName(), request.getNamespace());
+            }
         }
 
         // 2a. Pre-provision Kerberos keytabs if the view is configured for it.
