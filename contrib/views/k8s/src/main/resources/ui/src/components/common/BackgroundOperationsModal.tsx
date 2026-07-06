@@ -289,8 +289,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
           if (openId) {
             const row = (current as any).find((c: any) => c.id === openId) || { id: openId };
             await fetchSteps(openId);
-            // Tail logs for the selected sub-step (leaves carry the logs) — fall back to the op root.
-            const logId = selectedStepIdRef.current || openId;
+            // Tail the operation's aggregate log (root command id) — it accrues every step's output.
+            const logId = openId;
             if (showLogsRef.current[openId]) {
               const logInfo = logStateRef.current[logId];
               const forceLogs = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
@@ -396,19 +396,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     void selectOperation(commands[0]);
   }, [open, commands, selectedId]);
 
-  // Once the open operation's steps load, auto-select a sensible one (running/failed/last leaf) so its
-  // logs show without a manual click — the operation root itself usually has no logs of its own.
-  useEffect(() => {
-    if (!open || !selectedId || selectedStepId) return;
-    const steps = stepMap[selectedId];
-    if (!steps || steps.length === 0) return;
-    const def = pickDefaultStep(steps);
-    if (def) {
-      setSelectedStepId(def);
-      selectedStepIdRef.current = def;
-      if (!logStateRef.current[def]?.content) void loadLogs(def, true);
-    }
-  }, [open, selectedId, selectedStepId, stepMap]);
+  // (The Logs panel shows the operation's aggregate root log directly — no per-step auto-selection.)
 
   const loadLogs = async (id: string, reset = false, quiet = false, force = false) => {
     setLogState(prev => ({
@@ -484,20 +472,11 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     const status = (selectedStatus?.id === op.id ? selectedStatus : null) || op;
     const steps = stepMap[op.id] || [];
     const running = status.state === 'RUNNING' || status.state === 'PENDING';
-    // Logs are shown for the selected sub-step (its own id); fall back to the operation root.
-    const logId = selectedStepId || op.id;
+    // Logs panel shows the operation's AGGREGATE log (the root command id): every step tees its
+    // output into the root as it runs, so this is the full, in-order operation log — no per-step
+    // clicking needed. The steps tree beside it is a progress display only.
+    const logId = op.id;
     const logs = logState[logId];
-    const selectedStepName = selectedStepId
-        ? (flattenLeaves(steps).find(n => n.key === selectedStepId)?.message
-            || flattenAll(steps).find(n => n.key === selectedStepId)?.message
-            || 'step')
-        : 'operation';
-    const chooseStep = (id: string) => {
-        setSelectedStepId(id);
-        selectedStepIdRef.current = id;
-        logPinnedRef.current[id] = true;
-        if (!logStateRef.current[id]?.content) void loadLogs(id, true);
-    };
     return (
       <>
         {status.state === 'FAILED' && status.error && (
@@ -512,26 +491,24 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
         <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
           {/* Steps panel */}
           <div style={{ flex: '0 0 42%', minWidth: 0, maxHeight: '50vh', overflow: 'auto', borderRight: '1px solid var(--line)', paddingRight: 12 }}>
-            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Execution steps <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>(run by Ambari, in order — click one to see its logs)</Typography.Text></Typography.Text>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Execution steps</Typography.Text>
             {steps.length > 0 ? (
               <Tree
                 className="bgops-steps"
                 defaultExpandAll
-                selectable
-                selectedKeys={selectedStepId ? [selectedStepId] : []}
-                onSelect={(keys) => { const id = keys[0]; if (id) chooseStep(String(id)); }}
+                selectable={false}
                 treeData={stepToTreeData(steps)}
               />
             ) : (
               <Typography.Text type="secondary">{running ? 'Planning steps…' : 'No steps available.'}</Typography.Text>
             )}
           </div>
-          {/* Logs panel — for the selected step */}
+          {/* Logs panel — the operation's full aggregate log */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
               <Space size={6} style={{ minWidth: 0 }}>
                 <Typography.Text strong>Logs</Typography.Text>
-                <Typography.Text type="secondary" ellipsis style={{ fontSize: 12, maxWidth: 320 }} title={selectedStepName}>— {selectedStepName}</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>— full operation</Typography.Text>
               </Space>
               <Space>
                 <Button size="small" onClick={() => { logPinnedRef.current[logId] = true; loadLogs(logId, true); }}>Refresh</Button>
@@ -545,7 +522,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               onScroll={handleLogScroll(logId)}
               style={{ background: '#0d1117', color: '#c9d1d9', padding: 10, borderRadius: 6, flex: 1, minHeight: 200, maxHeight: '50vh', overflow: 'auto', fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}
             >
-              {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : (steps.length > 0 ? 'No logs for this step yet. Pick another step or wait for it to run.' : 'No logs yet.'))}
+              {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : (running ? 'Waiting for output…' : 'No logs yet.'))}
             </div>
           </div>
         </div>

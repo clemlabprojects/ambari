@@ -646,55 +646,22 @@ public class CommandPlanFactory {
                                                  String dependencyName,
                                                  Map<String, Object> dependencySpec,
                                                  String reason) {
-        final String now = Instant.now().toString();
-        String id = cmd.getId() + "-" + UUID.randomUUID();
-
-        CommandEntity satisfied = new CommandEntity();
-        satisfied.setId(id);
-        satisfied.setType(CommandType.DEPENDENCY_SATISFIED.name());
-        satisfied.setTitle("Helm: dependency " + dependencyName + " already present");
-        satisfied.setViewInstance(ctx.getInstanceName());
-
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("releaseName", dependencyName);
-        if (dependencySpec != null) {
-            Object namespace = dependencySpec.get("namespace");
-            if (namespace != null) {
-                params.put("namespace", namespace);
-            }
-        }
-        params.put("reason", reason);
-        satisfied.setParamsJson(gson.toJson(params));
-
-        CommandStatusEntity status = new CommandStatusEntity();
-        status.setId(id + "-status");
-        status.setAttempt(0);
-        status.setState(CommandState.SUCCEEDED.name());
-        status.setCreatedBy(ctx.getUsername());
-        status.setCreatedAt(now);
-        status.setUpdatedAt(now);
-        status.setMessage(reason);
-        status.setWorkerId(null);
-        satisfied.setCommandStatusId(status.getId());
-
-        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
-        List<String> childCommands;
+        // A skipped/already-present dependency does no work, so it no longer gets its own (empty,
+        // pre-succeeded) sub-step in the operation tree — that just added a click-through step with
+        // nothing to show. Instead the skip is recorded as a line in the operation's aggregate log,
+        // where the operator sees WHY the dependency was not installed alongside the real steps.
+        String ns = dependencySpec != null && dependencySpec.get("namespace") != null
+                ? String.valueOf(dependencySpec.get("namespace")) : null;
+        String line = "Dependency '" + dependencyName + "'"
+                + (ns != null ? " (namespace " + ns + ")" : "")
+                + " skipped: " + reason;
         try {
-            childCommands = gson.fromJson(cmd.getChildListJson(), listType);
-            if (childCommands == null) {
-                childCommands = new ArrayList<>();
-            }
+            CommandLogService.get(ctx).append(cmd.getId(), line);
         } catch (Exception e) {
-            childCommands = new ArrayList<>();
+            LOG.debug("Could not log skipped dependency {} to {}: {}", dependencyName, cmd.getId(), e.toString());
         }
-        childCommands.add(satisfied.getId());
-        cmd.setChildListJson(gson.toJson(childCommands));
-
-        store(cmd);
-        store(status);
-        store(satisfied);
-
-        LOG.info("Dependency {} already present; added satisfied step {}", dependencyName, satisfied.getId());
+        LOG.info("Dependency {} already present/skipped ({}); logged to operation, no sub-step created",
+                dependencyName, reason);
     }
 
     /**
