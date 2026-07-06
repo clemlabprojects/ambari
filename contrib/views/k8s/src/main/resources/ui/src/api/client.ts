@@ -401,6 +401,32 @@ export const selectKubeconfigContext = (context: string): Promise<{ message: str
     body: JSON.stringify({ context }),
   });
 
+export interface OpenShiftLogin {
+  apiUrl: string;
+  username: string;
+  password: string;
+  caData?: string;
+  insecure?: boolean;
+}
+
+/**
+ * Configure the view to connect to OpenShift with a username/password. The backend mints and
+ * auto-renews an API token (oc-login flow), so it survives token expiry — for clusters where only
+ * console login is available. Rebuilds the client; throws with the backend error on failure.
+ */
+export const saveOpenShiftLogin = (login: OpenShiftLogin): Promise<{ message: string }> =>
+  fetchJson<{ message: string }>("/cluster/openshift-login", {
+    method: "POST",
+    body: JSON.stringify(login),
+  });
+
+/** Dry-run an OpenShift login (mint a token) without persisting. Returns {ok, message|error}. */
+export const testOpenShiftLogin = (login: OpenShiftLogin): Promise<{ ok: boolean; message?: string; error?: string }> =>
+  fetchJson<{ ok: boolean; message?: string; error?: string }>("/cluster/openshift-login/test", {
+    method: "POST",
+    body: JSON.stringify(login),
+  });
+
 /**
  * Live "test connection & list clusters" for a remote Ambari, before saving a REMOTE context.
  * Returns the clusters the remote Ambari manages + its version, or {ok:false, error} on failure.

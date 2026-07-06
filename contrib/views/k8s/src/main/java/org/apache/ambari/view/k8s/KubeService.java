@@ -236,6 +236,95 @@ public class KubeService {
                 "message", "Context set to: " + (context == null || context.isBlank() ? "current-context" : context))).build();
     }
 
+    /**
+     * Configure the view to connect to OpenShift with a username/password (for clusters where only
+     * console login is available and terminal kubeconfig tokens expire). The view mints and auto-renews
+     * an API token from these credentials. Body: {apiUrl, username, password, caData?, insecure?}.
+     */
+    @POST
+    @Path("/cluster/openshift-login")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response saveOpenShiftLogin(java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        if (body == null) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
+        }
+        String apiUrl = body.get("apiUrl") == null ? null : String.valueOf(body.get("apiUrl")).trim();
+        String username = body.get("username") == null ? null : String.valueOf(body.get("username")).trim();
+        String password = body.get("password") == null ? null : String.valueOf(body.get("password"));
+        String caData = body.get("caData") == null ? null : String.valueOf(body.get("caData"));
+        boolean insecure = Boolean.parseBoolean(String.valueOf(body.get("insecure")));
+        if (apiUrl == null || apiUrl.isBlank() || username == null || username.isBlank() || password == null || password.isEmpty()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", "apiUrl, username and password are required")).build();
+        }
+        LOG.info("/cluster/openshift-login: configuring OpenShift login for user '{}' at {}", username, apiUrl);
+        this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+        try {
+            boolean ok = this.getKubernetesService().forceReloadClient();
+            if (!ok) {
+                return Response.status(502)
+                        .entity(Collections.singletonMap("error", "Saved, but could not connect — check URL/credentials and that the cluster allows password login (oc login -u -p).")).build();
+            }
+        } catch (Exception e) {
+            LOG.warn("/cluster/openshift-login: client reload failed: {}", e.toString());
+            return Response.status(502).entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+        return Response.ok(Collections.singletonMap("message", "OpenShift login configured for " + username)).build();
+    }
+
+    /**
+     * Dry-run test of an OpenShift username/password login WITHOUT persisting anything: mints a token
+     * from the OAuth server and confirms it works. Lets the UI gate "Connect" on a successful test.
+     * Body: {apiUrl, username, password, caData?, insecure?}. Returns {ok, message|error}.
+     */
+    @POST
+    @Path("/cluster/openshift-login/test")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response testOpenShiftLogin(java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        if (body == null) {
+            return Response.ok(Map.of("ok", false, "error", "missing body")).build();
+        }
+        String apiUrl = body.get("apiUrl") == null ? null : String.valueOf(body.get("apiUrl")).trim();
+        String username = body.get("username") == null ? null : String.valueOf(body.get("username")).trim();
+        String password = body.get("password") == null ? null : String.valueOf(body.get("password"));
+        String caData = body.get("caData") == null ? null : String.valueOf(body.get("caData"));
+        boolean insecure = Boolean.parseBoolean(String.valueOf(body.get("insecure")));
+        if (apiUrl == null || apiUrl.isBlank() || username == null || username.isBlank() || password == null || password.isEmpty()) {
+            return Response.ok(Map.of("ok", false, "error", "apiUrl, username and password are required")).build();
+        }
+        try {
+            org.apache.ambari.view.k8s.service.OpenShiftLoginProvider provider =
+                    new org.apache.ambari.view.k8s.service.OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
+            String token = provider.refresh();
+            if (token == null || token.isBlank()) {
+                return Response.ok(Map.of("ok", false, "error",
+                        "Could not obtain a token. Check the URL/credentials, and that the cluster allows password login (oc login -u -p).")).build();
+            }
+            return Response.ok(Map.of("ok", true, "message", "Authenticated to OpenShift as " + username + ".")).build();
+        } catch (Exception e) {
+            return Response.ok(Map.of("ok", false, "error", e.getMessage() == null ? e.toString() : e.getMessage())).build();
+        }
+    }
+
+    /** Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). */
+    @POST
+    @Path("/cluster/auth-mode")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response setAuthMode(java.util.Map<String, String> body) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        String mode = body == null ? null : body.get("mode");
+        this.getConfigService().setAuthMode(mode);
+        try { this.getKubernetesService().forceReloadClient(); } catch (Exception e) {
+            LOG.warn("/cluster/auth-mode: reload failed: {}", e.toString());
+        }
+        return Response.ok(Collections.singletonMap("message", "Auth mode set to " + this.getConfigService().getAuthMode())).build();
+    }
+
     @GET
     @Path("/cluster/configured")
     @Produces(MediaType.APPLICATION_JSON)

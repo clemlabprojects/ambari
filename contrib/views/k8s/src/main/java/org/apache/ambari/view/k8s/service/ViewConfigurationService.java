@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.nio.file.StandardOpenOption;
 import java.security.PrivilegedExceptionAction;
 import java.security.AccessController;
@@ -49,9 +50,22 @@ public class ViewConfigurationService {
     private static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
     private static final String KUBECONFIG_UPLOADED = "kubeconfig.uploaded";
     private static final String KUBECONFIG_CONTEXT_KEY = "kubeconfig.context";
-    
+
+    // Auth mode: "kubeconfig" (default, uploaded file) or "openshift-login" (API URL + user/password,
+    // token minted + renewed on demand — for clusters where only console login is available).
+    private static final String AUTH_MODE_KEY = "auth.mode";
+    public static final String AUTH_MODE_KUBECONFIG = "kubeconfig";
+    public static final String AUTH_MODE_OPENSHIFT_LOGIN = "openshift-login";
+    private static final String OS_API_URL_KEY = "openshift.apiUrl";
+    private static final String OS_USERNAME_KEY = "openshift.username";
+    private static final String OS_PASSWORD_ENC_KEY = "openshift.password.enc";
+    private static final String OS_CA_KEY = "openshift.caData";
+    private static final String OS_INSECURE_KEY = "openshift.insecure";
+
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
+    // Cached per-instance so the minted token is reused across calls (rebuilding would drop the cache).
+    private volatile OpenShiftLoginProvider openShiftLoginProvider;
 
     /**
      * Constructs a {@code ViewConfigurationService} and validates the kubeconfig state on startup.
@@ -168,6 +182,8 @@ public class ViewConfigurationService {
         LOG.info("Attempting to save instance data. Key: '{}', Value: '{}'", KUBECONFIG_PATH_KEY, kubeconfigPath);
         try {
             viewContext.putInstanceData(KUBECONFIG_PATH_KEY, kubeconfigPath);
+            // Uploading a kubeconfig switches the view back to kubeconfig auth mode (away from openshift-login).
+            viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_KUBECONFIG);
             LOG.debug("Successfully called putInstanceData for key '{}'", KUBECONFIG_PATH_KEY);
             
             // Verify that the data is correctly stored by retrieving it
@@ -184,12 +200,125 @@ public class ViewConfigurationService {
         }
     }
 
+    /** @return the active auth mode ("kubeconfig" default, or "openshift-login"). */
+    public String getAuthMode() {
+        String mode = viewContext.getInstanceData(AUTH_MODE_KEY);
+        return (mode == null || mode.isBlank()) ? AUTH_MODE_KUBECONFIG : mode;
+    }
+
+    /** Switch the active auth mode (e.g. back to "kubeconfig" without re-uploading). */
+    public void setAuthMode(String mode) {
+        viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN.equals(mode) ? AUTH_MODE_OPENSHIFT_LOGIN : AUTH_MODE_KUBECONFIG);
+        this.openShiftLoginProvider = null;
+    }
+
+    /** @return true if the view is configured with OpenShift username/password login. */
+    public boolean isOpenShiftLogin() {
+        return AUTH_MODE_OPENSHIFT_LOGIN.equals(getAuthMode())
+                && viewContext.getInstanceData(OS_API_URL_KEY) != null
+                && viewContext.getInstanceData(OS_USERNAME_KEY) != null;
+    }
+
+    /**
+     * Persist an OpenShift username/password login. The password is encrypted with the same service used
+     * for the kubeconfig file. Switches the view to openshift-login mode and marks it configured.
+     */
+    public void saveOpenShiftLogin(String apiUrl, String username, String password, String caData, boolean insecure) {
+        try {
+            viewContext.putInstanceData(OS_API_URL_KEY, apiUrl);
+            viewContext.putInstanceData(OS_USERNAME_KEY, username);
+            if (password != null && !password.isEmpty()) {
+                String enc = Base64.getEncoder().encodeToString(
+                        encryptionService.encrypt(password.getBytes(StandardCharsets.UTF_8)));
+                viewContext.putInstanceData(OS_PASSWORD_ENC_KEY, enc);
+            }
+            viewContext.putInstanceData(OS_CA_KEY, caData != null ? caData : "");
+            viewContext.putInstanceData(OS_INSECURE_KEY, Boolean.toString(insecure));
+            viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN);
+            viewContext.putInstanceData(KUBECONFIG_UPLOADED, "true");
+            this.openShiftLoginProvider = null; // rebuild with new creds on next use
+            LOG.info("Saved OpenShift login for user '{}' at {}", username, apiUrl);
+        } catch (Exception e) {
+            LOG.error("Failed to save OpenShift login: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to save OpenShift login", e);
+        }
+    }
+
+    /** Build (once) and return the token provider for the stored OpenShift login, or null if not set. */
+    public synchronized OpenShiftLoginProvider getOpenShiftLoginProvider() {
+        if (!isOpenShiftLogin()) return null;
+        if (openShiftLoginProvider != null) return openShiftLoginProvider;
+        String apiUrl = viewContext.getInstanceData(OS_API_URL_KEY);
+        String username = viewContext.getInstanceData(OS_USERNAME_KEY);
+        String enc = viewContext.getInstanceData(OS_PASSWORD_ENC_KEY);
+        String password = "";
+        if (enc != null && !enc.isBlank()) {
+            try {
+                password = new String(encryptionService.decrypt(Base64.getDecoder().decode(enc)), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                LOG.error("Failed to decrypt stored OpenShift password: {}", e.getMessage());
+            }
+        }
+        String caData = viewContext.getInstanceData(OS_CA_KEY);
+        boolean insecure = Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY));
+        openShiftLoginProvider = new OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
+        return openShiftLoginProvider;
+    }
+
+    public String getOpenShiftApiUrl() { return viewContext.getInstanceData(OS_API_URL_KEY); }
+    public String getOpenShiftCaData() { return viewContext.getInstanceData(OS_CA_KEY); }
+    public boolean isOpenShiftInsecure() { return Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY)); }
+
+    /**
+     * Synthesize a kubeconfig (with a freshly-minted token) for the stored OpenShift login. Used by the
+     * helm client and anywhere a kubeconfig string is expected.
+     */
+    private String synthesizeOpenShiftKubeconfig() {
+        OpenShiftLoginProvider provider = getOpenShiftLoginProvider();
+        String token = provider != null ? provider.getToken() : null;
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("Could not obtain an OpenShift token from the stored username/password.");
+        }
+        String apiUrl = getOpenShiftApiUrl();
+        String caData = getOpenShiftCaData();
+        boolean insecure = isOpenShiftInsecure();
+        String clusterTls;
+        if (!insecure && caData != null && !caData.isBlank()) {
+            String b64 = caData.trim().startsWith("-----BEGIN")
+                    ? Base64.getEncoder().encodeToString(caData.trim().getBytes(StandardCharsets.UTF_8))
+                    : caData.trim().replaceAll("\\s", "");
+            clusterTls = "    certificate-authority-data: " + b64 + "\n";
+        } else {
+            clusterTls = "    insecure-skip-tls-verify: true\n";
+        }
+        return "apiVersion: v1\n"
+                + "kind: Config\n"
+                + "clusters:\n"
+                + "- name: openshift\n"
+                + "  cluster:\n"
+                + "    server: " + apiUrl + "\n"
+                + clusterTls
+                + "users:\n"
+                + "- name: openshift-user\n"
+                + "  user:\n"
+                + "    token: " + token + "\n"
+                + "contexts:\n"
+                + "- name: openshift\n"
+                + "  context:\n"
+                + "    cluster: openshift\n"
+                + "    user: openshift-user\n"
+                + "current-context: openshift\n";
+    }
+
     /**
      * Returns the plain YAML content as a string.
      */
     public String getKubeconfigContents() {
+        if (isOpenShiftLogin()) {
+            return synthesizeOpenShiftKubeconfig();
+        }
         LOG.info("Attempting to retrieve kubeconfig contents from encrypted file.");
-        
+
         final String kubeconfigPath = getKubeconfigPath();
         if (kubeconfigPath == null) {
             LOG.error("kubeconfig.path is not set for this view instance");

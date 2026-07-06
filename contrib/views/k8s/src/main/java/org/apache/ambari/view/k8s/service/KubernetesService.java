@@ -324,13 +324,13 @@ public class KubernetesService {
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
         this.helmService = new HelmService(viewContext, helmClient);
         
-        if (kubeconfigPath == null) {
+        boolean openShiftLogin = configurationService.isOpenShiftLogin();
+        if (kubeconfigPath == null && !openShiftLogin) {
             LOG.info("View is not configured. Kubernetes client will not be initialized.");
             this.isConfigured = false;
             this.client = null;
         } else {
-            File configFile = new File(kubeconfigPath);
-            if (!configFile.exists()) {
+            if (!openShiftLogin && !new File(kubeconfigPath).exists()) {
                 LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
                 configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
                 this.isConfigured = false;
@@ -338,12 +338,18 @@ public class KubernetesService {
             } else {
                 // Initialize Kubernetes client with kubeconfig
                 try {
-                    EncryptionService encryptionService = new EncryptionService();
-                    byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-                    byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-                    String kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
-                    
-                    LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
+                    String kubeconfigContent;
+                    if (openShiftLogin) {
+                        // Synthesized kubeconfig carrying a freshly-minted OpenShift token (username/password login).
+                        kubeconfigContent = configurationService.getKubeconfigContents();
+                        LOG.info("Initializing Kubernetes client from OpenShift username/password login.");
+                    } else {
+                        EncryptionService encryptionService = new EncryptionService();
+                        byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
+                        byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
+                        kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+                        LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
+                    }
                     Config baseConfiguration = buildConfigForSelectedContext(kubeconfigContent);
                     ConfigBuilder configurationBuilder = new ConfigBuilder(baseConfiguration);
                     LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n");
@@ -371,6 +377,10 @@ public class KubernetesService {
                         LOG.info("No custom SSL configuration found. Using default JVM TrustStore.");
                     }
 
+                    if (openShiftLogin) {
+                        // Dynamic token so the long-lived client always uses a fresh token (auto-renew).
+                        finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
+                    }
                     this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
 
                     if (false) { // Disabled OpenShift detection
@@ -2624,6 +2634,16 @@ public class KubernetesService {
     }
 
     /**
+     * Force-rebuild the client from the currently saved configuration, even if one already exists
+     * (used when the auth mode/credentials change, e.g. switching to OpenShift username/password login).
+     */
+    public synchronized boolean forceReloadClient() {
+        this.client = null;
+        this.isConfigured = false;
+        return reloadClientIfConfigured();
+    }
+
+    /**
      * Reinitialize the Kubernetes client from the currently saved kubeconfig if it was previously unconfigured.
      * @return true if the client was reinitialized.
      */
@@ -2633,20 +2653,26 @@ public class KubernetesService {
                 return true;
             }
             this.configurationService = new ViewConfigurationService(viewContext);
-            String kubeconfigPath = configurationService.getKubeconfigPath();
-            if (kubeconfigPath == null) {
-                LOG.warn("reloadClientIfConfigured: kubeconfig path is null");
-                return false;
+            boolean openShiftLogin = configurationService.isOpenShiftLogin();
+            String kubeconfigContent;
+            if (openShiftLogin) {
+                // Synthesized kubeconfig with a freshly-minted OpenShift token (username/password login).
+                kubeconfigContent = configurationService.getKubeconfigContents();
+            } else {
+                String kubeconfigPath = configurationService.getKubeconfigPath();
+                if (kubeconfigPath == null) {
+                    LOG.warn("reloadClientIfConfigured: kubeconfig path is null");
+                    return false;
+                }
+                if (!new File(kubeconfigPath).exists()) {
+                    LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
+                    return false;
+                }
+                EncryptionService encryptionService = new EncryptionService();
+                byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
+                byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
+                kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
             }
-            File configFile = new File(kubeconfigPath);
-            if (!configFile.exists()) {
-                LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
-                return false;
-            }
-            EncryptionService encryptionService = new EncryptionService();
-            byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-            byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-            String kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
 
             // Mirror the constructor's CA-loading step.  Without this, the JVM default
             // SSLContext is never updated with the kubeconfig CA and any post-upload HTTPS
@@ -2664,6 +2690,9 @@ public class KubernetesService {
 
             Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
             loadK8sPropsAsSystemProperties(viewContext);
+            if (configurationService.isOpenShiftLogin()) {
+                finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
+            }
             this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
             this.isConfigured = true;
             this.prometheusClientCache.clear();

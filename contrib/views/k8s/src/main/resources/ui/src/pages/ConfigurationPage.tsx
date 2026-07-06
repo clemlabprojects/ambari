@@ -18,14 +18,14 @@
 
 // ui/src/pages/ConfigurationPage.tsx
 import React from 'react';
-import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps, Dropdown } from 'antd';
+import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps, Dropdown, Divider } from 'antd';
 import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, DownOutlined } from '@ant-design/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, type KubeconfigContext } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -70,6 +70,54 @@ const ConfigurationPage: React.FC = () => {
     const [availableContexts, setAvailableContexts] = React.useState<KubeconfigContext[]>([]);
     const [chosenContext, setChosenContext] = React.useState<string | undefined>(undefined);
     const [savingContext, setSavingContext] = React.useState(false);
+    // OpenShift username/password login (second connection section).
+    const [osForm] = Form.useForm();
+    const [osSaving, setOsSaving] = React.useState(false);
+    const [osTesting, setOsTesting] = React.useState(false);
+    const [osTestOk, setOsTestOk] = React.useState(false);
+
+    const osFormValues = () => ({
+        apiUrl: osForm.getFieldValue('apiUrl'),
+        username: osForm.getFieldValue('username'),
+        password: osForm.getFieldValue('password'),
+        caData: osForm.getFieldValue('caData'),
+        insecure: !!osForm.getFieldValue('insecure'),
+    });
+
+    const handleTestOpenShift = async () => {
+        let values;
+        try { values = await osForm.validateFields(['apiUrl', 'username', 'password']); } catch { return; }
+        setOsTesting(true);
+        setOsTestOk(false);
+        try {
+            const res = await testOpenShiftLogin({ ...osFormValues(), ...values });
+            if (res.ok) {
+                setOsTestOk(true);
+                message.success(res.message || 'Connection OK');
+            } else {
+                message.error(res.error || 'Connection failed');
+            }
+        } catch (e: any) {
+            message.error(e?.message || 'Connection test failed');
+        } finally {
+            setOsTesting(false);
+        }
+    };
+
+    const handleOpenShiftLogin = async () => {
+        let values;
+        try { values = await osForm.validateFields(); } catch { return; }
+        setOsSaving(true);
+        try {
+            await saveOpenShiftLogin(osFormValues());
+            message.success('Connected to OpenShift.');
+            void fetchData(true);
+        } catch (e: any) {
+            message.error(e?.message || 'OpenShift login failed');
+        } finally {
+            setOsSaving(false);
+        }
+    };
 
     // After a kubeconfig is uploaded, offer the operator a choice of which context (cluster) this
     // view instance should target. A single context is selected silently; multiple opens a picker.
@@ -580,23 +628,69 @@ const ConfigurationPage: React.FC = () => {
                         <Card title="Kubernetes Cluster Connection">
                             <Space direction="vertical" size="large" style={{ width: '100%' }}>
                                 {status === 'unconfigured' && (
-                                    <Alert message="Configuration required" description="Please upload a valid kubeconfig file to continue." type="info" showIcon />
+                                    <Alert message="Configuration required" description="Connect the view to your cluster: upload a kubeconfig (any Kubernetes or OpenShift cluster), or log into OpenShift with a username/password." type="info" showIcon />
                                 )}
-                                <Paragraph>
-                                    Upload the <code>kubeconfig</code> file here to enable the view to connect to your Kubernetes or OpenShift cluster.
-                                </Paragraph>
-                                <Upload {...uploadProps}>
-                                    <Button icon={<UploadOutlined />}>Select Kubeconfig File</Button>
-                                </Upload>
-                                <Collapse ghost items={[{
-                                    key: '1',
-                                    label: <Text strong>View example file</Text>,
-                                    children: (
-                                        <pre style={{ backgroundColor: '#2b2b2b', color: '#f8f8f2', padding: '16px', borderRadius: '8px' }}>
-                                            <code>{kubeconfigExample.trim()}</code>
-                                        </pre>
-                                    ),
-                                }]} />
+
+                                {/* ── Kubernetes / kubeconfig ── */}
+                                <div>
+                                    <Title level={5} style={{ marginTop: 0 }}>Kubernetes cluster — kubeconfig</Title>
+                                    <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                                        Upload a <code>kubeconfig</code> file. Works for any Kubernetes or OpenShift cluster (as long as its token stays valid).
+                                    </Paragraph>
+                                    <Upload {...uploadProps}>
+                                        <Button icon={<UploadOutlined />}>Select Kubeconfig File</Button>
+                                    </Upload>
+                                    <Collapse ghost items={[{
+                                        key: '1',
+                                        label: <Text strong>View example file</Text>,
+                                        children: (
+                                            <pre style={{ backgroundColor: '#2b2b2b', color: '#f8f8f2', padding: '16px', borderRadius: '8px' }}>
+                                                <code>{kubeconfigExample.trim()}</code>
+                                            </pre>
+                                        ),
+                                    }]} />
+                                </div>
+
+                                <Divider>or</Divider>
+
+                                {/* ── OpenShift login ── */}
+                                <div>
+                                    <Title level={5} style={{ marginTop: 0 }}>OpenShift cluster — console login</Title>
+                                    <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                                        For OpenShift where you can only log in through the console (no persistent kubeconfig):
+                                        the view authenticates with your username/password and mints an API token itself,
+                                        renewing it automatically so it never expires. Requires the cluster to allow the
+                                        password grant (i.e. <code>oc login -u -p</code> works). Test the connection before connecting.
+                                    </Paragraph>
+                                    <Form form={osForm} layout="vertical" style={{ maxWidth: 620 }}
+                                        onValuesChange={() => setOsTestOk(false)}>
+                                        <Form.Item name="apiUrl" label="OpenShift API / console URL" rules={[required('API URL is required'), url('Enter a valid URL (https://…:6443)')]}>
+                                            <Input placeholder="https://api.my-cluster.example.com:6443" />
+                                        </Form.Item>
+                                        <Form.Item name="username" label="Username" rules={[required('Username is required')]}>
+                                            <Input placeholder="kubeadmin" autoComplete="off" />
+                                        </Form.Item>
+                                        <Form.Item name="password" label="Password" rules={[required('Password is required')]}>
+                                            <Input.Password placeholder="••••••••" autoComplete="new-password" />
+                                        </Form.Item>
+                                        <Form.Item name="caData" label="Cluster CA certificate (PEM or base64)"
+                                            help="Optional. Leave blank and tick 'Skip TLS verification' for a self-signed cluster.">
+                                            <Input.TextArea rows={3} placeholder="-----BEGIN CERTIFICATE-----&#10;..." />
+                                        </Form.Item>
+                                        <Form.Item name="insecure" label="Skip TLS verification" valuePropName="checked">
+                                            <Switch />
+                                        </Form.Item>
+                                        <Space>
+                                            <Button icon={<ApiOutlined />} loading={osTesting} onClick={handleTestOpenShift}>
+                                                Test connection
+                                            </Button>
+                                            <Button type="primary" loading={osSaving} disabled={!osTestOk} onClick={handleOpenShiftLogin}>
+                                                Connect{osTestOk ? '' : ' (test first)'}
+                                            </Button>
+                                            {osTestOk && <Tag color="green" icon={<CheckCircleOutlined />}>Connection verified</Tag>}
+                                        </Space>
+                                    </Form>
+                                </div>
                             </Space>
                         </Card>
                     )}
