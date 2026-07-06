@@ -62,6 +62,13 @@ public class ViewConfigurationService {
     private static final String OS_CA_KEY = "openshift.caData";
     private static final String OS_INSECURE_KEY = "openshift.insecure";
 
+    // View-wide outbound proxy for reaching internet Helm/Git repositories (password encrypted at rest).
+    private static final String PROXY_ENABLED_KEY = "proxy.enabled";
+    private static final String PROXY_URL_KEY = "proxy.url";
+    private static final String PROXY_USER_KEY = "proxy.username";
+    private static final String PROXY_PASSWORD_ENC_KEY = "proxy.password.enc";
+    private static final String PROXY_NOPROXY_KEY = "proxy.noProxy";
+
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
     // Cached per-instance so the minted token is reused across calls (rebuilding would drop the cache).
@@ -263,6 +270,43 @@ public class ViewConfigurationService {
         boolean insecure = Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY));
         openShiftLoginProvider = new OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
         return openShiftLoginProvider;
+    }
+
+    /** Persist the view-wide outbound proxy settings (password encrypted). */
+    public void saveProxySettings(boolean enabled, String url, String username, String password, String noProxy) {
+        try {
+            viewContext.putInstanceData(PROXY_ENABLED_KEY, Boolean.toString(enabled));
+            viewContext.putInstanceData(PROXY_URL_KEY, url == null ? "" : url);
+            viewContext.putInstanceData(PROXY_USER_KEY, username == null ? "" : username);
+            if (password != null && !password.isEmpty()) {
+                viewContext.putInstanceData(PROXY_PASSWORD_ENC_KEY,
+                        Base64.getEncoder().encodeToString(encryptionService.encrypt(password.getBytes(StandardCharsets.UTF_8))));
+            }
+            viewContext.putInstanceData(PROXY_NOPROXY_KEY, noProxy == null ? "" : noProxy);
+            LOG.info("Saved outbound proxy settings (enabled={}, url={})", enabled, url);
+        } catch (Exception e) {
+            LOG.error("Failed to save proxy settings: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to save proxy settings", e);
+        }
+    }
+
+    public boolean isProxyEnabled() { return Boolean.parseBoolean(viewContext.getInstanceData(PROXY_ENABLED_KEY)); }
+    public String getProxyUrl() { return viewContext.getInstanceData(PROXY_URL_KEY); }
+    public String getProxyUsername() { return viewContext.getInstanceData(PROXY_USER_KEY); }
+    public String getProxyNoProxy() { return viewContext.getInstanceData(PROXY_NOPROXY_KEY); }
+
+    /** Build a {@link ProxySupport} from the stored settings, keeping {@code alwaysDirect} hosts direct. */
+    public ProxySupport buildProxySupport(String... alwaysDirect) {
+        String encPw = viewContext.getInstanceData(PROXY_PASSWORD_ENC_KEY);
+        String password = "";
+        if (encPw != null && !encPw.isBlank()) {
+            try {
+                password = new String(encryptionService.decrypt(Base64.getDecoder().decode(encPw)), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                LOG.warn("Failed to decrypt stored proxy password: {}", e.getMessage());
+            }
+        }
+        return ProxySupport.from(getProxyUrl(), getProxyUsername(), password, getProxyNoProxy(), isProxyEnabled(), alwaysDirect);
     }
 
     public String getOpenShiftApiUrl() { return viewContext.getInstanceData(OS_API_URL_KEY); }

@@ -427,6 +427,20 @@ export const testOpenShiftLogin = (login: OpenShiftLogin): Promise<{ ok: boolean
     body: JSON.stringify(login),
   });
 
+export interface ProxySettings {
+  enabled: boolean;
+  url: string;
+  username: string;
+  password?: string;
+  noProxy: string;
+  passwordSet?: boolean;
+}
+
+/** View-wide outbound proxy for reaching internet Helm/Git repos (Kubernetes API stays direct). */
+export const getProxySettings = (): Promise<ProxySettings> => fetchJson<ProxySettings>("/cluster/proxy");
+export const saveProxySettings = (s: ProxySettings): Promise<{ message: string }> =>
+  fetchJson<{ message: string }>("/cluster/proxy", { method: "POST", body: JSON.stringify(s) });
+
 /**
  * Live "test connection & list clusters" for a remote Ambari, before saving a REMOTE context.
  * Returns the clusters the remote Ambari manages + its version, or {ok:false, error} on failure.

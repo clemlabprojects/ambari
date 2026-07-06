@@ -25,7 +25,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, type KubeconfigContext } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -101,6 +101,32 @@ const ConfigurationPage: React.FC = () => {
             message.error(e?.message || 'Connection test failed');
         } finally {
             setOsTesting(false);
+        }
+    };
+
+    // View-wide outbound proxy (for internet Helm/Git repos). Loaded once; password never returned.
+    const [proxyForm] = Form.useForm();
+    const [proxySaving, setProxySaving] = React.useState(false);
+    React.useEffect(() => {
+        getProxySettings()
+            .then((p) => proxyForm.setFieldsValue({ enabled: p.enabled, url: p.url, username: p.username, noProxy: p.noProxy }))
+            .catch(() => { /* not configured yet */ });
+    }, []);
+    const handleSaveProxy = async () => {
+        const v = proxyForm.getFieldsValue();
+        if (v.enabled && (!v.url || !String(v.url).trim())) {
+            message.error('Proxy URL is required when the proxy is enabled');
+            return;
+        }
+        setProxySaving(true);
+        try {
+            await saveProxySettings({ enabled: !!v.enabled, url: v.url || '', username: v.username || '', password: v.password || undefined, noProxy: v.noProxy || '' });
+            message.success(v.enabled ? 'Outbound proxy enabled' : 'Outbound proxy disabled');
+            proxyForm.setFieldsValue({ password: '' });
+        } catch (e: any) {
+            message.error(e?.message || 'Failed to save proxy settings');
+        } finally {
+            setProxySaving(false);
         }
     };
 
@@ -692,6 +718,38 @@ const ConfigurationPage: React.FC = () => {
                                     </Form>
                                 </div>
                             </Space>
+                        </Card>
+                    )}
+
+                    {/* ── Outbound proxy (optional, view-wide) ── */}
+                    {currentStep === 0 && (
+                        <Card title="Outbound proxy (for internet Helm / Git repositories)" style={{ marginTop: 16 }}>
+                            <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                                Route the view's access to <strong>internet Helm and Git repositories</strong> through a
+                                corporate proxy. Applied only to repository egress — the Kubernetes API always stays direct.
+                                Credentials are stored encrypted. (Note: bundled <code>helm</code> chart pulls are Go-based
+                                and additionally need <code>HTTPS_PROXY</code> in <code>ambari-env.sh</code>.)
+                            </Paragraph>
+                            <Form form={proxyForm} layout="vertical" style={{ maxWidth: 620 }}>
+                                <Form.Item name="enabled" label="Enable outbound proxy" valuePropName="checked">
+                                    <Switch />
+                                </Form.Item>
+                                <Form.Item name="url" label="Proxy URL">
+                                    <Input placeholder="http://proxy.corp:3128" />
+                                </Form.Item>
+                                <Form.Item name="username" label="Username (optional)">
+                                    <Input placeholder="proxy user" autoComplete="off" />
+                                </Form.Item>
+                                <Form.Item name="password" label="Password (optional)"
+                                    help="Leave blank to keep the previously saved password.">
+                                    <Input.Password placeholder="••••••••" autoComplete="new-password" />
+                                </Form.Item>
+                                <Form.Item name="noProxy" label="No-proxy hosts"
+                                    help="Comma/space separated. Hosts/domains that bypass the proxy, e.g. .corp.local, 10.0.0.0/8. The Kubernetes API is always excluded automatically.">
+                                    <Input placeholder=".corp.local, internal.example.com" />
+                                </Form.Item>
+                                <Button type="primary" loading={proxySaving} onClick={handleSaveProxy}>Save proxy settings</Button>
+                            </Form>
                         </Card>
                     )}
 

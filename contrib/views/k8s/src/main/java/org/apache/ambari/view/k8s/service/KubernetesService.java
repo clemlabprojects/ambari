@@ -391,6 +391,7 @@ public class KubernetesService {
                     }
                     this.isConfigured = true;
                     LOG.info("Kubernetes client initialized successfully.");
+                    applyProxySettings();
 
                 } catch (Exception e) {
                     LOG.error("Failed to read the kubeconfig file at: {}", kubeconfigPath, e);
@@ -1854,6 +1855,23 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Install the view-wide outbound proxy (for internet Helm/Git repos), keeping the Kubernetes API
+     * host DIRECT so cluster traffic never goes through the corporate proxy. Safe to call repeatedly.
+     */
+    public void applyProxySettings() {
+        try {
+            String apiHost = null;
+            if (client != null && client.getConfiguration() != null && client.getConfiguration().getMasterUrl() != null) {
+                try { apiHost = java.net.URI.create(client.getConfiguration().getMasterUrl()).getHost(); }
+                catch (Exception ignored) { /* leave null */ }
+            }
+            getConfigurationService().buildProxySupport(apiHost).install();
+        } catch (Exception e) {
+            LOG.warn("Failed to apply outbound proxy settings: {}", e.toString());
+        }
+    }
+
     /** Public accessor: whether the connected cluster is OpenShift (API-group probe, cached). */
     public boolean isOpenShiftCluster() {
         return client != null && isOpenShift(client);
@@ -2703,6 +2721,7 @@ public class KubernetesService {
             this.prometheusClientCache.clear();
             this.openShiftDetectionCache.set(null);
             this.monitoringTokenCache.set(null);
+            applyProxySettings();
             LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
             return true;
         } catch (Exception e) {

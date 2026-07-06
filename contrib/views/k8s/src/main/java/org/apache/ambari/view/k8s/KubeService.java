@@ -310,6 +310,52 @@ public class KubeService {
         }
     }
 
+    /** Current view-wide outbound proxy settings (password never returned — only whether one is set). */
+    @GET
+    @Path("/cluster/proxy")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getProxySettings() {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        ViewConfigurationService cfg = getConfigService();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("enabled", cfg.isProxyEnabled());
+        out.put("url", cfg.getProxyUrl() == null ? "" : cfg.getProxyUrl());
+        out.put("username", cfg.getProxyUsername() == null ? "" : cfg.getProxyUsername());
+        out.put("noProxy", cfg.getProxyNoProxy() == null ? "" : cfg.getProxyNoProxy());
+        out.put("passwordSet", cfg.getProxyUsername() != null && !cfg.getProxyUsername().isBlank());
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Save the view-wide outbound proxy (for reaching internet Helm/Git repos from behind a corporate
+     * proxy) and apply it immediately. The Kubernetes API always stays direct. Body:
+     * {enabled, url, username?, password?, noProxy?}.
+     */
+    @POST
+    @Path("/cluster/proxy")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response saveProxySettings(java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        if (body == null) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
+        }
+        boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        String url = body.get("url") == null ? null : String.valueOf(body.get("url")).trim();
+        String username = body.get("username") == null ? null : String.valueOf(body.get("username")).trim();
+        String password = body.get("password") == null ? null : String.valueOf(body.get("password"));
+        String noProxy = body.get("noProxy") == null ? null : String.valueOf(body.get("noProxy"));
+        if (enabled && (url == null || url.isBlank())) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", "Proxy URL is required when the proxy is enabled")).build();
+        }
+        this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
+        try { this.getKubernetesService().applyProxySettings(); } catch (Exception e) {
+            LOG.warn("/cluster/proxy: failed to apply proxy: {}", e.toString());
+        }
+        return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
+    }
+
     /** Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). */
     @POST
     @Path("/cluster/auth-mode")
