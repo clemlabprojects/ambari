@@ -65,6 +65,11 @@ class JournalNodeDefault(JournalNode):
       create_log_dir=True
     )
 
+    # In an HA quorum, wait for this JournalNode to catch up (CurrentLagTxns=0)
+    # before returning success, so a rolling restart does not move on to the
+    # next JournalNode while this one is still syncing.
+    journalnode_upgrade.wait_for_this_jn_to_sync(env)
+
   def post_upgrade_restart(self, env, upgrade_type=None):
     # express upgrade cannot determine if the JN quorum is established
     if upgrade_type == UPGRADE_TYPE_NON_ROLLING:

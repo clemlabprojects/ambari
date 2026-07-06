@@ -1597,8 +1597,58 @@
             }
           }
         }
+      },
+      {
+        "name": "journalnode_sync_lag",
+        "label": "JournalNode Sync Lag",
+        "description": "This service-level alert is triggered when a JournalNode in an HA quorum stays behind the edit-log writer (CurrentLagTxns above the transaction threshold) for longer than the configured duration. It helps catch a JournalNode whose process is up but is no longer keeping its edits in sync. The alert is skipped when NameNode HA is not enabled.",
+        "interval": 1,
+        "scope": "SERVICE",
+        "enabled": true,
+        "ignore_host": true,
+        "source": {
+          "type": "SCRIPT",
+          "path": "ODP/1.0/services/HDFS/package/alerts/alert_journalnode_lag.py",
+          "parameters": [
+            {
+              "name": "connection.timeout",
+              "display_name": "Connection Timeout",
+              "value": 5.0,
+              "type": "NUMERIC",
+              "description": "The maximum time to wait when reading each JournalNode JMX endpoint.",
+              "units": "seconds",
+              "threshold": "CRITICAL"
+            },
+            {
+              "name": "lag.txns.threshold",
+              "display_name": "Lag Transaction Threshold",
+              "value": 0,
+              "type": "NUMERIC",
+              "description": "A JournalNode whose CurrentLagTxns exceeds this transaction count is considered lagging. 0 means any non-zero lag starts the timer.",
+              "threshold": "WARNING"
+            },
+            {
+              "name": "lag.duration.warning.seconds",
+              "display_name": "Lag Duration Warning",
+              "value": 60,
+              "type": "NUMERIC",
+              "description": "The number of seconds a JournalNode may stay above the transaction threshold before a WARNING is raised.",
+              "units": "seconds",
+              "threshold": "WARNING"
+            },
+            {
+              "name": "lag.duration.critical.seconds",
+              "display_name": "Lag Duration Critical",
+              "value": 120,
+              "type": "NUMERIC",
+              "description": "The number of seconds a JournalNode may stay above the transaction threshold before a CRITICAL is raised.",
+              "units": "seconds",
+              "threshold": "CRITICAL"
+            }
+          ]
+        }
       }
-    ],      
+    ],
     "DATANODE": [
       {
         "name": "datanode_process",

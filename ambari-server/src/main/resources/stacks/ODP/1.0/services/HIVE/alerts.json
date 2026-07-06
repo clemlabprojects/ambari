@@ -110,6 +110,29 @@
             }
           ]
         }
+      },
+      {
+        "name": "hive_server_zk_registration",
+        "label": "HiveServer2 ZooKeeper Registration",
+        "description": "This host-level alert is triggered when dynamic service discovery is enabled and this HiveServer2 is not registered in its ZooKeeper namespace - i.e. JDBC clients can no longer discover it. It catches a hung HiveServer2 whose port is still bound but whose ZooKeeper session has dropped, a state the plain process/port check reports as healthy. Skipped when dynamic service discovery is not enabled.",
+        "interval": 3,
+        "scope": "ANY",
+        "enabled": true,
+        "source": {
+          "type": "SCRIPT",
+          "path": "ODP/1.0/services/HIVE/package/alerts/alert_hive_server_zk_registration.py",
+          "parameters": [
+            {
+              "name": "connection.timeout",
+              "display_name": "Connection Timeout",
+              "value": 15.0,
+              "type": "NUMERIC",
+              "description": "The maximum time to wait for the ZooKeeper query (a zkCli JVM invocation).",
+              "units": "seconds",
+              "threshold": "CRITICAL"
+            }
+          ]
+        }
       }
     ],
     "HIVE_SERVER_INTERACTIVE": [

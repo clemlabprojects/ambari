@@ -72,6 +72,38 @@
             }
           ]
         }
+      },
+      {
+        "name": "zookeeper_quorum_health",
+        "label": "ZooKeeper Quorum Health",
+        "description": "This service-level alert probes every ZooKeeper server in the ensemble with the 'srvr' four-letter-word and verifies the quorum is healthy: exactly one leader is elected and a majority of voting members are reachable as leader or follower. It goes CRITICAL when no leader is elected (election in progress / quorum lost) and WARNING when the quorum holds but the ensemble is degraded.",
+        "interval": 1,
+        "scope": "SERVICE",
+        "enabled": true,
+        "ignore_host": true,
+        "source": {
+          "type": "SCRIPT",
+          "path": "ODP/1.0/services/ZOOKEEPER/package/alerts/alert_zookeeper_quorum.py",
+          "parameters": [
+            {
+              "name": "connection.timeout",
+              "display_name": "Connection Timeout",
+              "value": 5.0,
+              "type": "NUMERIC",
+              "description": "The maximum time to wait when connecting to each ZooKeeper server.",
+              "units": "seconds",
+              "threshold": "CRITICAL"
+            },
+            {
+              "name": "zoo.cfg.path",
+              "display_name": "zoo.cfg Path",
+              "value": "",
+              "type": "STRING",
+              "description": "Optional explicit path to zoo.cfg used to enumerate the ensemble. When empty, common ODP/HDP locations are auto-detected.",
+              "visibility": "HIDDEN"
+            }
+          ]
+        }
       }
     ]
   }

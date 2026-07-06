@@ -75,6 +75,76 @@ def post_upgrade_check():
     raise Fail("JournalTransactionInfo does not have key LastAppliedOrWrittenTxId from JMX info")
 
 
+def wait_for_this_jn_to_sync(env):
+  """
+  Block until the JournalNode on THIS host has caught up with the edit-log
+  writer (CurrentLagTxns == 0), so that a rolling restart does not move on to
+  the next JournalNode while this one is still behind.
+
+  Only runs when NameNode HA is enabled and never during the initial cluster
+  start (there is nothing to sync against yet). Bounded by a configurable
+  timeout; if the JournalNode is still lagging when the timeout elapses the
+  restart is failed so the rolling restart halts instead of cascading.
+  """
+  import params
+  env.set_params(params)
+
+  # nothing to sync in a non-HA cluster
+  if not params.dfs_ha_enabled:
+    Logger.info("NameNode HA is not enabled; skipping JournalNode sync wait")
+    return
+
+  # on a fresh cluster the JMX lag bean is not meaningful yet
+  if params.command_phase == "INITIAL_START":
+    Logger.info("INITIAL_START phase; skipping JournalNode sync wait")
+    return
+
+  if params.journalnode_port is None:
+    Logger.warning("Could not determine JournalNode port; skipping JournalNode sync wait")
+    return
+
+  name_service = params.dfs_ha_nameservices
+  if name_service is None:
+    Logger.warning("Could not determine nameservice; skipping JournalNode sync wait")
+    return
+  # federation: the CurrentLagTxns bean is per nameservice, use the first one
+  name_service = name_service.split(',')[0].strip()
+
+  protocol = "https" if params.https_only else "http"
+  qry = "{0}://{1}:{2}/jmx?qry=Hadoop:service=JournalNode,name=Journal-{3}".format(
+    protocol, params.hostname, params.journalnode_port, name_service)
+
+  timeout_secs = int(default("/configurations/hdfs-site/dfs.journalnode.sync.wait.timeout.secs", 180))
+  step_secs = int(default("/configurations/hdfs-site/dfs.journalnode.sync.wait.interval.secs", 10))
+  if step_secs <= 0:
+    step_secs = 10
+  iterations = max(1, int(timeout_secs / step_secs))
+
+  Logger.info("Waiting for JournalNode %s to reach CurrentLagTxns=0 (timeout %ds)" % (params.hostname, timeout_secs))
+  last_lag = None
+  for i in range(iterations):
+    lag = get_value_from_jmx(qry, 'CurrentLagTxns', params.security_enabled,
+                             params.hdfs_user, params.https_only, last_retry=(i == iterations - 1))
+    if lag is None:
+      Logger.info("Try %d/%d: JournalNode lag not readable yet" % (i + 1, iterations))
+    else:
+      last_lag = int(lag)
+      if last_lag <= 0:
+        Logger.info("JournalNode %s is in sync (CurrentLagTxns=0)" % params.hostname)
+        return
+      Logger.info("Try %d/%d: JournalNode %s CurrentLagTxns=%d, waiting" % (i + 1, iterations, params.hostname, last_lag))
+    time.sleep(step_secs)
+
+  if last_lag is None:
+    # never got a reading (JN JMX unreachable the whole time) - do not block the
+    # restart on a measurement we could not take; the sync-lag alert will catch it
+    Logger.warning("Could not read JournalNode CurrentLagTxns within %ds; proceeding without a sync guarantee" % timeout_secs)
+    return
+
+  raise Fail("JournalNode %s is still lagging (CurrentLagTxns=%d) after %ds; halting rolling restart" % (
+    params.hostname, last_lag, timeout_secs))
+
+
 def hdfs_roll_edits():
   """
   HDFS_CLIENT needs to be a dependency of JOURNALNODE
