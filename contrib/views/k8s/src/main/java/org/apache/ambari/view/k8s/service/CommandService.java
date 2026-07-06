@@ -165,6 +165,10 @@ public class CommandService {
         this.commandUtils = new CommandUtils(this.ctx,this.kubernetesService);
         this.commandPlanFactory = new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
         this.commandLogService = CommandLogService.get(this.ctx);
+        // Stream the view's own server logging into the per-command log (see CommandLogAppender):
+        // any INFO+ this view logs on a command-tagged thread shows up in the operation's aggregate
+        // log in the UI. Idempotent — only attaches once per view classloader.
+        CommandLogAppender.install(this.ctx);
         PathConfig pathConfig = new PathConfig(ctx);
         pathConfig.ensureDirs();
         this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);
@@ -5627,6 +5631,9 @@ public class CommandService {
         // 7) Execute the selected child step
         // Tee everything logged during this step into the step's own log (see appendCommandLog).
         activeStepLogId.set(child.getId());
+        // Tag this worker thread with the root command id so ALL of the view's INFO+ logging during
+        // the step is streamed into the operation's aggregate log in the UI (see CommandLogAppender).
+        org.slf4j.MDC.put(CommandLogAppender.COMMAND_MDC_KEY, id);
         try {
             // Build a HelmDeployRequest from root params for the generic step methods you already have
             HelmDeployRequest rootReq = this.commandUtils.buildRequestFromRootParams(root);
@@ -7427,6 +7434,7 @@ public class CommandService {
             refreshCurrentStepSnapshot(root);
         } finally {
             activeStepLogId.remove();
+            org.slf4j.MDC.remove(CommandLogAppender.COMMAND_MDC_KEY);
         }
     }
 
