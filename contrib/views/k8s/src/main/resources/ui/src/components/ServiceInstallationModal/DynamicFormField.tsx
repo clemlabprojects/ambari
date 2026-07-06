@@ -19,32 +19,13 @@
 import React from 'react';
 import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
-import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
 import ServiceSelect from './ServiceSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
-import { fieldCapabilityAvailable } from './capabilities';
+import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
-
-// Module-level memoization: capability probe is the same for every form on the page,
-// so a single fetch is enough — and we cache the Promise so concurrent first renders
-// don't fan out into N network calls. Refresh on full reload (or when /cluster/capabilities
-// is invalidated server-side, which already happens on a 60s TTL).
-let capabilitiesPromise: Promise<ClusterCapabilities> | null = null;
-const useCapabilities = (): ClusterCapabilities | undefined => {
-  const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(undefined);
-  React.useEffect(() => {
-    if (!capabilitiesPromise) capabilitiesPromise = getClusterCapabilities();
-    capabilitiesPromise.then(setCaps).catch(() => {
-      // On error we leave caps undefined; the consumer should fail-open (show all
-      // options). Reset the cached promise so a future render can retry.
-      capabilitiesPromise = null;
-    });
-  }, []);
-  return caps;
-};
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();

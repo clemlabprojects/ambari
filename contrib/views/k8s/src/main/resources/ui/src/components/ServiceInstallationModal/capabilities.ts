@@ -15,7 +15,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type { ClusterCapabilities } from '../../api/client';
+import React from 'react';
+import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
+
+// Module-level memoization: the capability probe is the same for every form/field on the
+// page, so a single fetch is enough — and we cache the Promise so concurrent first renders
+// don't fan out into N network calls. Refresh on full reload (or when /cluster/capabilities
+// is invalidated server-side, which already happens on a 60s TTL). `lastResolved` holds the
+// last successfully-resolved value so non-hook callers (e.g. a submit handler building the
+// deploy values) can read the detected platform synchronously.
+let capabilitiesPromise: Promise<ClusterCapabilities> | null = null;
+let lastResolved: ClusterCapabilities | undefined;
+
+/** Shared capabilities hook: one cached probe drives OpenShift/CRD-aware field gating and
+ *  the platform-conditional binding engine alike. */
+export const useCapabilities = (): ClusterCapabilities | undefined => {
+  const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(lastResolved);
+  React.useEffect(() => {
+    if (!capabilitiesPromise) capabilitiesPromise = getClusterCapabilities();
+    capabilitiesPromise
+      .then(c => { lastResolved = c; setCaps(c); })
+      .catch(() => {
+        // On error leave caps undefined; consumers fail-open (or fail-closed for the
+        // OpenShift gate). Reset the cached promise so a future render can retry.
+        capabilitiesPromise = null;
+      });
+  }, []);
+  return caps;
+};
+
+/** The detected platform from the last resolved probe, or undefined if it hasn't resolved.
+ *  Lets non-hook code (deploy/preview value builders) branch bindings on the platform. */
+export const cachedPlatform = (): string | undefined => lastResolved?.platform;
 
 /**
  * Pure field/option capability gate used by DynamicFormField. A field (or a select

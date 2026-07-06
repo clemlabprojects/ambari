@@ -48,6 +48,7 @@ import {
   applyBindingTargets, interpolate, interpolateStr,
   buildVarContext,
 } from './bindings';
+import { useCapabilities } from './capabilities';
 
 import type { UploadFile } from 'antd/es/upload/interface';
 
@@ -203,6 +204,9 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
 }) => {
   const [form] = Form.useForm();
   const prevMountsRef = React.useRef<any | null>(null);
+  // Detected target platform (kubernetes|openshift); threaded into the binding engine so
+  // service.json can branch on it (e.g. Trino KEDA: Thanos+bearer on OpenShift).
+  const platform = useCapabilities()?.platform;
 
   const [isDeploying, setIsDeploying] = useState(false);
   const [availableServices, setAvailableServices] = useState<AvailableServices | null>(null);
@@ -556,7 +560,7 @@ const handleServiceChange = (value: string) => {
       const svcAny = (availableServices as any)?.[selectedServiceKey] as any;
       
       // 1. Build context
-      const varCtx = buildVarContext(svcAny?.variables, raw, mounts);
+      const varCtx = buildVarContext(svcAny?.variables, raw, mounts, {}, platform);
       
       // 2. Apply Bindings
       applyBindingTargets(mergedValues, bindings, mounts, raw, raw.releaseName || '', varCtx);
@@ -736,7 +740,7 @@ const handleServiceChange = (value: string) => {
 
     // 2) targets[] patch
     const svcAny = (availableServices as any)?.[selectedServiceKey] as any;
-    const varCtx = buildVarContext(svcAny?.variables, current, watchedMounts);
+    const varCtx = buildVarContext(svcAny?.variables, current, watchedMounts, {}, platform);
     const targetsPatch = makeTargetsPatch(bindings, watchedMounts, current, releaseNameWatch, varCtx);
 
     if (Object.keys(targetsPatch).length > 0) {
@@ -899,7 +903,7 @@ const handleServiceChange = (value: string) => {
         const mergedValues = JSON.parse(JSON.stringify(configValues));
         const mounts = allValues.mounts || {};
         const bindingList = (currentService?.bindings || []) as BindingSpec[];
-        const variableContext = buildVarContext((currentService as any)?.variables, allValues, mounts);
+        const variableContext = buildVarContext((currentService as any)?.variables, allValues, mounts, {}, platform);
       // Bindings drive both Helm values and TLS wiring. Merge their results into the live values object.
       // This mirrors what the backend does with service.json bindings to produce final Helm values.
       const finalPatch = makeTargetsPatch(bindingList, mounts, allValues, allValues.releaseName, variableContext);

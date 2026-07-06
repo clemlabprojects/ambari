@@ -514,6 +514,20 @@
       "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090"
     },
     {
+      "comment": "OpenShift: worker autoscaling reads metrics from the platform's built-in (user-workload) monitoring via the thanos-querier tenancy endpoint, which requires a bearer token. On vanilla K8s the kube-prometheus-stack address above is used instead.",
+      "name": "keda.thanos.serverAddress",
+      "template": "https://thanos-querier.openshift-monitoring.svc:9092"
+    },
+    {
+      "name": "keda.triggerAuth.name",
+      "template": "${trino.fullname}-keda-auth"
+    },
+    {
+      "comment": "Secret holding a bearer token for a ServiceAccount bound to the cluster-monitoring-view ClusterRole; consumed by the KEDA TriggerAuthentication on OpenShift. Operator-provided (see Cluster prerequisites), defaulting to this convention name.",
+      "name": "keda.thanos.tokenSecret",
+      "template": "${trino.fullname}-thanos-token"
+    },
+    {
       "name": "keda.requiredWorkers.window",
       "from": {
         "type": "form",
@@ -1173,11 +1187,13 @@
       ]
     },
     {
+      "comment": "Default (vanilla Kubernetes) KEDA triggers — scrape the kube-prometheus-stack Prometheus directly, no auth. Gated on isVanillaK8s so they are used everywhere EXCEPT a confirmed OpenShift cluster (where the openshift variant below takes over).",
       "name": "keda-triggers",
       "targets": [
         {
           "path": "server.keda.triggers[]",
           "op": "set",
+          "skipIfVarEmpty": "isVanillaK8s",
           "from": {
             "type": "template",
             "template": {
@@ -1195,6 +1211,7 @@
         {
           "path": "server.keda.triggers[]",
           "op": "set",
+          "skipIfVarEmpty": "isVanillaK8s",
           "from": {
             "type": "template",
             "template": {
@@ -1213,6 +1230,7 @@
         {
           "path": "server.keda.triggers[]",
           "op": "set",
+          "skipIfVarEmpty": "isVanillaK8s",
           "from": {
             "type": "template",
             "template": {
@@ -1231,6 +1249,7 @@
         {
           "path": "server.keda.triggers[]",
           "op": "set",
+          "skipIfVarEmpty": "isVanillaK8s",
           "from": {
             "type": "template",
             "template": {
@@ -1245,6 +1264,119 @@
               }
             }
           }
+        }
+      ]
+    },
+    {
+      "comment": "OpenShift KEDA triggers — same queries, but pointed at the thanos-querier tenancy endpoint (platform user-workload monitoring) with authModes=bearer and an authenticationRef to the TriggerAuthentication below. Gated on isOpenShift (fail-CLOSED: only a confirmed OpenShift cluster).",
+      "name": "keda-triggers-openshift",
+      "targets": [
+        {
+          "path": "server.keda.triggers[]",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": {
+            "type": "template",
+            "template": {
+              "type": "prometheus",
+              "metricType": "Value",
+              "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "metadata": {
+                "serverAddress": "${keda.thanos.serverAddress}",
+                "authModes": "bearer",
+                "metricName": "trino_required_workers",
+                "threshold": "${keda.requiredWorkers.threshold}",
+                "query": "sum by (service) (avg_over_time(trino_execution_ClusterSizeMonitor_RequiredWorkers{service=\"${trino.fullname}\"}[${keda.requiredWorkers.window}]))"
+              }
+            }
+          }
+        },
+        {
+          "path": "server.keda.triggers[]",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": {
+            "type": "template",
+            "template": {
+              "type": "prometheus",
+              "metricType": "Value",
+              "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "metadata": {
+                "serverAddress": "${keda.thanos.serverAddress}",
+                "authModes": "bearer",
+                "metricName": "trino_queued_queries",
+                "threshold": "${keda.queuedQueries.threshold}",
+                "activationThreshold": "${keda.queuedQueries.activation}",
+                "query": "sum(trino_execution_QueryManager_QueuedQueries{namespace=\"${namespace}\"})"
+              }
+            }
+          }
+        },
+        {
+          "path": "server.keda.triggers[]",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": {
+            "type": "template",
+            "template": {
+              "type": "prometheus",
+              "metricType": "Value",
+              "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "metadata": {
+                "serverAddress": "${keda.thanos.serverAddress}",
+                "authModes": "bearer",
+                "metricName": "trino_running_queries",
+                "threshold": "${keda.runningQueries.threshold}",
+                "activationThreshold": "${keda.runningQueries.activation}",
+                "query": "sum(trino_execution_QueryManager_RunningQueries{namespace=\"${namespace}\"})"
+              }
+            }
+          }
+        },
+        {
+          "path": "server.keda.triggers[]",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": {
+            "type": "template",
+            "template": {
+              "type": "prometheus",
+              "metricType": "Value",
+              "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "metadata": {
+                "serverAddress": "${keda.thanos.serverAddress}",
+                "authModes": "bearer",
+                "metricName": "trino_heap_percent",
+                "threshold": "${keda.heap.threshold}",
+                "activationThreshold": "${keda.heap.activation}",
+                "query": "((sum(java_lang_Memory_HeapMemoryUsage_used{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"}) / sum(java_lang_Memory_HeapMemoryUsage_max{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"})) * 100)"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "OpenShift only: turn on the chart's KEDA TriggerAuthentication (bearer token from the SA-token Secret) so the thanos-authenticated triggers above can read platform monitoring.",
+      "name": "keda-trigger-auth-openshift",
+      "targets": [
+        {
+          "path": "server.keda.triggerAuthentication.enabled",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": { "type": "template", "template": "true" }
+        },
+        {
+          "path": "server.keda.triggerAuthentication.name",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": { "type": "template", "template": "${keda.triggerAuth.name}" }
+        },
+        {
+          "path": "server.keda.triggerAuthentication.secretName",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": { "type": "template", "template": "${keda.thanos.tokenSecret}" }
         }
       ]
     },

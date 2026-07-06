@@ -29,6 +29,7 @@ import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
 import { applyBindingTargets, buildVarContext, deleteAtStr } from '../components/ServiceInstallationModal/bindings';
+import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -39,6 +40,10 @@ const ServiceWizardPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { token } = theme.useToken();
+  // Detected target platform (kubernetes|openshift); threaded into the binding engine so
+  // service.json can branch on it (e.g. Trino KEDA: Thanos+bearer on OpenShift).
+  const caps = useCapabilities();
+  const platform = caps?.platform;
   const [current, setCurrent] = useState(0);
   
   // Data
@@ -396,7 +401,7 @@ const ServiceWizardPage: React.FC = () => {
       const merged = JSON.parse(JSON.stringify(installValues || {}));
 
       // Apply bindings same way as the modal. resolvedSel.resolvedFields feeds `context` variables.
-      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {});
+      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
       applyBindingTargets(merged, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
 
       // Drop fields that should not end up in values.yaml
@@ -416,7 +421,7 @@ const ServiceWizardPage: React.FC = () => {
     } catch (e) {
       return '# (preview unavailable)';
     }
-  }, [installValues, def, resolvedSel]);
+  }, [installValues, def, resolvedSel, platform]);
 
   useEffect(() => {
     if (!editMode && !isDirtyRef.current) {
@@ -444,7 +449,7 @@ const ServiceWizardPage: React.FC = () => {
     const base = JSON.parse(JSON.stringify(installValues || {}));
 
     // Apply bindings same way as preview. resolvedSel.resolvedFields feeds `context` variables.
-    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {});
+    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
     applyBindingTargets(base, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
 
     // Drop fields that should not end up in values.yaml

@@ -190,10 +190,27 @@ export const buildVarContext = (
     vars: VariableSpec[] | undefined,
     formVals: any,
     mounts: Record<string, any>,
-    resolvedFields: Record<string, string> = {}
+    resolvedFields: Record<string, string> = {},
+    platform?: string
 ): Record<string, any> => {
   const ctx: Record<string, any> = {};
   const nonBlank = (x: any) => x != null && String(x).trim() !== '';
+
+  // Platform gate seeds (from the /cluster/capabilities probe). These let service.json
+  // branch bindings on the detected target platform via `skipIfVarEmpty` and `${...}`
+  // interpolation — the same primitive the engine already uses for context/toggle gating.
+  //
+  //   isOpenShift  — "true" ONLY when the probe confirmed OpenShift (fail-CLOSED, so an
+  //                  OpenShift-only binding never fires on vanilla K8s or while caps load).
+  //   isVanillaK8s — "true" UNLESS the probe confirmed OpenShift (fail-OPEN / defaults to
+  //                  the vanilla path when the platform is still unknown), so gating the
+  //                  default bindings on it never makes them vanish on a probe miss.
+  //
+  // e.g. Trino KEDA: the default Prometheus triggers are gated on isVanillaK8s and an
+  // OpenShift variant (Thanos tenancy + bearer auth) on isOpenShift.
+  ctx.platform = platform || '';
+  ctx.isOpenShift = platform === 'openshift' ? 'true' : '';
+  ctx.isVanillaK8s = platform === 'openshift' ? '' : 'true';
 
   // PHASE 1: Materialize direct values (Form fields, Mount paths, Platform Context values)
   (vars || []).forEach(v => {
