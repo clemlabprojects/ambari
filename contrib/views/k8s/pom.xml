@@ -181,6 +181,23 @@ limitations under the License.
             </exclusions>
         </dependency>
 
+        <!-- Pure-Java git (JGit) so GitOps clone/commit/push needs no OS `git` binary and can attach a
+             proxy per-transport. ssh.jsch 6.10.0 matches jgit-core 6.10.0 and is available offline. -->
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit</artifactId>
+            <version>6.10.0.202406032230-r</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit.ssh.jsch</artifactId>
+            <version>6.10.0.202406032230-r</version>
+        </dependency>
+        <dependency>
+            <groupId>com.jcraft</groupId>
+            <artifactId>jsch</artifactId>
+            <version>0.1.55</version>
+        </dependency>
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>kubernetes-client</artifactId>
