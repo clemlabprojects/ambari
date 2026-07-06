@@ -262,7 +262,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               {platform && (
                 <Tooltip title="Detected target platform">
                   <Tag
-                    color={platform === 'openshift' ? 'red' : 'blue'}
+                    color={platform === 'openshift' ? 'gold' : 'blue'}
                     style={{ margin: 0 }}
                   >
                     {platform === 'openshift' ? 'OpenShift' : 'Kubernetes'}
