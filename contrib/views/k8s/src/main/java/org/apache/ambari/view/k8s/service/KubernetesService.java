@@ -1872,6 +1872,35 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * "Can I?" — run a SelfSubjectAccessReview (the API behind {@code oc auth can-i}) for the connected
+     * credential. Returns true if the API server says the verb is allowed on the resource/namespace.
+     * Never throws: a failure (or no client) is reported as "not allowed".
+     */
+    public boolean canI(String verb, String group, String resource, String subresource, String namespace) {
+        if (client == null) return false;
+        try {
+            io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
+                new io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReviewBuilder()
+                    .withNewSpec()
+                        .withNewResourceAttributes()
+                            .withVerb(verb)
+                            .withGroup(group == null ? "" : group)
+                            .withResource(resource)
+                            .withSubresource(subresource)
+                            .withNamespace(namespace)
+                        .endResourceAttributes()
+                    .endSpec()
+                    .build();
+            var result = client.authorization().v1().selfSubjectAccessReview().create(review);
+            return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
+        } catch (Exception e) {
+            LOG.warn("can-i {} {}/{}{} in ns={} failed: {}", verb, group, resource,
+                    subresource != null ? "/" + subresource : "", namespace, e.toString());
+            return false;
+        }
+    }
+
     /** Public accessor: whether the connected cluster is OpenShift (API-group probe, cached). */
     public boolean isOpenShiftCluster() {
         return client != null && isOpenShift(client);

@@ -310,6 +310,53 @@ public class KubeService {
         }
     }
 
+    /**
+     * RBAC preflight (backed by SelfSubjectAccessReview, i.e. {@code oc auth can-i}) for the connected
+     * account against a target namespace: reports whether it can perform the core deploy actions and —
+     * on OpenShift — the KEDA autoscaling + monitoring actions. Lets the wizard warn BEFORE deploying
+     * when the account lacks a permission (e.g. can't create KEDA ScaledObjects or read platform monitoring).
+     */
+    @GET
+    @Path("/cluster/preflight")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response preflight(@QueryParam("namespace") @DefaultValue("default") String namespace) {
+        new AuthHelper(viewContext).checkConfigurationPermission();
+        KubernetesService k = getKubernetesService();
+        boolean ocp = k.isOpenShiftCluster();
+        List<Map<String, Object>> checks = new java.util.ArrayList<>();
+        // Core deploy
+        checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, namespace)));
+        checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, namespace)));
+        checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, namespace)));
+        checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, namespace)));
+        // KEDA autoscaling
+        checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, namespace)));
+        checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, namespace)));
+        // Monitoring (ServiceMonitor so Prometheus scrapes the workload)
+        checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, namespace)));
+        if (ocp) {
+            // KEDA must read metrics from OpenShift's built-in (user-workload) monitoring via the Thanos proxy.
+            boolean thanos = k.canI("get", "", "services", "proxy", "openshift-user-workload-monitoring")
+                    || k.canI("get", "", "services", "proxy", "openshift-monitoring");
+            checks.add(preflightCheck("Query platform monitoring (Thanos)", "Monitoring", thanos));
+        }
+        boolean allOk = checks.stream().allMatch(c -> Boolean.TRUE.equals(c.get("allowed")));
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("platform", ocp ? "openshift" : "kubernetes");
+        out.put("namespace", namespace);
+        out.put("allOk", allOk);
+        out.put("checks", checks);
+        return Response.ok(out).build();
+    }
+
+    private Map<String, Object> preflightCheck(String name, String group, boolean allowed) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("name", name);
+        m.put("group", group);
+        m.put("allowed", allowed);
+        return m;
+    }
+
     /** Current view-wide outbound proxy settings (password never returned — only whether one is set). */
     @GET
     @Path("/cluster/proxy")

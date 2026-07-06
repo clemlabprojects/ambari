@@ -25,7 +25,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, type KubeconfigContext } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, type PreflightCheck, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 
 const { Title, Paragraph, Text } = Typography;
@@ -101,6 +101,26 @@ const ConfigurationPage: React.FC = () => {
             message.error(e?.message || 'Connection test failed');
         } finally {
             setOsTesting(false);
+        }
+    };
+
+    // RBAC preflight (oc auth can-i) for a target namespace.
+    const [preflightNs, setPreflightNs] = React.useState('trino-ns');
+    const [preflightRunning, setPreflightRunning] = React.useState(false);
+    const [preflightChecks, setPreflightChecks] = React.useState<PreflightCheck[] | null>(null);
+    const [preflightPlatform, setPreflightPlatform] = React.useState<string>('');
+    const runPreflight = async () => {
+        setPreflightRunning(true);
+        try {
+            const r = await getPreflight(preflightNs || 'default');
+            setPreflightChecks(r.checks);
+            setPreflightPlatform(r.platform);
+            if (r.allOk) message.success('All prerequisite permissions granted');
+            else message.warning('Some permissions are missing — see the list');
+        } catch (e: any) {
+            message.error(e?.message || 'Preflight check failed');
+        } finally {
+            setPreflightRunning(false);
         }
     };
 
@@ -750,6 +770,39 @@ const ConfigurationPage: React.FC = () => {
                                 </Form.Item>
                                 <Button type="primary" loading={proxySaving} onClick={handleSaveProxy}>Save proxy settings</Button>
                             </Form>
+                        </Card>
+                    )}
+
+                    {/* ── Cluster prerequisites (RBAC preflight) ── */}
+                    {currentStep === 0 && (
+                        <Card title="Cluster prerequisites (RBAC)" style={{ marginTop: 16 }}>
+                            <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                                Check that the connected account can perform the actions a deployment needs in a target
+                                namespace (equivalent to <code>oc auth can-i</code>). On OpenShift this also covers KEDA
+                                autoscaling and reading the platform monitoring — so a missing right is caught before you deploy.
+                            </Paragraph>
+                            <Space style={{ marginBottom: 12 }}>
+                                <Input addonBefore="Namespace" value={preflightNs} onChange={(e) => setPreflightNs(e.target.value)} style={{ width: 320 }} />
+                                <Button loading={preflightRunning} onClick={runPreflight}>Run checks</Button>
+                                {preflightPlatform && <Tag color={preflightPlatform === 'openshift' ? 'gold' : 'blue'}>{preflightPlatform === 'openshift' ? 'OpenShift' : 'Kubernetes'}</Tag>}
+                            </Space>
+                            {preflightChecks && (
+                                <div>
+                                    {Array.from(new Set(preflightChecks.map(c => c.group))).map(group => (
+                                        <div key={group} style={{ marginBottom: 8 }}>
+                                            <Text strong style={{ fontSize: 12 }}>{group}</Text>
+                                            {preflightChecks.filter(c => c.group === group).map(c => (
+                                                <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+                                                    {c.allowed
+                                                        ? <CheckCircleTwoTone twoToneColor="#52c41a" />
+                                                        : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
+                                                    <Text type={c.allowed ? undefined : 'warning'}>{c.name}</Text>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </Card>
                     )}
 

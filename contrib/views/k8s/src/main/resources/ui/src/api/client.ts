@@ -436,6 +436,13 @@ export interface ProxySettings {
   passwordSet?: boolean;
 }
 
+export interface PreflightCheck { name: string; group: string; allowed: boolean; }
+export interface PreflightResult { platform: string; namespace: string; allOk: boolean; checks: PreflightCheck[]; }
+
+/** RBAC preflight (oc auth can-i) for the connected account against a target namespace. */
+export const getPreflight = (namespace: string): Promise<PreflightResult> =>
+  fetchJson<PreflightResult>(`/cluster/preflight?namespace=${encodeURIComponent(namespace)}`);
+
 /** View-wide outbound proxy for reaching internet Helm/Git repos (Kubernetes API stays direct). */
 export const getProxySettings = (): Promise<ProxySettings> => fetchJson<ProxySettings>("/cluster/proxy");
 export const saveProxySettings = (s: ProxySettings): Promise<{ message: string }> =>
