@@ -59,6 +59,25 @@ const mergeSteps = (existing: StepNode[] | undefined, fresh: StepNode[]): StepNo
   return merged;
 };
 
+/** Flatten the step tree into leaf nodes (leaves carry the actual logs). */
+const flattenLeaves = (nodes: StepNode[]): StepNode[] =>
+  nodes.flatMap((n) => (n.children.length ? flattenLeaves(n.children) : [n]));
+
+/** Flatten every node (leaves and parents) — used to resolve a selected step's name by key. */
+const flattenAll = (nodes: StepNode[]): StepNode[] =>
+  nodes.flatMap((n) => [n, ...flattenAll(n.children)]);
+
+/** Pick the most useful step to show logs for: a running/failed leaf, else the last leaf. */
+const pickDefaultStep = (nodes: StepNode[]): string | null => {
+  const leaves = flattenLeaves(nodes);
+  if (leaves.length === 0) return null;
+  const running = leaves.find((n) => n.state === 'RUNNING');
+  if (running) return running.key;
+  const failed = leaves.find((n) => n.state === 'FAILED');
+  if (failed) return failed.key;
+  return leaves[leaves.length - 1].key;
+};
+
 /**
  * Shared modal to display background operations/commands.
  * Fetches from backend with pagination and shows live status when a row is selected.
@@ -76,6 +95,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   // The single currently-open (accordion) operation. The 2s poller refreshes only its steps + logs.
   const selectedIdRef = React.useRef<string | null>(null);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  // The sub-step whose logs the panel shows (a child command id). Null → the operation root itself.
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const selectedStepIdRef = React.useRef<string | null>(null);
+  useEffect(() => { selectedStepIdRef.current = selectedStepId; }, [selectedStepId]);
 
   const [logState, setLogState] = useState<Record<string, { content: string; offset: number; eof: boolean; loading: boolean }>>({});
   const logStateRef = React.useRef(logState);
@@ -265,12 +288,14 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
           if (openId) {
             const row = (current as any).find((c: any) => c.id === openId) || { id: openId };
             await fetchSteps(openId);
+            // Tail logs for the selected sub-step (leaves carry the logs) — fall back to the op root.
+            const logId = selectedStepIdRef.current || openId;
             if (showLogsRef.current[openId]) {
-              const logInfo = logStateRef.current[openId];
+              const logInfo = logStateRef.current[logId];
               const forceLogs = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
               const needsLogs = (!logInfo?.eof) || forceLogs;
               if (needsLogs && !logInfo?.loading) {
-                void loadLogs(openId, false, true, forceLogs);
+                void loadLogs(logId, false, true, forceLogs);
               }
             }
           }
@@ -342,6 +367,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   const selectOperation = async (record: CommandStatus) => {
     setSelectedId(record.id);
     selectedIdRef.current = record.id;
+    setSelectedStepId(null);          // default to auto-picking a step once steps load
+    selectedStepIdRef.current = null;
     setShowLogs(s => ({ ...s, [record.id]: true }));
     logPinnedRef.current[record.id] = true;
     try {
@@ -370,6 +397,20 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     if (!open || selectedId || commands.length === 0) return;
     void selectOperation(commands[0]);
   }, [open, commands, selectedId]);
+
+  // Once the open operation's steps load, auto-select a sensible one (running/failed/last leaf) so its
+  // logs show without a manual click — the operation root itself usually has no logs of its own.
+  useEffect(() => {
+    if (!open || !selectedId || selectedStepId) return;
+    const steps = stepMap[selectedId];
+    if (!steps || steps.length === 0) return;
+    const def = pickDefaultStep(steps);
+    if (def) {
+      setSelectedStepId(def);
+      selectedStepIdRef.current = def;
+      if (!logStateRef.current[def]?.content) void loadLogs(def, true);
+    }
+  }, [open, selectedId, selectedStepId, stepMap]);
 
   const loadLogs = async (id: string, reset = false, quiet = false, force = false) => {
     setLogState(prev => ({
@@ -407,9 +448,9 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     // width:100% + right-aligned fixed columns → the state Tag and progress bar line up on the panel's
     // right edge at EVERY tree depth (paired with the .bgops-steps CSS that makes the node fill the row).
     title: (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 24 }}>
         <Typography.Text ellipsis title={n.message} style={{ minWidth: 0 }}>{n.message}</Typography.Text>
-        <Tag color={stateColor(n.state)} style={{ justifySelf: 'end', margin: 0 }}>{n.state}</Tag>
+        <Tag color={stateColor(n.state)} style={{ margin: 0, textAlign: 'center', width: '100%' }}>{n.state}</Tag>
         <Progress percent={n.percent} size="small" status={progressStatus(n.state) as any} showInfo style={{ marginBottom: 0, width: 130 }} />
       </div>
     ),
@@ -423,6 +464,8 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     if (!id) {
       setSelectedId(null);
       selectedIdRef.current = null;
+      setSelectedStepId(null);
+      selectedStepIdRef.current = null;
       return;
     }
     const op = commands.find(c => c.id === id);
@@ -434,7 +477,20 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     const status = (selectedStatus?.id === op.id ? selectedStatus : null) || op;
     const steps = stepMap[op.id] || [];
     const running = status.state === 'RUNNING' || status.state === 'PENDING';
-    const logs = logState[op.id];
+    // Logs are shown for the selected sub-step (its own id); fall back to the operation root.
+    const logId = selectedStepId || op.id;
+    const logs = logState[logId];
+    const selectedStepName = selectedStepId
+        ? (flattenLeaves(steps).find(n => n.key === selectedStepId)?.message
+            || flattenAll(steps).find(n => n.key === selectedStepId)?.message
+            || 'step')
+        : 'operation';
+    const chooseStep = (id: string) => {
+        setSelectedStepId(id);
+        selectedStepIdRef.current = id;
+        logPinnedRef.current[id] = true;
+        if (!logStateRef.current[id]?.content) void loadLogs(id, true);
+    };
     return (
       <>
         {status.state === 'FAILED' && status.error && (
@@ -449,33 +505,40 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
         <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
           {/* Steps panel */}
           <div style={{ flex: '0 0 42%', minWidth: 0, maxHeight: '50vh', overflow: 'auto', borderRight: '1px solid var(--line)', paddingRight: 12 }}>
-            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Steps</Typography.Text>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>Steps <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>(click a step to see its logs)</Typography.Text></Typography.Text>
             {steps.length > 0 ? (
-              <Tree className="bgops-steps" defaultExpandAll selectable={false} treeData={stepToTreeData(steps)} />
+              <Tree
+                className="bgops-steps"
+                defaultExpandAll
+                selectable
+                selectedKeys={selectedStepId ? [selectedStepId] : []}
+                onSelect={(keys) => { const id = keys[0]; if (id) chooseStep(String(id)); }}
+                treeData={stepToTreeData(steps)}
+              />
             ) : (
               <Typography.Text type="secondary">{running ? 'Planning steps…' : 'No steps available.'}</Typography.Text>
             )}
           </div>
-          {/* Logs panel */}
+          {/* Logs panel — for the selected step */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <Space size={6}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+              <Space size={6} style={{ minWidth: 0 }}>
                 <Typography.Text strong>Logs</Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>(detailed output)</Typography.Text>
+                <Typography.Text type="secondary" ellipsis style={{ fontSize: 12, maxWidth: 320 }} title={selectedStepName}>— {selectedStepName}</Typography.Text>
               </Space>
               <Space>
-                <Button size="small" onClick={() => { logPinnedRef.current[op.id] = true; loadLogs(op.id, true); }}>Refresh</Button>
-                <Button size="small" onClick={() => loadLogs(op.id, false)} disabled={logs?.eof} loading={logs?.loading}>
+                <Button size="small" onClick={() => { logPinnedRef.current[logId] = true; loadLogs(logId, true); }}>Refresh</Button>
+                <Button size="small" onClick={() => loadLogs(logId, false)} disabled={logs?.eof} loading={logs?.loading}>
                   {logs?.eof ? 'End' : 'Load more'}
                 </Button>
               </Space>
             </div>
             <div
-              ref={(el) => { logRefs.current[op.id] = el; }}
-              onScroll={handleLogScroll(op.id)}
+              ref={(el) => { logRefs.current[logId] = el; }}
+              onScroll={handleLogScroll(logId)}
               style={{ background: '#0d1117', color: '#c9d1d9', padding: 10, borderRadius: 6, flex: 1, minHeight: 200, maxHeight: '50vh', overflow: 'auto', fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}
             >
-              {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : 'No logs yet.')}
+              {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : (steps.length > 0 ? 'No logs for this step yet. Pick another step or wait for it to run.' : 'No logs yet.'))}
             </div>
           </div>
         </div>

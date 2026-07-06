@@ -118,8 +118,16 @@ body {
  * (right-aligned fixed columns in the node title) line up at every tree depth (AMBARI-526). --- */
 .bgops-steps .ant-tree-treenode {
   width: 100%;
+  border-bottom: 1px solid var(--line-soft);   /* distinguish each step from the next */
+  padding: 3px 0;
+  align-items: center;
 }
 .bgops-steps .ant-tree-node-content-wrapper {
   flex: 1;
   min-width: 0;
+}
+/* Clear highlight for the step whose logs are being shown */
+.bgops-steps .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: rgba(var(--accent-rgb), 0.16) !important;
+  outline: 1px solid var(--accent);
 }
