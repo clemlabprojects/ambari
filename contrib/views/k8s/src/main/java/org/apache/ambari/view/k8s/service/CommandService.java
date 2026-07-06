@@ -4570,6 +4570,22 @@ public class CommandService {
                 }
 
                 String dependencyReleaseName = dependencyEntry.getKey();
+
+                // OpenShift: skip dependencies flagged skipOnOpenShift (e.g. kube-prometheus-stack, which
+                // conflicts with the platform's built-in Prometheus operator — same monitoring.coreos.com
+                // CRDs). Trino still autoscales via KEDA against the built-in (user-workload) monitoring.
+                if (dependencySpec instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> depSkipMap = (Map<String, Object>) dependencySpec;
+                    if (asBoolean(depSkipMap.get("skipOnOpenShift"), false) && this.kubernetesService.isOpenShiftCluster()) {
+                        LOG.info("Skipping dependency '{}' on OpenShift (skipOnOpenShift=true)", dependencyReleaseName);
+                        this.commandPlanFactory.createDependencySatisfiedCommand(
+                                rootCommand, dependencyReleaseName, depSkipMap,
+                                "Skipped on OpenShift — the platform's built-in monitoring stack is used instead.");
+                        continue;
+                    }
+                }
+
                 if (skipIfReleaseExists && dependencyReleaseName != null && dependencyNamespace != null) {
                     if (dependencyReleaseExists(dependencyNamespace, dependencyReleaseName)) {
                         String reason = "Dependency already installed as Helm release '" + dependencyReleaseName
