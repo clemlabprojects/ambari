@@ -113,3 +113,13 @@ body {
   font-weight: 600;
   font-size: 13px;
 }
+
+/* --- Background Operations step tree: make each node fill the row so the state Tag + progress bar
+ * (right-aligned fixed columns in the node title) line up at every tree depth (AMBARI-526). --- */
+.bgops-steps .ant-tree-treenode {
+  width: 100%;
+}
+.bgops-steps .ant-tree-node-content-wrapper {
+  flex: 1;
+  min-width: 0;
+}
