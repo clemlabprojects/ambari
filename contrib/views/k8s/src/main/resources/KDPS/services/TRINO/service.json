@@ -2281,7 +2281,7 @@
     },
     {
       "name": "hadoopIntegration",
-      "label": "Intégration Hadoop",
+      "label": "Hadoop & Hive integration",
       "type": "group",
       "fields": [
         {
@@ -2299,14 +2299,20 @@
           "condition": { "field": "hiveCatalog.enabled", "value": true },
           "excludeFromValues": true,
           "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point the catalog at a specific metastore (for example an external context without an Ambari to resolve it)."
-        }
-      ]
-    },
-    {
-      "name": "hadoopGroupMapping",
-      "label": "Mapping de groupes LDAP (Hadoop UGI)",
-      "type": "group",
-      "help": "Active la résolution des groupes Hadoop via un annuaire LDAP/FreeIPA. Indispensable pour que les politiques Ranger basées sur les groupes (banque_*, assurance_*, etc.) s'appliquent aux requêtes Trino (le conteneur Trino ne contient pas de SSSD). Voir HADOOP-LDAP-GROUP-MAPPING.md.",
+        },
+        {
+          "name": "hive.externalKeytabSecret",
+          "label": "External Hive keytab Secret",
+          "type": "secret-discovery",
+          "excludeFromValues": true,
+          "help": "Only for an EXTERNAL platform context whose Hive is in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino service keytab issued by the backend realm's KDC) and 'principal' (must match the context's Hive client principal). Providing it switches the Hive catalog to the external keytab (PRE_PROVISIONED) instead of an Ambari-issued one; leave blank for a same-realm MANAGED context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
+        },
+        {
+          "name": "hadoopGroupMapping",
+          "label": "Hadoop LDAP group mapping",
+          "type": "group",
+          "collapsed": true,
+          "help": "Active la résolution des groupes Hadoop via un annuaire LDAP/FreeIPA. Indispensable pour que les politiques Ranger basées sur les groupes (banque_*, assurance_*, etc.) s'appliquent aux requêtes Trino (le conteneur Trino ne contient pas de SSSD). Voir HADOOP-LDAP-GROUP-MAPPING.md.",
       "fields": [
         {
           "name": "hadoopConf.groupMapping.enabled",
@@ -2430,13 +2436,8 @@
           }
         }
       ]
-    },
-    {
-      "name": "hive.externalKeytabSecret",
-      "label": "External Hive keytab Secret",
-      "type": "secret-discovery",
-      "excludeFromValues": true,
-      "help": "Only for an EXTERNAL platform context whose Hive is in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino service keytab issued by the backend realm's KDC) and 'principal' (must match the context's Hive client principal). Providing it switches the Hive catalog to the external keytab (PRE_PROVISIONED) instead of an Ambari-issued one; leave blank for a same-realm MANAGED context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
+        }
+      ]
     }
   ],
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
