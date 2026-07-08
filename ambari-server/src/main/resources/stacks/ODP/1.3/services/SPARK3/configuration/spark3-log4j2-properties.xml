@@ -78,7 +78,21 @@ logger.parquet.name = org.apache.parquet.CorruptStatistics
 logger.parquet.level = error
 logger.parquet2.name = parquet.CorruptStatistics
 logger.parquet2.level = error
-    </value>
+    
+# ODP: file appender so the daemon log has a normalized name (service-component-user-host) via ${sys:odp.log.file}
+rootLogger.appenderRef.file.ref = file
+appender.file.type = RollingFile
+appender.file.name = file
+appender.file.fileName = ${sys:spark.log.dir:-/var/log/spark3}/${sys:odp.log.file:-spark.log}
+appender.file.filePattern = ${sys:spark.log.dir:-/var/log/spark3}/${sys:odp.log.file:-spark.log}.%i
+appender.file.layout.type = PatternLayout
+appender.file.layout.pattern = %d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n%ex
+appender.file.policies.type = Policies
+appender.file.policies.size.type = SizeBasedTriggeringPolicy
+appender.file.policies.size.size = 256MB
+appender.file.strategy.type = DefaultRolloverStrategy
+appender.file.strategy.max = 10
+</value>
     <value-attributes>
       <type>content</type>
       <show-property-name>false</show-property-name>

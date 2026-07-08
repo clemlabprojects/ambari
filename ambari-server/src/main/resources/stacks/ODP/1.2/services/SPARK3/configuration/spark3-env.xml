@@ -199,6 +199,9 @@ export HADOOP_CONF_DIR=${HADOOP_CONF_DIR:-{{hadoop_conf_dir}}}
 # The java implementation to use.
 export JAVA_HOME={{java_home}}
 
+
+# ODP: normalized log4j2 file name for the Spark history server
+export SPARK_HISTORY_OPTS="$SPARK_HISTORY_OPTS -Dspark.log.dir={{spark_log_dir}} -Dodp.log.file=spark-spark-historyserver-${HOSTNAME}.log"
 </value>
     <value-attributes>
       <type>content</type>

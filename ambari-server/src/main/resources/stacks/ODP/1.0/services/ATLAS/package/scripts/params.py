@@ -194,6 +194,8 @@ data_dir = format("{stack_root}/current/atlas-server/data")
 expanded_war_dir = os.environ['METADATA_EXPANDED_WEBAPP_DIR'] if 'METADATA_EXPANDED_WEBAPP_DIR' in os.environ else format("{stack_root}/current/atlas-server/server/webapp")
 
 metadata_log4j_content = config['configurations']['atlas-log4j']['content']
+# Atlas 2.4+ (ODP 1.3) logs via logback; this config type only exists there (None on older stacks).
+metadata_logback_content = default("/configurations/atlas-logback/content", None)
 
 metadata_solrconfig_content = default("/configurations/atlas-solrconfig/content", None)
 metadata_solrschema_content = default("/configurations/atlas-solrschema/content", None)

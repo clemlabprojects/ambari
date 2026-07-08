@@ -111,7 +111,10 @@
             export LIVY_PID_DIR={{livy2_pid_dir}}
             export LIVY_CONF_DIR={{livy2_conf_dir}}
             export LIVY_SERVER_JAVA_OPTS="-Xmx2g"
-        </value>
+        
+            # ODP: expose log dir + host so the file appender name resolves
+            export LIVY_SERVER_JAVA_OPTS="$LIVY_SERVER_JAVA_OPTS -Dlivy.log.dir={{livy2_log_dir}} -Dodp.host=${HOSTNAME}"
+</value>
         <value-attributes>
             <type>content</type>
         </value-attributes>

@@ -47,7 +47,7 @@
   <!--
     Add ROLLINGFILE to root logger to get log file output
   -->
-  <!--appender name="ROLLINGFILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+  <appender name="ROLLINGFILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <File>${zookeeper.log.dir}/${zookeeper.log.file}</File>
     <encoder>
       <pattern>%d{ISO8601} - %-5p [%t:%C{1}@%L] - %m%n</pattern>
@@ -62,7 +62,7 @@
     <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
       <MaxFileSize>${zookeeper.log.maxfilesize}</MaxFileSize>
     </triggeringPolicy>
-  </appender-->
+  </appender>
 
   <!--
     Add TRACEFILE to root logger to get log file output
@@ -110,5 +110,6 @@
 
   <root level="INFO">
     <appender-ref ref="CONSOLE" />
+    <appender-ref ref="ROLLINGFILE" />
   </root>
 </configuration>

@@ -96,6 +96,15 @@ def metadata(type='server'):
            group=params.user_group,
            content=InlineTemplate(params.metadata_log4j_content)
       )
+      # Atlas 2.4+ (ODP 1.3) logs via logback; render the managed atlas-logback.xml so the daemon log follows
+      # the normalized name (overrides the packaged default). Absent on older stacks -> skip.
+      if params.metadata_logback_content:
+        File(format("{conf_dir}/atlas-logback.xml"),
+             mode=0o644,
+             owner=params.metadata_user,
+             group=params.user_group,
+             content=InlineTemplate(params.metadata_logback_content)
+        )
       File(format("{conf_dir}/atlas-env.sh"),
            owner=params.metadata_user,
            group=params.user_group,

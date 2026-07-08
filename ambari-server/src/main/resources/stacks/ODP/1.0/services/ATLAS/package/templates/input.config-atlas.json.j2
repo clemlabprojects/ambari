@@ -21,6 +21,11 @@
       "type":"atlas_app",
       "rowtype":"service",
       "path":"{{default('/configurations/atlas-env/metadata_log_dir', '/var/log/atlas')}}/application.log"
+    },
+    {
+      "type":"atlas_app",
+      "rowtype":"service",
+      "path":"{{default('/configurations/atlas-env/metadata_log_dir', '/var/log/atlas')}}/atlas-*-server-*.log"
     }
   ],
   "filter":[

@@ -26,7 +26,7 @@
     <value>&lt;Configuration&gt;
     &lt;Properties&gt;
         &lt;Property name="app.log.dir"&gt;${sys:launcher.dir}/../logs&lt;/Property&gt;
-        &lt;Property name="app.log.file"&gt;${sys:launcher.name}.log&lt;/Property&gt;
+        &lt;Property name="app.log.file"&gt;knox-{{knox_user}}-gateway-{{knox_host_name_in_cluster}}.log&lt;/Property&gt;
         &lt;Property name="app.audit.file"&gt;${sys:launcher.name}-audit.log&lt;/Property&gt;
     &lt;/Properties&gt;
 

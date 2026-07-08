@@ -108,7 +108,10 @@ fi
 if [ -f /etc/kafka/conf/kafka-ranger-env.sh ]; then
 . /etc/kafka/conf/kafka-ranger-env.sh
 fi
-    </value>
+    
+# ODP: expose host to log4j so the appender file names can be normalized (service-component-user-host)
+export KAFKA_OPTS="${KAFKA_OPTS} -Dodp.host=${HOSTNAME}"
+</value>
     <value-attributes>
       <type>content</type>
     </value-attributes>

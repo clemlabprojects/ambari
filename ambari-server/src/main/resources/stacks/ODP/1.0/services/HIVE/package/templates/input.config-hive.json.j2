@@ -20,7 +20,7 @@
     {
       "type":"hive_server",
       "rowtype":"service",
-      "path":"{{default('/configurations/hive-env/hive_log_dir', '/var/log/hive')}}/hive-server2.out"
+      "path":"{{default('/configurations/hive-env/hive_log_dir', '/var/log/hive')}}/hive-*-hiveserver2-*.log"
     },
     {
       "type":"hive_server_interactive",
@@ -30,7 +30,7 @@
     {
       "type":"hive_metastore",
       "rowtype":"service",
-      "path":"{{default('/configurations/hive-env/hive_log_dir', '/var/log/hive')}}/hive.out"
+      "path":"{{default('/configurations/hive-env/hive_log_dir', '/var/log/hive')}}/hive-*-metastore-*.log"
     }
   ],
   "filter":[

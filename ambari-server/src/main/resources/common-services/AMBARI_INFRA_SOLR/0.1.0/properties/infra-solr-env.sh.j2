@@ -58,6 +58,8 @@ RMI_PORT={{infra_solr_jmx_port}}
 #SOLR_OPTS="$SOLR_OPTS -Dsolr.autoCommit.maxTime=60000"
 #SOLR_OPTS="$SOLR_OPTS -Dsolr.clustering.enabled=true"
 SOLR_OPTS="$SOLR_OPTS -Djava.rmi.server.hostname={{hostname}}"
+# ODP: normalized log4j2 file name (service-component-user-host) via ${sys:odp.log.file} in log4j2.xml.
+SOLR_OPTS="$SOLR_OPTS -Dodp.log.file=infra-solr-{{infra_solr_user}}-server-{{hostname}}.log"
 {% if infra_solr_extra_java_opts -%}
 SOLR_OPTS="$SOLR_OPTS {{infra_solr_extra_java_opts}}"
 {% endif %}

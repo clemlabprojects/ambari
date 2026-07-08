@@ -957,6 +957,10 @@
             #export OZONE_HEAPSIZE_MAX={{ozone_heapsize}}
             #export OZONE_HEAPSIZE_MIN={{ozone_heapsize}}
             export OZONE_OPTS="${OZONE_OPTS} -Djava.net.preferIPv4Stack=true"
+            # ODP: normalized log4j file name (service-component-user-host) via ${odp.log.file} in ozone-log4j-*.
+            # Set here (sourced inside the daemon login shell) - the Ambari Execute environment is stripped by su.
+            # Global fallback; the per-role OZONE_*_OPTS below win (applied last by the launcher).
+            export OZONE_OPTS="${OZONE_OPTS} -Dodp.log.file=ozone-{{ozone_user}}-${HOSTNAME}.log"
             # For Kerberos debugging, an extended option set logs more information
 
             # export OZONE_OPTS="-Djava.net.preferIPv4Stack=true -Dsun.security.krb5.debug=true -Dsun.security.spnego.debug"
@@ -1096,7 +1100,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_OM_OPTS="$OZONE_OM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_OM_OPTS="$OZONE_OM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS -Dodp.log.file=ozone-{{ozone_user}}-om-${HOSTNAME}.log"
 
             ###
             # Ozone DataNode specific parameters
@@ -1105,7 +1109,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_DATANODE_OPTS="$OZONE_DATANODE_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}} -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS -Dodp.log.file=ozone-{{ozone_user}}-datanode-${HOSTNAME}.log"
 
             ###
             # HDFS StorageContainerManager specific parameters
@@ -1114,7 +1118,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_SCM_OPTS="$OZONE_SCM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_SCM_OPTS="$OZONE_SCM_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS -Dodp.log.file=ozone-{{ozone_user}}-scm-${HOSTNAME}.log"
 
             ###
             # Ozone Recon UI specific parameters
@@ -1123,7 +1127,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_RECON_OPTS="$OZONE_RECON_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_RECON_OPTS="$OZONE_RECON_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS -Dodp.log.file=ozone-{{ozone_user}}-recon-${HOSTNAME}.log"
 
             ###
             # Ozone S3 Gateway specific parameters
@@ -1132,7 +1136,7 @@
             # These options will be appended to the options specified as OZONE_OPTS
             # and therefore may override any similar flags set in OZONE_OPTS
             #
-            export OZONE_S3G_OPTS="$OZONE_S3G_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS"
+            export OZONE_S3G_OPTS="$OZONE_S3G_OPTS {{ozone_java_opts}} -Xms{{ozone_heapsize}} -Xmx{{ozone_heapsize}}  -Xmn{{ozone_new_generation_size}} $JAVA_GC_ARGS -Dodp.log.file=ozone-{{ozone_user}}-s3g-${HOSTNAME}.log"
 
             {% if security_enabled %}
             {% if role == 'ozone-manager' %}

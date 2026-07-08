@@ -20,7 +20,7 @@
     {
       "type":"spark3_jobhistory_server",
       "rowtype":"service",
-      "path":"{{default('/configurations/spark3-env/spark_log_dir', '/var/log/spark3')}}/spark-*-org.apache.spark.deploy.history.HistoryServer*.out"
+      "path":"{{default('/configurations/spark3-env/spark_log_dir', '/var/log/spark3')}}/spark-*-historyserver-*.log"
     },
     {
       "type":"spark3_thriftserver",
@@ -30,7 +30,7 @@
     {
       "type":"livy2_server",
       "rowtype":"service",
-      "path":"{{default('/configurations/livy2-env/livy2_log_dir', '/var/log/livy2')}}/livy-{{default('/configurations/livy2-env/livy2_user', 'livy')}}-server.out"
+      "path":"{{default('/configurations/livy2-env/livy2_log_dir', '/var/log/livy2')}}/livy-*-server-*.log"
     }
   ],
   "filter":[

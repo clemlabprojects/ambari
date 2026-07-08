@@ -27,8 +27,8 @@ limitations under the License.
 
     <RollingFile
         name="RollingFile"
-        fileName="{{infra_solr_log_dir}}/solr.log"
-        filePattern="{{infra_solr_log_dir}}/solr.log.%i" >
+        fileName="{{infra_solr_log_dir}}/${sys:odp.log.file:-solr.log}"
+        filePattern="{{infra_solr_log_dir}}/${sys:odp.log.file:-solr.log}.%i" >
       <PatternLayout>
         <Pattern>
           %d{ISO8601} [%t] %-5p [%X{collection} %X{shard} %X{replica} %X{core}] %C (%F:%L) - %m%n

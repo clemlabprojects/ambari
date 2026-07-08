@@ -24,11 +24,18 @@
         <description>Livy2-log4j-Properties</description>
         <value>
             # Set everything to be logged to the console
-            log4j.rootCategory=INFO, console
+            log4j.rootCategory=INFO, console, file
             log4j.appender.console=org.apache.log4j.ConsoleAppender
             log4j.appender.console.target=System.err
             log4j.appender.console.layout=org.apache.log4j.PatternLayout
             log4j.appender.console.layout.ConversionPattern=%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n
+            # ODP: file appender with normalized name (service-component-user-host)
+            log4j.appender.file=org.apache.log4j.RollingFileAppender
+            log4j.appender.file.File=${livy.log.dir}/livy-livy-server-${odp.host}.log
+            log4j.appender.file.MaxFileSize=256MB
+            log4j.appender.file.MaxBackupIndex=10
+            log4j.appender.file.layout=org.apache.log4j.PatternLayout
+            log4j.appender.file.layout.ConversionPattern=%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n
 
             log4j.logger.org.eclipse.jetty=WARN
         </value>

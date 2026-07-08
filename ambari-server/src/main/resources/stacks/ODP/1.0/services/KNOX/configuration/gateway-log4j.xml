@@ -83,7 +83,7 @@
       log4j.appender.stdout.layout.ConversionPattern=%d{yy/MM/dd HH:mm:ss} %p %c{2}: %m%n
 
       log4j.appender.drfa=org.apache.log4j.DailyRollingFileAppender
-      log4j.appender.drfa.File=${app.log.dir}/${app.log.file}
+      log4j.appender.drfa.File=${app.log.dir}/knox-{{knox_user}}-gateway-{{knox_host_name_in_cluster}}.log
       log4j.appender.drfa.DatePattern=.yyyy-MM-dd
       log4j.appender.drfa.layout=org.apache.log4j.PatternLayout
       log4j.appender.drfa.layout.ConversionPattern=%d{ISO8601} %-5p %c{2} (%F:%M(%L)) - %m%n
