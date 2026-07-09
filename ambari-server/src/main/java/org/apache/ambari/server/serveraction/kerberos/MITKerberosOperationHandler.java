@@ -395,6 +395,44 @@ public class MITKerberosOperationHandler extends KDCKerberosOperationHandler {
     }
   }
 
+  /**
+   * Extract the principal's CURRENT keys into a keytab via {@code kadmin xst -norandkey} — i.e.
+   * WITHOUT rotating them (no KVNO bump). This makes ad-hoc keytab re-issuance idempotent: a
+   * previously distributed keytab for the same principal stays valid. (Requires the KDC admin
+   * credential to hold the extract-keys 'e' privilege, which the Ambari KDC admin has.)
+   */
+  @Override
+  public Integer createKeytabFileForExistingPrincipal(String principal,
+                                                      Set<EncryptionType> keyEncryptionTypes,
+                                                      java.io.File destinationKeytabFile)
+      throws KerberosOperationException {
+    String encryptionTypeSpec = null;
+    if (!CollectionUtils.isEmpty(keyEncryptionTypes)) {
+      StringBuilder b = new StringBuilder();
+      for (EncryptionType encryptionType : keyEncryptionTypes) {
+        if (b.length() > 0) {
+          b.append(',');
+        }
+        b.append(encryptionType.getName()).append(":normal");
+      }
+      encryptionTypeSpec = b.toString();
+    }
+
+    String path = destinationKeytabFile.getAbsolutePath();
+    String query = (StringUtils.isEmpty(encryptionTypeSpec))
+        ? String.format("xst -norandkey -k \"%s\" %s", path, principal)
+        : String.format("xst -norandkey -k \"%s\" -e %s %s", path, encryptionTypeSpec, principal);
+
+    ShellCommandUtil.Result result = invokeKAdmin(query);
+    if (!result.isSuccessful()) {
+      String message = String.format("Failed to export (no-rekey) the keytab file for %s:\n\tExitCode: %s\n\tSTDOUT: %s\n\tSTDERR: %s",
+          principal, result.getExitCode(), result.getStdout(), result.getStderr());
+      LOG.warn(message);
+      throw new KerberosOperationException(message);
+    }
+    return readKeytabKeyVersion(destinationKeytabFile);
+  }
+
 
   /**
     * No need to ensure host exists in MIT KDC

@@ -297,6 +297,45 @@ public class IPAKerberosOperationHandler extends KDCKerberosOperationHandler {
   }
 
   /**
+   * Retrieve the principal's CURRENT key into a keytab via {@code ipa-getkeytab -r} — i.e. WITHOUT
+   * generating a new key (no rekey). This makes ad-hoc keytab re-issuance idempotent: a previously
+   * distributed keytab for the same principal stays valid. (Requires the retrieve-keytab privilege,
+   * which the Ambari IPA admin credential holds. The principal's key must already exist — it is
+   * created on first issuance.)
+   */
+  @Override
+  public Integer createKeytabFileForExistingPrincipal(String principal,
+                                                      Set<EncryptionType> keyEncryptionTypes,
+                                                      java.io.File destinationKeytabFile)
+      throws KerberosOperationException {
+    String encryptionTypeSpec = null;
+    if (!CollectionUtils.isEmpty(keyEncryptionTypes)) {
+      StringBuilder b = new StringBuilder();
+      for (EncryptionType encryptionType : keyEncryptionTypes) {
+        if (b.length() > 0) {
+          b.append(',');
+        }
+        b.append(encryptionType.getName());
+      }
+      encryptionTypeSpec = b.toString();
+    }
+
+    String path = destinationKeytabFile.getAbsolutePath();
+    String[] command = (StringUtils.isEmpty(encryptionTypeSpec))
+        ? new String[]{executableIpaGetKeytab, "-r", "-s", getAdminServerHost(true), "-p", principal, "-k", path}
+        : new String[]{executableIpaGetKeytab, "-r", "-s", getAdminServerHost(true), "-e", encryptionTypeSpec, "-p", principal, "-k", path};
+
+    ShellCommandUtil.Result result = executeCommand(command);
+    if (!result.isSuccessful()) {
+      String message = String.format("Failed to retrieve (no-rekey) the keytab file for %s:\n\tExitCode: %s\n\tSTDOUT: %s\n\tSTDERR: %s",
+          principal, result.getExitCode(), result.getStdout(), result.getStderr());
+      LOG.warn(message);
+      throw new KerberosOperationException(message);
+    }
+    return readKeytabKeyVersion(destinationKeytabFile);
+  }
+
+  /**
    * Invokes the ipa shell command with administrative credentials to issue queries
    *
    * @param query a String containing the query to send to the ipa command

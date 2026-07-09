@@ -402,6 +402,53 @@ public abstract class KerberosOperationHandler {
   }
 
   /**
+   * Materialize a keytab for an EXISTING principal WITHOUT rotating/rekeying its key, so that
+   * re-issuing a keytab does NOT invalidate keytabs already distributed (the KVNO-desync /
+   * "Preauthentication failed" class of bug). This is what makes ad-hoc keytab issuance idempotent
+   * and self-healing: it always returns the KDC's CURRENT key for the principal.
+   * <p/>
+   * The default implementation is unsupported so callers fall back to create/rotate. It is
+   * overridden where the KDC can extract an existing key: MIT ({@code kadmin xst -norandkey}) and
+   * FreeIPA ({@code ipa-getkeytab -r}). Active Directory cannot export an existing key (the key is
+   * only known at password-set time), so AD keeps the rotate path.
+   *
+   * @param principal             the existing principal whose current key to export
+   * @param keyEncryptionTypes    encryption types to include (null/empty = KDC default set)
+   * @param destinationKeytabFile absolute path to write the keytab to
+   * @return the key version number (KVNO) written, or null if it could not be determined
+   * @throws KerberosOperationException if the export fails
+   */
+  public Integer createKeytabFileForExistingPrincipal(String principal,
+                                                      Set<EncryptionType> keyEncryptionTypes,
+                                                      File destinationKeytabFile)
+      throws KerberosOperationException {
+    throw new UnsupportedOperationException("No-rekey keytab export is not supported for this KDC type");
+  }
+
+  /**
+   * Best-effort read of the highest key version number (KVNO) present in a keytab file. Used to
+   * report the KVNO of a no-rekey export without a separate KDC round-trip.
+   */
+  protected Integer readKeytabKeyVersion(File keytabFile) {
+    try {
+      Keytab keytab = readKeytabFile(keytabFile);
+      Integer max = null;
+      if (keytab != null && keytab.getEntries() != null) {
+        for (KeytabEntry entry : keytab.getEntries()) {
+          int v = entry.getKeyVersion() & 0xff;
+          if (max == null || v > max) {
+            max = v;
+          }
+        }
+      }
+      return max;
+    } catch (Exception e) {
+      LOG.warn("Could not read KVNO from keytab file '{}': {}", keytabFile, e.getMessage());
+      return null;
+    }
+  }
+
+  /**
    * Create or append to a keytab file using the specified Keytab
    * <p/>
    * If the destination keytab file contains keytab data, that data will be merged with the new data

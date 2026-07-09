@@ -151,34 +151,75 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
                 LOG.info("No host component parsed from principal '{}'; skipping ensureHostExists", principal);
             }
 
-            // Ensure principal exists (create or rotate)
+            // Ensure principal exists, then materialize its keytab.
+            //
+            // IDEMPOTENCY FIX: when the principal already exists we EXTRACT its CURRENT key without
+            // rekeying (MIT `xst -norandkey` / IPA `ipa-getkeytab -r`) instead of rotating the
+            // password every time. Rotating on each issuance was the root cause of KDPS keytab
+            // desync: any deploy/resume that rekeyed the KDC while the k8s Secret kept the older
+            // keytab produced "Preauthentication failed" and broke ingestion. Extracting the current
+            // key makes re-issuance idempotent + self-healing (the keytab always matches the KDC),
+            // so a stale Secret is repaired on the next issue and nothing else that holds this
+            // principal's keytab is invalidated. AD cannot export an existing key -> rotate fallback.
             boolean isService = principal.contains("/"); // service principals have a slash
             boolean exists = handler.principalExists(principal, isService);
             LOG.info("Principal '{}' existence check: exists={}, isService={}", principal, exists, isService);
 
-            String password = generateSecurePassword(32);
             Integer kvno;
-
-            if (!exists) {
-                actionLog.writeStdOut("Principal does not exist; creating...");
-                LOG.info("Principal '{}' does not exist; creating new principal", principal);
-                kvno = handler.createPrincipal(principal, password, isService);
-            } else {
-                actionLog.writeStdOut("Principal exists; rotating password...");
-                LOG.info("Principal '{}' exists; rotating password", principal);
-                kvno = handler.setPrincipalPassword(principal, password, isService);
-            }
-
-            LOG.info("Principal '{}' processed with kvno={} (created={})", principal, kvno, !exists);
-
-            // Generate keytab (write to temp file, then stash it in the temporary credential store)
             tmpKeytab = File.createTempFile("adhoc_", ".keytab");
             LOG.info("Temporary keytab file created at '{}'", tmpKeytab.getAbsolutePath());
 
-            // Using protected helpers from KerberosOperationHandler (same package access)
-            handler.createKeytabFile(principal, password, kvno, tmpKeytab);
-            LOG.info("Keytab file written for principal '{}' (size={} bytes)",
-                    principal, tmpKeytab.length());
+            if (exists) {
+                Integer noRekeyKvno = null;
+                try {
+                    actionLog.writeStdOut("Principal exists; extracting its CURRENT key WITHOUT rekey...");
+                    LOG.info("Principal '{}' exists; extracting current key without rekey", principal);
+                    noRekeyKvno = handler.createKeytabFileForExistingPrincipal(principal, null, tmpKeytab);
+                } catch (Exception noRekeyErr) {
+                    // No-rekey extraction is a best-effort optimisation. It is not available on every
+                    // KDC: AD can't export an existing key at all, and FreeIPA's `ipa-getkeytab -r`
+                    // needs a retrieve-keytab ACL the Ambari admin may not hold ("Insufficient access
+                    // rights"). Fall back to the rotate path — which still keeps the Secret and KDC in
+                    // lockstep because KEYTAB_CREATE_SECRET always overwrites the Secret with THIS
+                    // issuance's payload, so a re-issue self-heals a drifted Secret.
+                    actionLog.writeStdOut("No-rekey extraction unavailable (" + trimMsg(noRekeyErr) + "); rotating key...");
+                    LOG.info("No-rekey extraction unavailable for principal '{}' (kdcType={}): {} — rotating",
+                            principal, kdcType, trimMsg(noRekeyErr));
+                }
+                if (noRekeyKvno != null) {
+                    kvno = noRekeyKvno;
+                } else {
+                    String password = generateSecurePassword(32);
+                    kvno = handler.setPrincipalPassword(principal, password, isService);
+                    handler.createKeytabFile(principal, password, kvno, tmpKeytab);
+                }
+            } else {
+                actionLog.writeStdOut("Principal does not exist; creating...");
+                LOG.info("Principal '{}' does not exist; creating new principal", principal);
+                String password = generateSecurePassword(32);
+                kvno = handler.createPrincipal(principal, password, isService);
+                // Prefer a no-rekey export of the just-created key (correct for randkey KDCs where the
+                // password isn't the actual key); fall back to the handler's normal keytab creation
+                // (MIT string2key / IPA ipa-getkeytab / AD) if extraction is unavailable.
+                Integer extracted = null;
+                try {
+                    extracted = handler.createKeytabFileForExistingPrincipal(principal, null, tmpKeytab);
+                } catch (Exception noRekeyErr) {
+                    LOG.info("No-rekey export of freshly-created principal '{}' unavailable ({}); using normal keytab creation",
+                            principal, trimMsg(noRekeyErr));
+                }
+                if (extracted != null) {
+                    kvno = extracted;
+                } else {
+                    handler.createKeytabFile(principal, password, kvno, tmpKeytab);
+                }
+            }
+            if (kvno == null) {
+                kvno = 0;
+            }
+
+            LOG.info("Principal '{}' processed with kvno={} (created={})", principal, kvno, !exists);
+            LOG.info("Keytab file written for principal '{}' (size={} bytes)", principal, tmpKeytab.length());
 
             byte[] keytabBytes = Files.readAllBytes(tmpKeytab.toPath());
             String payloadRef = adhocKeytabPayloadStore.storePayload(clusterName, keytabBytes);
@@ -265,6 +306,12 @@ public class GenerateAdhocKeytabServerAction extends KerberosServerAction {
 
     private static String escape(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String trimMsg(Throwable t) {
+        String m = (t == null) ? "" : (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+        m = m.replaceAll("\\s+", " ").trim();
+        return (m.length() > 160) ? (m.substring(0, 160) + "…") : m;
     }
 
     private static String generateSecurePassword(int len) {
