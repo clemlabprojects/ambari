@@ -19,7 +19,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
 import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
-import { cancelCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
+import { cancelCommand, resumeCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
 
 type BackgroundOperationsModalProps = {
   open: boolean;
@@ -283,22 +283,23 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               }
             }
           }
-          // Refresh steps + logs for the one open operation only. Steps are merged in place
-          // (mergeSteps) so the displayed list doesn't change — only statuses move.
+          // Refresh the one open operation only. Steps are merged in place (mergeSteps) so the
+          // displayed tree stays put and the accordion never re-renders/collapses — only statuses
+          // and the tailing log move. IMPORTANT: tail the log FIRST and do NOT await fetchSteps,
+          // otherwise a slow child-step fetch (many steps / busy backend) starves the log stream and
+          // the operator has to hit Refresh to see output.
           const openId = selectedIdRef.current;
           if (openId) {
             const row = (current as any).find((c: any) => c.id === openId) || { id: openId };
-            await fetchSteps(openId);
-            // Tail the operation's aggregate log (root command id) — it accrues every step's output.
-            const logId = openId;
-            if (showLogsRef.current[openId]) {
-              const logInfo = logStateRef.current[logId];
-              const forceLogs = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
-              const needsLogs = (!logInfo?.eof) || forceLogs;
-              if (needsLogs && !logInfo?.loading) {
-                void loadLogs(logId, false, true, forceLogs);
-              }
+            const running = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
+            // Stream the operation's aggregate log (root command id) every tick. While the op is
+            // running we force (eof=false) so it keeps following as new output is appended.
+            const logInfo = logStateRef.current[openId];
+            if (!logInfo?.loading && (running || !logInfo?.eof)) {
+              void loadLogs(openId, false, true, running);
             }
+            // Refresh steps in the background (fire-and-forget) so it can't block the log stream.
+            void fetchSteps(openId);
           }
         } catch {
           // ignore poll errors
@@ -442,7 +443,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     // right edge at EVERY tree depth (paired with the .bgops-steps CSS that makes the node fill the row).
     // The leading status icon signals this is a tracked step executed by Ambari.
     title: (
-      <div style={{ display: 'grid', gridTemplateColumns: '18px 1fr 96px 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 34 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr) 96px 130px', alignItems: 'center', gap: 10, width: '100%', minHeight: 34 }}>
         <span style={{ fontSize: 14, lineHeight: 1 }}>{stepIcon(n.state)}</span>
         <Typography.Text ellipsis title={n.message} style={{ minWidth: 0, fontWeight: 500 }}>{n.message}</Typography.Text>
         <Tag color={stateColor(n.state)} style={{ margin: 0, textAlign: 'center', width: '100%' }}>{n.state}</Tag>
@@ -554,23 +555,35 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             items={commands.map((op) => ({
               key: op.id,
               // Header sits on top of the two panels; shows name + state + progress + time.
+              // The Abort/Resume control lives INSIDE the header row (last flex item), not in antd's
+              // `extra` slot: `extra` overlaps a full-width label, so keeping everything in one flex
+              // row (name ellipsises, the rest flexShrink:0) guarantees no overlap with the timestamp.
               label: (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, width: '100%' }}>
                   <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }} title={op.message || op.type || op.id}>
                     {op.message || op.type || op.id}
                   </Typography.Text>
-                  <Tag color={stateColor(op.state)} style={{ margin: 0 }}>{op.state}</Tag>
-                  <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: 160, marginBottom: 0 }} />
-                  <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
+                  <Tag color={stateColor(op.state)} style={{ margin: 0, flexShrink: 0 }}>{op.state}</Tag>
+                  <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: 120, marginBottom: 0, flexShrink: 0 }} />
+                  <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
+                  {(op.state === 'RUNNING' || op.state === 'PENDING') ? (
+                    <Button size="small" danger style={{ flexShrink: 0 }} onClick={async (e) => {
+                      e.stopPropagation();
+                      try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
+                      catch (err: any) { message.error(err?.message || 'Abort failed'); }
+                    }}>Abort</Button>
+                  ) : (op.state === 'FAILED') ? (
+                    // Resume from the failed step: re-runs that sub-step and continues, skipping the
+                    // succeeded steps — for transient sub-step failures, so the whole KDPS wizard flow
+                    // need not be repeated. Blue, in the same slot Abort uses while running.
+                    <Button size="small" type="primary" style={{ flexShrink: 0 }} onClick={async (e) => {
+                      e.stopPropagation();
+                      try { await resumeCommand(op.id); message.success('Resuming from the failed step'); loadPage(true); }
+                      catch (err: any) { message.error(err?.message || 'Resume failed'); }
+                    }}>Resume</Button>
+                  ) : null}
                 </div>
               ),
-              extra: (op.state === 'RUNNING' || op.state === 'PENDING') ? (
-                <Button size="small" danger onClick={async (e) => {
-                  e.stopPropagation();
-                  try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
-                  catch (err: any) { message.error(err?.message || 'Abort failed'); }
-                }}>Abort</Button>
-              ) : undefined,
               children: renderOperationBody(op),
             }))}
           />

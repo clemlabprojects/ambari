@@ -128,6 +128,14 @@ body {
 .bgops-steps .ant-tree-node-content-wrapper {
   flex: 1;
   min-width: 0;
+  overflow: hidden;                              /* clip, don't push the fixed columns off-row */
+}
+/* The title (our grid) must fill the wrapper so its minmax(0,1fr) name column can ellipsise
+ * long step titles instead of overflowing the row. */
+.bgops-steps .ant-tree-node-content-wrapper .ant-tree-title {
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 /* Clear highlight for the step whose logs are being shown */
 .bgops-steps .ant-tree-node-content-wrapper.ant-tree-node-selected {
