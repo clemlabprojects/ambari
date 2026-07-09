@@ -42,6 +42,24 @@ public class StackServiceDef {
     public String pattern;
     public String secretName;
     public Map<String, Object> dependencies;
+    /**
+     * OpenShift SCC grants this service's pods require — declared when bundled subcharts pin a
+     * UID/GID or run as root and can't run under the default {@code restricted-v2} SCC. Each entry
+     * is {@code {"scc": "anyuid", "serviceAccounts": ["default", "{{releaseName}}-airflow-scheduler", ...]}}.
+     *
+     * <p>Grants are PER-SERVICEACCOUNT, never to the whole {@code system:serviceaccounts:<ns>} group.
+     * A group grant is subtly wrong: it also makes SAs that must stay on {@code restricted-v2} (e.g.
+     * the OpenMetadata server, whose pods set {@code runAsNonRoot} with no UID and rely on the
+     * platform to inject a namespace-range UID) PREFER {@code anyuid} — which injects no UID, so the
+     * image runs as root and the pod fails "container has runAsNonRoot and image will run as root".
+     * Listing only the SAs that genuinely need the elevated SCC leaves every other SA (server,
+     * postgres) on {@code restricted-v2}. {@code {{releaseName}}} is expanded to the release name.
+     *
+     * <p>On an OpenShift target the deploy preflight ({@code ensureSccGrants}) creates the per-SA
+     * RoleBindings when the view has the rights, else blocks with the exact {@code oc adm policy
+     * add-scc-to-user} commands. Ignored on vanilla Kubernetes.
+     */
+    public List<Map<String, Object>> openshiftScc;
     public List<Map<String, Object>> endpoints;
     public List<Map<String, Object>> mounts;
     public List<Map<String, Object>> variables;

@@ -21,6 +21,7 @@ package org.apache.ambari.view.k8s.resources;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
+import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
@@ -196,18 +197,20 @@ public class ConfigurationResource {
     @Path("/security")
     public Response getSecurityConfig(@Context HttpHeaders headers, @Context UriInfo ui) {
         try {
-            // Lazily auto-create a default OIDC profile when Keycloak is configured in Ambari.
-            // The loopback uses the local FQDN — not the inbound baseUri — because a public proxy
-            // in front of Ambari would PKIX-fail here and the catch below silently swallows it
-            // (so a missing default profile would be the only visible symptom).
+            // Derive the default (local managed) context's OIDC security profile through the SAME
+            // per-context flow used for EXTERNAL/REMOTE contexts — one profile named after the context,
+            // marked derivedFromContext. The default context is virtual (no create/update event), so
+            // this GET is its deterministic trigger; the reconcile is idempotent. The loopback uses the
+            // local FQDN — not the inbound baseUri — because a public proxy in front of Ambari would
+            // PKIX-fail here and the catch below silently swallows it.
             try {
                 String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 String cluster = resolveClusterName(ambariBase, headers);
                 AmbariActionClient ambariClient = new AmbariActionClient(
                         viewContext, ambariBase, cluster,
                         AmbariActionClient.toAuthHeaders(headers.getRequestHeaders()));
-                new ConfigurationBootstrapService(viewContext, kubernetesService)
-                        .ensureDefaultOidcProfile(ambariClient, cluster);
+                new ContextService(viewContext)
+                        .reconcileDerivedOidcProfile(ContextService.DEFAULT_CONTEXT_ID, ambariClient, cluster);
             } catch (Exception ignored) {
                 // Best-effort — never block the GET if Ambari is unreachable
             }

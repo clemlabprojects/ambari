@@ -794,6 +794,78 @@ public final class OmAtlasProvisioning {
                 + ": " + readBody(conn, true));
     }
 
+    /**
+     * Create-or-find a Ranger SERVICE (a.k.a. plugin "repository") over the Admin REST API.
+     * Idempotent: GET-by-name first; if absent, POST. This is the direct-REST equivalent of the
+     * Ambari-delegated {@code submitRangerPluginRepository}, used when the platform context carries
+     * its own Ranger admin credentials (external, or a managed/remote context with creds entered).
+     *
+     * @param serviceName the repository name (e.g. {@code <release>_trino})
+     * @param serviceType Ranger service-def type (e.g. {@code trino}, {@code hive}, {@code hdfs})
+     * @param configs     service configs (jdbc.url, username, resource-lookup creds, tag.download.auth.users …);
+     *                    may be empty — Ranger accepts a minimal repo and configs can be refined later
+     * @return the Ranger service id
+     */
+    public static long createOrFindService(String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                           String serviceName, String serviceType,
+                                           Map<String, String> configs) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+
+        Long existing = lookupServiceByName(rangerAdminUrl, basic, serviceName);
+        if (existing != null) {
+            LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — no-op", serviceName, existing);
+            return existing;
+        }
+
+        JsonObject svc = new JsonObject();
+        svc.addProperty("name", serviceName);
+        svc.addProperty("type", serviceType);
+        svc.addProperty("isEnabled", true);
+        JsonObject cfg = new JsonObject();
+        if (configs != null) {
+            for (Map.Entry<String, String> e : configs.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) cfg.addProperty(e.getKey(), e.getValue());
+            }
+        }
+        svc.add("configs", cfg);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/service").openConnection();
+        configureSsl(conn);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", basic);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        try (var os = conn.getOutputStream()) {
+            os.write(GSON.toJson(svc).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IllegalStateException("Ranger service create failed for '" + serviceName
+                    + "' (type=" + serviceType + "): HTTP " + code + " — " + readBody(conn, true));
+        }
+        long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
+        LOG.info("OmAtlasProvisioning: Ranger service '{}' (type={}) created (id={})", serviceName, serviceType, id);
+        return id;
+    }
+
+    /** GET a Ranger service by name; returns its id, or null on 404. */
+    private static Long lookupServiceByName(String rangerAdminUrl, String basic, String serviceName) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/service/name/" + pathSegmentEncode(serviceName)).openConnection();
+        configureSsl(conn);
+        conn.setRequestProperty("Authorization", basic);
+        int code = conn.getResponseCode();
+        if (code == 200) {
+            JsonObject found = JsonParser.parseString(readBody(conn, false)).getAsJsonObject();
+            return found.has("id") ? found.get("id").getAsLong() : null;
+        }
+        if (code == 404) return null;
+        throw new IllegalStateException("Ranger service lookup-by-name '" + serviceName + "' returned HTTP " + code
+                + ": " + readBody(conn, true));
+    }
+
     private static JsonObject buildAtlasReadPolicy(String atlasServiceName, String policyName,
                                                    String omPrincipal, boolean isKerberos,
                                                    AtlasResourceSet set) {

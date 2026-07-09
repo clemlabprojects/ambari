@@ -18,6 +18,8 @@
 
 package org.apache.ambari.view.k8s.model.stack;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.util.List;
 import java.util.Map;
 
@@ -30,7 +32,12 @@ import java.util.Map;
  * <p>Full schema documentation lives at
  * {@code docs/EXTERNAL_SERVICE_TARGETS.md}. This class is what Jackson hydrates
  * the JSON into; the deploy pipeline reads it from {@link StackServiceDef#externalServiceTargets}.
+ *
+ * <p>{@code ignoreUnknown} so inline documentation keys ({@code comment}, {@code _description})
+ * in service.json never fail the whole service definition's load (matching the lenient
+ * convention used elsewhere in KDPS JSON).
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ExternalServiceTarget {
 
     /** Human-readable label shown next to the target's UI group in the wizard. */
@@ -64,6 +71,7 @@ public class ExternalServiceTarget {
     public Map<String, AuthMode> authModes;
 
     /** Per-mode auth declaration. See {@code docs/EXTERNAL_SERVICE_TARGETS.md}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class AuthMode {
 
         /** Human-readable label rendered in the auth-mode dropdown. */

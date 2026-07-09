@@ -77,9 +77,15 @@ public class ManagedContextResolver {
                 case "hive.hs2JdbcUrl":         return hs2JdbcUrl();
                 case "hive.hs2HostPort":        return hs2HostPort();
                 case "hive.scheme":             return hiveScheme();
+                case "hive.transportMode":      return hiveTransportMode();
                 case "hive.authMode":           return hiveAuthMode();
+                case "hive.rangerServiceName":  return hs2Available() ? cluster + "_hive" : null;
                 case "oidc.issuerUrl":          return oidcIssuer();
                 case "oidc.realm":              return oidcRealm();
+                case "oidc.adminRealm":         return cfg("oidc-env", "oidc_admin_realm");
+                case "oidc.adminClientId":      return cfg("oidc-env", "oidc_admin_client_id");
+                case "oidc.verifyTls":          return cfg("oidc-env", "oidc_verify_tls");
+                case "oidc.principalDomain":    return cfg("oidc-env", "oidc_principal_domain");
                 default:
                     return null;
             }
@@ -197,6 +203,17 @@ public class ManagedContextResolver {
             return "true".equalsIgnoreCase(t(cfg("hive-site", "hive.server2.use.SSL"))) ? "hive+https" : "hive+http";
         }
         return "hive";
+    }
+
+    /**
+     * HS2 transport mode as a plain token: "http" or "binary". Read straight from
+     * hive.server2.transport.mode; "all" and any non-http value resolve to "binary" (the
+     * binary listener is always present in those modes, and binary → hive:// is the clearer
+     * SQLAlchemy driver for Superset). Superset uses this to pick hive:// vs impala://.
+     */
+    private String hiveTransportMode() throws Exception {
+        if (!hs2Available()) return null;
+        return hiveHttpTransport() ? "http" : "binary";
     }
 
     /** OM Hive auth mode from hive.server2.authentication (KERBEROS/LDAP/NONE/NOSASL). */

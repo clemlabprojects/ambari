@@ -27,4 +27,13 @@ public class SecurityConfigDTO {
     public OidcConfig oidc;
     public TlsConfig tls;
     public java.util.Map<String,Object> extraProperties;
+    /**
+     * Non-null when this profile was auto-derived from a KDPS platform context (its value is the
+     * context id). KDPS owns the lifecycle of such profiles — it upserts one when a context that
+     * carries OIDC is created/updated and prunes it when the context is deleted or loses OIDC —
+     * so operator-authored profiles (this field null) are never touched by the reconcile.
+     */
+    public String derivedFromContext;
+    /** Human-readable label shown in the Step-1 picker; for a derived profile this is the context name. */
+    public String displayName;
 }
