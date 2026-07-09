@@ -52,5 +52,9 @@ public class ContextCapabilitySchema {
         public List<String> options;   // for type=enum
         public String placeholder;
         public String help;
+        public String group;           // UI grouping bucket (e.g. "Security & Authentication",
+                                       // "Hive", "Atlas", "Ranger"); falls back to the capability
+                                       // label when unset. Purely presentational — the stored
+                                       // config key stays "<capability>.<name>".
     }
 }

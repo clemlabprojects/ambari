@@ -3,25 +3,65 @@
   "label": "Apache Atlas",
   "order": 10,
   "fields": [
-    { "name": "atlasUrl", "label": "Atlas URL", "type": "string",
+    {
+      "name": "atlasUrl",
+      "label": "Atlas URL",
+      "type": "string",
       "placeholder": "https://atlas.example.com:21443",
       "managedResolver": "atlas.url",
-      "help": "Base Atlas REST URL." },
-    { "name": "atlasAuthMode", "label": "Authentication", "type": "enum",
-      "options": ["basic", "kerberos", "ldap", "none"], "default": "basic",
-      "managedResolver": "atlas.authMode" },
-    { "name": "atlasAclMode", "label": "Authorization", "type": "enum",
-      "options": ["ranger", "simple"], "default": "ranger",
-      "managedResolver": "atlas.aclMode" },
-    { "name": "atlasRangerServiceName", "label": "Atlas Ranger service repo", "type": "string",
+      "help": "Base Atlas REST URL.",
+      "group": "Atlas"
+    },
+    {
+      "name": "atlasAuthMode",
+      "label": "Authentication",
+      "type": "enum",
+      "options": [
+        "basic",
+        "kerberos",
+        "ldap",
+        "none"
+      ],
+      "default": "basic",
+      "managedResolver": "atlas.authMode",
+      "group": "Atlas"
+    },
+    {
+      "name": "atlasAclMode",
+      "label": "Authorization",
+      "type": "enum",
+      "options": [
+        "ranger",
+        "simple"
+      ],
+      "default": "ranger",
+      "managedResolver": "atlas.aclMode",
+      "group": "Atlas"
+    },
+    {
+      "name": "atlasRangerServiceName",
+      "label": "Atlas Ranger service repo",
+      "type": "string",
       "placeholder": "<cluster>_atlas",
       "managedResolver": "atlas.rangerServiceName",
-      "help": "Ranger service-repository name backing Atlas authorization (when ACL = ranger)." },
-    { "name": "federationUser", "label": "Federation / bot user", "type": "string",
+      "help": "Ranger service-repository name backing Atlas authorization (when ACL = ranger).",
+      "group": "Atlas"
+    },
+    {
+      "name": "federationUser",
+      "label": "Federation / bot user",
+      "type": "string",
       "placeholder": "openmetadata-federation",
-      "help": "Local Atlas account a federating service authenticates as." },
-    { "name": "federationPassword", "label": "Federation / bot password", "type": "password",
+      "help": "Local Atlas account a federating service authenticates as.",
+      "group": "Atlas"
+    },
+    {
+      "name": "federationPassword",
+      "label": "Federation / bot password",
+      "type": "password",
       "secret": true,
-      "help": "Password for the federation/bot user. For a managed context this is provisioned automatically." }
+      "help": "Password for the federation/bot user. For a managed context this is provisioned automatically.",
+      "group": "Atlas"
+    }
   ]
 }

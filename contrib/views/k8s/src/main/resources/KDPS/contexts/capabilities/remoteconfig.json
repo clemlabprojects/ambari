@@ -1,0 +1,16 @@
+{
+  "capability": "remoteconfig",
+  "label": "Remote configuration",
+  "order": 5,
+  "fields": [
+    {
+      "name": "autoConfigureRemote",
+      "label": "Auto-configure remote Ranger/Atlas",
+      "type": "boolean",
+      "default": true,
+      "group": "Remote configuration",
+      "appliesTo": "EXTERNAL",
+      "help": "When enabled, KDPS creates the Ranger repositories/policies, Atlas federation, and TagSync on the external cluster during deploy. Disable to configure those components yourself — KDPS then skips the pushes, shows the required manual steps in the deploy log, and offers a Preflight check to verify your setup. Property resolution (reads) is unaffected either way."
+    }
+  ]
+}

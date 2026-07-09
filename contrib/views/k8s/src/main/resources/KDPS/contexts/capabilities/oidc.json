@@ -3,15 +3,64 @@
   "label": "OIDC / Keycloak",
   "order": 50,
   "fields": [
-    { "name": "issuerUrl", "label": "OIDC issuer URL", "type": "string",
+    {
+      "name": "issuerUrl",
+      "label": "OIDC issuer URL",
+      "type": "string",
       "placeholder": "https://keycloak.example.com/realms/odp",
-      "managedResolver": "oidc.issuerUrl" },
-    { "name": "realm", "label": "OIDC realm", "type": "string",
+      "managedResolver": "oidc.issuerUrl",
+      "help": "The OIDC issuer (realm) URL deployed services use for login. For a MANAGED/REMOTE context KDPS reads it from the (local/remote) Ambari oidc-env; for an EXTERNAL context, set it here.",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "realm",
+      "label": "OIDC / SSO realm",
+      "type": "string",
       "placeholder": "odp",
-      "managedResolver": "oidc.realm" },
-    { "name": "adminUser", "label": "OIDC admin user", "type": "string",
-      "managedResolver": "oidc.adminUser", "appliesTo": "EXTERNAL" },
-    { "name": "adminPassword", "label": "OIDC admin password", "type": "password",
-      "secret": true, "appliesTo": "EXTERNAL" }
+      "managedResolver": "oidc.realm",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "adminRealm",
+      "label": "Keycloak admin realm",
+      "type": "string",
+      "placeholder": "master",
+      "managedResolver": "oidc.adminRealm",
+      "help": "Realm that hosts the admin/registration client (usually 'master'). Only needed when KDPS registers service clients itself (source=internal).",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "adminClientId",
+      "label": "Client-registration client ID",
+      "type": "string",
+      "managedResolver": "oidc.adminClientId",
+      "help": "A Keycloak service-account client (with manage-clients / client-registration rights) KDPS authenticates AS to CREATE an OIDC client for each deployed service. For MANAGED/REMOTE KDPS reads it from oidc-env; for EXTERNAL, provide it here. Leave the admin fields blank to use a pre-registered client instead (source=external).",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "adminClientSecret",
+      "label": "Client-registration client secret",
+      "type": "password",
+      "secret": true,
+      "help": "Secret paired with the registration client ID. For an EXTERNAL context, enter it here (stored encrypted); for MANAGED/REMOTE it is read from oidc-env at registration time. When admin client ID + secret are present KDPS registers service clients directly against this Keycloak (source=internal); otherwise a pre-registered client's id/secret must be supplied on the security profile.",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "verifyTls",
+      "label": "Verify Keycloak TLS",
+      "type": "boolean",
+      "placeholder": "true",
+      "managedResolver": "oidc.verifyTls",
+      "help": "true/false \u2014 whether KDPS verifies the Keycloak server certificate when registering clients. For MANAGED/REMOTE read from oidc-env (oidc_verify_tls).",
+      "group": "Security & Authentication"
+    },
+    {
+      "name": "principalDomain",
+      "label": "Principal domain",
+      "type": "string",
+      "managedResolver": "oidc.principalDomain",
+      "help": "Optional principal domain appended to usernames (maps to the service's authorizer principalDomain).",
+      "group": "Security & Authentication"
+    }
   ]
 }

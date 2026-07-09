@@ -3,15 +3,30 @@
   "label": "Apache Ranger",
   "order": 20,
   "fields": [
-    { "name": "rangerUrl", "label": "Ranger Admin URL", "type": "string",
+    {
+      "name": "rangerUrl",
+      "label": "Ranger Admin URL",
+      "type": "string",
       "placeholder": "https://ranger.example.com:6182",
       "managedResolver": "ranger.url",
-      "help": "Ranger Admin policy-manager URL." },
-    { "name": "rangerAdminUsername", "label": "Ranger Admin username", "type": "string",
-      "default": "admin", "appliesTo": "EXTERNAL",
-      "help": "Admin user KDPS uses to create policies on an external Ranger." },
-    { "name": "rangerAdminPassword", "label": "Ranger Admin password", "type": "password",
-      "secret": true, "appliesTo": "EXTERNAL",
-      "help": "Admin password for an external Ranger. For a managed context, policy operations are delegated to the Ambari server, which holds the credential — nothing to enter." }
+      "help": "Ranger Admin policy-manager URL.",
+      "group": "Ranger"
+    },
+    {
+      "name": "rangerAdminUsername",
+      "label": "Ranger Admin username",
+      "type": "string",
+      "default": "admin",
+      "help": "Admin user KDPS uses to create the plugin repository and policies on this Ranger. Enter it (with the password below) to have KDPS talk to Ranger DIRECTLY over REST \u2014 required for an EXTERNAL Ranger, and also usable for a managed/internal one when you'd rather KDPS own the credential than delegate to the Ambari server.",
+      "group": "Ranger"
+    },
+    {
+      "name": "rangerAdminPassword",
+      "label": "Ranger Admin password",
+      "type": "password",
+      "secret": true,
+      "help": "Admin password paired with the username above. When BOTH are set, every Ranger operation (repository creation, policy/grant creation) for services wired to this context runs directly against ranger Admin URL. Leave BOTH blank on a managed context to keep delegating those operations to the Ambari server, which holds the credential (the pre-existing behaviour).",
+      "group": "Ranger"
+    }
   ]
 }

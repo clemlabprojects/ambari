@@ -172,6 +172,26 @@ public class ContextResource {
     }
 
     /**
+     * Preflight check for a context's remote Ranger/Atlas. Used when the operator disabled automatic
+     * configuration ({@code autoConfigureRemote=false}) and set those components up themselves — it
+     * verifies reachability + admin auth (and lists Ranger service repos) so they can confirm it's
+     * correct. Read-only; never mutates. Returns {@code {ok, checks:[{component, ok, message, ...}]}}.
+     */
+    @POST
+    @Path("{id}/preflight")
+    public Response preflight(@PathParam("id") String id, @Context HttpHeaders headers) {
+        try {
+            ContextService svc = new ContextService(viewContext);
+            String cluster = resolveClusterName(headers);
+            AmbariActionClient client = ambariClient(headers);
+            return Response.ok(svc.preflight(id, client, cluster)).build();
+        } catch (Exception e) {
+            LOG.warn("Preflight failed for context {}: {}", id, e.toString());
+            return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /**
      * Live "test connection &amp; list clusters" for a remote Ambari, used by the Contexts UI before
      * a REMOTE context is saved. Body: {@code {"remoteAmbariUrl": "...", "remoteUsername": "...",
      * "remotePassword": "...", "verifySsl": true|false}}. Returns {@code {ok, clusters[],
@@ -193,6 +213,30 @@ public class ContextResource {
             return Response.ok(result).build();
         } catch (Exception e) {
             LOG.warn("probe-remote failed: {}", e.toString());
+            return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /**
+     * Live "test connection &amp; list clusters" for a Cloudera Manager, used by the Contexts UI before
+     * a CDP context is saved. Body: {@code {"cmUrl": "...", "cmUsername": "...", "cmPassword": "...",
+     * "verifySsl": true|false}}. Returns {@code {ok, clusters[], cmVersion, apiVersion}} or
+     * {@code {ok:false, error}}. The password authenticates only this probe — never persisted.
+     */
+    @POST
+    @Path("probe-cdp")
+    public Response probeCdp(java.util.Map<String, Object> body) {
+        try {
+            String url = body == null ? null : java.util.Objects.toString(body.get("cmUrl"), null);
+            String user = body == null ? null : java.util.Objects.toString(body.get("cmUsername"), null);
+            String pass = body == null ? null : java.util.Objects.toString(body.get("cmPassword"), null);
+            boolean verifySsl = body != null && "true".equalsIgnoreCase(
+                    java.util.Objects.toString(body.get("verifySsl"), "false"));
+            java.util.Map<String, Object> result =
+                    new ContextService(viewContext).probeCdp(url, user, pass, verifySsl);
+            return Response.ok(result).build();
+        } catch (Exception e) {
+            LOG.warn("probe-cdp failed: {}", e.toString());
             return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
         }
     }

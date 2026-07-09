@@ -63,6 +63,10 @@ public class ContextService {
     // REMOTE: like MANAGED but discovery runs against a DIFFERENT cluster's Ambari, reached over
     // the network with stored credentials (the "connect to remote cluster" context).
     public static final String KIND_REMOTE   = "REMOTE";
+    // CDP: like REMOTE but the remote cluster is Cloudera-managed — discovery runs against its
+    // Cloudera Manager REST API instead of Ambari. Config: cmUrl, cmUsername, verifySsl, clusterName;
+    // secret: cmPassword.
+    public static final String KIND_CDP      = "CDP";
 
     private static final String SECRET_PREFIX = "context.";
     private static final Gson GSON = new Gson();
@@ -192,7 +196,12 @@ public class ContextService {
         String now = Instant.now().toString();
         entity.setCreatedAt(prior != null && prior.getCreatedAt() != null ? prior.getCreatedAt() : now);
         entity.setUpdatedAt(now);
-        return repo.upsert(entity);
+        KdpsContextEntity saved = repo.upsert(entity);
+        // Deterministic security-profile derivation: (re)derive this context's OIDC profile now — on
+        // create/update only, never lazily — so the Step-1 picker is stable and reproducible. EXTERNAL/
+        // REMOTE resolve without a local Ambari (REMOTE builds its own remote client).
+        reconcileDerivedOidcProfile(saved.getId(), null, null);
+        return saved;
     }
 
     public void delete(String id) {
@@ -208,6 +217,121 @@ public class ContextService {
             }
         }
         repo.deleteById(id);
+        pruneDerivedOidcProfile(id);
+    }
+
+    // ----- Derived OIDC security profiles (one per OIDC-bearing context, deterministic on CRUD) -----
+
+    private static String derivedOidcProfileKey(String contextId) { return "ctx-oidc-" + contextId; }
+
+    /**
+     * (Re)derive the OIDC security profile for a persisted context — invoked on create/update only.
+     * A profile keyed {@code ctx-oidc-<id>} and named after the context is upserted when the context
+     * carries OIDC (an issuer) + client-registration admin creds + a compatible backend (for REMOTE,
+     * Ambari &gt;= 2.8.2.0 with OIDC enabled); otherwise any previously-derived profile for this context
+     * is pruned. Operator-authored profiles ({@code derivedFromContext == null}) are never touched.
+     * Best-effort — never fails the context save.
+     */
+    public void reconcileDerivedOidcProfile(String contextId, AmbariActionClient ambari, String cluster) {
+        try {
+            ResolvedContext rc = resolve(contextId, ambari, cluster);
+            SecurityProfileService sps = new SecurityProfileService(viewContext);
+            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
+            if (profiles.profiles == null) profiles.profiles = new java.util.HashMap<>();
+            String key = derivedOidcProfileKey(contextId);
+            boolean isDefault = DEFAULT_CONTEXT_ID.equals(contextId);
+            // A profile is derivable when the context exposes OIDC (an issuer) on a compatible backend
+            // AND KDPS can register clients for it — either via the context's own admin creds
+            // (EXTERNAL/REMOTE) or, for the default local context, via the local Ambari oidc-env.
+            boolean canRegister = rc != null && (rc.hasContextOidcAdminCreds() || isDefault);
+            boolean derive = rc != null && rc.hasOidc() && oidcVersionSupported(rc) && canRegister;
+            if (derive) {
+                profiles.profiles.put(key, buildOidcProfileFromContext(rc));
+                // Migrate the legacy bespoke auto-profile (keyed "keycloak") the old bootstrap created
+                // for the local cluster — it is now superseded by the unified per-context derivation.
+                if (isDefault) {
+                    if (profiles.profiles.remove("keycloak") != null) {
+                        LOG.info("Migrated legacy auto OIDC profile 'keycloak' -> '{}'", key);
+                    }
+                    if ("keycloak".equals(profiles.defaultProfile)) profiles.defaultProfile = key;
+                }
+                if (profiles.defaultProfile == null || profiles.defaultProfile.isBlank()) {
+                    profiles.defaultProfile = key;
+                }
+                LOG.info("Derived OIDC security profile '{}' (source=internal) from context '{}' (issuer={})",
+                        key, rc.getName(), rc.getOidcIssuerUrl());
+            } else if (profiles.profiles.remove(key) != null) {
+                LOG.info("Pruned derived OIDC security profile '{}' — context '{}' no longer exposes usable OIDC",
+                        key, contextId);
+            }
+            sps.saveProfiles(profiles);
+        } catch (Exception e) {
+            LOG.warn("reconcileDerivedOidcProfile: could not derive OIDC profile for context {}: {}", contextId, e.toString());
+        }
+    }
+
+    private void pruneDerivedOidcProfile(String contextId) {
+        try {
+            SecurityProfileService sps = new SecurityProfileService(viewContext);
+            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
+            if (profiles.profiles != null && profiles.profiles.remove(derivedOidcProfileKey(contextId)) != null) {
+                sps.saveProfiles(profiles);
+                LOG.info("Pruned derived OIDC security profile for deleted context {}", contextId);
+            }
+        } catch (Exception e) {
+            LOG.warn("pruneDerivedOidcProfile: {}", e.toString());
+        }
+    }
+
+    private org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO buildOidcProfileFromContext(ResolvedContext rc) {
+        org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO cfg =
+                new org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO();
+        cfg.mode = "oidc";
+        cfg.derivedFromContext = rc.getId();
+        // Human title for the Step-1 picker: the context's own title + the auth type it carries, e.g.
+        // "Ambari-managed cluster (OIDC)" or "CDP prod (OIDC)". The map key stays the stable
+        // ctx-oidc-<id> identifier; operators see this title, not the key.
+        String ctxTitle = (rc.getName() != null && !rc.getName().isBlank()) ? rc.getName() : rc.getId();
+        cfg.displayName = ctxTitle + " (OIDC)";
+        org.apache.ambari.view.k8s.dto.security.OidcConfig o =
+                new org.apache.ambari.view.k8s.dto.security.OidcConfig();
+        o.source = "internal"; // context carries admin creds → KDPS registers each service's client itself
+        o.issuerUrl = rc.getOidcIssuerUrl();
+        o.scopes = "openid email profile";
+        o.userClaim = "preferred_username";
+        o.groupsClaim = "groups";
+        if (rc.getOidcPrincipalDomain() != null && !rc.getOidcPrincipalDomain().isBlank()) {
+            o.principalDomain = rc.getOidcPrincipalDomain().trim();
+        }
+        if ("false".equalsIgnoreCase(rc.getOidcVerifyTls())) o.skipTlsVerify = Boolean.TRUE;
+        cfg.oidc = o;
+        return cfg;
+    }
+
+    /** REMOTE contexts require Ambari &gt;= 2.8.2.0 for OIDC; EXTERNAL (non-Ambari) has no version gate. */
+    private boolean oidcVersionSupported(ResolvedContext rc) {
+        if (!KIND_REMOTE.equals(rc.getKind())) return true;
+        String v = rc.getAmbariVersion();
+        if (v == null || v.isBlank()) {
+            LOG.info("OIDC derive: remote context '{}' reported no Ambari version — treating as incompatible (need >= 2.8.2.0)", rc.getId());
+            return false;
+        }
+        boolean ok = compareDottedVersions(v, "2.8.2.0") >= 0;
+        if (!ok) LOG.info("OIDC derive: remote Ambari {} < 2.8.2.0 — no OIDC profile derived for context '{}'", v, rc.getId());
+        return ok;
+    }
+
+    /** Numeric dotted-version compare; strips any trailing build suffix (e.g. "2.8.2.0.1-315"). */
+    private static int compareDottedVersions(String a, String b) {
+        String[] pa = a.replaceAll("[^0-9.].*$", "").split("\\.");
+        String[] pb = b.split("\\.");
+        int n = Math.max(pa.length, pb.length);
+        for (int i = 0; i < n; i++) {
+            int x = i < pa.length && !pa[i].isBlank() ? Integer.parseInt(pa[i]) : 0;
+            int y = i < pb.length && !pb[i].isBlank() ? Integer.parseInt(pb[i]) : 0;
+            if (x != y) return Integer.compare(x, y);
+        }
+        return 0;
     }
 
     private void validate(ContextRequest req) {
@@ -220,9 +344,9 @@ public class ContextService {
         if (req.kind == null || req.kind.isBlank()) {
             req.kind = KIND_EXTERNAL;
         }
-        if (!KIND_EXTERNAL.equals(req.kind) && !KIND_REMOTE.equals(req.kind)) {
-            // MANAGED is virtual (rejected earlier); only EXTERNAL/REMOTE are persistable.
-            throw new IllegalArgumentException("kind must be EXTERNAL or REMOTE");
+        if (!KIND_EXTERNAL.equals(req.kind) && !KIND_REMOTE.equals(req.kind) && !KIND_CDP.equals(req.kind)) {
+            // MANAGED is virtual (rejected earlier); only EXTERNAL/REMOTE/CDP are persistable.
+            throw new IllegalArgumentException("kind must be EXTERNAL, REMOTE or CDP");
         }
         if (KIND_REMOTE.equals(req.kind)) {
             Map<String, Object> cfg = req.config != null ? req.config : new LinkedHashMap<>();
@@ -231,6 +355,12 @@ public class ContextService {
             }
             if (req.clusterName == null || req.clusterName.isBlank()) {
                 throw new IllegalArgumentException("REMOTE context requires clusterName (the remote cluster)");
+            }
+        }
+        if (KIND_CDP.equals(req.kind)) {
+            Map<String, Object> cfg = req.config != null ? req.config : new LinkedHashMap<>();
+            if (isBlank(str(cfg.get("cmUrl")))) {
+                throw new IllegalArgumentException("CDP context requires cmUrl (the Cloudera Manager URL)");
             }
         }
     }
@@ -271,9 +401,13 @@ public class ContextService {
             effectiveCluster = entity.getClusterName();
         }
 
+        boolean cdp = entity != null && KIND_CDP.equals(entity.getKind());
         boolean discover = entity == null || KIND_MANAGED.equals(entity.getKind()) || remote;
         ResolvedContext rc;
-        if (discover) {
+        if (cdp) {
+            // Cloudera-managed remote cluster: discover via the Cloudera Manager REST API.
+            rc = resolveCdp(entity);
+        } else if (discover) {
             rc = resolveManaged(entity, effectiveAmbari, effectiveCluster);
             if (remote) {
                 rc.setKind(KIND_REMOTE);
@@ -281,6 +415,9 @@ public class ContextService {
                 // would perform Ranger ops itself rather than hand them to the (local) server.
                 rc.setRangerManaged(false);
                 rc.setRemoteAmbariUrl(str(parseConfig(entity.getConfigJson()).get("remoteAmbariUrl")));
+                // Operator opt-out of auto-configuring the remote cluster's Ranger/Atlas (writes only).
+                rc.setAutoConfigureRemote(!"false".equalsIgnoreCase(
+                        str(parseConfig(entity.getConfigJson()).get("autoConfigureRemote"))));
                 // Discover remote-cluster info (Ambari version, running stack) for display, stamp the
                 // last-contact time, and cache it into the context config so the list/detail can show
                 // it without another live call. Best-effort: never fails resolution.
@@ -308,6 +445,49 @@ public class ContextService {
         }
         // Schema-driven generic field view (what the UI renders) on top of the typed accessors.
         populateResolvedFields(rc, entity, effectiveAmbari, effectiveCluster, discover);
+
+        // Populate the typed OIDC admin-credential accessors used by the OIDC client-registration
+        // step and by the derived-profile logic — for EXTERNAL (typed config + decrypted secret) and
+        // REMOTE (remote oidc-env, via the remote client) contexts ONLY. The default local MANAGED
+        // context deliberately leaves these null so registration keeps reading the local Ambari
+        // oidc-env exactly as before (no regression). The non-secret fields are already in the
+        // resolvedFields map (config for EXTERNAL, remote oidc-env for REMOTE); the admin client
+        // secret is not (secrets are never mirrored into the map), so it is read explicitly.
+        {
+            Map<String, String> rf = rc.getResolvedFields();
+            String issuer = rf.get("oidc.issuerUrl");
+            // OIDC coordinates (issuer/realm/verifyTls/principalDomain) are populated for EVERY kind —
+            // incl. the default local MANAGED context — so an OIDC security profile can be derived from
+            // any context that exposes an issuer.
+            if (issuer != null && !issuer.isBlank()) {
+                rc.setOidcIssuerUrl(issuer);
+                rc.setOidcRealm(rf.get("oidc.realm"));
+                rc.setOidcVerifyTls(rf.get("oidc.verifyTls"));
+                rc.setOidcPrincipalDomain(rf.get("oidc.principalDomain"));
+            }
+            // Admin (client-registration) creds are populated ONLY for EXTERNAL/REMOTE. The default
+            // local MANAGED context deliberately leaves these null so the OIDC registration step keeps
+            // reading the local Ambari oidc-env (with credential-store alias resolution) unchanged.
+            if (KIND_EXTERNAL.equals(rc.getKind()) || KIND_REMOTE.equals(rc.getKind())) {
+                rc.setOidcAdminRealm(defaultStr(rf.get("oidc.adminRealm"), "master"));
+                rc.setOidcAdminClientId(rf.get("oidc.adminClientId"));
+                if (issuer != null && !issuer.isBlank()) {
+                    // Keycloak realm issuer is <adminBase>/realms/<realm>; strip to get the admin base URL.
+                    rc.setOidcAdminUrl(issuer.replaceAll("/realms/.*$", ""));
+                }
+                // Admin client secret: prefer an operator-typed context secret; for REMOTE fall back to
+                // the remote oidc-env value (may be a credential-store alias the view cannot dereference
+                // — the operator then supplies it on the context instead).
+                String secret = (entity != null) ? readSecret(entity.getId(), "adminClientSecret") : null;
+                if ((secret == null || secret.isBlank()) && KIND_REMOTE.equals(rc.getKind())
+                        && effectiveAmbari != null && effectiveCluster != null) {
+                    try {
+                        secret = effectiveAmbari.getDesiredConfigProperty(effectiveCluster, "oidc-env", "oidc_admin_client_secret");
+                    } catch (Exception ignored) { }
+                }
+                if (secret != null && !secret.isBlank()) rc.setOidcAdminClientSecret(secret);
+            }
+        }
         return rc;
     }
 
@@ -386,6 +566,35 @@ public class ContextService {
         return out;
     }
 
+    /**
+     * Live "test connection &amp; list clusters" for a Cloudera Manager, used by the Contexts UI before
+     * a CDP context is saved (analogue of {@link #probeRemote}). Returns {@code {ok, clusters[],
+     * cmVersion, apiVersion}} or {@code {ok:false, error}}. The password authenticates only this
+     * probe — never persisted nor echoed.
+     */
+    public Map<String, Object> probeCdp(String url, String user, String pass, boolean verifySsl) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (isBlank(url) || isBlank(user) || isBlank(pass)) {
+            out.put("ok", false);
+            out.put("error", "cmUrl, cmUsername and cmPassword are required");
+            return out;
+        }
+        try {
+            Map<String, Object> probe = new org.apache.ambari.view.k8s.utils.CmActionClient(url, user, pass, verifySsl).probe();
+            if (!Boolean.TRUE.equals(probe.get("ok"))) {
+                out.put("ok", false);
+                out.put("error", humanizeConnError(new IllegalStateException(String.valueOf(probe.get("error")))));
+                return out;
+            }
+            out.putAll(probe);
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", humanizeConnError(e));
+            LOG.info("ContextService.probeCdp failed for {}: {}", url, e.toString());
+        }
+        return out;
+    }
+
     /** Map a connection exception to a short, operator-friendly hint. */
     private static String humanizeConnError(Exception e) {
         String msg = String.valueOf(e.getMessage());
@@ -452,7 +661,28 @@ public class ContextService {
         String cluster = (entity != null && entity.getClusterName() != null && !entity.getClusterName().isBlank())
                 ? entity.getClusterName() : clusterName;
         r.setClusterName(cluster);
-        r.setRangerManaged(true); // privileged Ranger ops delegated to the Ambari server
+        r.setRangerManaged(true); // default: privileged Ranger ops delegated to the Ambari server
+
+        // Operator-supplied Ranger admin credentials are optional even for a MANAGED context. When a
+        // saved context carries rangerUrl + rangerAdminUsername + rangerAdminPassword, KDPS performs
+        // Ranger repository/policy operations DIRECTLY over REST against that URL (rangerManaged=false)
+        // instead of delegating to the Ambari server — this is what lets a managed/remote context
+        // behave like an external one for privileged Ranger ops. The default managed context (no
+        // entity/config) keeps delegating to Ambari, so existing deploys are unaffected.
+        if (entity != null) {
+            Map<String, Object> cfg = parseConfig(entity.getConfigJson());
+            String cfgRangerUrl  = str(cfg.get("rangerUrl"));
+            String cfgRangerUser = str(cfg.get("rangerAdminUsername"));
+            String cfgRangerPass = readSecret(entity.getId(), "rangerAdminPassword");
+            if (!isBlank(cfgRangerUrl))  r.setRangerUrl(cfgRangerUrl);
+            if (!isBlank(cfgRangerUser)) r.setRangerAdminUsername(cfgRangerUser);
+            if (!isBlank(cfgRangerPass)) r.setRangerAdminPassword(cfgRangerPass);
+            if (!isBlank(cfgRangerUrl) && !isBlank(cfgRangerUser) && !isBlank(cfgRangerPass)) {
+                r.setRangerManaged(false);
+                LOG.info("ContextService.resolveManaged: Ranger admin credentials supplied on managed context '{}' — "
+                        + "Ranger repository/policy ops will run directly over REST against {}", r.getId(), cfgRangerUrl);
+            }
+        }
 
         if (ambari == null || cluster == null) {
             LOG.warn("ContextService.resolveManaged: no Ambari client/cluster — returning skeleton managed context");
@@ -510,6 +740,9 @@ public class ContextService {
         r.setRangerManaged(false); // view performs Ranger REST itself with stored creds
 
         Map<String, Object> config = parseConfig(entity.getConfigJson());
+        // Operator opt-out of KDPS auto-configuring the remote Ranger/Atlas (WRITE/push paths only).
+        // Default true; only an explicit "false" disables. Property resolution (reads) is never gated.
+        r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
         r.setAtlasUrl(str(config.get("atlasUrl")));
         r.setAtlasAuthMode(defaultStr(str(config.get("atlasAuthMode")), "basic"));
         r.setAtlasAclMode(defaultStr(str(config.get("atlasAclMode")), "ranger"));
@@ -520,6 +753,260 @@ public class ContextService {
         r.setAtlasFederationUser(str(config.get("federationUser")));
         r.setAtlasFederationPassword(readSecret(entity.getId(), "federationPassword"));
         return r;
+    }
+
+    /**
+     * Resolve a CDP (Cloudera Manager) context by live-discovering Hive/Ranger/Atlas endpoints + the
+     * Kerberos realm from CM's REST API — the CDP analogue of {@link #resolveManaged}, so an external
+     * Cloudera-managed cluster can be a KDPS context source without hand-entering every property. The
+     * discovery is dynamic (fresh each resolve). Ranger/Atlas admin credentials are NOT exposed by CM,
+     * so those remain operator-supplied (stored config + decrypted secret). Populates both the typed
+     * getters (rangerUrl/atlasUrl/kerberosRealm) and the generic {@code resolvedFields} map the deploy
+     * reads Hive props from ({@code hive.*}). Best-effort: a CM read failure leaves the field unset and
+     * logs — it never throws out of resolve (the context still resolves with whatever was reachable).
+     */
+    private ResolvedContext resolveCdp(KdpsContextEntity entity) {
+        ResolvedContext r = new ResolvedContext();
+        r.setId(entity.getId());
+        r.setName(entity.getName());
+        r.setKind(KIND_CDP);
+        r.setAtlasManaged(false);
+        r.setRangerManaged(false);
+
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        r.setClusterName(str(config.get("clusterName")));
+        r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
+        // CM does not expose Ranger/Atlas admin creds; those stay operator-supplied.
+        r.setRangerAdminUsername(defaultStr(str(config.get("rangerAdminUsername")), "admin"));
+        r.setRangerAdminPassword(readSecret(entity.getId(), "rangerAdminPassword"));
+        r.setAtlasAuthMode(defaultStr(str(config.get("atlasAuthMode")), "basic"));
+        r.setAtlasAclMode(defaultStr(str(config.get("atlasAclMode")), "ranger"));
+        r.setAtlasFederationUser(str(config.get("federationUser")));
+        r.setAtlasFederationPassword(readSecret(entity.getId(), "federationPassword"));
+
+        String cmUrl = str(config.get("cmUrl"));
+        Map<String, String> rf = r.getResolvedFields();
+        if (cmUrl == null || cmUrl.isBlank()) {
+            LOG.warn("CDP context {} has no cmUrl — nothing to discover", entity.getId());
+            return r;
+        }
+        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
+        String cmUser = str(config.get("cmUsername"));
+        String cmPass = readSecret(entity.getId(), "cmPassword");
+        try {
+            org.apache.ambari.view.k8s.utils.CmActionClient cm =
+                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+
+            String cluster = str(config.get("clusterName"));
+            if (cluster == null || cluster.isBlank()) {
+                List<Map<String, Object>> cl = cm.listClusters();
+                if (!cl.isEmpty()) { cluster = str(cl.get(0).get("name")); r.setClusterName(cluster); }
+            }
+            if (cluster == null || cluster.isBlank()) {
+                LOG.warn("CDP context {}: CM has no clusters", entity.getId());
+                return r;
+            }
+
+            // Kerberos realm (drives hive.authMode).
+            String realm = null;
+            try { realm = cm.cmConfig().get("SECURITY_REALM"); } catch (Exception ignore) {}
+            if (realm != null && !realm.isBlank()) {
+                r.setKerberosRealm(realm);
+                rf.put("kerberos.realm", realm);
+            }
+            rf.put("hive.authMode", (realm != null && !realm.isBlank()) ? "kerberos" : "none");
+
+            for (Map<String, Object> svc : cm.listServices(cluster)) {
+                String type = str(svc.get("type"));
+                String name = str(svc.get("name"));
+                if (type == null) continue;
+                switch (type) {
+                    case "HIVE_ON_TEZ": {   // HiveServer2 lives here in CDP 7.x
+                        String host = cm.firstRoleHost(cluster, name, "HIVESERVER2");
+                        Map<String, String> cfg = cm.configForRoleType(cluster, name, "HIVESERVER2");
+                        String transport = defaultStr(pick(cfg, "hive_server2_transport_mode",
+                                "hive.server2.transport.mode"), "binary");
+                        boolean ssl = truthy(pick(cfg, "hiveserver2_enable_ssl", "hive.server2.use.SSL", "ssl_enabled"));
+                        String port = "http".equalsIgnoreCase(transport)
+                                ? defaultStr(pick(cfg, "hive_server2_thrift_http_port", "hive.server2.thrift.http.port"), "10001")
+                                : defaultStr(pick(cfg, "hs2_thrift_address_port", "hive.server2.thrift.port"), "10000");
+                        if (host != null) {
+                            rf.put("hive.hs2HostPort", host + ":" + port);
+                            rf.put("hive.transportMode", transport.toLowerCase());
+                            rf.put("hive.scheme", ssl ? "https" : "http");
+                        }
+                        break;
+                    }
+                    case "HIVE": {          // Metastore (and, on older CDP, HS2 too)
+                        String msHost = cm.firstRoleHost(cluster, name, "HIVEMETASTORE");
+                        if (msHost != null) {
+                            Map<String, String> cfg = cm.configForRoleType(cluster, name, "HIVEMETASTORE");
+                            String port = defaultStr(pick(cfg, "hive_metastore_port", "hive.metastore.port"), "9083");
+                            rf.put("hive.metastoreUri", "thrift://" + msHost + ":" + port);
+                        }
+                        if (!rf.containsKey("hive.hs2HostPort")) {
+                            String hs2 = cm.firstRoleHost(cluster, name, "HIVESERVER2");
+                            if (hs2 != null) {
+                                Map<String, String> cfg = cm.configForRoleType(cluster, name, "HIVESERVER2");
+                                String transport = defaultStr(pick(cfg, "hive_server2_transport_mode"), "binary");
+                                boolean ssl = truthy(pick(cfg, "hiveserver2_enable_ssl", "ssl_enabled"));
+                                String port = "http".equalsIgnoreCase(transport)
+                                        ? defaultStr(pick(cfg, "hive_server2_thrift_http_port"), "10001")
+                                        : defaultStr(pick(cfg, "hs2_thrift_address_port"), "10000");
+                                rf.put("hive.hs2HostPort", hs2 + ":" + port);
+                                rf.put("hive.transportMode", transport.toLowerCase());
+                                rf.put("hive.scheme", ssl ? "https" : "http");
+                            }
+                        }
+                        break;
+                    }
+                    case "RANGER": {
+                        String host = cm.firstRoleHost(cluster, name, "RANGER_ADMIN");
+                        Map<String, String> cfg = cm.configForRoleType(cluster, name, "RANGER_ADMIN");
+                        String httpsPort = pick(cfg, "ranger_service_https_port");
+                        boolean ssl = httpsPort != null && !httpsPort.isBlank()
+                                && truthy(pick(cfg, "ssl_enabled", "ranger.service.https.attrib.ssl.enabled"));
+                        String port = ssl ? httpsPort : defaultStr(pick(cfg, "ranger_service_http_port"), "6080");
+                        if (host != null) {
+                            String url = (ssl ? "https" : "http") + "://" + host + ":" + port;
+                            r.setRangerUrl(url);
+                            rf.put("ranger.rangerUrl", url);
+                        }
+                        // CDP Ranger repo naming convention: cm_<component>.
+                        rf.put("hive.rangerServiceName", defaultStr(str(config.get("rangerHiveService")), "cm_hive"));
+                        r.setAtlasRangerServiceName(defaultStr(str(config.get("atlasRangerServiceName")), "cm_atlas"));
+                        break;
+                    }
+                    case "ATLAS": {
+                        String host = cm.firstRoleHost(cluster, name, "ATLAS_SERVER");
+                        Map<String, String> cfg = cm.configForRoleType(cluster, name, "ATLAS_SERVER");
+                        boolean ssl = truthy(pick(cfg, "ssl_enabled", "atlas.enableTLS"));
+                        String port = ssl ? defaultStr(pick(cfg, "atlas_server_https_port"), "21443")
+                                          : defaultStr(pick(cfg, "atlas_server_http_port"), "21000");
+                        if (host != null) {
+                            String url = (ssl ? "https" : "http") + "://" + host + ":" + port;
+                            r.setAtlasUrl(url);
+                            rf.put("atlas.atlasUrl", url);
+                        }
+                        break;
+                    }
+                    default:
+                        // ignore other service types
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("CDP discovery failed for context {} ({}): {}", entity.getId(), cmUrl, e.toString());
+        }
+        return r;
+    }
+
+    /** First non-blank value among {@code keys} in {@code m}, or null. */
+    private static String pick(Map<String, String> m, String... keys) {
+        if (m == null) return null;
+        for (String k : keys) {
+            String v = m.get(k);
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
+    }
+
+    private static boolean truthy(String v) {
+        return v != null && ("true".equalsIgnoreCase(v) || "1".equals(v) || "yes".equalsIgnoreCase(v));
+    }
+
+    /**
+     * Preflight check for a context's remote Ranger/Atlas — used when the operator disabled
+     * {@code autoConfigureRemote} and configured those components themselves. Probes reachability +
+     * admin auth (and, for Ranger, lists the service repos so the operator can confirm the expected
+     * one exists). Read-only; never mutates. Returns {@code {context, autoConfigureRemote, ok,
+     * checks:[{component, ok, skipped, message, detail}]}}.
+     */
+    public Map<String, Object> preflight(String contextId, AmbariActionClient ambari, String clusterName) {
+        ResolvedContext rc = resolve(contextId, ambari, clusterName);
+        List<Map<String, Object>> checks = new ArrayList<>();
+        checks.add(probeRangerComponent(rc));
+        checks.add(probeAtlasComponent(rc));
+        boolean ok = checks.stream().allMatch(c ->
+                Boolean.TRUE.equals(c.get("ok")) || Boolean.TRUE.equals(c.get("skipped")));
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("context", rc.getName());
+        out.put("kind", rc.getKind());
+        out.put("autoConfigureRemote", rc.isAutoConfigureRemote());
+        out.put("ok", ok);
+        out.put("checks", checks);
+        return out;
+    }
+
+    private Map<String, Object> probeRangerComponent(ResolvedContext rc) {
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("component", "Ranger");
+        String url = str(rc.getRangerUrl());
+        if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Ranger URL in context"); return c; }
+        try {
+            String body = httpGet(url.replaceAll("/+$", "") + "/service/public/v2/api/service",
+                    str(rc.getRangerAdminUsername()), rc.getRangerAdminPassword());
+            java.util.List<String> repos = new ArrayList<>();
+            try { for (Object s : (List<?>) new com.google.gson.Gson().fromJson(body, List.class)) {
+                Object n = ((Map<?, ?>) s).get("name"); if (n != null) repos.add(String.valueOf(n)); } } catch (Exception ignore) {}
+            c.put("ok", true);
+            c.put("message", "Ranger reachable + admin auth OK");
+            c.put("detail", "service repos: " + repos);
+        } catch (Exception e) {
+            c.put("ok", false);
+            c.put("message", "Ranger check failed: " + trimMsg(e));
+        }
+        return c;
+    }
+
+    private Map<String, Object> probeAtlasComponent(ResolvedContext rc) {
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("component", "Atlas");
+        String url = str(rc.getAtlasUrl());
+        if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Atlas URL in context"); return c; }
+        try {
+            String body = httpGet(url.replaceAll("/+$", "") + "/api/atlas/admin/status",
+                    str(rc.getAtlasFederationUser()), rc.getAtlasFederationPassword());
+            boolean active = body != null && body.contains("ACTIVE");
+            c.put("ok", active);
+            c.put("message", active ? "Atlas reachable + ACTIVE" : "Atlas reachable but not ACTIVE");
+            c.put("detail", body == null ? "" : body.trim());
+        } catch (Exception e) {
+            c.put("ok", false);
+            c.put("message", "Atlas check failed: " + trimMsg(e));
+        }
+        return c;
+    }
+
+    /** Minimal trust-all HTTPS GET with optional basic auth — for preflight probes of self-signed
+     * external Ranger/Atlas (mirrors the insecure read path used for remote-Ambari probes). */
+    private String httpGet(String url, String user, String password) throws Exception {
+        // Trust-all also implies skipping HTTPS endpoint-identity (hostname/SAN) checks — java.net.http
+        // enforces those independently of the TrustManager and only relaxes them via this global
+        // property (it ignores SSLParameters' endpointIdentificationAlgorithm). Self-signed Ranger/
+        // Atlas on an IP or mismatched SAN would otherwise fail preflight with a hostname error.
+        System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
+        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+        sc.init(null, new javax.net.ssl.TrustManager[]{ new javax.net.ssl.X509TrustManager() {
+            public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
+            public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+        }}, new java.security.SecureRandom());
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .sslContext(sc).connectTimeout(java.time.Duration.ofSeconds(8)).build();
+        java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(12)).GET();
+        if (user != null && !user.isBlank() && password != null) {
+            String tok = java.util.Base64.getEncoder().encodeToString((user + ":" + password).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            b.header("Authorization", "Basic " + tok);
+        }
+        java.net.http.HttpResponse<String> resp = client.send(b.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() / 100 != 2) throw new IllegalStateException("HTTP " + resp.statusCode());
+        return resp.body();
+    }
+
+    private static String trimMsg(Throwable t) {
+        String m = t == null ? "" : (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+        return m.length() > 160 ? m.substring(0, 160) : m;
     }
 
     /**
