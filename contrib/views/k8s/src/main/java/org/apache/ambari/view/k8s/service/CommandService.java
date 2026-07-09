@@ -272,7 +272,11 @@ public class CommandService {
      * @return normalized injection mode ("WEBHOOK" or "PRE_PROVISIONED"); defaults to WEBHOOK
      */
     private String resolveKerberosInjectionModeFromSettings() {
-        String defaultMode = KERBEROS_INJECTION_MODE_WEBHOOK;
+        // Default to PRE_PROVISIONED: Ambari mints the keytab Secret and the chart mounts it into the
+        // pods (init/side path) — no mutating admission webhook. It's the less-intrusive model, needs no
+        // CA-signed webhook serving cert, and is the only option for external (non-Ambari) contexts where
+        // the operator uploads the keytab. Operators can still opt into WEBHOOK via view settings.
+        String defaultMode = KERBEROS_INJECTION_MODE_PRE_PROVISIONED;
         try {
             String rawSettingsJson = ctx.getInstanceData(VIEW_SETTINGS_KEY);
             if (rawSettingsJson == null || rawSettingsJson.isBlank()) {
@@ -1895,6 +1899,15 @@ public class CommandService {
         params.put("_rangerPluginUserName", rangerPluginUserName);
         params.put("_rangerPluginUserPassword", rangerPluginUserPassword);
         params.put("_rangerServiceConfigs", rangerServiceConfigs);
+        // Thread the selected platform context so the repository-creation step can route to the
+        // context's own Ranger over REST (external / creds-bearing managed) instead of the Ambari
+        // server. Absent/default context → the step delegates to Ambari as before.
+        if (!params.containsKey("_platformContextId")) {
+            String repoPcId = resolveStringValue(ConfigResolutionService.getByDottedPath(
+                    request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(),
+                    "platformContextId"), "");
+            if (repoPcId != null && !repoPcId.isBlank()) params.put("_platformContextId", repoPcId);
+        }
 
         // Ensure the helm values contain the repository name if it was missing.
         String repositoryNameProperty = resolveStringValue(rangerPluginSettingsSpec.get("repository_name_property"), null);
@@ -4083,6 +4096,15 @@ public class CommandService {
         if (callerHeaders != null) {
             params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         }
+        // Thread the selected platform context id globally so EVERY post-deploy step (OIDC client
+        // registration, Ranger repo/grant, Hive/Atlas ingestion) can resolve the context and route
+        // to its endpoints/credentials. Blank/default → steps use the local Ambari as before.
+        if (!params.containsKey("_platformContextId")) {
+            String deployPcId = resolveStringValue(ConfigResolutionService.getByDottedPath(
+                    request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(),
+                    "platformContextId"), "");
+            if (deployPcId != null && !deployPcId.isBlank()) params.put("_platformContextId", deployPcId);
+        }
         // command status
         CommandStatusEntity commandStatusEntity = new CommandStatusEntity();
         commandStatusEntity.setId(id + "-status");
@@ -4646,6 +4668,30 @@ public class CommandService {
         // a service-account-token Secret) exists — create it when the view has the rights, otherwise
         // BLOCK the deploy with an actionable message so a cluster admin can provision it first, rather
         // than shipping a Trino that never scales. (detect, else request — see ensureKedaThanosTokenSecret)
+        // 2a-pre. OpenShift SCC preflight (detect-else-request). When the service declares openshiftScc
+        // (e.g. OpenMetadata's bundled OpenSearch/Airflow pin UIDs and can't run under restricted-v2),
+        // grant those SCCs to the namespace's service accounts if the view has the rights; otherwise
+        // BLOCK the deploy with the exact `oc adm policy` commands so a cluster admin can run them
+        // first — rather than shipping a release whose pods are silently rejected (FailedCreate).
+        if (this.kubernetesService.isOpenShiftCluster() && request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
+            try {
+                StackServiceDef sccDef = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+                if (sccDef != null && sccDef.openshiftScc != null && !sccDef.openshiftScc.isEmpty()) {
+                    String sccProblem = this.kubernetesService.ensureSccGrants(request.getNamespace(), request.getReleaseName(), sccDef.openshiftScc);
+                    if (sccProblem != null) {
+                        throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
+                                + " on OpenShift — required Security Context Constraints are not granted.\n" + sccProblem);
+                    }
+                    LOG.info("OpenShift SCC(s) {} ensured for release {} in namespace {}",
+                            sccDef.openshiftScc, request.getReleaseName(), request.getNamespace());
+                }
+            } catch (IllegalStateException ise) {
+                throw ise;
+            } catch (Exception e) {
+                LOG.warn("SCC preflight for {} could not run: {}", request.getServiceKey(), e.toString());
+            }
+        }
+
         if (this.kubernetesService.isOpenShiftCluster()) {
             Map<String, Object> deployValues = request.getValues();
             Object kedaNode = mapGet(mapGet(deployValues, "server"), "keda");
@@ -5035,14 +5081,20 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", principal);
-                            grantParams.put("_hiveRangerServiceName", cluster + "_hive");
+                            // Hive Ranger service name is resolved at execute time from the platform
+                            // context (managed → <cluster>_hive, external → its hive.rangerServiceName),
+                            // so the context id is threaded rather than a hardcoded local name.
+                            String hiveGrantPcId = stringValue(ConfigResolutionService.getByDottedPath(
+                                    request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(),
+                                    "platformContextId"));
+                            if (!hiveGrantPcId.isBlank()) grantParams.put("_platformContextId", hiveGrantPcId);
                             if (params.get("_cluster") != null) grantParams.put("_cluster", params.get("_cluster"));
                             if (params.get("_baseUri") != null) grantParams.put("_baseUri", params.get("_baseUri"));
                             if (params.get("_callerHeaders") != null) grantParams.put("_callerHeaders", params.get("_callerHeaders"));
                             this.commandPlanFactory.createRangerPolicyGrantHiveRead(rootCommand, grantParams);
                             LOG.info("Queued RANGER_POLICY_GRANT_HIVE_READ post-deploy step for release '{}' "
-                                    + "(principal='{}', hiveService='{}')",
-                                    request.getReleaseName(), principal, cluster + "_hive");
+                                    + "(principal='{}', context='{}')",
+                                    request.getReleaseName(), principal, hiveGrantPcId.isBlank() ? "default" : hiveGrantPcId);
                         }
                     }
 
@@ -5244,13 +5296,31 @@ public class CommandService {
     public List<CommandStatus> listCommands(int limit, int offset) {
         Collection<CommandEntity> all;
         try {
-            all = dataStore.findAll(CommandEntity.class, null);
-        } catch (PersistenceException e) {
-            throw new RuntimeException(e);
+            // Fetch ONLY root operations at the DB level. Child-step rows (the bulk — a deploy is one
+            // root + ~15-30 children) have a null childListJson, so filtering here means we no longer
+            // load-and-discard every step row on each poll; the working set becomes the operation
+            // count, not the operation count × steps.
+            //
+            // The Ambari DataStore API has no LIMIT/OFFSET (findAll -> Query.getResultList() with no
+            // setMaxResults/setFirstResult), and updatedAt lives on the status entity (not queryable
+            // here), so the final sort + page is still done in memory — but only over roots, which is
+            // what the modal's incremental "Load more" (offset/limit) asks for. No retention needed;
+            // full history is preserved and reachable by paging.
+            all = dataStore.findAll(CommandEntity.class, "childListJson IS NOT NULL");
+        } catch (Exception filterErr) {
+            // Defensive: if the dynamic-entity layer rejects the where clause for any reason, fall
+            // back to the full scan (correct, just slower) rather than breaking the operations list.
+            LOG.warn("Root-filtered command query failed ('{}'); falling back to full scan.", filterErr.toString());
+            try {
+                all = dataStore.findAll(CommandEntity.class, null);
+            } catch (PersistenceException e) {
+                throw new RuntimeException(e);
+            }
         }
         List<CommandStatus> out = new ArrayList<>();
         for (CommandEntity e : all) {
-            // Heuristic: only list roots (those with a plan/children)
+            // Belt-and-suspenders: the DB filter already excludes children (null childListJson); this
+            // also drops any root with an empty "[]" plan.
             if (e.getChildListJson() == null || e.getChildListJson().isBlank()) continue;
             CommandStatusEntity st = findCommandStatusById(e.getCommandStatusId());
             if (st == null) continue;
@@ -5439,6 +5509,145 @@ public class CommandService {
 
     public void cancel(String id) {
         cancelRecursive(id);
+    }
+
+    /**
+     * Resume a FAILED operation from the step that failed, instead of re-running the whole KDPS
+     * wizard flow. A top operation stops at the first failed sub-step (desired), but the failure is
+     * often transient (a timed-out API call, a not-yet-ready backend). Because {@link #runNextStep}
+     * is a persisted, idempotent state machine — it re-derives the current step from each child's
+     * stored state every tick, skipping SUCCEEDED and running the first PENDING — resuming is simply:
+     * reset the failed step (and anything after it that isn't already SUCCEEDED) back to PENDING,
+     * flip the root back to RUNNING, and re-schedule the driver. Already-succeeded steps are NOT
+     * re-run. Sub-steps are individually idempotent (ensure-x / create-or-update; the main Helm step
+     * install-or-upgrades an existing release), so re-running the failed one is safe.
+     *
+     * <p>Steps that call back into Ambari (Ranger policy grants, OIDC client registration, Atlas
+     * federation, keytab issue) authenticate with the ORIGINAL caller's Ambari session cookie,
+     * captured as {@code _callerHeaders} at submit time. That session is short-lived and is
+     * invalidated by an ambari-server restart — so a replayed step can 403 ("Missing authentication
+     * token"). The resume request itself is authenticated, so we refresh {@code _callerHeaders} on
+     * the root and every step from the live resume request before re-running.
+     *
+     * @param rootId        id of the root (top) command to resume
+     * @param callerHeaders the resume request's HTTP headers (fresh, authenticated); may be null
+     * @throws IllegalArgumentException if the command is unknown
+     * @throws IllegalStateException    if the command is not in a FAILED state, or has no steps
+     */
+    public void resume(String rootId, javax.ws.rs.core.MultivaluedMap<String, String> callerHeaders) {
+        CommandEntity root = find(rootId);
+        if (root == null) throw new IllegalArgumentException("Unknown operation: " + rootId);
+        CommandStatusEntity rootSt = findCommandStatusById(root.getCommandStatusId());
+        if (rootSt == null) throw new IllegalStateException("No status for operation: " + rootId);
+        if (!CommandState.FAILED.name().equals(rootSt.getState())) {
+            throw new IllegalStateException("Only a failed operation can be resumed (current state: "
+                    + rootSt.getState() + ").");
+        }
+
+        List<String> childIds;
+        try {
+            Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+            childIds = gson.fromJson(root.getChildListJson(), listType);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Operation has an unreadable step plan; cannot resume.", ex);
+        }
+        if (childIds == null || childIds.isEmpty()) {
+            throw new IllegalStateException("Operation has no steps to resume.");
+        }
+
+        // Refresh the captured Ambari auth on the root + every step from THIS (authenticated) resume
+        // request, so replayed Ambari-callback steps don't 403 on a session invalidated since submit.
+        Object freshHeaders = null;
+        if (callerHeaders != null && !callerHeaders.isEmpty()) {
+            try { freshHeaders = AmbariActionClient.headersToPersistableMap(callerHeaders); }
+            catch (Exception ex) { LOG.warn("Could not build persistable caller headers for resume of {}: {}", rootId, ex.toString()); }
+        }
+        if (freshHeaders != null) {
+            refreshCallerHeaders(root, freshHeaders);
+            for (String cid : childIds) {
+                if (cid == null || cid.isBlank()) continue;
+                refreshCallerHeaders(find(cid), freshHeaders);
+            }
+        }
+
+        // Reset the FIRST failed/canceled step to PENDING, then reset any later non-SUCCEEDED steps
+        // to PENDING too (so the tail re-runs in order). SUCCEEDED steps are left untouched.
+        boolean foundFailed = false;
+        String resumeTitle = null;
+        for (String cid : childIds) {
+            if (cid == null || cid.isBlank()) continue;
+            CommandEntity child = find(cid);
+            if (child == null) continue;
+            CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+            if (st == null) continue;
+            String state = st.getState();
+
+            if (!foundFailed) {
+                if (CommandState.FAILED.name().equals(state) || CommandState.CANCELED.name().equals(state)) {
+                    foundFailed = true;
+                    resumeTitle = child.getTitle();
+                    st.setState(CommandState.PENDING.name());
+                    st.setError(null);
+                    st.setMessage("Retrying after failure…");
+                    st.setAttempt(st.getAttempt() == null ? 1 : st.getAttempt() + 1);
+                    st.setUpdatedAt(Instant.now().toString());
+                    store(st);
+                }
+            } else if (!CommandState.SUCCEEDED.name().equals(state)
+                    && !CommandState.PENDING.name().equals(state)) {
+                // A later step left RUNNING/FAILED/CANCELED by the abort — re-arm it.
+                st.setState(CommandState.PENDING.name());
+                st.setError(null);
+                st.setUpdatedAt(Instant.now().toString());
+                store(st);
+            }
+        }
+
+        // Flip the root back to RUNNING and re-schedule the step driver. If no explicit FAILED child
+        // was found (root failed in its own orchestration), runNextStep will simply pick up the first
+        // PENDING step, which is the correct resume point.
+        rootSt.setState(CommandState.RUNNING.name());
+        rootSt.setError(null);
+        rootSt.setMessage(resumeTitle != null ? ("Resumed at: " + resumeTitle) : "Resumed");
+        rootSt.setUpdatedAt(Instant.now().toString());
+        store(rootSt);
+        try {
+            commandLogService.append(rootId, "▶ Resume requested — re-running from step: "
+                    + (resumeTitle != null ? resumeTitle : "start"));
+        } catch (Exception ignored) {}
+        LOG.info("Resuming operation {} from step: {}", rootId, resumeTitle != null ? resumeTitle : "(start)");
+        scheduleNow(rootId);
+    }
+
+    /**
+     * Replace a command's persisted {@code _callerHeaders} with fresh (already-persistable) values,
+     * preserving the storage form (inline JSON vs {@code @@file:} externalized). Only touches
+     * commands that already carry {@code _callerHeaders} (i.e. Ambari-callback steps); others are
+     * left untouched. Best-effort — logs and continues on any failure.
+     */
+    private void refreshCallerHeaders(CommandEntity cmd, Object freshHeaders) {
+        if (cmd == null || freshHeaders == null) return;
+        try {
+            String raw = CommandUtils.resolveParamsPayload(cmd.getParamsJson());
+            if (raw == null || raw.isBlank()) return;
+            Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+            Map<String, Object> p = gson.fromJson(raw, mapType);
+            if (p == null || !p.containsKey("_callerHeaders")) return; // only steps that authenticate to Ambari
+            p.put("_callerHeaders", freshHeaders);
+            String updated = gson.toJson(p);
+            String pj = cmd.getParamsJson();
+            if (pj != null && pj.startsWith("@@file:")) {
+                java.nio.file.Path fp = java.nio.file.Path.of(pj.substring("@@file:".length()));
+                java.nio.file.Files.writeString(fp, updated, java.nio.charset.StandardCharsets.UTF_8);
+                // keep the @@file: reference unchanged
+            } else {
+                cmd.setParamsJson(updated);
+                store(cmd);
+            }
+            LOG.info("Refreshed caller auth for command {} on resume", cmd.getId());
+        } catch (Exception e) {
+            LOG.warn("Could not refresh caller headers for command {}: {}", cmd.getId(), e.toString());
+        }
     }
 
     private void cancelRecursive(String id) {
@@ -6053,6 +6262,9 @@ public class CommandService {
                     appendCommandLog(id, "Dependency already satisfied: release=" + releaseName + " namespace=" + namespace);
                 }
                 case RANGER_REPOSITORY_CREATION -> {
+                  // Operator opted out of KDPS configuring the remote Ranger — skip the repo creation
+                  // and advise them (they create the repository themselves; Preflight verifies it).
+                  if (!remoteConfigGate(childParams, "Ranger repository creation", childSt, id)) {
                     // this step will create the Ranger plugin repository for the chart plugin
                     String chartName   = (String) childParams.get("chart");
                     String namespace   = (String) childParams.get("namespace");
@@ -6133,6 +6345,26 @@ public class CommandService {
                     Map<String, String> rangerServiceConfigs =
                             (Map<String, String>) childParams.get("_rangerServiceConfigs");
 
+                    // Generic Ranger routing: when the selected platform context carries its own Ranger
+                    // admin credentials, create the plugin repository DIRECTLY over the Ranger Admin REST
+                    // API against that context's Ranger (external, or a managed/remote context with creds
+                    // entered) — no local Ambari-managed Ranger required. Otherwise delegate to the
+                    // Ambari server as before (the default managed context, unchanged).
+                    org.apache.ambari.view.k8s.model.ResolvedContext repoRc = resolvePlatformContextForStep(childParams);
+                    if (repoRc != null && repoRc.hasDirectRangerCreds()) {
+                        long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(
+                                repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
+                                rangerRepositoryName, serviceType, rangerServiceConfigs);
+                        LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
+                                rangerRepositoryName, serviceType, svcId);
+                        Map<String,Object> res = new LinkedHashMap<>();
+                        res.put("rangerRepositoryName", rangerRepositoryName);
+                        res.put("serviceId", svcId);
+                        res.put("via", "context-ranger-rest");
+                        childSt.setResultJson(gson.toJson(res));
+                        break;
+                    }
+
                     LOG.info("Submitting Ambari Ranger plugin repository request: repo='{}', serviceType='{}', pluginUser='{}', rangerServiceConfig={}",
                             rangerRepositoryName, serviceType, pluginUserName,rangerServiceConfigs);
 
@@ -6167,38 +6399,53 @@ public class CommandService {
                     res.put("rangerRepositoryName", rangerRepositoryName);
                     res.put("requestId", reqId);
                     childSt.setResultJson(gson.toJson(res));
+                  } // end remoteConfigGate guard
                 }
                 case OM_RANGER_TAGSYNC_REGISTER -> {
-                    String result = registerRangerTagSyncSource(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Ranger TagSync source registration", childSt, id)) {
+                        String result = registerRangerTagSyncSource(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case OM_ATLAS_FEDERATION_REGISTER -> {
-                    String result = registerOmAtlasFederation(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Atlas federation provisioning", childSt, id)) {
+                        String result = registerOmAtlasFederation(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case OM_HIVE_BASE_INGESTION_REGISTER -> {
                     String result = registerOmHiveBaseIngestion(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
                 case ATLAS_USER_PROVISION_OM -> {
-                    String result = provisionAtlasUserForOm(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Atlas federation user provisioning", childSt, id)) {
+                        String result = provisionAtlasUserForOm(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case ATLAS_SIMPLE_AUTHZ_GRANT_OM -> {
-                    String result = grantAtlasSimpleAuthzForOm(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Atlas simple-authz grant", childSt, id)) {
+                        String result = grantAtlasSimpleAuthzForOm(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case RANGER_POLICY_CREATE_ATLAS_OM_READ -> {
-                    String result = createRangerAtlasReadPolicyForOm(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Ranger read-only policy for OpenMetadata", childSt, id)) {
+                        String result = createRangerAtlasReadPolicyForOm(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case RANGER_POLICY_GRANT_VIA_AMBARI -> {
-                    String result = grantRangerAtlasReadViaAmbari(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Ranger OpenMetadata read grant", childSt, id)) {
+                        String result = grantRangerAtlasReadViaAmbari(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 case RANGER_POLICY_GRANT_HIVE_READ -> {
-                    String result = grantRangerHiveReadViaAmbari(childParams);
-                    if (result != null) childSt.setResultJson(result);
+                    if (!remoteConfigGate(childParams, "Ranger Hive SELECT grant", childSt, id)) {
+                        String result = grantRangerHiveReadViaAmbari(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
                 }
                 // ... inside runNextStep ...
                 case CONFIG_MATERIALIZE -> {
@@ -6780,6 +7027,42 @@ public class CommandService {
                     String principalFqdn = (String) childParams.get("principalFqdn");
                     Objects.requireNonNull(principalFqdn, "principalFqdn");
 
+                    // GENERATE ONCE, REUSE — the same discipline ODP uses for headless keytabs
+                    // (hdfs.headless.keytab is generated once and the identical bytes distributed to
+                    // every host, never re-keyed per host). Here the k8s Secret IS the durable store:
+                    // if it already holds this keytab, REUSE it and DO NOT call the KDC. Re-issuing
+                    // would rotate the principal's key and invalidate the stored keytab — the
+                    // "Preauthentication failed" desync. We only issue (create + key) when the Secret
+                    // is absent. No retrieve ACL / salt / KVNO bookkeeping; works for MIT/IPA/AD.
+                    {
+                        String reuseNs  = (String) childParams.get("namespace");
+                        String reuseSec = (String) childParams.get("secretName");
+                        String reuseKey = (String) childParams.get("keyNameInSecret");
+                        if (reuseKey == null || reuseKey.isBlank()) reuseKey = "service.keytab";
+                        if (reuseNs != null && !reuseNs.isBlank() && reuseSec != null && !reuseSec.isBlank()) {
+                            try {
+                                Optional<byte[]> existing =
+                                        this.kubernetesService.readOpaqueSecretKeyAsBytes(reuseNs, reuseSec, reuseKey);
+                                if (existing.isPresent() && existing.get().length > 0) {
+                                    LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' already holds keytab '{}' ({} bytes) — reusing, NOT re-keying the KDC",
+                                            reuseNs, reuseSec, reuseKey, existing.get().length);
+                                    appendCommandLog(id, "Reusing existing keytab in Secret " + reuseNs + "/" + reuseSec
+                                            + " (generate-once; no KDC re-key)");
+                                    Map<String, Object> reusedRes = new LinkedHashMap<>();
+                                    reusedRes.put("reused", true);
+                                    reusedRes.put("secretName", reuseSec);
+                                    reusedRes.put("keyNameInSecret", reuseKey);
+                                    reusedRes.put("payloadSha256", sha256Hex(existing.get()));
+                                    childSt.setResultJson(gson.toJson(reusedRes));
+                                    break; // skip KDC issuance entirely
+                                }
+                            } catch (Exception reuseCheck) {
+                                LOG.warn("KEYTAB_ISSUE_PRINCIPAL: could not check Secret '{}/{}' for reuse ({}); proceeding to issue",
+                                        reuseNs, reuseSec, reuseCheck.toString());
+                            }
+                        }
+                    }
+
                     String baseUriStr = (String) childParams.get("_baseUri");
                     if (baseUriStr == null || baseUriStr.isBlank()) {
                         throw new IllegalStateException("Missing baseUri in command params (_baseUri)");
@@ -6925,6 +7208,24 @@ public class CommandService {
 
                     Map<String,Object> issuerRes =
                             gson.fromJson(issuerSt.getResultJson(), java.util.Map.class);
+
+                    // Generate-once/reuse: the issuer found the keytab already present in the Secret
+                    // and skipped the KDC (no re-key, no payload). Just confirm it's still there.
+                    if (issuerRes != null && Boolean.TRUE.equals(issuerRes.get("reused"))) {
+                        Optional<byte[]> present =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                        if (present.isPresent() && present.get().length > 0) {
+                            LOG.info("KEYTAB_CREATE_SECRET: reusing keytab already in Secret '{}/{}' (no re-key, nothing to write)",
+                                    namespace, secretName);
+                            appendCommandLog(id, "Keytab Secret " + namespace + "/" + secretName + " already present; reused");
+                            break; // step complete
+                        }
+                        // Raced: Secret vanished after the issue-time check and there is no payload to
+                        // write. Fail so a re-run re-issues from scratch (Secret absent -> real issue).
+                        throw new IllegalStateException("Keytab reuse expected Secret '" + namespace + "/" + secretName
+                                + "' but it is now missing; re-run the operation to re-issue the keytab.");
+                    }
+
                     String payloadRef = issuerRes == null ? null : (String) issuerRes.get("payloadRef");
                     if (payloadRef == null || payloadRef.isBlank()) {
                         throw new IllegalStateException("Issuer resultJson does not contain payloadRef");
@@ -7128,39 +7429,67 @@ public class CommandService {
                         throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
                     }
                     Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-                    String clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                    String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
-                    var ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
 
-                    // Load Keycloak admin settings from Ambari oidc-env config
-                    String oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
-                    String oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
-                    String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
-                    String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
-                    String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
-                    String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
-                    boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
+                    // Resolve the Keycloak admin (client-registration) settings. Generic rule mirroring
+                    // the Ranger routing: when the selected platform context carries its own OIDC admin
+                    // creds (EXTERNAL / REMOTE Keycloak), use them and DO NOT touch the local Ambari —
+                    // this is what lets a standalone Ambari (no local oidc-env, no cluster) register
+                    // clients. Otherwise read the local Ambari oidc-env exactly as before (the default
+                    // managed context, unchanged).
+                    org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(childParams);
+                    boolean oidcFromContext = oidcRc != null && oidcRc.hasContextOidcAdminCreds();
+                    String clstr = null;
+                    AmbariActionClient ambariCli = null;
+                    String oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTlsStr;
+                    String adminUsername = "", adminPassword = "";
 
-                    if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
-                        throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config");
+                    if (oidcFromContext) {
+                        oidcAdminUrl   = oidcRc.getOidcAdminUrl();
+                        oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
+                                ? "master" : oidcRc.getOidcAdminRealm();
+                        oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
+                                ? "odp" : oidcRc.getOidcRealm();
+                        adminClientId  = oidcRc.getOidcAdminClientId();
+                        adminClientSec = oidcRc.getOidcAdminClientSecret();
+                        verifyTlsStr   = oidcRc.getOidcVerifyTls();
+                        LOG.info("OIDC_REGISTER_CLIENT: registering against the platform context's Keycloak "
+                                + "(adminUrl={}, realm={}, registrationClient={})", oidcAdminUrl, oidcRealm, adminClientId);
+                    } else {
+                        clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+                        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+                        ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
+
+                        // Load Keycloak admin settings from Ambari oidc-env config
+                        oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
+                        oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
+                        oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
+                        adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
+                        String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+                        verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
+
+                        if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
+                            throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
+                                    + "(and the selected platform context supplies no OIDC admin credentials).");
+                        }
+                        if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
+                        if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+                        if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
+
+                        // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
+                        AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
+                        char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
+                        adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
+
+                        // Admin username/password come from the Ambari credential store (same alias used
+                        // by ConfigureOidcServerAction), never from plain-text config properties.
+                        // Stored by Ansible enable_oidc.yml as a PrincipalKeyCredential at oidc.admin.credential.
+                        org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
+                                oidcAliasResolver.getOidcAdminCredential(clstr);
+                        adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
+                        adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
+                                ? new String(oidcAdminCred.getKey()) : "";
                     }
-                    if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
-                    if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
-                    if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
-
-                    // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
-                    AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
-                    char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
-                    String adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
-
-                    // Admin username/password come from the Ambari credential store (same alias used
-                    // by ConfigureOidcServerAction), never from plain-text config properties.
-                    // Stored by Ansible enable_oidc.yml as a PrincipalKeyCredential at oidc.admin.credential.
-                    org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
-                            oidcAliasResolver.getOidcAdminCredential(clstr);
-                    String adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
-                    String adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
-                            ? new String(oidcAdminCred.getKey()) : "";
+                    boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
 
                     String desiredClientId = (String) childParams.get("oidcClientId");
                     String redirectUri     = (String) childParams.get("oidcRedirectUri");
@@ -7185,7 +7514,9 @@ public class CommandService {
                     var oidcResult = keycloakClient.registerClient(
                             desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient);
 
-                    String issuerUrl = resolveOidcIssuerUrl(ambariCli, clstr);
+                    String issuerUrl = oidcFromContext
+                            ? oidcRc.getOidcIssuerUrl()
+                            : resolveOidcIssuerUrl(ambariCli, clstr);
                     if (issuerUrl == null || issuerUrl.isBlank()) {
                         issuerUrl = oidcResult.issuerUrl();
                     }
@@ -7689,9 +8020,18 @@ public class CommandService {
         if (omEndpoint == null || omEndpoint.isBlank()) throw new IllegalArgumentException("omEndpoint is required");
         if (jwt == null || jwt.isBlank()) throw new IllegalArgumentException("jwt is required");
 
-        // Use the entry key as the unique "source key" within ranger-tagsync-site
-        // (this is also what the operator types into ranger.tagsync.sources CSV).
-        String sourceKey = entryKey;
+        // The "source key" is the token Ranger's TagSynchronizer uses as the <name> in
+        // `ranger.tagsync.source.<name>.*`. It MUST be the name the concrete TagSource
+        // implementation reads its own config under: OpenmetadataRESTTagSource hard-codes the
+        // prefix `ranger.tagsync.source.openmetadatarest.*` (see TagSyncConfig), so the endpoint
+        // and token MUST live under `openmetadatarest`, not the service.json entry name. Honor an
+        // explicit `source_key` from the spec, else default to the built-in `openmetadatarest`
+        // (NOT entryKey — using the entry name e.g. "ranger-openmetadata-tagsync" makes the impl
+        // report "OpenmetadataEndpoint not specified" because it never reads that prefix).
+        Object sourceKeyOverride = spec.get("source_key");
+        String sourceKey = (sourceKeyOverride != null && !String.valueOf(sourceKeyOverride).isBlank())
+                ? String.valueOf(sourceKeyOverride)
+                : "openmetadatarest";
 
         Map<String, String> props = new LinkedHashMap<>();
         // ----- per-source endpoint + auth + class -----
@@ -7703,6 +8043,17 @@ public class CommandService {
         }
         // Reasonable default polling interval: 30s; operators can override via Ambari UI later.
         props.putIfAbsent("ranger.tagsync.source." + sourceKey + ".cookies.timeout.millis", "30000");
+
+        // ----- ENABLE the source -----
+        // TagSynchronizer.initializeTagSources() discovers a source from any
+        // `ranger.tagsync.source.<name>.*` key but ONLY activates it when the BARE flag
+        // `ranger.tagsync.source.<name>` equals true/enable/enabled. Without this the source is
+        // silently skipped ("TagSync is not configured for any tag-sources"). `ranger.tagsync.sources`
+        // is NOT read by this TagSynchronizer, so the enable flag — not the CSV — is what matters.
+        props.put("ranger.tagsync.source." + sourceKey, "true");
+        // Turn OFF the default Atlas (Kafka) source: it's enabled by default and, with no Atlas
+        // Kafka wired, loops "Failed to initialize TAG source atlas" and can crowd out our source.
+        props.put("ranger.tagsync.source.atlas", "false");
 
         // ----- service-name mapper: maps OM database-service name → Ranger Trino service name -----
         // The spec may declare a static mapping or rely on the wizard's form-supplied helm values.
@@ -8008,6 +8359,37 @@ public class CommandService {
             LOG.warn("resolvePlatformContextForStep failed: {}", e.toString());
             return null;
         }
+    }
+
+    /**
+     * Gate for steps that WRITE configuration to a remote platform's Ranger/Atlas. When the selected
+     * context is EXTERNAL/REMOTE and the operator set {@code autoConfigureRemote=false}, KDPS must NOT
+     * push (create repos/policies/tagsync/federation) — the operator configures those components
+     * themselves. This logs an operator advisory, records the step as skipped, and returns {@code true}
+     * so the caller skips its push. Returns {@code false} (proceed) for MANAGED contexts or when
+     * auto-config is enabled. Only WRITE paths call this — property resolution (reads) is never gated,
+     * so services still get correct connection values either way.
+     *
+     * @return true if the caller should SKIP the push
+     */
+    private boolean remoteConfigGate(Map<String, Object> childParams, String component,
+                                     CommandStatusEntity childSt, String id) {
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        if (rc == null) return false;
+        boolean managed = rc.getKind() == null || "MANAGED".equalsIgnoreCase(rc.getKind());
+        if (managed || rc.isAutoConfigureRemote()) return false;
+        String msg = "Auto-configuration is DISABLED for context '" + stringValue(rc.getName())
+                + "' (" + rc.getKind() + ") — SKIPPING: " + component + ". Configure this on the "
+                + "external cluster's Ranger/Atlas yourself, then run the context Preflight to verify.";
+        try { appendCommandLog(id, "⚠ " + msg); } catch (Exception ignore) {}
+        LOG.info(msg);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("skipped", true);
+        res.put("reason", "autoConfigureRemote=false");
+        res.put("component", component);
+        res.put("contextName", stringValue(rc.getName()));
+        if (childSt != null) childSt.setResultJson(gson.toJson(res));
+        return true;
     }
 
     String registerOmAtlasFederation(Map<String, Object> childParams) throws Exception {
@@ -8366,18 +8748,44 @@ public class CommandService {
      * in context → log that the operator must grant it. Non-fatal: any failure is logged and the
      * ingestion pipeline is still deployed (operator can grant manually).
      */
+    /**
+     * Resolve the Hive Ranger service (repository) name to grant on, context-kind-agnostically:
+     * an explicit {@code _hiveRangerServiceName} step param wins, else the context's resolved
+     * {@code hive.rangerServiceName} (a MANAGED context derives {@code <cluster>_hive}; an EXTERNAL
+     * one supplies the backend repo name), else a last-resort {@code <cluster>_hive}/{@code hive}.
+     */
+    private String resolveHiveRangerServiceName(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc, String cluster) {
+        String explicit = stringValue(childParams.get("_hiveRangerServiceName"));
+        if (!explicit.isBlank()) return explicit;
+        if (rc != null && rc.getResolvedFields() != null) {
+            Object v = rc.getResolvedFields().get("hive.rangerServiceName");
+            if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
+        }
+        return (cluster == null || cluster.isBlank()) ? "hive" : cluster + "_hive";
+    }
+
     private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
             org.apache.ambari.view.k8s.model.ResolvedContext rc, String namespace, String releaseName) {
         // Ranger maps the kerberos principal oma-ing-<ns>@<realm> to user oma-ing-<ns> (KDPS kerberos
         // block: serviceName 'oma-ing', principalTemplate '{service}-{namespace}@{realm}').
         String principal = "oma-ing-" + namespace;
         String cluster = stringValue(childParams.get("_cluster"));
-        String hiveService = cluster.isBlank() ? "hive" : cluster + "_hive";
+        String hiveService = resolveHiveRangerServiceName(childParams, rc, cluster);
         String resources = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
         String policyName = "kdps-openmetadata-" + releaseName + "-hive-read";
         try {
             String baseUriStr = stringValue(childParams.get("_baseUri"));
-            if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
+            // Generic Ranger routing (same decision for every service): the context's own Ranger creds
+            // win — direct REST; else a managed context delegates the grant to the Ambari server; else
+            // there is no Ranger to grant on and we log a manual-remediation hint (non-fatal).
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+                        rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+                LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive read policy id={} for '{}' on '{}' (direct REST)",
+                        pid, principal, hiveService);
+            } else if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
                 Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                 AmbariActionClient ambari = new AmbariActionClient(ctx,
                         java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
@@ -8391,13 +8799,6 @@ public class CommandService {
                     LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
                             + "grant Hive access manually if ingestion is denied.", req, principal);
                 }
-            } else if (rc != null && rc.getRangerUrl() != null && !rc.getRangerUrl().isBlank()
-                    && rc.getRangerAdminUsername() != null && !rc.getRangerAdminUsername().isBlank()) {
-                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
-                        rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
-                        hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
-                LOG.info("OM_HIVE_BASE_INGESTION: external Ranger Hive read policy id={} for '{}' on '{}'",
-                        pid, principal, hiveService);
             } else {
                 LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive read "
                         + "access to '{}' manually (Ranger service '{}', database/table/column=* with 'select'), "
@@ -9138,16 +9539,9 @@ public class CommandService {
         String cluster = (String) childParams.get("_cluster");
         String releaseName = (String) childParams.get("releaseName");
         String baseUriStr = (String) childParams.get("_baseUri");
-        if (cluster == null || baseUriStr == null) {
-            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_HIVE_READ params");
-        }
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        AmbariActionClient ambari = new AmbariActionClient(ctx,
-                baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
 
-        String hiveService = stringValue(childParams.get("_hiveRangerServiceName"));
-        if (hiveService.isBlank()) hiveService = cluster + "_hive";
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String hiveService = resolveHiveRangerServiceName(childParams, rc, cluster);
 
         String principal = stringValue(childParams.get("_principal"));
         if (principal.isBlank()) {
@@ -9157,9 +9551,33 @@ public class CommandService {
         String policyName = "kdps-" + releaseName + "-hive-read";
         int timeoutSeconds = 60;
 
-        // One grant: select on database/table/column. Hive maps DESCRIBE (and thus Superset's
-        // column reflection) to the select privilege, so this is the minimum that unblocks
-        // "tables list but show no columns".
+        // Generic Ranger routing: the context's own Ranger admin creds win → grant directly over REST
+        // against the context's Ranger (external, or a managed/remote context with creds entered);
+        // otherwise a managed context delegates the grant to the Ambari server (the credential lives
+        // there). One grant: select on database/table/column — Hive maps DESCRIBE (and thus Superset's
+        // column reflection) to 'select', the minimum that unblocks "tables list but show no columns".
+        if (rc != null && rc.hasDirectRangerCreds()) {
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+                    rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                    hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+            LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' via context Ranger (direct REST, policy id={})",
+                    principal, hiveService, pid);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("hiveServiceName", hiveService);
+            result.put("principal", principal);
+            result.put("policyId", pid);
+            result.put("via", "context-ranger-rest");
+            return gson.toJson(result);
+        }
+
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_HIVE_READ params "
+                    + "(and the selected context supplies no Ranger admin credentials for the direct-REST path).");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx,
+                baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
         int req = ambari.submitRangerPolicyGrant(
                 hiveService, principal, "select",
                 "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}",

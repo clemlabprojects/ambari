@@ -28,6 +28,53 @@ const resolveApiBase = (): string => {
 
 export const API_BASE_URL = resolveApiBase();
 
+/**
+ * When the Ambari session expires (e.g. after an ambari-server restart) the backend rejects
+ * requests with 401, or 403 "missing authentication token". Ambari's own UI redirects to its
+ * login page in that case; the view must do the same instead of surfacing a raw error and
+ * getting stuck. Redirect the TOP window (the view is embedded in the Ambari page) to Ambari's
+ * login route so the operator re-authenticates. Guarded so a burst of concurrently-failing
+ * requests (e.g. the dashboard/ops-modal pollers) only triggers a single navigation.
+ *
+ * Returns true when it handled an auth-expiry status (caller should stop / throw a benign error).
+ * A 403 is only treated as auth-expiry when its body looks like an authentication failure, so a
+ * legitimate application 403 (RBAC etc.) is NOT mistaken for a logged-out session.
+ */
+let authRedirecting = false;
+export function handleAuthExpiry(status: number, body?: string): boolean {
+  const b = (body || '').toLowerCase();
+  const isAuthExpiry =
+    status === 401 ||
+    (status === 403 && (b.includes('authentication') || b.includes('token') || b.includes('not authenticated') || b.includes('csrf')));
+  if (!isAuthExpiry) return false;
+  if (!authRedirecting) {
+    authRedirecting = true;
+    try {
+      (window.top || window)!.location.assign('/#/login');
+    } catch {
+      window.location.assign('/#/login');
+    }
+  }
+  return true;
+}
+
+/**
+ * Lightweight session heartbeat: pings a cheap authenticated endpoint purely to detect an expired
+ * Ambari session and trigger the login redirect (via handleAuthExpiry) — the way the main Ambari
+ * dashboard continuously polls and bounces to login. Runs on every page (AppLayout), never throws,
+ * and a network blip is ignored (only a real 401 / auth-403 redirects).
+ */
+export const pingSession = async (): Promise<void> => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/cluster/configured`, { credentials: 'include', cache: 'no-store' });
+    if (!res.ok) {
+      handleAuthExpiry(res.status, await res.text().catch(() => ''));
+    }
+  } catch {
+    /* transient network error — not an auth failure, ignore */
+  }
+};
+
 // Backend uses single-L "CANCELED"; keep backward compatibility with old "CANCELLED"
 export type CommandState = 'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED'|'CANCELED';
 
@@ -197,6 +244,26 @@ export const listIngresses = async (namespace?: string): Promise<IngressRow[]> =
   return handleApiResponse(res);
 };
 
+// OpenShift Routes — the platform's edge object (charts emit these instead of Ingresses on OpenShift).
+export interface RouteRow {
+  namespace: string;
+  name: string;
+  host: string | null;
+  path: string | null;
+  url: string | null;
+  service: string | null;
+  port: string | number | null;
+  tls: string | null;
+  admitted: boolean;
+  creationTimestamp: string | null;
+}
+
+export const listRoutes = async (namespace?: string): Promise<RouteRow[]> => {
+  const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  const res = await fetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
+  return handleApiResponse(res);
+};
+
 export const getPodLogs = async (ns: string, pod: string, container?: string, tailLines?: number): Promise<string> => {
   const params = new URLSearchParams();
   if (container) params.set('container', container);
@@ -256,6 +323,7 @@ async function fetchJson<T = unknown>(
   });
   if (!response.ok) {
     const text = await response.text();
+    if (handleAuthExpiry(response.status, text)) throw new Error('Session expired — redirecting to Ambari login');
     throw new Error(`HTTP ${response.status} – ${text || response.statusText}`);
   }
   if (response.status === 204) return undefined as unknown as T; // No-content
@@ -274,7 +342,8 @@ const handleApiResponse = async (response: Response) => {
     return response.json();
   }
   const errorText = await response.text();
-  
+  if (handleAuthExpiry(response.status, errorText)) throw new Error('Session expired — redirecting to Ambari login');
+
   // Reliably detect the "unconfigured" state from the backend
   if (response.status === 412 || (errorText && errorText.includes("not configured with a kubeconfig"))) {
     throw new Error('unconfigured');
@@ -337,6 +406,8 @@ export interface RemoteProbeResult {
   ok: boolean;
   clusters?: string[];
   ambariVersion?: string;
+  cmVersion?: string;    // Cloudera Manager product version (CDP probe)
+  apiVersion?: string;   // CM REST API version (CDP probe)
   error?: string;
 }
 
@@ -351,6 +422,7 @@ export interface ContextFieldDef {
   options?: string[];
   placeholder?: string;
   help?: string;
+  group?: string;       // UI grouping bucket; falls back to capability label
 }
 export interface ContextCapabilitySchema {
   capability: string;
@@ -379,6 +451,13 @@ export const saveContext = (ctx: PlatformContext): Promise<PlatformContext> =>
 
 export const deleteContext = (id: string): Promise<void> =>
   fetchJson<void>(`/contexts/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+export interface PreflightCheck { component: string; ok?: boolean; skipped?: boolean; message?: string; detail?: string; }
+export interface PreflightResult { context?: string; kind?: string; autoConfigureRemote?: boolean; ok?: boolean; checks?: PreflightCheck[]; error?: string; }
+/** Verify a context's remote Ranger/Atlas are reachable + configured (used when the operator
+ * disabled auto-configuration and set them up manually). Read-only. */
+export const preflightContext = (id: string): Promise<PreflightResult> =>
+  fetchJson<PreflightResult>(`/contexts/${encodeURIComponent(id)}/preflight`, { method: "POST" });
 
 /** A context entry from the uploaded kubeconfig (which cluster this view instance can target). */
 export interface KubeconfigContext {
@@ -460,6 +539,21 @@ export const probeRemoteContext = (req: {
   verifySsl: boolean;
 }): Promise<RemoteProbeResult> =>
   fetchJson<RemoteProbeResult>("/contexts/probe-remote", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+/**
+ * Live "test connection & list clusters" for a Cloudera Manager, used before a CDP context is
+ * saved. The password authenticates only this probe and is never persisted.
+ */
+export const probeCdpContext = (req: {
+  cmUrl: string;
+  cmUsername: string;
+  cmPassword: string;
+  verifySsl: boolean;
+}): Promise<RemoteProbeResult> =>
+  fetchJson<RemoteProbeResult>("/contexts/probe-cdp", {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -784,6 +878,26 @@ export async function cancelCommand(id: string) {
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `Cancel failed: ${response.status}`);
+  }
+}
+
+/**
+ * Resume a FAILED operation from the step that failed: re-runs that sub-step and continues,
+ * skipping the already-succeeded steps. Recovers from transient sub-step failures without
+ * re-running the whole KDPS wizard flow.
+ */
+export async function resumeCommand(id: string) {
+  const response = await fetch(`${API_BASE_URL}/commands/${id}/resume`, { method: 'POST' });
+  if (!response.ok) {
+    let msg = `Resume failed: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body?.error) msg = body.error;
+    } catch { /* fall back to text */
+      const text = await response.text().catch(() => '');
+      if (text) msg = text;
+    }
+    throw new Error(msg);
   }
 }
 

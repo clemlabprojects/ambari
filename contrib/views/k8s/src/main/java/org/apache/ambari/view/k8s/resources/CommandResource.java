@@ -189,6 +189,35 @@ public class CommandResource {
   }
 
   /**
+   * Resume a FAILED operation from the step that failed (re-runs that sub-step and continues,
+   * skipping the already-succeeded steps) — for recovering from transient sub-step failures
+   * without re-running the whole KDPS wizard flow.
+   *
+   * @param id id of the failed root command to resume
+   * @return HTTP 202 with the command id and state {@code RUNNING}; 409 if it is not resumable
+   */
+  @POST
+  @Path("/{id}/resume")
+  public Response resume(@PathParam("id") String id, @Context HttpHeaders headers) {
+    try {
+      // Pass the resume request's (fresh, authenticated) headers so replayed Ambari-callback steps
+      // re-authenticate with a live session instead of the invalidated one captured at submit time.
+      CommandService.get(viewContext).resume(id, headers.getRequestHeaders());
+      return Response.status(Response.Status.ACCEPTED)
+              .entity(Map.of("id", id, "state", "RUNNING"))
+              .build();
+    } catch (IllegalStateException ise) {
+      return Response.status(Response.Status.CONFLICT)
+              .entity(Map.of("id", id, "error", ise.getMessage()))
+              .build();
+    } catch (IllegalArgumentException iae) {
+      return Response.status(Response.Status.NOT_FOUND)
+              .entity(Map.of("id", id, "error", iae.getMessage()))
+              .build();
+    }
+  }
+
+  /**
    * Stream a chunk of the log output produced by a command.
    *
    * @param id     command id whose log to read

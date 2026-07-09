@@ -832,7 +832,7 @@ public class CommandPlanFactory {
     public void createRangerPolicyCreateAtlasOmRead(CommandEntity rootCommand, Map<String, Object> params) {
         queueAtlasFederationStep(rootCommand, params,
                 CommandType.RANGER_POLICY_CREATE_ATLAS_OM_READ,
-                "Ranger: create read-only policy for OpenMetadata federation in Atlas service repo",
+                "Ranger: create OpenMetadata read-only policy on Atlas repo",
                 "-ranger-atlas-policy-");
     }
 
@@ -844,7 +844,7 @@ public class CommandPlanFactory {
     public void createRangerPolicyGrantViaAmbari(CommandEntity rootCommand, Map<String, Object> params) {
         queueAtlasFederationStep(rootCommand, params,
                 CommandType.RANGER_POLICY_GRANT_VIA_AMBARI,
-                "Ranger: grant OpenMetadata federation read access in Atlas service repo (via Ambari)",
+                "Ranger: grant OpenMetadata read access on Atlas repo",
                 "-ranger-atlas-grant-");
     }
 
@@ -859,7 +859,7 @@ public class CommandPlanFactory {
     public void createRangerPolicyGrantHiveRead(CommandEntity rootCommand, Map<String, Object> params) {
         queueAtlasFederationStep(rootCommand, params,
                 CommandType.RANGER_POLICY_GRANT_HIVE_READ,
-                "Ranger: grant Superset service user read (select) on Hive service repo (via Ambari)",
+                "Ranger: grant Superset SELECT on Hive repo",
                 "-ranger-hive-grant-");
     }
 

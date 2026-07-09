@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.24",
+  "version": "1.13.31",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -90,6 +90,7 @@
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
+      "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
       ],
@@ -98,6 +99,25 @@
       "namespace": "monitoring"
     }
   },
+  "openshiftScc": [
+    {
+      "comment": "Grant anyuid ONLY to the SAs whose images pin a UID/GID or run as root: the bundled OpenSearch (uses the namespace 'default' SA, hardcodes fsGroup:1000/runAsUser) and every Airflow component/job (uid 50000) — INCLUDING the migrate-database-job and create-user-job SAs (their pods run the airflow image as uid 50000 and are what apply/seed the metadata DB; miss them and the DB never migrates -> app pods hang on wait-for-airflow-migrations). The OpenMetadata server SA ('{{releaseName}}') and both postgres SAs are intentionally EXCLUDED so they keep restricted-v2 — the server pods set runAsNonRoot with no UID and need the platform to inject one, which anyuid would suppress. Airflow SA names are {{releaseName}}-airflow-<component> and need not exist yet (RBAC binds by name).",
+      "scc": "anyuid",
+      "serviceAccounts": [
+        "default",
+        "{{releaseName}}-airflow-scheduler",
+        "{{releaseName}}-airflow-api-server",
+        "{{releaseName}}-airflow-triggerer",
+        "{{releaseName}}-airflow-dag-processor",
+        "{{releaseName}}-airflow-statsd",
+        "{{releaseName}}-airflow-worker",
+        "{{releaseName}}-airflow-webserver",
+        "{{releaseName}}-airflow-flower",
+        "{{releaseName}}-airflow-migrate-database-job",
+        "{{releaseName}}-airflow-create-user-job"
+      ]
+    }
+  ],
   "endpoints": [
     {
       "id": "openmetadata-ui",
@@ -914,6 +934,30 @@
       ]
     },
     {
+      "comment": "OpenShift: the self-managed kube-prometheus-stack is skipped (dependency skipOnOpenShift), so the platform's built-in monitoring scrapes OpenMetadata instead. The normal 'service-monitor-enable' binding is gated on monitoringRelease (the discovered self-managed release) which is empty on OpenShift, so we force serviceMonitor.enabled here: the chart emits a ServiceMonitor (port admin, path /prometheus, in the release namespace, no kube-prometheus 'release' label) that OpenShift User-Workload-Monitoring picks up. Gated on isOpenShift so vanilla k8s is unaffected.",
+      "name": "service-monitor-openshift",
+      "skipIfVarEmpty": "isOpenShift",
+      "targets": [
+        {
+          "path": "serviceMonitor.enabled",
+          "op": "set",
+          "value": true
+        }
+      ]
+    },
+    {
+      "comment": "OpenShift: disable OpenSearch's vm.max_map_count sysctl init container. It runs PRIVILEGED as root, which even the anyuid SCC (granted by the deploy preflight) does not permit — only the privileged SCC would, which we don't want to require. OpenSearch here is singleNode (discovery.type=single-node), so bootstrap checks are skipped and a low max_map_count is a harmless warning rather than a startup failure. Gated on isOpenShift so vanilla k8s keeps the sysctl init.",
+      "name": "opensearch-sysctl-off-openshift",
+      "skipIfVarEmpty": "isOpenShift",
+      "targets": [
+        {
+          "path": "opensearch.sysctlInit.enabled",
+          "op": "set",
+          "value": false
+        }
+      ]
+    },
+    {
       "name": "ranger-tagsync-endpoint-from-ingress",
       "skipIfVarEmpty": "ingressHost",
       "targets": [
@@ -1536,6 +1580,7 @@
           "label": "Enable Atlas federation",
           "type": "boolean",
           "defaultValue": false,
+          "autoEnableWhenContext": "atlas",
           "advisor": "recommend_atlas",
           "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
         },
@@ -1574,6 +1619,7 @@
           "label": "Enable Hive base ingestion",
           "type": "boolean",
           "defaultValue": false,
+          "autoEnableWhenContext": "hive",
           "advisor": "recommend_hive",
           "help": "When ON, KDPS creates an OM Hive databaseService and a scheduled metadata ingestion pipeline that connects directly to HiveServer2. For Atlas+Hive federation, enable this together with Atlas Federation below."
         },
@@ -1669,6 +1715,126 @@
           "defaultValue": "",
           "help": "Optional comma-separated regex patterns of schemas/databases to include (e.g. odp_functional_tests). Blank ingests all schemas.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
+        },
+        {
+          "name": "hive.externalKeytabSecret",
+          "label": "External ingestion service keytab Secret",
+          "type": "secret-discovery",
+          "condition": { "field": "baseIngestion.hiveEnabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Only when the selected Platform Context is EXTERNAL and its Hive / Atlas live in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding key 'service.keytab' (the service keytab issued by the backend realm's KDC). The ingestion pods auto-detect the principal from it (klist), so you only need the keytab. Create it first, e.g.: kubectl -n <ns> create secret generic om-cdp-keytab --from-file=service.keytab=./oma-ing.keytab. Leave blank when the context's realm is the same as the Ambari cluster — KDPS then mints the ingestion keytab automatically. This one keytab is used by ALL federated-service ingestion (Hive, Atlas, HDFS)."
+        }
+      ]
+    },
+    {
+      "name": "rangerTagSync",
+      "label": "Ranger TagSync",
+      "type": "group",
+      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries.",
+      "fields": [
+        {
+          "name": "rangerTagSyncEnabled",
+          "label": "Enable Ranger TagSync",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "autoEnableWhenContext": ["ranger", "atlas"],
+          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store); the JWT + Trino service wiring below then auto-fill. Toggle off if you don't want tag propagation."
+        },
+        {
+          "name": "rangerTagSyncToken",
+          "label": "OM bot JWT (optional — auto-fetched)",
+          "type": "password",
+          "required": false,
+          "excludeFromValues": true,
+          "help": "Leave empty: the post-install Job fetches the ingestion-bot JWT from OM postgres (Fernet-decrypted) and writes it to the Secret referenced below. The bootstrap Job also sets the bot's JWTTokenExpiry to 'Unlimited' so the token doesn't expire and break TagSync after 7 days.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
+        },
+        {
+          "name": "rangerTagSyncTokenSecretName",
+          "label": "Token Secret name (optional)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "K8s Secret holding the JWT under key 'tagsync-token'. Defaults to '<release>-tagsync-token' when empty.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          },
+          "defaultValue": ""
+        },
+        {
+          "name": "rangerTagSyncEndpoint",
+          "label": "OM API endpoint as seen from Ranger TagSync (optional)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
+        },
+        {
+          "name": "rangerTagSyncTrinoServiceFqn",
+          "label": "OM Trino service name (auto-discovered)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          },
+          "defaultValue": "trino-clemlab"
+        },
+        {
+          "name": "rangerTagSyncRangerTrinoService",
+          "label": "Ranger Trino service name (auto-discovered)",
+          "type": "string",
+          "excludeFromValues": true,
+          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          },
+          "defaultValue": "trino-trino-ns"
+        },
+        {
+          "name": "rangerTagSyncComponentType",
+          "label": "Ranger component type",
+          "type": "string",
+          "defaultValue": "trino",
+          "excludeFromValues": true,
+          "help": "Leave 'trino' unless connecting a non-Trino tag source.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
+        },
+        {
+          "name": "rangerTagSyncDownloadInterval",
+          "label": "Sync interval (ms)",
+          "type": "number",
+          "defaultValue": 230000,
+          "excludeFromValues": true,
+          "help": "Default 230s. Lower → tags propagate faster, more load on OM.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
+        },
+        {
+          "name": "rangerTagSyncBatchSize",
+          "label": "Batch size (entities/page)",
+          "type": "number",
+          "defaultValue": 10000,
+          "excludeFromValues": true,
+          "help": "Default 10000. Raise for catalogs >100k entities.",
+          "condition": {
+            "field": "rangerTagSyncEnabled",
+            "value": true
+          }
         }
       ]
     },
@@ -1749,6 +1915,7 @@
       "name": "monitoringGeneric",
       "label": "Monitoring",
       "type": "group",
+      "capability": "kubernetes",
       "fields": [
         {
           "name": "monitoring.discovery",
@@ -1795,7 +1962,8 @@
           "type": "string",
           "required": true,
           "defaultValue": "nginx",
-          "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
+          "capability": "kubernetes",
+          "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller. Hidden on OpenShift, where the HAProxy Router (Route) owns routing rather than an nginx Ingress class.",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2002,6 +2170,7 @@
           "name": "ingressTuning",
           "label": "Ingress tuning (nginx)",
           "type": "group",
+          "capability": "kubernetes",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2134,117 +2303,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "rangerTagSync",
-      "label": "Ranger TagSync",
-      "type": "group",
-      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries.",
-      "fields": [
-        {
-          "name": "rangerTagSyncEnabled",
-          "label": "Enable Ranger TagSync",
-          "type": "boolean",
-          "defaultValue": false,
-          "excludeFromValues": true,
-          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags."
-        },
-        {
-          "name": "rangerTagSyncToken",
-          "label": "OM bot JWT (optional — auto-fetched)",
-          "type": "password",
-          "required": false,
-          "excludeFromValues": true,
-          "help": "Leave empty: the post-install Job fetches the ingestion-bot JWT from OM postgres (Fernet-decrypted) and writes it to the Secret referenced below. The bootstrap Job also sets the bot's JWTTokenExpiry to 'Unlimited' so the token doesn't expire and break TagSync after 7 days.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        },
-        {
-          "name": "rangerTagSyncTokenSecretName",
-          "label": "Token Secret name (optional)",
-          "type": "string",
-          "excludeFromValues": true,
-          "help": "K8s Secret holding the JWT under key 'tagsync-token'. Defaults to '<release>-tagsync-token' when empty.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          },
-          "defaultValue": ""
-        },
-        {
-          "name": "rangerTagSyncEndpoint",
-          "label": "OM API endpoint as seen from Ranger TagSync (optional)",
-          "type": "string",
-          "excludeFromValues": true,
-          "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        },
-        {
-          "name": "rangerTagSyncTrinoServiceFqn",
-          "label": "OM Trino service name (auto-discovered)",
-          "type": "string",
-          "excludeFromValues": true,
-          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          },
-          "defaultValue": "trino-clemlab"
-        },
-        {
-          "name": "rangerTagSyncRangerTrinoService",
-          "label": "Ranger Trino service name (auto-discovered)",
-          "type": "string",
-          "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          },
-          "defaultValue": "trino-trino-ns"
-        },
-        {
-          "name": "rangerTagSyncComponentType",
-          "label": "Ranger component type",
-          "type": "string",
-          "defaultValue": "trino",
-          "excludeFromValues": true,
-          "help": "Leave 'trino' unless connecting a non-Trino tag source.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        },
-        {
-          "name": "rangerTagSyncDownloadInterval",
-          "label": "Sync interval (ms)",
-          "type": "number",
-          "defaultValue": 230000,
-          "excludeFromValues": true,
-          "help": "Default 230s. Lower → tags propagate faster, more load on OM.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        },
-        {
-          "name": "rangerTagSyncBatchSize",
-          "label": "Batch size (entities/page)",
-          "type": "number",
-          "defaultValue": 10000,
-          "excludeFromValues": true,
-          "help": "Default 10000. Raise for catalogs >100k entities.",
-          "condition": {
-            "field": "rangerTagSyncEnabled",
-            "value": true
-          }
-        }
-      ]
     }
   ],
   "ranger": {
@@ -2263,31 +2321,30 @@
       "_description": "Per-source identity. Chart-wide wiring lives in ranger-tagsync-settings above.",
       "type": "ranger-tagsync-source",
       "cm_name": "ranger-openmetadata-tagsync",
-      "source_class": "org.apache.ranger.tagsync.source.openmetadatarest.OpenmetadataRESTTagSource"
+      "source_class": "org.apache.ranger.tagsync.source.openmetadatarest.OpenmetadataRESTTagSource",
+      "_source_key_note": "source_key MUST be 'openmetadatarest' — OpenmetadataRESTTagSource reads its endpoint/token from the fixed prefix ranger.tagsync.source.openmetadatarest.* (see TagSyncConfig). Using the entry name instead yields 'OpenmetadataEndpoint not specified'.",
+      "source_key": "openmetadatarest"
     }
   },
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
-  "requiredChartVersion": ">=1.13.12",
+  "requiredChartVersion": ">=1.13.31",
   "externalServiceTargets": {
     "hive": {
-      "label": "Hive Metastore",
+      "label": "Federated ingestion (external Kerberos keytab)",
       "discoveryServiceType": "HIVE_METASTORE",
-      "urlOverrideField": "ui_hive_metastore_uri_override",
-      "modeField": "hive.externalAuthMode",
+      "comment": "Safe gate (Trino pattern): the external path triggers ONLY when the operator uploads a keytab Secret via hive.externalKeytabSecret — a MANAGED same-realm deploy leaves it blank and keeps auto-minting, so no regression on k8s target clusters. When set, the applyTo repoints global.security.kerberos.keytab.* (consumed by the OM server, native ingestion AND — via the chart's tpl'd airflow volume — the KubernetesExecutor ingestion task pods) at the uploaded Secret, and deployUsesExternalKeytab() skips the Ambari mint (a backend-realm principal is not issuable by the hosting KDC). The ingestion pods auto-detect the principal from the keytab (klist), so no principal override is needed; the uploaded Secret must carry key 'service.keytab'. This one keytab covers every federated service the ingestion reaches (Hive, Atlas, HDFS).",
+      "urlOverrideField": "hive.externalKeytabSecret",
       "authModes": {
-        "none": {
-          "label": "No authentication (dev only)"
-        },
         "kerberos": {
-          "label": "Kerberos / SASL GSSAPI",
+          "label": "Kerberos / SASL GSSAPI (external keytab)",
           "secretField": "hive.externalKeytabSecret",
-          "secretKeys": ["keytab", "principal"],
+          "secretKeys": ["service.keytab"],
           "applyTo": {
+            "global.security.kerberos.injectionMode":        "PRE_PROVISIONED",
             "global.security.kerberos.keytab.secretName":    "{{secret.name}}",
-            "global.security.kerberos.keytab.secretDataKey": "keytab",
-            "global.security.kerberos.principal":            "{{secret.data.principal | b64decode | trim}}"
+            "global.security.kerberos.keytab.secretDataKey": "service.keytab"
           }
         }
       }
