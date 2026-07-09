@@ -1712,51 +1712,10 @@
       "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
     },
     {
-      "name": "acls",
-      "label": "Contrôle d'accès (Service Trino)",
-      "type": "group",
-      "fields": [
-        {
-          "name": "accessControl.type",
-          "label": "Enable Access Control",
-          "type": "select",
-          "options": [
-            {
-              "label": "Disabled",
-              "value": "{}"
-            },
-            {
-              "label": "Ranger",
-              "value": "ranger"
-            }
-          ],
-          "defaultValue": "ranger",
-          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
-        },
-        {
-          "name": "rangerAdminUrl",
-          "label": "Ranger admin",
-          "type": "context-resolved",
-          "contextField": "ranger.rangerUrl",
-          "condition": { "field": "accessControl.type", "value": "ranger" },
-          "excludeFromValues": true,
-          "help": "The Ranger of the selected Platform Context (right panel) whose policies Trino's plugin enforces. Resolved by KDPS from the context."
-        },
-        {
-          "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
-          "type": "number",
-          "condition": {
-            "field": "nodePort.enabled",
-            "value": true
-          }
-        }
-      ]
-    },
-    {
       "name": "monitoringGeneric",
       "label": "Monitoring",
       "type": "group",
+      "capability": "kubernetes",
       "fields": [
         {
           "name": "monitoring.discovery",
@@ -1869,6 +1828,7 @@
           "name": "ingress.ingressClassName",
           "label": "Ingress class",
           "type": "string",
+          "capability": "kubernetes",
           "required": true,
           "defaultValue": "nginx",
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
@@ -1883,7 +1843,7 @@
           "type": "string",
           "required": true,
           "excludeFromValues": true,
-          "help": "Public DNS name the ingress controller will route. e.g. service.example.com.",
+          "help": "Public DNS name the edge routes to (e.g. service.example.com). On OpenShift this becomes the Route host and must sit under the cluster ingress domain (…apps-<cluster>) to resolve — or leave it blank to let OpenShift auto-assign a reachable host. Under OIDC/OAuth this host is also the login redirect (https://<host>/oauth2/callback), so register it in the identity provider.",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2078,6 +2038,7 @@
           "name": "ingressTuning",
           "label": "Ingress tuning (nginx)",
           "type": "group",
+          "capability": "kubernetes",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2413,6 +2374,48 @@
       ]
     },
     {
+      "name": "acls",
+      "label": "Contrôle d'accès (Service Trino)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "accessControl.type",
+          "label": "Enable Access Control",
+          "type": "select",
+          "options": [
+            {
+              "label": "Disabled",
+              "value": "{}"
+            },
+            {
+              "label": "Ranger",
+              "value": "ranger"
+            }
+          ],
+          "defaultValue": "ranger",
+          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
+        },
+        {
+          "name": "rangerAdminUrl",
+          "label": "Ranger admin",
+          "type": "context-resolved",
+          "contextField": "ranger.rangerUrl",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "excludeFromValues": true,
+          "help": "The Ranger of the selected Platform Context (right panel) whose policies Trino's plugin enforces. Resolved by KDPS from the context."
+        },
+        {
+          "name": "nodePort.port",
+          "label": "Port du Nœud (Optionnel)",
+          "type": "number",
+          "condition": {
+            "field": "nodePort.enabled",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
       "name": "hadoopIntegration",
       "label": "Hadoop & Hive integration",
       "type": "group",
@@ -2422,7 +2425,8 @@
           "label": "Enable Hive catalog",
           "type": "boolean",
           "defaultValue": false,
-          "help": "When ON, KDPS creates a Trino 'hive' catalog connected to the Hive Metastore of the selected Platform Context (right panel)."
+          "autoEnableWhenContext": "hive",
+          "help": "When ON, KDPS creates a Trino 'hive' catalog connected to the Hive Metastore of the selected Platform Context (right panel). Auto-enabled when the selected context exposes Hive."
         },
         {
           "name": "hiveCatalog.metastoreUri",
@@ -2435,10 +2439,10 @@
         },
         {
           "name": "hive.externalKeytabSecret",
-          "label": "External Hive keytab Secret",
+          "label": "External Trino service keytab Secret",
           "type": "secret-discovery",
           "excludeFromValues": true,
-          "help": "Only for an EXTERNAL platform context whose Hive is in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino service keytab issued by the backend realm's KDC) and 'principal' (must match the context's Hive client principal). Providing it switches the Hive catalog to the external keytab (PRE_PROVISIONED) instead of an Ambari-issued one; leave blank for a same-realm MANAGED context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
+          "help": "Only for an EXTERNAL platform context (no Ambari to issue keytabs), e.g. a CDP backend in a DIFFERENT Kerberos realm. Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino SERVICE keytab issued by the backend realm's KDC) and 'principal'. This is the Trino service identity — it mounts globally at /etc/security/keytabs/service.keytab and is used for EVERY Kerberos-authenticated backend Trino talks to: Hive metastore, HDFS, the Ranger plugin, and any other federated ODP service (not Hive only). Providing it selects PRE_PROVISIONED mode with your keytab instead of an Ambari-issued one; leave blank for a same-realm MANAGED (Ambari) context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
         },
         {
           "name": "hadoopGroupMapping",

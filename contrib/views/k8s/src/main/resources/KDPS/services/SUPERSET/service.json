@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.34",
+  "version": "0.12.36",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -101,6 +101,26 @@
         "enabledField": "hiveDb.enabled",
         "overrideFields": ["hiveDb.authMode"]
       }
+    },
+    {
+      "comment": "HS2 transport mode (http/binary) resolved from the selected KDPS context (managed: hive-site hive.server2.transport.mode; external: typed). Drives the hive:// vs impala:// driver choice below. Unset when Hive is disabled.",
+      "name": "hiveTransportMode",
+      "from": {
+        "type": "context",
+        "key": "hive.transportMode",
+        "enabledField": "hiveDb.enabled",
+        "overrideFields": ["hiveDb.transportMode"]
+      }
+    },
+    {
+      "comment": "true ONLY when the resolved transport is binary → use the PyHive hive:// driver.",
+      "name": "hiveModeBinary",
+      "from": { "type": "equals", "var": "hiveTransportMode", "value": "binary", "caseInsensitive": true }
+    },
+    {
+      "comment": "true for anything that is NOT binary (http / all / unresolved) → use the impyla impala:// driver. This is the safe default that preserves the pre-existing behaviour when a context does not report a transport mode.",
+      "name": "hiveModeHttp",
+      "from": { "type": "equals", "var": "hiveTransportMode", "value": "binary", "negate": true, "caseInsensitive": true }
     },
     {
       "name": "ingressEnabled",
@@ -540,8 +560,9 @@
       ]
     },
     {
-      "name": "superset-hive-datasource",
-      "skipIfVarEmpty": "hiveHostPort",
+      "comment": "HTTP-transport Hive (hive.server2.transport.mode=http, or unknown → safe default): reached over impyla (impala:// SQLAlchemy driver) with HTTP+GSSAPI+SSL. The database is LABELLED 'Platform Hive (impyla, HTTP)' so customers understand it targets HiveServer2 over the impyla driver, NOT an Impala daemon. Fires only when Hive is enabled (hiveHostPort) AND the transport is not binary (hiveModeHttp).",
+      "name": "superset-hive-datasource-http",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp"],
       "targets": [
         {
           "path": "extraConfigs",
@@ -549,7 +570,24 @@
           "from": {
             "type": "template",
             "template": {
-              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive (impyla, HTTP)\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Binary-transport Hive (hive.server2.transport.mode=binary or all): reached over PyHive (hive:// SQLAlchemy driver) with Kerberos (SASL). Correctly named 'Platform Hive' — no impyla/Impala ambiguity. Fires only when Hive is enabled (hiveHostPort) AND the transport is binary (hiveModeBinary).",
+      "name": "superset-hive-datasource-binary",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeBinary"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
             }
           }
         }
@@ -705,37 +743,54 @@
       "help": "Trino coordinator port (default 8080)."
     },
     {
-      "name": "hiveDb.enabled",
-      "label": "Connect to platform Hive",
-      "type": "boolean",
-      "defaultValue": false,
-      "help": "When ON, KDPS creates a Superset database connection to the HiveServer2 of the selected Platform Context (right panel). Auth follows the context (Kerberos uses the keytab/ccache already mounted in the Superset pod)."
-    },
-    {
-      "name": "hiveDb.hostPort",
-      "label": "HiveServer2 host:port",
-      "type": "context-resolved",
-      "contextField": "hive.hs2HostPort",
-      "condition": { "field": "hiveDb.enabled", "value": true },
-      "excludeFromValues": true,
-      "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point at a specific HiveServer2."
-    },
-    {
-      "name": "hiveDb.authMode",
-      "label": "Hive authentication",
-      "type": "context-resolved",
-      "contextField": "hive.authMode",
-      "condition": { "field": "hiveDb.enabled", "value": true },
-      "excludeFromValues": true,
-      "help": "Delivered by KDPS from the context (kerberos / ldap / none). The Superset Hive connection is built to match it."
-    },
-    {
-      "name": "hiveDb.externalKeytabSecret",
-      "label": "External Hive keytab Secret",
-      "type": "secret-discovery",
-      "condition": { "field": "hiveDb.enabled", "value": true },
-      "excludeFromValues": true,
-      "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'keytab' (the service keytab issued by the backend realm's KDC) and 'principal' (e.g. superset/host@CDP.REALM). Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab --from-literal=principal=superset/host@CDP.EXAMPLE.COM. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+      "name": "hiveDatabase",
+      "label": "Platform Hive database",
+      "type": "group",
+      "fields": [
+        {
+          "name": "hiveDb.enabled",
+          "label": "Connect to platform Hive",
+          "type": "boolean",
+          "defaultValue": false,
+          "autoEnableWhenContext": "hive",
+          "help": "When ON, KDPS creates a Superset database connection to the HiveServer2 of the selected Platform Context (right panel). Auth follows the context (Kerberos uses the keytab/ccache already mounted in the Superset pod)."
+        },
+        {
+          "name": "hiveDb.hostPort",
+          "label": "HiveServer2 host:port",
+          "type": "context-resolved",
+          "contextField": "hive.hs2HostPort",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point at a specific HiveServer2."
+        },
+        {
+          "name": "hiveDb.authMode",
+          "label": "Hive authentication",
+          "type": "context-resolved",
+          "contextField": "hive.authMode",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Delivered by KDPS from the context (kerberos / ldap / none). The Superset Hive connection is built to match it."
+        },
+        {
+          "name": "hiveDb.transportMode",
+          "label": "HS2 transport mode",
+          "type": "context-resolved",
+          "contextField": "hive.transportMode",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Delivered by KDPS from the context (hive.server2.transport.mode). binary → the connection uses the PyHive hive:// driver; http (or unknown) → the impyla impala:// driver over HTTP. Override only to force a driver."
+        },
+        {
+          "name": "hiveDb.externalKeytabSecret",
+          "label": "External Superset service keytab Secret",
+          "type": "secret-discovery",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'keytab' (the service keytab issued by the backend realm's KDC) and 'principal' (e.g. superset/host@CDP.REALM). Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab --from-literal=principal=superset/host@CDP.EXAMPLE.COM. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+        }
+      ]
     },
     {
       "name": "ingressConfig",
@@ -753,6 +808,7 @@
           "name": "ingress.ingressClassName",
           "label": "Ingress class",
           "type": "string",
+          "capability": "kubernetes",
           "required": true,
           "defaultValue": "nginx",
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
@@ -962,6 +1018,7 @@
           "name": "ingressTuning",
           "label": "Ingress tuning (nginx)",
           "type": "group",
+          "capability": "kubernetes",
           "condition": {
             "field": "ingress.enabled",
             "value": true

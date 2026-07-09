@@ -620,6 +620,47 @@ const ServiceWizardPage: React.FC = () => {
     return Array.from(new Set(missing));
   }, [def, resolvedSel, installValues]);
 
+  // Auto-enable a toggle when the selected platform context provides its capability — e.g. the Hive
+  // catalog turns ON when the context exposes Hive (resolvedFields has a `hive.*` value). Declared
+  // per-field via `autoEnableWhenContext: "<capability>"`. Applied once per (context, field) so it
+  // seeds a sensible default without fighting a later manual toggle by the operator.
+  const autoEnabledRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    if (!def || !resolvedSel) return;
+    const rf = resolvedSel.resolvedFields || {};
+    // A single capability string OR an array (ALL must be provided — AND). The array form gates a
+    // toggle on more than one context capability, e.g. Ranger TagSync only auto-enables when the
+    // context exposes BOTH Ranger and Atlas (a tag source + a tag store), never an incomplete half.
+    const providesOne = (cap: string) =>
+      Object.keys(rf).some((k) => k.startsWith(cap + '.') && String(rf[k] ?? '').trim() !== '');
+    const provides = (cap: string | string[]) =>
+      Array.isArray(cap) ? cap.length > 0 && cap.every(providesOne) : providesOne(cap);
+    const collect = (fields: any[], out: any[] = []): any[] => {
+      for (const f of fields || []) {
+        if (f && typeof f === 'object') {
+          if (f.autoEnableWhenContext && f.name) out.push(f);
+          if (Array.isArray(f.fields)) collect(f.fields, out);
+        }
+      }
+      return out;
+    };
+    const ctxId = selectedCtxId || 'default';
+    const toEnable = collect((def as any).form || [])
+      .filter((f) => provides(f.autoEnableWhenContext) && !autoEnabledRef.current.has(`${ctxId}:${f.name}`));
+    if (!toEnable.length) return;
+    setInstallValues((prev: any) => {
+      const next = { ...prev };
+      for (const f of toEnable) {
+        autoEnabledRef.current.add(`${ctxId}:${f.name}`);
+        const parts = String(f.name).split('.');
+        let o: any = next;
+        for (let i = 0; i < parts.length - 1; i++) { o[parts[i]] = { ...(o[parts[i]] || {}) }; o = o[parts[i]]; }
+        o[parts[parts.length - 1]] = true;
+      }
+      return next;
+    });
+  }, [def, resolvedSel, selectedCtxId]);
+
   // Actual deploy submit. `atlasRestartAuthorized` carries the operator's choice from the
   // pre-deploy restart-confirmation modal (true = let KDPS restart Atlas to activate the OM
   // federation user; false = skip the restart, operator restarts manually). It is threaded to the

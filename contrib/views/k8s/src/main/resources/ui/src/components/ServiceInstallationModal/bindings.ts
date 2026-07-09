@@ -177,6 +177,13 @@ export type VariableSpec =
     // truthy the variable is left unset, so a `skipIfVarEmpty` binding (e.g. the Hive catalog) is
     // skipped entirely — i.e. "use the context's Hive only when the operator turned it on".
     | { name: string; from: { type: 'context'; key: string; overrideFields?: string[]; enabledField?: string } }
+    // `equals` derives a boolean-ish gate var ("true" / "") by comparing another (already-resolved)
+    // variable against a constant. Used to branch a binding on a resolved capability value that has
+    // no boolean form field — e.g. Superset picks hive:// vs impala:// from `hive.transportMode`.
+    // `negate` flips the result, so `{var:'hiveTransportMode', value:'binary', negate:true}` is
+    // "true for anything that is NOT binary" (http / all / unresolved) — the safe default branch.
+    // Declare an `equals` var AFTER the variable it references (phase-1 resolution is in array order).
+    | { name: string; from: { type: 'equals'; var: string; value: string; negate?: boolean; caseInsensitive?: boolean } }
     | { name: string; template: string };
 
 /**
@@ -235,6 +242,16 @@ export const buildVarContext = (
         }
         if (!nonBlank(val)) val = resolvedFields?.[v.from.key];
         if (nonBlank(val)) setAtStr(ctx, v.name, val);
+      } else if ((v.from as any).type === 'equals') {
+        // Compares an already-resolved var (declared earlier) against a constant → "true" / "".
+        const cur = getAtStr(ctx, (v.from as any).var);
+        const target = (v.from as any).value;
+        const ci = (v.from as any).caseInsensitive;
+        let match = ci
+            ? String(cur ?? '').toLowerCase() === String(target ?? '').toLowerCase()
+            : String(cur ?? '') === String(target ?? '');
+        if ((v.from as any).negate) match = !match;
+        setAtStr(ctx, v.name, match ? 'true' : '');
       }
     }
   });
@@ -342,6 +359,14 @@ export function valueFromTargetSource(
    These functions apply the logic defined in charts.json "bindings" to create the final YAML.
    ============================================================================================== */
 
+/** `skipIfVarEmpty` gate: skip when the referenced var is empty. Accepts a single var name or an
+ *  array (skip if ANY is empty — i.e. all must be non-empty for the target/binding to apply). */
+const skipForVars = (checkVar: any, varCtx?: Record<string, any>): boolean => {
+  if (!checkVar) return false;
+  const names = Array.isArray(checkVar) ? checkVar : [checkVar];
+  return names.some((n: string) => !varCtx?.[n]);
+};
+
 /** * Creates a "Patch" object. This is a sparse object containing ONLY the changes
  * dictated by the bindings. It does not modify the source object.
  */
@@ -366,11 +391,7 @@ export const makeTargetsPatch = (
       // -- CONDITIONAL LOGIC --
       // If "skipIfVarEmpty" is set, we check the variable context.
       // If the variable is empty/false, we skip generating this target entirely.
-      if ((t as any).skipIfVarEmpty) {
-        const checkVar = (t as any).skipIfVarEmpty;
-        const checkVal = varCtx?.[checkVar];
-        if (!checkVal) continue;
-      }
+      if (skipForVars((t as any).skipIfVarEmpty, varCtx)) continue;
 
       // Handle Arrays (e.g. ingress.hosts[], volumes[])
       if (t.path.endsWith('[]')) {
@@ -436,22 +457,14 @@ export function applyBindingTargets(
   if (!bindingList) return;
   for (const b of bindingList) {
     // Binding-level skip
-    if ((b as any).skipIfVarEmpty) {
-      const checkVar = (b as any).skipIfVarEmpty;
-      const checkVal = varCtx?.[checkVar];
-      if (!checkVal) continue;
-    }
+    if (skipForVars((b as any).skipIfVarEmpty, varCtx)) continue;
     if (!Array.isArray(b.targets)) continue;
 
     for (const t of b.targets) {
 
       // -- CONDITIONAL LOGIC --
       // Skip this target if the referenced variable is empty
-      if ((t as any).skipIfVarEmpty) {
-        const checkVar = (t as any).skipIfVarEmpty;
-        const checkVal = varCtx?.[checkVar];
-        if (!checkVal) continue;
-      }
+      if (skipForVars((t as any).skipIfVarEmpty, varCtx)) continue;
       // Skip if value already exists and skipIfExists is true
       if ((t as any).skipIfExists) {
         const existing = getAt(mergedValues, toPath(t.path.replace(/\[\]$/, '')));

@@ -66,6 +66,10 @@ export const fieldCapabilityAvailable = (
 ): boolean => {
   if (!cap) return true;
   if (cap === 'openshift') return caps?.platform === 'openshift';
+  // `kubernetes` is the inverse of `openshift` and fail-OPEN: an nginx-Ingress-only field (class,
+  // annotations, proxy buffers) shows everywhere EXCEPT a confirmed OpenShift cluster — on OpenShift
+  // the platform router/Route owns host+port+TLS+tuning, so those fields are hidden as irrelevant.
+  if (cap === 'kubernetes') return caps?.platform !== 'openshift';
   if (!caps) return true; // fail-open while loading
   if (cap === 'certManager') return !!caps.certManager?.installed;
   if (cap === 'externalSecrets') return !!caps.externalSecrets?.installed;

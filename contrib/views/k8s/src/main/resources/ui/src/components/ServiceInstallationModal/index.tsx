@@ -1385,7 +1385,7 @@ const handleServiceChange = (value: string) => {
           <Form.Item name="securityProfile" label="Security Profile" tooltip="Apply a global security profile (LDAP/AD/OIDC truststore wiring)">
             <Select allowClear placeholder="Default profile">
               {Object.keys(securityProfiles.profiles || {}).map(key => (
-                <Option key={key} value={key}>{key}</Option>
+                <Option key={key} value={key}>{(securityProfiles.profiles as any)?.[key]?.displayName || key}</Option>
               ))}
             </Select>
           </Form.Item>

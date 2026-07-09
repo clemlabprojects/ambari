@@ -116,7 +116,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
             <Form.Item name="securityProfile" label="Security Profile" tooltip="Pick the auth profile to apply (LDAP/AD/OIDC truststore wiring)">
                 <Select allowClear placeholder="Default profile">
                   {Object.keys(securityProfiles).map((p: string) => (
-                    <Select.Option key={p} value={p}>{p}</Select.Option>
+                    <Select.Option key={p} value={p}>{securityProfiles[p]?.displayName || p}</Select.Option>
                   ))}
                 </Select>
             </Form.Item>
