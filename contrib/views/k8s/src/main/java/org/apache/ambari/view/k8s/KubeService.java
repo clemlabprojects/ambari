@@ -339,8 +339,25 @@ public class KubeService {
             boolean thanos = k.canI("get", "", "services", "proxy", "openshift-user-workload-monitoring")
                     || k.canI("get", "", "services", "proxy", "openshift-monitoring");
             checks.add(preflightCheck("Query platform monitoring (Thanos)", "Monitoring", thanos));
+
+            // SCC (advisory): a chart that needs non-default UIDs (runAsUser:0, fsGroup, seccomp) won't
+            // run under the default restricted-v2 SCC. The view NEVER grants SCCs itself (they are
+            // cluster-wide privilege grants) — this only tells the operator whether they can, and prints
+            // the exact command. Advisory: it does not fail the overall preflight.
+            boolean canGrantScc = k.canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace)
+                    && k.canI("use", "security.openshift.io", "securitycontextconstraints", "anyuid", null);
+            Map<String, Object> sccCheck = preflightCheck(
+                    "Grant a non-default SCC (anyuid) — only if a chart requires it", "Security (SCC)", canGrantScc);
+            sccCheck.put("advisory", true);
+            sccCheck.put("remediation", "oc adm policy add-scc-to-user anyuid -z <serviceaccount> -n " + namespace);
+            sccCheck.put("note", "SCCs are cluster-wide grants; a cluster admin runs this only when a chart "
+                    + "needs anyuid/privileged. The view does not grant SCCs.");
+            checks.add(sccCheck);
         }
-        boolean allOk = checks.stream().allMatch(c -> Boolean.TRUE.equals(c.get("allowed")));
+        // Advisory checks (e.g. SCC) don't count against the overall readiness gate.
+        boolean allOk = checks.stream()
+                .filter(c -> !Boolean.TRUE.equals(c.get("advisory")))
+                .allMatch(c -> Boolean.TRUE.equals(c.get("allowed")));
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("platform", ocp ? "openshift" : "kubernetes");
         out.put("namespace", namespace);

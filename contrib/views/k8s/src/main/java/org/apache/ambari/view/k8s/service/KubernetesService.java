@@ -2411,6 +2411,107 @@ public class KubernetesService {
     }
 
     /**
+     * OpenShift SCC preflight (detect-else-request, mirrors {@link #ensureKedaThanosTokenSecret}).
+     * For each declared grant {@code {scc, serviceAccounts}}, bind the SCC's ClusterRole to those
+     * SPECIFIC service accounts so pods that pin a UID/GID or run as root (bundled OpenSearch,
+     * Airflow) are admitted, WITHOUT touching the SAs that must stay on {@code restricted-v2}.
+     *
+     * <p>Deliberately PER-SERVICEACCOUNT, not a namespace-group grant. Granting {@code anyuid} to
+     * {@code system:serviceaccounts:<ns>} also makes SAs that rely on the platform injecting a
+     * namespace-range UID (e.g. the OpenMetadata server, which sets {@code runAsNonRoot} with no
+     * UID) prefer {@code anyuid} — which injects nothing, so the image runs as root and the pod
+     * fails "container has runAsNonRoot and image will run as root". Binding only the SAs that need
+     * it leaves the server + postgres SAs on {@code restricted-v2}. RBAC subjects need not exist
+     * yet, so we can bind the release-templated Airflow SA names before Helm creates them.
+     *
+     * <p>{@code {{releaseName}}} in a service-account name is expanded to {@code releaseName}. Each
+     * SCC's RoleBinding is reconciled (deleted + recreated) so its subject list always matches the
+     * current declaration — this also heals any legacy group-subject binding of the same name.
+     *
+     * <p>Returns {@code null} when everything is granted (or off OpenShift), or an actionable message
+     * listing the {@code oc adm policy add-scc-to-user} commands a cluster admin must run when the
+     * view's account lacks the rights.
+     */
+    public String ensureSccGrants(String namespace, String releaseName, java.util.List<java.util.Map<String, Object>> sccGrants) {
+        if (client == null) return "No cluster connection.";
+        if (!isOpenShiftCluster()) return null;              // no-op on vanilla Kubernetes
+        if (namespace == null || namespace.isBlank() || sccGrants == null || sccGrants.isEmpty()) return null;
+
+        boolean canRb = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
+        java.util.List<String> unresolved = new java.util.ArrayList<>();
+        String rel = releaseName == null ? "" : releaseName;
+
+        for (java.util.Map<String, Object> grant : sccGrants) {
+            if (grant == null) continue;
+            Object sccObj = grant.get("scc");
+            String scc = sccObj == null ? null : sccObj.toString().trim();
+            if (scc == null || scc.isBlank()) continue;
+
+            // Resolve + template the target service accounts. No SAs => nothing safe to grant
+            // (never fall back to a namespace-group grant — see javadoc).
+            java.util.List<String> sas = new java.util.ArrayList<>();
+            Object saObj = grant.get("serviceAccounts");
+            if (saObj instanceof java.util.List) {
+                for (Object o : (java.util.List<?>) saObj) {
+                    if (o == null) continue;
+                    String sa = o.toString().replace("{{releaseName}}", rel).replace("{{release}}", rel).trim();
+                    if (!sa.isBlank()) sas.add(sa);
+                }
+            }
+            if (sas.isEmpty()) {
+                LOG.warn("openshiftScc grant for '{}' declares no serviceAccounts; skipping (refusing a namespace-wide grant)", scc);
+                continue;
+            }
+
+            String rbName = "kdps-scc-" + scc;
+            String clusterRole = "system:openshift:scc:" + scc;
+            if (!canRb) { unresolved.add(scc + " " + String.join(",", sas)); continue; }
+
+            RoleBindingBuilder rbb = new RoleBindingBuilder()
+                    .withNewMetadata().withName(rbName).withNamespace(namespace).endMetadata()
+                    .withNewRoleRef()
+                        .withApiGroup("rbac.authorization.k8s.io")
+                        .withKind("ClusterRole")
+                        .withName(clusterRole)
+                    .endRoleRef();
+            for (String sa : sas) {
+                rbb.addNewSubject()
+                        .withKind("ServiceAccount")
+                        .withName(sa)
+                        .withNamespace(namespace)
+                    .endSubject();
+            }
+            try {
+                // Reconcile: delete any existing binding of this name (heals a stale group/subject set)
+                // then create with the current per-SA subjects.
+                try { client.rbac().roleBindings().inNamespace(namespace).withName(rbName).delete(); } catch (Exception ignore) { }
+                client.rbac().roleBindings().inNamespace(namespace).resource(rbb.build()).create();
+                LOG.info("Granted SCC '{}' to service accounts {} in namespace {} (RoleBinding {})", scc, sas, namespace, rbName);
+            } catch (Exception e) {
+                // Typically RBAC escalation-prevention: the view can create RoleBindings but is not
+                // itself allowed to use this SCC, so it cannot grant it. Surface the manual command.
+                LOG.warn("Could not grant SCC '{}' in {}: {}", scc, namespace, e.getMessage());
+                unresolved.add(scc + " " + String.join(",", sas));
+            }
+        }
+
+        if (unresolved.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("The view's account cannot grant the OpenShift SCC(s) required by this "
+                + "service to namespace '" + namespace + "'. Ask a cluster administrator to run, before deploying:\n");
+        for (String u : unresolved) {
+            String[] parts = u.split(" ", 2);
+            String scc = parts[0];
+            String[] sas = (parts.length > 1 ? parts[1] : "").split(",");
+            sb.append("  oc adm policy add-scc-to-user ").append(scc);
+            for (String sa : sas) {
+                if (!sa.isBlank()) sb.append(" -z ").append(sa);
+            }
+            sb.append(" -n ").append(namespace).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    /**
      * Apply bearer tokens to Prometheus requests if the kubeconfig provides one.
      */
     private void applyPrometheusAuth(HttpRequest.Builder builder) {
@@ -3155,6 +3256,79 @@ public class KubernetesService {
             return out;
         } catch (Exception e) {
             LOG.warn("listIngresses failed: {}", e.toString());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext ROUTE_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("route.openshift.io").withVersion("v1")
+                    .withKind("Route").withPlural("routes").withNamespaced(true).build();
+
+    private static Map<String, Object> asMap(Object o) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> m = (o instanceof Map) ? (Map<String, Object>) o : java.util.Collections.emptyMap();
+        return m;
+    }
+    private static String str(Object o) { return o == null ? null : String.valueOf(o); }
+
+    /** Whether the router admitted a Route (status.ingress[].conditions[type=Admitted].status == True). */
+    private static boolean routeAdmitted(Map<String, Object> status) {
+        Object ingress = status.get("ingress");
+        if (ingress instanceof List<?> list) {
+            for (Object entry : list) {
+                Object conds = asMap(entry).get("conditions");
+                if (conds instanceof List<?> cl) {
+                    for (Object c : cl) {
+                        Map<String, Object> cm = asMap(c);
+                        if ("Admitted".equals(str(cm.get("type"))) && "True".equals(str(cm.get("status")))) return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Browse-view list of OpenShift Routes in a namespace. Empty on non-OpenShift clusters. Read via the
+     * generic resource API (no openshift-client impl needed on the classpath). One row per Route with the
+     * reachable URL, target service:port, TLS termination and whether the router admitted it — this is
+     * how the view surfaces "where's my UI?" on OpenShift, where charts emit Routes instead of Ingresses.
+     */
+    public List<Map<String, Object>> listRoutes(String namespace) {
+        try {
+            checkConfiguration();
+            if (!isOpenShiftCluster()) return java.util.Collections.emptyList();
+            var op = client.genericKubernetesResources(ROUTE_RDC);
+            var items = (namespace != null && !namespace.isBlank())
+                    ? op.inNamespace(namespace).list().getItems()
+                    : op.inAnyNamespace().list().getItems();
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var route : items) {
+                Map<String, Object> props = route.getAdditionalProperties();
+                Map<String, Object> spec = asMap(props.get("spec"));
+                Map<String, Object> status = asMap(props.get("status"));
+                String host = str(spec.get("host"));
+                String path = str(spec.get("path"));
+                String termination = str(asMap(spec.get("tls")).get("termination"));
+                boolean secure = termination != null && !termination.isBlank();
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("namespace", route.getMetadata() != null ? route.getMetadata().getNamespace() : null);
+                r.put("name", route.getMetadata() != null ? route.getMetadata().getName() : null);
+                r.put("host", host);
+                r.put("path", path);
+                r.put("url", (host == null || host.isBlank()) ? null
+                        : (secure ? "https://" : "http://") + host + (path != null && !path.isBlank() ? path : ""));
+                r.put("service", str(asMap(spec.get("to")).get("name")));
+                r.put("port", asMap(spec.get("port")).get("targetPort"));
+                r.put("tls", termination);
+                r.put("admitted", routeAdmitted(status));
+                r.put("creationTimestamp", route.getMetadata() != null ? route.getMetadata().getCreationTimestamp() : null);
+                out.add(r);
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.warn("listRoutes failed: {}", e.toString());
             return java.util.Collections.emptyList();
         }
     }
