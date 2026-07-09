@@ -499,6 +499,27 @@ public class ReleaseMetadataService {
                 }
             }
 
+            // 1b) OpenShift Routes — on OpenShift charts emit Routes instead of Ingresses, so the
+            // Ingress scan above finds nothing. Surface the release's Routes as public endpoints too.
+            if (ks.isOpenShiftCluster()) {
+                for (Map<String, Object> r : ks.listRoutes(namespace)) {
+                    String name = r.get("name") != null ? String.valueOf(r.get("name")) : null;
+                    String url = r.get("url") != null ? String.valueOf(r.get("url")) : null;
+                    if (name == null
+                            || !name.toLowerCase(Locale.ROOT).contains(releaseName.toLowerCase(Locale.ROOT))
+                            || url == null || url.isBlank()) {
+                        continue;
+                    }
+                    ReleaseEndpointDTO dto = new ReleaseEndpointDTO();
+                    dto.setId("route-" + name);
+                    dto.setLabel("Route " + (r.get("host") != null ? r.get("host") : name));
+                    dto.setUrl(url);
+                    dto.setKind("public");
+                    dto.setDescription("Discovered from OpenShift Route " + name);
+                    result.add(dto);
+                }
+            }
+
             // 2) Services of type LoadBalancer
             List<Service> services = client.services()
                     .inNamespace(namespace)

@@ -23,6 +23,8 @@ import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { API_BASE_URL } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
+import { getPods, listDeployments, type DeploymentRow } from '../api/client';
+import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
@@ -58,7 +60,30 @@ const HelmReleasesPage: React.FC = () => {
   const [tlsByRelease, setTlsByRelease] = useState<Record<string, ReleaseTlsEntry[]>>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [statusModalRelease, setStatusModalRelease] = useState<HelmRelease | null>(null);
+  // Live workload snapshot for the release-detail modal (fetched on open; k8s + OpenShift alike).
+  const [releaseDetail, setReleaseDetail] = useState<{ pods: KubePod[]; deployments: DeploymentRow[]; loading: boolean }>(
+    { pods: [], deployments: [], loading: false });
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
+
+  // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
+  // label) so the modal shows real health/workloads instead of mostly-empty Flux reconcile metadata.
+  useEffect(() => {
+    const rel = statusModalRelease;
+    if (!rel) { setReleaseDetail({ pods: [], deployments: [], loading: false }); return; }
+    let alive = true;
+    setReleaseDetail((d) => ({ ...d, loading: true }));
+    const selector = `app.kubernetes.io/instance=${rel.name}`;
+    Promise.allSettled([getPods(rel.namespace, selector), listDeployments(rel.namespace)])
+      .then(([podsRes, depRes]) => {
+        if (!alive) return;
+        const pods = podsRes.status === 'fulfilled' ? podsRes.value : [];
+        const allDeps = depRes.status === 'fulfilled' ? depRes.value : [];
+        const rx = rel.name.toLowerCase();
+        const deployments = allDeps.filter((d) => (d.name || '').toLowerCase().includes(rx));
+        setReleaseDetail({ pods, deployments, loading: false });
+      });
+    return () => { alive = false; };
+  }, [statusModalRelease]);
   const [historyEntries, setHistoryEntries] = useState<HelmHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | undefined>(undefined);
@@ -781,7 +806,8 @@ const HelmReleasesPage: React.FC = () => {
                 onClick={() => navigate('/workloads', {
                   state: {
                     namespace: r.namespace,
-                    labelSelector: `release=${r.name}`
+                    // Helm's standard release label — `release=<name>` matched nothing (charts don't set it).
+                    labelSelector: `app.kubernetes.io/instance=${r.name}`
                   }
                 })}
               >
@@ -1006,6 +1032,22 @@ const HelmReleasesPage: React.FC = () => {
               rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}
               loading={isLoading || status === 'loading'}
               size="small"
+              onRow={(record: any) => ({
+                style: { cursor: 'pointer' },
+                // Click anywhere on the row (except an interactive cell — name link, action buttons,
+                // menus, endpoint links) opens the detailed release-status view.
+                onClick: (e: React.MouseEvent) => {
+                  const el = e.target as HTMLElement;
+                  // In-row interactive elements.
+                  if (el.closest('a, button, .ant-btn, .ant-dropdown-trigger, .ant-switch, [role="button"], .ant-tag')) return;
+                  // Portal popups (Dropdown menu, Popover, Modal, Select…) render at document.body but
+                  // their React tree is nested under this row's Actions cell, so React synthetic events
+                  // still bubble here — guard on the portal roots so a menu-item click never opens the
+                  // details modal.
+                  if (el.closest('.ant-dropdown, .ant-dropdown-menu, .ant-popover, .ant-modal, .ant-select-dropdown, .ant-picker-dropdown, .ant-tooltip')) return;
+                  setStatusModalRelease(record);
+                },
+              })}
               pagination={{
                 current: pageIndex,
                 pageSize,
@@ -1021,60 +1063,106 @@ const HelmReleasesPage: React.FC = () => {
               open={!!statusModalRelease}
               onCancel={() => setStatusModalRelease(null)}
               footer={<Button onClick={() => setStatusModalRelease(null)}>Close</Button>}
-              width={640}
+              width={760}
             >
-              <Descriptions column={1} size="small" bordered>
-                <Descriptions.Item label="Status">
-                  <Space>
-                    <StatusTag status={statusModalRelease?.status || 'unknown'} />
-                    <span>{statusModalRelease?.message || 'No status message'}</span>
-                  </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="GitOps">
-                  {statusModalRelease?.deploymentMode === 'FLUX_GITOPS' ? (
-                    <Space direction="vertical" size="small">
-                      <span>Repo: {statusModalRelease.gitRepoUrl || '—'}</span>
-                      <span>Branch: {statusModalRelease.gitBranch || '—'}</span>
-                      <span>Path: {statusModalRelease.gitPath || '—'}</span>
-                      {statusModalRelease.gitPrState ? (
-                        <span>
-                          PR {statusModalRelease.gitPrNumber || ''} — {statusModalRelease.gitPrState}
-                          {statusModalRelease.gitPrUrl ? (
-                            <a href={statusModalRelease.gitPrUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>
-                              View
-                            </a>
-                          ) : null}
-                        </span>
+              {statusModalRelease && (() => {
+                const rel = statusModalRelease;
+                const pods = releaseDetail.pods;
+                const podTotal = pods.length;
+                const podRunning = pods.filter(p => (p.phase || '') === 'Running').length;
+                const restarts = pods.reduce((sum, p) => sum + (p.containers || []).reduce((s, c) => s + (c.restartCount || 0), 0), 0);
+                const isGitOps = rel.deploymentMode === 'FLUX_GITOPS';
+                return (
+                  <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                    {/* Overview — the pertinent identity/health, same on k8s and OpenShift */}
+                    <Descriptions column={1} size="small" bordered>
+                      <Descriptions.Item label="Status">
+                        <Space><StatusTag status={rel.status || 'unknown'} />{rel.message ? <span>{rel.message}</span> : null}</Space>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Chart">
+                        <Text code style={{ fontSize: 12 }}>{rel.chart}</Text>
+                        <Text type="secondary"> @ {rel.version}</Text>
+                        {rel.appVersion ? <Text type="secondary"> · app {rel.appVersion}</Text> : null}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Deployment">
+                        {isGitOps ? 'Flux GitOps' : 'Direct Helm'}
+                        {rel.serviceKey ? <Tag style={{ marginLeft: 8 }}>{rel.serviceKey}</Tag> : null}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Updated">{rel.updated ? new Date(rel.updated).toLocaleString() : '—'}</Descriptions.Item>
+                      {rel.securityProfile ? (
+                        <Descriptions.Item label="Security profile">
+                          {rel.securityProfile}{rel.securityProfileStale ? <Tag color="orange" style={{ marginLeft: 8 }}>stale</Tag> : null}
+                        </Descriptions.Item>
                       ) : null}
-                    </Space>
-                  ) : (
-                    'Direct Helm deployment'
-                  )}
-                </Descriptions.Item>
-                <Descriptions.Item label="Reconcile">
-                  <Space direction="vertical" size="small">
-                    <span>Observed generation: {statusModalRelease?.observedGeneration || '—'}</span>
-                    <span>Desired generation: {statusModalRelease?.desiredGeneration || '—'}</span>
-                    <span>Last reconcile: {statusModalRelease?.lastHandledReconcileAt || '—'}</span>
-                    <span>Last transition: {statusModalRelease?.lastTransitionTime || '—'}</span>
-                    {statusModalRelease?.staleGeneration ? <Tag color="blue">Reconciling</Tag> : null}
+                    </Descriptions>
+
+                    {/* Endpoints — the reachable URLs (Route on OpenShift, Ingress/LB on k8s) */}
+                    <div>
+                      <Text strong>Endpoints</Text>
+                      <div style={{ marginTop: 6 }}>
+                        {rel.endpoints && rel.endpoints.length ? (
+                          <Space direction="vertical" size={2}>
+                            {rel.endpoints.map(ep => (
+                              <div key={ep.id || ep.url}>
+                                {ep.url ? <a href={ep.url} target="_blank" rel="noreferrer">{ep.label || ep.url}</a> : <span>{ep.label || ep.id}</span>}
+                                {ep.internal ? <Tag style={{ marginLeft: 6 }}>internal</Tag> : null}
+                              </div>
+                            ))}
+                          </Space>
+                        ) : <Text type="secondary">No external endpoint (Route/Ingress) discovered.</Text>}
+                      </div>
+                    </div>
+
+                    {/* Live workloads — real health from the cluster */}
+                    <div>
+                      <Space>
+                        <Text strong>Workloads</Text>
+                        {releaseDetail.loading ? <Tag>loading…</Tag> : (
+                          <Space size={6}>
+                            <Tag color={podTotal > 0 && podRunning === podTotal ? 'green' : podTotal === 0 ? 'default' : 'orange'}>{podRunning}/{podTotal} pods running</Tag>
+                            {restarts > 0 ? <Tag color="orange">⟳ {restarts} restarts</Tag> : null}
+                          </Space>
+                        )}
+                      </Space>
+                      {releaseDetail.deployments.length ? (
+                        <Table size="small" rowKey="name" pagination={false} style={{ marginTop: 8 }}
+                          dataSource={releaseDetail.deployments}
+                          columns={[
+                            { title: 'Deployment', dataIndex: 'name', render: (v: string) => <Text code style={{ fontSize: 11 }}>{v}</Text> },
+                            { title: 'Ready', key: 'ready', width: 80, render: (_: any, d: DeploymentRow) => { const r = d.readyReplicas ?? 0, t = d.replicas ?? 0; return <Tag color={t > 0 && r === t ? 'green' : r === 0 ? 'red' : 'orange'} style={{ margin: 0 }}>{r}/{t}</Tag>; } },
+                            { title: 'Image', dataIndex: 'image', ellipsis: true, render: (v: string) => v ? <Text style={{ fontSize: 11 }}>{v}</Text> : null },
+                          ] as any}
+                        />
+                      ) : null}
+                      {pods.length ? (
+                        <Table size="small" rowKey="name" style={{ marginTop: 8 }}
+                          pagination={pods.length > 8 ? { pageSize: 8, size: 'small' } : false}
+                          dataSource={pods}
+                          columns={[
+                            { title: 'Pod', dataIndex: 'name', render: (v: string) => <Text code style={{ fontSize: 11 }}>{v}</Text> },
+                            { title: 'Phase', dataIndex: 'phase', width: 100, render: (v: string) => <Tag color={v === 'Running' ? 'green' : v === 'Pending' ? 'blue' : v === 'Succeeded' ? 'default' : 'red'} style={{ margin: 0 }}>{v || '?'}</Tag> },
+                            { title: 'Restarts', key: 'rs', width: 90, render: (_: any, p: KubePod) => { const rs = (p.containers || []).reduce((s, c) => s + (c.restartCount || 0), 0); return rs > 0 ? <Tag color="orange" style={{ margin: 0 }}>{rs}</Tag> : <span>0</span>; } },
+                            { title: 'Node', dataIndex: 'nodeName', ellipsis: true, render: (v: string) => v ? <Text style={{ fontSize: 11 }}>{v}</Text> : null },
+                          ] as any}
+                        />
+                      ) : (!releaseDetail.loading ? <div style={{ marginTop: 8 }}><Text type="secondary">No pods matched app.kubernetes.io/instance={rel.name}.</Text></div> : null)}
+                    </div>
+
+                    {/* GitOps/reconcile — only shown when the release is actually Flux-managed */}
+                    {isGitOps ? (
+                      <Descriptions column={1} size="small" bordered>
+                        <Descriptions.Item label="GitOps repo">{rel.gitRepoUrl || '—'}{rel.gitBranch ? ` (${rel.gitBranch})` : ''}{rel.gitPath ? ` · ${rel.gitPath}` : ''}</Descriptions.Item>
+                        <Descriptions.Item label="Reconcile">{rel.reconcileState || '—'}{rel.staleGeneration ? <Tag color="blue" style={{ marginLeft: 8 }}>reconciling</Tag> : null}{rel.lastHandledReconcileAt ? ` · ${rel.lastHandledReconcileAt}` : ''}</Descriptions.Item>
+                        {rel.conditions?.length ? (
+                          <Descriptions.Item label="Conditions">
+                            {rel.conditions.map((cond, idx) => (<div key={`${idx}-${cond.type}`}><strong>{cond.type || 'Condition'}</strong> – {cond.status || 'Unknown'} {cond.message ? `· ${cond.message}` : ''}</div>))}
+                          </Descriptions.Item>
+                        ) : null}
+                      </Descriptions>
+                    ) : null}
                   </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="Conditions">
-                  {statusModalRelease?.conditions?.length ? statusModalRelease.conditions.map((cond, idx) => (
-                    <div key={`${idx}-${cond.type}`}>
-                      <strong>{cond.type || 'Condition'}</strong> – {cond.status || 'Unknown'} {cond.message ? `· ${cond.message}` : ''}
-                    </div>
-                  )) : '—'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Repo health">
-                  {statusModalRelease?.sourceConditions?.length ? statusModalRelease.sourceConditions.map((cond, idx) => (
-                    <div key={`source-${idx}-${cond.type}`}>
-                      <strong>{cond.type || 'Source'}</strong> – {cond.status || 'Unknown'} {cond.message ? `· ${cond.message}` : ''}
-                    </div>
-                  )) : '—'}
-                </Descriptions.Item>
-              </Descriptions>
+                );
+              })()}
             </Modal>
 
             <Modal

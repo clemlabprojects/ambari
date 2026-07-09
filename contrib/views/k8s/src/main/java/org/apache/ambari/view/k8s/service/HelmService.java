@@ -401,20 +401,55 @@ public class HelmService {
             }
         } else {
             LOG.info("Release exists → upgrade: chartRef={}, ns={}, name={}, version={}, dryRun={}", chartRef, namespace, releaseName, versionOpt, dryRun);
-            return helmClient.upgrade(
-                        chartRef,
-                        versionOpt,
-                        resolveChartRef(chartName,repoIdOpt).isOci,
-                        releaseName,
-                        namespace,
-                        pathConfiguration.repositoriesConfig(),
-                        kubeconfig,
-                        finalValues,
-                        timeoutSec,
-                        /*wait*/ wait,
-                        /*atomic*/ atomic,
-                        /*dryRun*/ dryRun
-            );
+            try {
+                return helmClient.upgrade(
+                            chartRef,
+                            versionOpt,
+                            resolveChartRef(chartName,repoIdOpt).isOci,
+                            releaseName,
+                            namespace,
+                            pathConfiguration.repositoriesConfig(),
+                            kubeconfig,
+                            finalValues,
+                            timeoutSec,
+                            /*wait*/ wait,
+                            /*atomic*/ atomic,
+                            /*dryRun*/ dryRun
+                );
+            } catch (RuntimeException upErr) {
+                // A release whose FIRST revision failed or is stuck pending is "existing" but has no
+                // DEPLOYED revision, so `helm upgrade` errors "has no deployed releases" (and a stuck
+                // pending-install errors "another operation ... in progress"). This is exactly the
+                // state a timed-out/failed first install leaves behind — and the case the operation
+                // Resume must recover. Uninstall the dead release, then install fresh. On a dry-run
+                // we can't (and needn't) uninstall — just validate via a dry-run install.
+                final String m = upErr.getMessage() == null ? "" : upErr.getMessage().toLowerCase(Locale.ROOT);
+                boolean deadRelease = m.contains("has no deployed releases")
+                        || m.contains("another operation") || m.contains("in progress")
+                        || m.contains("pending");
+                if (!deadRelease) throw upErr;
+                LOG.warn("Upgrade failed on a non-deployed release ('{}'); recovering via {}install.",
+                        upErr.getMessage(), dryRun ? "dry-run " : "uninstall+");
+                if (!dryRun) {
+                    try { helmClient.uninstall(releaseName, namespace, kubeconfig); }
+                    catch (Exception ue) { LOG.warn("Uninstall of dead release '{}/{}' failed (continuing to install): {}", namespace, releaseName, ue.toString()); }
+                }
+                return helmClient.install(
+                            chartRef,
+                            versionOpt,
+                            resolveChartRef(chartName,repoIdOpt).isOci,
+                            releaseName,
+                            namespace,
+                            pathConfiguration.repositoriesConfig(),
+                            kubeconfig,
+                            finalValues,
+                            timeoutSec,
+                            /*createNs*/ true,
+                            /*wait*/ wait,
+                            /*atomic*/ atomic,
+                            /*dryRun*/ dryRun
+                );
+            }
         }
     }
 

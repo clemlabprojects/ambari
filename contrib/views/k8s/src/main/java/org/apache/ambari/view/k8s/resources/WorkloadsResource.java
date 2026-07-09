@@ -160,6 +160,17 @@ public class WorkloadsResource {
     }
 
     /**
+     * OpenShift Route browse list. One row per Route with host, reachable URL, target service,
+     * TLS termination and admitted state. Empty on non-OpenShift clusters. On OpenShift charts
+     * emit Routes (not Ingresses), so this is where operators find a deployed UI's URL.
+     */
+    @GET
+    @Path("/routes")
+    public List<Map<String, Object>> listRoutes(@QueryParam("namespace") String namespace) {
+        return kube().listRoutes(unscope(namespace));
+    }
+
+    /**
      * Normalize the UI's "all namespaces" marker ("*") and empty strings into
      * null so the service-layer helpers do a cluster-wide list. Keeps the URL
      * shape clean (?namespace=* is more readable than omitting the param).

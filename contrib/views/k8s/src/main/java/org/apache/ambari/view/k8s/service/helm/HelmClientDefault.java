@@ -99,7 +99,11 @@ public class HelmClientDefault implements HelmClient {
             if (createNamespace) installCommand = installCommand.createNamespace();
             if (atomic) installCommand = installCommand.atomic();
             if (wait) installCommand = installCommand.waitReady();
-            // if (dryRun) installCommand = installCommand.dryRun(); // Enable if your helm-java supports it
+            // CRITICAL: apply dry-run when requested. Without it the "validate chart (dry-run)" step
+            // performs a REAL install — which for a chart with post-install hook jobs (e.g. OpenMetadata's
+            // airflow create-user/migrate-db) BLOCKS waiting on those hooks and leaves a stuck
+            // pending release, so the next deploy fails with "another operation in progress".
+            if (dryRun) installCommand = installCommand.dryRun();
 
             if (!chartRef.startsWith("oci://")) {
                 installCommand = installCommand.withRepositoryConfig(repositoriesConfig);
@@ -131,7 +135,9 @@ public class HelmClientDefault implements HelmClient {
 
             if (atomic) upgradeCommand = upgradeCommand.atomic();
             if (wait) upgradeCommand = upgradeCommand.waitReady();
-            // if (dryRun) upgradeCommand = upgradeCommand.dryRun(); // if available
+            // Apply dry-run when requested (see install() — a "dry-run" that really installs blocks
+            // on post-install hooks and leaves a stuck pending release).
+            if (dryRun) upgradeCommand = upgradeCommand.dryRun();
 
             if (!chartRef.startsWith("oci://")) {
                 upgradeCommand = upgradeCommand.withRepositoryConfig(repositoriesConfig);

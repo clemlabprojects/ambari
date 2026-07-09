@@ -34,10 +34,13 @@ import {
   listDeployments,
   listConfigMaps,
   listIngresses,
+  listRoutes,
   type DeploymentRow,
   type ConfigMapRow,
   type IngressRow,
+  type RouteRow,
 } from '../api/client';
+import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
 import { DownloadOutlined } from '@ant-design/icons';
@@ -90,6 +93,11 @@ const WorkloadsPage: React.FC = () => {
   const [configMapsLoading, setConfigMapsLoading] = useState(false);
   const [ingresses, setIngresses] = useState<IngressRow[]>([]);
   const [ingressesLoading, setIngressesLoading] = useState(false);
+  // OpenShift Routes — shown as their own tab only when the detected platform is OpenShift
+  // (charts emit Routes instead of Ingresses there; this is where the deployed UI URL lives).
+  const isOpenShift = useCapabilities()?.platform === 'openshift';
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(false);
 
   useEffect(() => {
     // Initial namespace fetch and default selection (prefer nav state/query when present)
@@ -347,6 +355,14 @@ const WorkloadsPage: React.FC = () => {
     listIngresses(namespaceForList).then(setIngresses).catch(() => setIngresses([])).finally(() => setIngressesLoading(false));
   }, [activeTab, namespaceForList]);
 
+  useEffect(() => {
+    // Eager-load Routes on OpenShift (not gated on the active tab) so the tab's count badge is
+    // correct on arrival — e.g. when navigating in from a release — instead of showing 0 until clicked.
+    if (!isOpenShift) return;
+    setRoutesLoading(true);
+    listRoutes(namespaceForList).then(setRoutes).catch(() => setRoutes([])).finally(() => setRoutesLoading(false));
+  }, [namespaceForList, isOpenShift]);
+
   const deploymentColumns = [
     { title: 'Namespace', dataIndex: 'namespace', sorter: (a: DeploymentRow, b: DeploymentRow) => (a.namespace || '').localeCompare(b.namespace || '') },
     { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
@@ -386,6 +402,21 @@ const WorkloadsPage: React.FC = () => {
     },
     { title: 'TLS Secrets', dataIndex: 'tlsSecrets', width: 110, render: (n: number) => <Tag color={n > 0 ? 'green' : 'default'} style={{ margin: 0 }}>{n}</Tag> },
     { title: 'Address', dataIndex: 'address', render: (v: string) => v ? <Typography.Text code style={{ fontSize: 11 }}>{v}</Typography.Text> : null },
+  ];
+
+  const routeColumns = [
+    { title: 'Namespace', dataIndex: 'namespace', sorter: (a: RouteRow, b: RouteRow) => (a.namespace || '').localeCompare(b.namespace || '') },
+    { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+    {
+      title: 'URL',
+      dataIndex: 'url',
+      render: (v: string, row: RouteRow) => v
+        ? <a href={v} target="_blank" rel="noreferrer">{v}</a>
+        : (row.host ? <Typography.Text>{row.host}</Typography.Text> : <Typography.Text type="secondary">—</Typography.Text>),
+    },
+    { title: 'Service', dataIndex: 'service', width: 200, render: (v: string, row: RouteRow) => v ? <Typography.Text code style={{ fontSize: 11 }}>{v}{row.port != null ? `:${row.port}` : ''}</Typography.Text> : null },
+    { title: 'TLS', dataIndex: 'tls', width: 100, render: (v: string) => v ? <Tag color="green" style={{ margin: 0 }}>{v}</Tag> : <Tag style={{ margin: 0 }}>none</Tag> },
+    { title: 'Admitted', dataIndex: 'admitted', width: 100, render: (ok: boolean) => <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? 'Yes' : 'No'}</Tag> },
   ];
 
   // Tab order is intentional: most-used (Pods, Deployments) first; networking
@@ -454,6 +485,20 @@ const WorkloadsPage: React.FC = () => {
         />
       ),
     },
+    ...(isOpenShift ? [{
+      key: 'routes',
+      label: <Space size={4}>Routes <Tag color="gold">{routes.length}</Tag></Space>,
+      children: (
+        <Table<RouteRow>
+          rowKey={(r) => `${r.namespace}/${r.name}`}
+          size="small"
+          loading={routesLoading}
+          dataSource={routes}
+          columns={routeColumns as any}
+          pagination={{ pageSize: 25, size: 'small' }}
+        />
+      ),
+    }] : []),
     {
       key: 'configmaps',
       label: <Space size={4}>ConfigMaps <Tag color="geekblue">{configMaps.length}</Tag></Space>,
