@@ -44,7 +44,7 @@ import { useClusterStatus } from '../../context/ClusterStatusContext';
 import { useThemeMode } from '../../context/ThemeModeContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import NamespaceSelector from './NamespaceSelector';
-import { listCommands, getClusterCapabilities } from '../../api/client';
+import { listCommands, getClusterCapabilities, pingSession } from '../../api/client';
 import './AppLayout.css';
 
 const { Header, Content, Sider } = Layout;
@@ -140,6 +140,14 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const id = window.setInterval(loadOperationsCount, 15000);
     return () => window.clearInterval(id);
   }, [isOperationsModalOpen]);
+
+  // Continuous session heartbeat (like the main Ambari dashboard): a cheap authenticated ping every
+  // 8s so an expired session is detected and redirected to the Ambari login WITHOUT any user action
+  // or page refresh — on any page, even idle ones. The redirect itself is handled by handleAuthExpiry.
+  React.useEffect(() => {
+    const id = window.setInterval(() => { void pingSession(); }, 8000);
+    return () => window.clearInterval(id);
+  }, []);
 
   /**
    * Build the sidebar menu. We use sub-menus (groups) to keep the top-level
