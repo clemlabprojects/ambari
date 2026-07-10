@@ -158,7 +158,10 @@
                   <goal>copy-dependencies</goal>
                 </goals>
                 <configuration>
-                  <excludeArtifactIds>ambari-logsearch-web,spring-boot-starter,spring-boot-starter-actuator,log4j-slf4j-impl,
+                  <!-- slf4j-reload4j is dragged in transitively (Hadoop deps) and competes with Logback as the SLF4J
+                       binding; it makes SLF4J bind to Reload4jLoggerFactory so the LogSearch portal's Logback init
+                       fails ("LoggerFactory is not a Logback LoggerContext"). Keep Logback as the sole binding. -->
+                  <excludeArtifactIds>ambari-logsearch-web,spring-boot-starter,spring-boot-starter-actuator,log4j-slf4j-impl,slf4j-reload4j,
                     spring-boot-starter-freemarker,spring-boot-starter-jersey,spring-boot-starter-jetty,spring-boot-starter-json,
                     spring-boot-starter-log4j2,spring-boot-starter-security,spring-boot-starter-validation,spring-boot-starter-web</excludeArtifactIds>
                   <outputAbsoluteArtifactFilename>true</outputAbsoluteArtifactFilename>
