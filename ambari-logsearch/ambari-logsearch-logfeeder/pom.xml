@@ -400,7 +400,10 @@
 
             </goals>
             <configuration>
-              <excludeArtifactIds>spring-boot-starter,spring-boot-starter-log4j2</excludeArtifactIds>
+              <!-- slf4j-reload4j is dragged in transitively (Hadoop deps) and competes with Logback as the SLF4J
+                   binding; on the classpath it makes SLF4J bind to Reload4jLoggerFactory, so Spring Boot's Logback
+                   init fails ("LoggerFactory is not a Logback LoggerContext"). Keep Logback as the sole binding. -->
+              <excludeArtifactIds>spring-boot-starter,spring-boot-starter-log4j2,slf4j-reload4j,log4j-slf4j-impl</excludeArtifactIds>
               <outputAbsoluteArtifactFilename>true</outputAbsoluteArtifactFilename>
               <outputDirectory>${basedir}/target/libs</outputDirectory>
               <overWriteReleases>false</overWriteReleases>
