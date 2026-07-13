@@ -78,13 +78,21 @@ const AppRouter: React.FC = () => {
   }
 
   if (status === 'unconfigured') {
+    // First-run (no cluster configured): rendered WITHOUT AppLayout, so it needs its own
+    // scroll container — otherwise the ConfigurationPage's antd <Layout> overflows #root
+    // (overflow:hidden) and the page can't scroll full-page. Same 100dvh flex-column +
+    // min-height:0 + overflow:auto pattern as .main-scroll / the AppLayout config fallback.
     return (
-      <React.Suspense fallback={<PageFallback />}>
-        <Routes>
-          <Route path="/configuration" element={<ConfigurationPage />} />
-          <Route path="*" element={<Navigate to="/configuration" replace />} />
-        </Routes>
-      </React.Suspense>
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+          <React.Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/configuration" element={<ConfigurationPage />} />
+              <Route path="*" element={<Navigate to="/configuration" replace />} />
+            </Routes>
+          </React.Suspense>
+        </div>
+      </div>
     );
   }
 

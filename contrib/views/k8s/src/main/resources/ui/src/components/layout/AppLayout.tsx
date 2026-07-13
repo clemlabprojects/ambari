@@ -208,12 +208,19 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isConfigPage = location.pathname.startsWith('/configuration');
   if (isConfigPage) {
     // First-run configuration screen renders without the chrome so a
-    // disconnected view doesn't expose a broken sidebar. Use a plain block
-    // scroll container — NOT .app-layout, which is display:flex row + height:100%:
-    // in a flex row the content column is stretch-capped to the viewport height,
-    // so the container never overflows and the page can't scroll when the view
-    // runs full-page (standalone). A block with overflow-y:auto scrolls correctly.
-    return <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>{children}</div>;
+    // disconnected view doesn't expose a broken sidebar. Reuse the SAME scroll
+    // pattern as .main-scroll (which scrolls correctly on every other page):
+    // a viewport-height (100dvh) flex column whose inner pane is flex:1 1 auto +
+    // min-height:0 + overflow:auto. The min-height:0 is what lets the pane shrink
+    // below its content and actually engage the scrollbar — a plain height:100%
+    // block does NOT establish a scroll context around the page's antd <Layout>,
+    // so the page couldn't scroll full-page. 100dvh anchors to the viewport so it
+    // works regardless of the ancestor height chain.
+    return (
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>{children}</div>
+      </div>
+    );
   }
 
   return (
