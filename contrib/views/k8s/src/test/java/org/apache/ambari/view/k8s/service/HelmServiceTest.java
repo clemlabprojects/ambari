@@ -90,7 +90,7 @@ class HelmServiceTest {
     req.setNamespace("apps");
     req.setValues(Map.of("replicaCount", 1));
 
-    when(helm.list("apps", "KC", true)).thenReturn(List.of());
+    when(helm.list("apps", "KC", false)).thenReturn(List.of());
 
     Release rel = mock(Release.class);
 
@@ -137,7 +137,7 @@ class HelmServiceTest {
 
     Release existing = mock(Release.class);
     when(existing.getName()).thenReturn("prom");
-    when(helm.list("apps", "KC", true)).thenReturn(List.of(existing));
+    when(helm.list("apps", "KC", false)).thenReturn(List.of(existing));
 
     Release rel = mock(Release.class);
     when(helm.upgrade(
@@ -187,7 +187,7 @@ class HelmServiceTest {
     req.setNamespace("apps");
     // values null par défaut
 
-    when(helm.list("apps", "KC", true)).thenReturn(List.of());
+    when(helm.list("apps", "KC", false)).thenReturn(List.of());
 
     Release rel = mock(Release.class);
     when(helm.install(
