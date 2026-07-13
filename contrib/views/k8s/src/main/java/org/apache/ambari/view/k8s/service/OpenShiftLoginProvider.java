@@ -220,11 +220,19 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         }
         TrustManagerFactory custom = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         custom.init(ts);
-        TrustManagerFactory def = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        def.init((KeyStore) null);
-        return new CompositeTrustManager(
-                (X509TrustManager) def.getTrustManagers()[0],
-                (X509TrustManager) custom.getTrustManagers()[0]);
+        X509TrustManager customTm = (X509TrustManager) custom.getTrustManagers()[0];
+        // Compose with the JVM default trust store so public CAs still validate. But the Ambari
+        // server JVM's default trust store may be locked down / unreadable from the view context
+        // (KeyStoreException: "problem accessing trust store"). If so, trust ONLY the provided CA —
+        // the operator supplied it precisely so this endpoint is trusted.
+        try {
+            TrustManagerFactory def = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            def.init((KeyStore) null);
+            return new CompositeTrustManager((X509TrustManager) def.getTrustManagers()[0], customTm);
+        } catch (Exception e) {
+            LOG.warn("Default trust store unavailable ({}); trusting only the provided OpenShift CA.", e.toString());
+            return customTm;
+        }
     }
 
     private X509TrustManager trustAll() {

@@ -60,6 +60,10 @@ public class ViewConfigurationService {
     private static final String OS_USERNAME_KEY = "openshift.username";
     private static final String OS_PASSWORD_ENC_KEY = "openshift.password.enc";
     private static final String OS_CA_KEY = "openshift.caData";
+    // A CA PEM/chain overflows the 2000-char viewinstancedata column, so it is written to a file
+    // in the working dir and only its path is kept in instance data (OS_CA_PATH_KEY).
+    private static final String OS_CA_PATH_KEY = "openshift.caPath";
+    private static final String OPENSHIFT_CA_FILE = "openshift-ca.pem";
     private static final String OS_INSECURE_KEY = "openshift.insecure";
 
     // View-wide outbound proxy for reaching internet Helm/Git repositories (password encrypted at rest).
@@ -239,7 +243,15 @@ public class ViewConfigurationService {
                         encryptionService.encrypt(password.getBytes(StandardCharsets.UTF_8)));
                 viewContext.putInstanceData(OS_PASSWORD_ENC_KEY, enc);
             }
-            viewContext.putInstanceData(OS_CA_KEY, caData != null ? caData : "");
+            // The CA is a PEM (often a full chain) that easily exceeds the 2000-char
+            // viewinstancedata column, so persist it to a file in the working dir (like the
+            // kubeconfig) and store only the path. getOpenShiftCaData() reads it back.
+            if (caData != null && !caData.isBlank()) {
+                viewContext.putInstanceData(OS_CA_PATH_KEY, saveOpenShiftCaFile(caData));
+            } else {
+                viewContext.putInstanceData(OS_CA_PATH_KEY, "");
+            }
+            viewContext.putInstanceData(OS_CA_KEY, ""); // never store the raw PEM inline (2000-char limit)
             viewContext.putInstanceData(OS_INSECURE_KEY, Boolean.toString(insecure));
             viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN);
             viewContext.putInstanceData(KUBECONFIG_UPLOADED, "true");
@@ -266,7 +278,7 @@ public class ViewConfigurationService {
                 LOG.error("Failed to decrypt stored OpenShift password: {}", e.getMessage());
             }
         }
-        String caData = viewContext.getInstanceData(OS_CA_KEY);
+        String caData = getOpenShiftCaData();
         boolean insecure = Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY));
         openShiftLoginProvider = new OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
         return openShiftLoginProvider;
@@ -310,7 +322,47 @@ public class ViewConfigurationService {
     }
 
     public String getOpenShiftApiUrl() { return viewContext.getInstanceData(OS_API_URL_KEY); }
-    public String getOpenShiftCaData() { return viewContext.getInstanceData(OS_CA_KEY); }
+    public String getOpenShiftCaData() {
+        String path = viewContext.getInstanceData(OS_CA_PATH_KEY);
+        if (path != null && !path.isBlank()) {
+            try {
+                return AccessController.doPrivileged((PrivilegedExceptionAction<String>) () -> {
+                    File f = new File(path);
+                    return f.exists()
+                            ? new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)
+                            : null;
+                });
+            } catch (Exception e) {
+                LOG.warn("Failed to read OpenShift CA file {}: {}", path, e.getMessage());
+            }
+        }
+        // Legacy fallback: a small CA stored inline before the file-based change.
+        String inline = viewContext.getInstanceData(OS_CA_KEY);
+        return (inline == null || inline.isBlank()) ? null : inline;
+    }
+
+    /** Write the OpenShift CA PEM to a file in the working dir; returns its absolute path. */
+    private String saveOpenShiftCaFile(String caPem) {
+        final String dir = getConfigurationDirectoryPath();
+        try {
+            return AccessController.doPrivileged((PrivilegedExceptionAction<String>) () -> {
+                File d = new File(dir);
+                if (!d.exists() && !d.mkdirs()) {
+                    throw new IOException("Could not create working directory: " + dir);
+                }
+                File f = new File(d, OPENSHIFT_CA_FILE);
+                try (OutputStream os = new FileOutputStream(f)) {
+                    os.write(caPem.getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                }
+                LOG.info("Wrote OpenShift CA ({} chars) to {}", caPem.length(), f.getAbsolutePath());
+                return f.getAbsolutePath();
+            });
+        } catch (Exception e) {
+            LOG.error("Failed to write OpenShift CA file: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to write OpenShift CA file", e);
+        }
+    }
     public boolean isOpenShiftInsecure() { return Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY)); }
 
     /**

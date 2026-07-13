@@ -2691,26 +2691,43 @@ public class KubernetesService {
      * client-certificate auth via the Config's key managers.
      */
     private KubernetesClient buildTrustingClient(Config config, java.util.List<String> caDataList) throws Exception {
-        KeyStore ts = KeyStore.getInstance(KeyStore.getDefaultType());
-        ts.load(null, null);
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        final TrustManager[] trustManagers;
         int i = 0;
-        for (String caData : caDataList) {
-            for (java.security.cert.Certificate c :
-                    cf.generateCertificates(new ByteArrayInputStream(Base64.getDecoder().decode(caData)))) {
-                if (c instanceof X509Certificate) {
-                    LOG.info("Trusting kubeconfig CA subject: {}", ((X509Certificate) c).getSubjectX500Principal().getName());
+        if (config.isTrustCerts()) {
+            // insecure-skip-tls-verify: trust everything and never touch a trust store. The Ambari
+            // server JVM's default trust store may be unreadable from the view context, which would
+            // otherwise fail even insecure connections with "problem accessing trust store".
+            LOG.warn("Building Kubernetes client in insecure (trust-all) TLS mode.");
+            trustManagers = new TrustManager[]{ trustAllManager() };
+        } else {
+            KeyStore ts = KeyStore.getInstance(KeyStore.getDefaultType());
+            ts.load(null, null);
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            for (String caData : caDataList) {
+                for (java.security.cert.Certificate c :
+                        cf.generateCertificates(new ByteArrayInputStream(Base64.getDecoder().decode(caData)))) {
+                    if (c instanceof X509Certificate) {
+                        LOG.info("Trusting kubeconfig CA subject: {}", ((X509Certificate) c).getSubjectX500Principal().getName());
+                    }
+                    ts.setCertificateEntry("k8s-ca-" + (i++), c);
                 }
-                ts.setCertificateEntry("k8s-ca-" + (i++), c);
             }
+            TrustManagerFactory customTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            customTmf.init(ts);
+            X509TrustManager customTm = (X509TrustManager) customTmf.getTrustManagers()[0];
+            // Compose with the JVM default trust store so public CAs still validate — but fall back
+            // to the injected CA(s) alone if that store is unreadable from the view context
+            // ("problem accessing trust store"), rather than failing the whole client build.
+            X509TrustManager tm = customTm;
+            try {
+                TrustManagerFactory defTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                defTmf.init((KeyStore) null);
+                tm = new CompositeTrustManager((X509TrustManager) defTmf.getTrustManagers()[0], customTm);
+            } catch (Exception e) {
+                LOG.warn("Default trust store unavailable ({}); trusting only the {} injected CA cert(s).", e.toString(), i);
+            }
+            trustManagers = new TrustManager[]{ tm };
         }
-        TrustManagerFactory customTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        customTmf.init(ts);
-        X509TrustManager customTm = (X509TrustManager) customTmf.getTrustManagers()[0];
-        TrustManagerFactory defTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        defTmf.init((KeyStore) null);
-        X509TrustManager defTm = (X509TrustManager) defTmf.getTrustManagers()[0];
-        final TrustManager[] trustManagers = new TrustManager[]{ new CompositeTrustManager(defTm, customTm) };
 
         KeyManager[] km = null;
         try {
@@ -2725,6 +2742,15 @@ public class KubernetesService {
                 .withConfig(config)
                 .withHttpClientBuilderConsumer(b -> b.sslContext(keyManagers, trustManagers))
                 .build();
+    }
+
+    /** Trust-all X509 manager for insecure (skip-tls-verify) mode — never touches a trust store. */
+    private static X509TrustManager trustAllManager() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] c, String a) { }
+            public void checkServerTrusted(X509Certificate[] c, String a) { }
+            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+        };
     }
 
     /** CA data of the cluster referenced by {@code contextName} (or the current-context when null). */
