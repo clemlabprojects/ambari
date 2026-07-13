@@ -2854,11 +2854,6 @@ public class KubernetesService {
                    IOException {
         LOG.info("Adding {} kubeconfig cluster CA entry(ies) to the JVM's default SSL context.", caDataList.size());
 
-        // Default JVM trust manager — preserves trust for the platform cacerts bundle.
-        TrustManagerFactory defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        defaultTrustManagerFactory.init((KeyStore) null);
-        X509TrustManager defaultTrustManager = (X509TrustManager) defaultTrustManagerFactory.getTrustManagers()[0];
-
         KeyStore customTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         customTrustStore.load(null, null);
 
@@ -2881,8 +2876,22 @@ public class KubernetesService {
         customTrustManagerFactory.init(customTrustStore);
         X509TrustManager customTrustManager = (X509TrustManager) customTrustManagerFactory.getTrustManagers()[0];
 
+        // Preserve the platform cacerts bundle by composing with the JVM default trust manager — but
+        // the Ambari server JVM's default trust store may be unreadable / password-mismatched from the
+        // view context (KeyStoreException: "Keystore was tampered with, or password was incorrect").
+        // If so, install ONLY the cluster CA(s) rather than failing every HTTPS path in the JVM.
+        X509TrustManager effectiveTrustManager = customTrustManager;
+        try {
+            TrustManagerFactory defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            defaultTrustManagerFactory.init((KeyStore) null);
+            X509TrustManager defaultTrustManager = (X509TrustManager) defaultTrustManagerFactory.getTrustManagers()[0];
+            effectiveTrustManager = new CompositeTrustManager(defaultTrustManager, customTrustManager);
+        } catch (Exception e) {
+            LOG.warn("Default trust store unavailable ({}); JVM default SSL context will trust ONLY the {} cluster CA cert(s).", e.toString(), caIndex);
+        }
+
         SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, new TrustManager[]{new CompositeTrustManager(defaultTrustManager, customTrustManager)}, null);
+        sslContext.init(null, new TrustManager[]{ effectiveTrustManager }, null);
         SSLContext.setDefault(sslContext);
 
         LOG.info("JVM default SSL context updated to trust {} kubeconfig CA certificate(s).", caIndex);
