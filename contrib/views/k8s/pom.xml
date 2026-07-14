@@ -521,6 +521,46 @@ limitations under the License.
                             </target>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- The Maven exclusions keep the OTHER arch's helm-java native jar out of the
+                             dependency graph, but target/lib and classes/WEB-INF/lib are staging dirs
+                             that survive incremental rebuilds: switching -Dambari.grafana.arch without
+                             `mvn clean` left BOTH linux-amd64 and linux-arm64 (25MB each) in the view
+                             jar. Delete every helm native jar that is not the target arch from both
+                             staging dirs so the packaged artifact always ships exactly one. -->
+                        <id>enforce-single-helm-native-arch</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <delete>
+                                    <fileset dir="${project.build.directory}/lib"
+                                             includes="linux-amd64-*.jar,linux-arm64-*.jar,darwin-amd64-*.jar,darwin-arm64-*.jar"
+                                             excludes="linux-${ambari.grafana.arch}-*.jar"
+                                             erroronmissingdir="false"/>
+                                </delete>
+                                <delete>
+                                    <fileset dir="${project.build.directory}/classes/WEB-INF/lib"
+                                             includes="linux-amd64-*.jar,linux-arm64-*.jar,darwin-amd64-*.jar,darwin-arm64-*.jar"
+                                             excludes="linux-${ambari.grafana.arch}-*.jar"
+                                             erroronmissingdir="false"/>
+                                </delete>
+                                <!-- Strip the ServiceLoader registration from the remaining native jar so the
+                                     view's own KdpsHelmNativeLibrary provider (exec-safe extraction dir, arch
+                                     picked by os.arch) is the ONLY registered com.marcnuri.helm.jni.NativeLibrary.
+                                     The Ambari ViewClassLoader lists WEB-INF/lib jars in arbitrary order BEFORE
+                                     the view classes, so without this strip the stock provider (java.io.tmpdir
+                                     extraction — broken on noexec /tmp hosts) wins the ServiceLoader race. -->
+                                <zip destfile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar">
+                                    <zipfileset src="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
+                                                excludes="META-INF/services/com.marcnuri.helm.jni.NativeLibrary"/>
+                                </zip>
+                                <move file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar"
+                                      tofile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
+                                      overwrite="true"/>
+                            </target>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 

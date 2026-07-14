@@ -89,7 +89,18 @@ public class ViewConfigurationService {
         this.viewContext = viewContext;
         this.encryptionService = new EncryptionService();
         LOG.debug("EncryptionService initialized successfully");
-        
+
+        // Point the helm-java native-library extraction at the (exec-permitted) view working dir
+        // BEFORE anything touches com.marcnuri.helm.Helm — on hardened hosts java.io.tmpdir is
+        // often mounted noexec, and Helm$HelmLibHolder's static-init failure would poison the
+        // class for the whole JVM lifetime.
+        try {
+            org.apache.ambari.view.k8s.service.helm.KdpsHelmNativeLibrary.setExtractionBaseDir(
+                    new File(getConfigurationDirectoryPath(), "helm-native").toPath());
+        } catch (Exception e) {
+            LOG.warn("Could not set helm-java extraction dir: {}", e.toString());
+        }
+
         // Check if the view is configured and if the kubeconfig file exists
         if (isConfigured()) {
             LOG.info("View is configured, checking kubeconfig file existence");
