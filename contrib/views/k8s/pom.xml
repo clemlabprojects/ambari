@@ -926,6 +926,12 @@ chmod +x "${OUT_DIR}/load.sh"
                     <include>*.json</include>
                     <include>KDPS/**</include>
                     <include>KDPS**</include>
+                    <!-- ServiceLoader registration of KdpsHelmNativeLibrary (exec-safe helm-java
+                         loader). This whitelist REPLACES Maven's default resource handling, so
+                         without an explicit include the services file is silently dropped and
+                         NativeLibrary.getInstance() finds no provider at all (the native jars'
+                         own registrations are stripped at prepare-package). -->
+                    <include>META-INF/services/**</include>
                 </includes>
             </resource>
             <resource>
