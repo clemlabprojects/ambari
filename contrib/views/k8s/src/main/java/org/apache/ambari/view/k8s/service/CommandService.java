@@ -4309,6 +4309,16 @@ public class CommandService {
         } catch (Exception ex) {
             LOG.warn("Failed to provision truststore Secret from Ambari truststore: {}", ex.toString());
         }
+        // The required Hadoop config maps are MATERIALIZED FROM THE LOCAL (managed) cluster's
+        // desired configs. On a standalone Ambari (no cluster) — or when the cluster could not be
+        // resolved — there is nothing to read them from: skip the whole block instead of NPE-ing
+        // in getDesiredConfigProperties(cluster=null,...). Deploys against an EXTERNAL/CDP context
+        // or with no platform context never rely on these config maps.
+        if (hadoopRequiredConfigMaps != null && (ambariActionClient == null || cluster == null || cluster.isBlank())) {
+            LOG.warn("No local Ambari cluster available (standalone Ambari?) — skipping {} required Hadoop "
+                    + "config map(s); hadoopConf stays disabled for this deploy.", hadoopRequiredConfigMaps.size());
+            hadoopRequiredConfigMaps = null;
+        }
         if (hadoopRequiredConfigMaps != null) {
             LOG.info("Parsing Required Hadoop Config Maps");
             Map<String, AmbariActionClient.AmbariConfigPropertiesTypes> defaultConfigs = ambariActionClient.getDefaultConfigTypes();

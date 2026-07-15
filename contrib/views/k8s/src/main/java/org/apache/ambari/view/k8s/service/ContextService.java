@@ -57,6 +57,9 @@ public class ContextService {
 
     /** Stable id of the auto-seeded context bound to the Ambari-managed cluster. */
     public static final String DEFAULT_CONTEXT_ID = "default";
+    /** Virtual "no platform context" id — a standalone service wired to no backend at all. */
+    public static final String NO_CONTEXT_ID = "none";
+    public static final String KIND_NONE = "NONE";
 
     public static final String KIND_MANAGED  = "MANAGED";
     public static final String KIND_EXTERNAL = "EXTERNAL";
@@ -143,10 +146,11 @@ public class ContextService {
      */
     public KdpsContextEntity save(ContextRequest request) {
         Objects.requireNonNull(request, "context must not be null");
-        if (DEFAULT_CONTEXT_ID.equals(request.id) || KIND_MANAGED.equals(request.kind)) {
+        if (DEFAULT_CONTEXT_ID.equals(request.id) || KIND_MANAGED.equals(request.kind)
+                || NO_CONTEXT_ID.equals(request.id) || KIND_NONE.equals(request.kind)) {
             throw new IllegalArgumentException(
-                    "The managed default context is virtual and cannot be created or edited; "
-                    + "only EXTERNAL and REMOTE contexts are persisted.");
+                    "The managed default and the no-context entries are virtual and cannot be created "
+                    + "or edited; only EXTERNAL and REMOTE contexts are persisted.");
         }
         validate(request);
 
@@ -386,6 +390,17 @@ public class ContextService {
      * @param clusterName the Ambari cluster name (for MANAGED resolution)
      */
     public ResolvedContext resolve(String contextId, AmbariActionClient ambari, String clusterName) {
+        // Explicit "no platform context" (standalone service): resolve to an inert context so every
+        // context-dependent step (Hive/Ranger/Kerberos/OIDC wiring) skips cleanly. First-class for
+        // standalone Ambari deployments where no managed cluster exists.
+        if (NO_CONTEXT_ID.equals(contextId)) {
+            ResolvedContext none = new ResolvedContext();
+            none.setId(NO_CONTEXT_ID);
+            none.setName("No platform context (standalone service)");
+            none.setKind(KIND_NONE);
+            none.setRangerManaged(false);
+            return none;
+        }
         KdpsContextEntity entity = (contextId == null || contextId.isBlank())
                 ? null
                 : repo.findById(contextId);

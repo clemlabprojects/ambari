@@ -693,8 +693,16 @@ const ServiceWizardPage: React.FC = () => {
               endpoints: (def as any)?.endpoints || undefined,
               mounts: isUpgrade ? null : ((installValues as any)?.mounts || (def as any)?.mounts || null),
               dependencies: isUpgrade ? null : ((def as any)?.dependencies || null),
-              ranger: isUpgrade ? null : ((def as any)?.ranger || null),
-              requiredConfigMaps: isUpgrade ? null : ((def as any)?.requiredConfigMaps || null),
+              // Context-dependent blocks are omitted when the deploy is wired to no platform
+              // context (standalone service): the Ranger spec targets the selected context's
+              // Ranger, and requiredConfigMaps are materialized from the LOCAL managed cluster's
+              // configs — meaningless (and standalone-fatal) without one. requiredConfigMaps are
+              // therefore only sent for a MANAGED-context deploy.
+              ranger: isUpgrade || selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
+              requiredConfigMaps: (isUpgrade
+                  || selectedCtxId === 'none'
+                  || ((contexts.find((c) => c.id === selectedCtxId)?.kind ?? 'MANAGED') !== 'MANAGED'))
+                ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
               tls: (installValues as any)?.tls || undefined,
               kerberos: (installValues as any)?.kerberos || undefined,
@@ -893,8 +901,15 @@ const ServiceWizardPage: React.FC = () => {
                   style={{ width: '100%' }}
                   value={selectedId}
                   onChange={(v) => setInstallValues((prev: any) => ({ ...prev, platformContextId: v }))}
-                  options={(contexts.length ? contexts : [{ id: 'default', name: 'Ambari-managed cluster', kind: 'MANAGED' } as PlatformContext])
-                    .map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` }))}
+                  options={[
+                    // First-class "no context": a standalone service wired to no backend at all.
+                    // Every context-dependent step (Hive/Ranger/Kerberos/OIDC wiring, Hadoop config
+                    // maps) is skipped — required on a standalone Ambari where no managed cluster
+                    // exists, and useful anywhere for a plain unwired deploy.
+                    { value: 'none', label: 'No platform context (standalone service)' },
+                    ...(contexts.length ? contexts : [{ id: 'default', name: 'Ambari-managed cluster', kind: 'MANAGED' } as PlatformContext])
+                      .map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` })),
+                  ]}
                   dropdownRender={(menu) => (
                     <>
                       {menu}
