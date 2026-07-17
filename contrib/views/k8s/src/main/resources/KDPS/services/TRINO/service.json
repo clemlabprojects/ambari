@@ -150,6 +150,8 @@
       "imageRepository": "registry.clemlab.com/clemlabprojects",
       "imageGlobalRegistryProperty": "global.image.registry",
       "namespace": "keda",
+      "skipIfReleaseExists": true,
+      "skipOnOpenShift": true,
       "crds": [
         "scaledobjects.keda.sh"
       ],
