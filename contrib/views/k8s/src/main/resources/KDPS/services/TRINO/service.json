@@ -516,9 +516,9 @@
       "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090"
     },
     {
-      "comment": "OpenShift: worker autoscaling reads metrics from the platform's built-in (user-workload) monitoring via the thanos-querier tenancy endpoint, which requires a bearer token. On vanilla K8s the kube-prometheus-stack address above is used instead.",
+      "comment": "OpenShift: worker autoscaling reads metrics from the platform's built-in (user-workload) monitoring via the thanos-querier CLUSTER endpoint (:9091). The KEDA SA is bound to cluster-monitoring-view, so :9091 is the correct port (the :9092 tenancy port returns HTTP 400 for a cluster-view token and needs a per-request namespace param KEDA does not send). Verified on CRC: :9091 + bearer token returns the trino_* metrics. On vanilla K8s the kube-prometheus-stack address above is used instead.",
       "name": "keda.thanos.serverAddress",
-      "template": "https://thanos-querier.openshift-monitoring.svc:9092"
+      "template": "https://thanos-querier.openshift-monitoring.svc:9091"
     },
     {
       "name": "keda.triggerAuth.name",
@@ -1283,10 +1283,11 @@
               "type": "prometheus",
               "metricType": "Value",
               "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "name": "trino_required_workers",
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "metricName": "trino_required_workers",
+                "unsafeSsl": "true",
                 "threshold": "${keda.requiredWorkers.threshold}",
                 "query": "sum by (service) (avg_over_time(trino_execution_ClusterSizeMonitor_RequiredWorkers{service=\"${trino.fullname}\"}[${keda.requiredWorkers.window}]))"
               }
@@ -1303,10 +1304,11 @@
               "type": "prometheus",
               "metricType": "Value",
               "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "name": "trino_queued_queries",
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "metricName": "trino_queued_queries",
+                "unsafeSsl": "true",
                 "threshold": "${keda.queuedQueries.threshold}",
                 "activationThreshold": "${keda.queuedQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_QueuedQueries{namespace=\"${namespace}\"})"
@@ -1324,10 +1326,11 @@
               "type": "prometheus",
               "metricType": "Value",
               "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "name": "trino_running_queries",
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "metricName": "trino_running_queries",
+                "unsafeSsl": "true",
                 "threshold": "${keda.runningQueries.threshold}",
                 "activationThreshold": "${keda.runningQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_RunningQueries{namespace=\"${namespace}\"})"
@@ -1345,10 +1348,11 @@
               "type": "prometheus",
               "metricType": "Value",
               "authenticationRef": { "name": "${keda.triggerAuth.name}" },
+              "name": "trino_heap_percent",
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "metricName": "trino_heap_percent",
+                "unsafeSsl": "true",
                 "threshold": "${keda.heap.threshold}",
                 "activationThreshold": "${keda.heap.activation}",
                 "query": "((sum(java_lang_Memory_HeapMemoryUsage_used{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"}) / sum(java_lang_Memory_HeapMemoryUsage_max{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"})) * 100)"
