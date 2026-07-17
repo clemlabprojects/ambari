@@ -6074,8 +6074,17 @@ public class CommandService {
                         applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        overrideProperties.put(imageGlobalRegistryProperty, imageRepository);
-                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {}", imageGlobalRegistryProperty, imageRepository);
+                        // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
+                        // registry as the main chart — i.e. the operator-selected Helm repo — not the
+                        // hardcoded service.json default. Mirror the main-release behaviour
+                        // (getEffectiveImageRegistry(repoId)); fall back to the service.json
+                        // imageRepository only when the selected repo resolves no image registry.
+                        String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+                        if (depRegistry == null || depRegistry.isBlank()) {
+                            depRegistry = imageRepository;
+                        }
+                        overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
+                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
                     }
                     LOG.info("Performing dry-run of dependency release: {} in namespace: {} with chart: {} and version: {} ", releaseName, namespace, chartName, chartVersion);
                     appendCommandLog(id, "Dry-run dependency: release=" + releaseName + " chart=" + chartName + " version=" + chartVersion + " repoId=" + repoId);
@@ -6214,8 +6223,17 @@ public class CommandService {
                         applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        overrideProperties.put(imageGlobalRegistryProperty, imageRepository);
-                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {}", imageGlobalRegistryProperty, imageRepository);
+                        // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
+                        // registry as the main chart — i.e. the operator-selected Helm repo — not the
+                        // hardcoded service.json default. Mirror the main-release behaviour
+                        // (getEffectiveImageRegistry(repoId)); fall back to the service.json
+                        // imageRepository only when the selected repo resolves no image registry.
+                        String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+                        if (depRegistry == null || depRegistry.isBlank()) {
+                            depRegistry = imageRepository;
+                        }
+                        overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
+                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
                     }
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
