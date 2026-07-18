@@ -778,6 +778,53 @@ public class CommandService {
     // =========================================================================
 
     /**
+     * True when an OIDC provider is actually configured for this deploy, so the OIDC client
+     * registration steps have a real Keycloak to target. A service definition declaring {@code oidc[]}
+     * is NOT sufficient on its own — it only says "this service can do OIDC". The provider comes from
+     * exactly one of three sources, mirroring what the OIDC_REGISTER_CLIENT runtime resolves:
+     * <ol>
+     *   <li>a selected security profile that carries OIDC (internal registration or external creds),</li>
+     *   <li>the selected platform context supplying its own OIDC admin creds (external/remote Keycloak),</li>
+     *   <li>a managed Ambari cluster whose {@code oidc-env} is enabled (the classic internal path).</li>
+     * </ol>
+     * With none of these — e.g. a standalone Ambari + external CDP context + no security profile — the
+     * service must deploy WITHOUT OIDC login rather than fall through to internal Keycloak registration
+     * and fail on cluster auto-discovery ("found no clusters in Ambari"). Logs the skip reason when it
+     * returns {@code false} (only called when the service actually declares oidc[]).
+     */
+    private boolean hasConfiguredOidcProvider(SecurityConfigDTO securityCfg,
+                                              Map<String, Object> params,
+                                              AmbariActionClient ambariActionClient,
+                                              String cluster,
+                                              String serviceKey) {
+        // (a) security profile OIDC
+        if (securityCfg != null && securityCfg.oidc != null) {
+            return true;
+        }
+        // (b) platform context OIDC admin creds (external/remote Keycloak)
+        org.apache.ambari.view.k8s.model.ResolvedContext oidcCtx = resolvePlatformContextForStep(params);
+        if (oidcCtx != null && oidcCtx.hasContextOidcAdminCreds()) {
+            return true;
+        }
+        // (c) managed cluster with oidc-env enabled
+        if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+            try {
+                String adminUrl = ambariActionClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+                if (adminUrl != null && !adminUrl.isBlank()) {
+                    return true;
+                }
+            } catch (Exception ex) {
+                LOG.debug("oidc-env not readable on cluster {}; managed OIDC path unavailable: {}", cluster, ex.toString());
+            }
+        }
+        LOG.info("Service {} declares oidc[] but no OIDC provider is configured "
+                        + "(no security-profile OIDC, no context OIDC admin creds, no managed oidc-env); "
+                        + "skipping OIDC client registration and deploying without OIDC login.",
+                serviceKey);
+        return false;
+    }
+
+    /**
      * Append OIDC client registration steps (register in Keycloak + create K8s Secret) to the
      * current command plan.  Called during deploy when the service definition contains oidc[].
      */
@@ -4841,7 +4888,8 @@ public class CommandService {
             List<Map<String, Object>> oidcEntries =
                     (oidcServiceDef != null && oidcServiceDef.oidc != null) ? oidcServiceDef.oidc : Collections.emptyList();
 
-            if (!oidcEntries.isEmpty()) {
+            if (!oidcEntries.isEmpty()
+                    && hasConfiguredOidcProvider(securityCfg, params, ambariActionClient, cluster, request.getServiceKey())) {
                 String oidcRealm = "";
                 if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
                     try {
