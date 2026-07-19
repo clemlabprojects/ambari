@@ -475,7 +475,8 @@
         "label": "Contrôle d'accès (Service Trino)",
         "type": "group",
         "fields": [
-          { "name": "accessControl.type", "label": "Enable Access Control", "type": "select", "options": [ { "label": "Disabled", "value": "{}" }, { "label": "Ranger", "value": "ranger" } ], "defaultValue": "ranger", "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès." },
+          { "name": "accessControl.type", "label": "Enable Access Control", "type": "select", "options": [ { "label": "Disabled (allow all)", "value": "properties" }, { "label": "Ranger", "value": "ranger" } ], "defaultValue": "ranger", "help": "Access control for the Trino coordinator. 'Disabled (allow all)' runs the built-in allow-all system access control; 'Ranger' enforces the selected Platform Context's Ranger policies." },
+          { "name": "accessControl.properties", "label": "Access control properties", "type": "string", "condition": { "field": "accessControl.type", "value": "properties" }, "defaultValue": "access-control.name=allow-all", "help": "Coordinator access-control.properties. Defaults to Trino's built-in allow-all (no restrictions); required by the chart whenever access control type is 'properties'." },
           { "name": "nodePort.port", "label": "Port du Nœud (Optionnel)", "type": "number", "condition": { "field": "nodePort.enabled", "value": true } }
         ]
       },

@@ -2390,8 +2390,8 @@
           "type": "select",
           "options": [
             {
-              "label": "Disabled",
-              "value": "{}"
+              "label": "Disabled (allow all)",
+              "value": "properties"
             },
             {
               "label": "Ranger",
@@ -2399,7 +2399,15 @@
             }
           ],
           "defaultValue": "ranger",
-          "help": "Activer l'intégration avec Apache Ranger pour le contrôle d'accès."
+          "help": "Access control for the Trino coordinator. 'Disabled (allow all)' runs Trino with its built-in allow-all system access control (no restrictions); 'Ranger' enforces the policies of the selected Platform Context's Ranger. NOTE: the value 'properties' is the chart's generic file/properties mode — combined with the allow-all line below it means 'no access control'."
+        },
+        {
+          "name": "accessControl.properties",
+          "label": "Access control properties",
+          "type": "string",
+          "condition": { "field": "accessControl.type", "value": "properties" },
+          "defaultValue": "access-control.name=allow-all",
+          "help": "Contents of the coordinator's access-control.properties. Defaults to Trino's built-in allow-all (no restrictions), which is what 'Disabled (allow all)' means. Advanced operators may override it (e.g. a file-based rules provider). Required by the chart whenever access control type is 'properties'."
         },
         {
           "name": "rangerAdminUrl",
