@@ -43,6 +43,11 @@ export const API_BASE_URL = resolveApiBase();
 let authRedirecting = false;
 export function handleAuthExpiry(status: number, body?: string): boolean {
   const b = (body || '').toLowerCase();
+  // A rejected CLUSTER token (backend marks it "K8S_UNAUTHORIZED") is NOT an Ambari-session expiry:
+  // it means the stored kube/OpenShift credentials went stale, not that the operator is logged out of
+  // Ambari. Never bounce them to the Ambari login for that — it is surfaced as a "disconnected" cluster
+  // badge and (for openshift-login) auto-healed server-side instead.
+  if (b.includes('k8s_unauthorized')) return false;
   const isAuthExpiry =
     status === 401 ||
     (status === 403 && (b.includes('authentication') || b.includes('token') || b.includes('not authenticated') || b.includes('csrf')));
@@ -1126,6 +1131,28 @@ export interface ClusterCapabilities {
 }
 export const getClusterCapabilities = async (): Promise<ClusterCapabilities> => {
   return fetchJson<ClusterCapabilities>('/cluster/capabilities');
+};
+
+/**
+ * Live connectivity outcome from the backend `/cluster/liveness` probe. Unlike `isViewConfigured`
+ * (which only says whether credentials were ever stored), this reflects whether those credentials
+ * still authenticate against the cluster right now. `state` mirrors the backend `ConnectionHealth`.
+ */
+export interface ClusterLiveness {
+  state: 'CONNECTED' | 'UNAUTHENTICATED' | 'UNREACHABLE' | 'UNCONFIGURED';
+  message: string;
+}
+
+/**
+ * Actively probes the cluster API to drive the honest connection badge. The endpoint always answers
+ * 200 with a {@link ClusterLiveness} body (probe failures are reported in `state`, not as HTTP errors),
+ * so this call itself does not throw for a dead token — the caller inspects `state`.
+ */
+export const getClusterLiveness = async (): Promise<ClusterLiveness> => {
+  if (import.meta.env.DEV) {
+    return { state: 'CONNECTED', message: 'dev mock' };
+  }
+  return fetchJson<ClusterLiveness>('/cluster/liveness');
 };
 
 export const getHelmRepos = () => {

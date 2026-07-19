@@ -19,9 +19,13 @@
 // ui/src/context/ClusterStatusContext.tsx
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import type { ServiceDefinition, ClusterStats, ComponentStatus, ClusterEvent, ClusterNode, HelmReleasePage } from '../types';
-import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getAvailableServices, getMonitoringDiscovery } from '../api/client';
+import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getMonitoringDiscovery, getClusterLiveness } from '../api/client';
+import { invalidateCapabilities } from '../components/ServiceInstallationModal/capabilities';
 
-type Status = 'loading' | 'connected' | 'unconfigured' | 'error' | 'configuring';
+// 'disconnected' = the view IS configured but its stored credentials no longer authenticate against
+// the cluster (token revoked/expired) or the API is unreachable. Distinct from 'unconfigured' (no
+// credentials ever stored) and 'error' (an unexpected client/Ambari-session failure).
+type Status = 'loading' | 'connected' | 'disconnected' | 'unconfigured' | 'error' | 'configuring';
 
 interface ClusterStatusContextType {
   status: Status;
@@ -37,6 +41,16 @@ interface ClusterStatusContextType {
   setClusterStatus: (status: Status) => void; // Optional setter for status
   checkViewIsConfigured?: () => boolean; // Optional method to check if the cluster is configured
   monitoringState?: { state?: string; message?: string };
+  /** Human-readable reason for a 'disconnected' status (e.g. "credentials rejected (401)"). */
+  connectionMessage?: string | null;
+  /**
+   * Increments every time the connection transitions back to 'connected' from a down state. Data that
+   * was fetched while disconnected (e.g. the step-3 cluster-resource pickers) depends on this so it
+   * re-fetches on reconnect instead of staying stale until a browser refresh.
+   */
+  connectionEpoch: number;
+  /** Runs a live connectivity probe and updates the badge (connected / disconnected). Never throws. */
+  checkLiveness: () => Promise<void>;
 }
 
 const ClusterStatusContext = createContext<ClusterStatusContextType | undefined>(undefined);
@@ -53,6 +67,13 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
   const [error, setError] = useState<string | null>(null);
   const [mainLoaderActive, setMainLoaderActive] = useState<boolean>(true);
   const [monitoringState, setMonitoringState] = useState<{ state?: string; message?: string }>({});
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [connectionEpoch, setConnectionEpoch] = useState<number>(0);
+
+  // Mirror `status` into a ref so the periodic liveness probe can read the current value without
+  // being re-created on every status change (keeps the 8s heartbeat interval stable).
+  const statusRef = React.useRef<Status>('loading');
+  React.useEffect(() => { statusRef.current = status; }, [status]);
 
   const setClusterStatus = (newStatus: Status) => {
     setStatus(newStatus);
@@ -107,8 +128,32 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       if (helmRes.status === 'fulfilled') setHelmReleases(helmRes.value);
 
-      // Consider connected if any core call succeeded and we are not marked unconfigured/error
-      setStatus((prev) => (prev === 'unconfigured' || prev === 'error') ? prev : 'connected');
+      // Derive the badge HONESTLY. If any core call actually returned data, we are definitively
+      // connected. If EVERY core call failed, do not blindly claim "connected" (the old bug) — run an
+      // authoritative liveness probe to tell "cluster down / token dead" apart from a transient hiccup.
+      const anyFulfilled = results.some((r) => r.status === 'fulfilled');
+      if (anyFulfilled) {
+        setConnectionMessage(null);
+        setStatus((prev) => (prev === 'unconfigured' || prev === 'error') ? prev : 'connected');
+      } else {
+        try {
+          const health = await getClusterLiveness();
+          if (health.state === 'CONNECTED') {
+            setConnectionMessage(null);
+            setStatus('connected');
+          } else if (health.state === 'UNCONFIGURED') {
+            setStatus('unconfigured');
+          } else {
+            console.warn('All cluster calls failed and liveness probe reports', health.state, '-', health.message);
+            setConnectionMessage(health.message);
+            setStatus('disconnected');
+          }
+        } catch (probeErr) {
+          console.warn('All cluster calls failed and the liveness probe itself failed', probeErr);
+          setConnectionMessage('Cluster API is unreachable.');
+          setStatus('disconnected');
+        }
+      }
 
       // Update monitoring bootstrap state
       try {
@@ -132,6 +177,50 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
   const refresh = React.useCallback(async () => {
     console.log('API CALL: DEBUG: Refreshing cluster data...');
     await fetchData(true);
+  }, [fetchData]);
+
+  /**
+   * Periodic, cheap liveness probe that keeps the connection badge honest between full data refreshes.
+   * Called by the app-wide heartbeat (AppLayout). It:
+   *  - flips the badge to 'disconnected' the moment the stored credentials stop authenticating, and
+   *  - on RECOVERY (disconnected/error -> connected) invalidates the capability cache, bumps
+   *    {@link connectionEpoch} (so step-3 pickers re-fetch), and pulls fresh cluster data — so the UI
+   *    heals without the operator having to reload the browser.
+   * Never throws: a probe/network failure leaves the current status untouched.
+   */
+  const checkLiveness = React.useCallback(async () => {
+    const prev = statusRef.current;
+    // Don't let a background probe stomp on the setup wizard / initial-load states.
+    if (prev === 'unconfigured' || prev === 'configuring' || prev === 'loading') return;
+
+    let health;
+    try {
+      health = await getClusterLiveness();
+    } catch (e) {
+      // Probe request to Ambari itself failed (not a cluster-auth signal) — ignore this tick.
+      console.warn('Liveness probe request failed', e);
+      return;
+    }
+
+    if (health.state === 'CONNECTED') {
+      if (prev === 'disconnected' || prev === 'error') {
+        console.info('Cluster connection restored — invalidating caches and refreshing dependent data.');
+        setConnectionMessage(null);
+        invalidateCapabilities();
+        setConnectionEpoch((e) => e + 1);
+        void fetchData(true);
+      }
+      setStatus('connected');
+    } else if (health.state === 'UNCONFIGURED') {
+      setStatus('unconfigured');
+    } else {
+      // UNAUTHENTICATED or UNREACHABLE.
+      if (prev !== 'disconnected') {
+        console.warn('Cluster connection lost:', health.state, '-', health.message);
+      }
+      setConnectionMessage(health.message);
+      setStatus('disconnected');
+    }
   }, [fetchData]);
 
 
@@ -172,6 +261,9 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       helmReleases,
       error,
       monitoringState,
+      connectionMessage,
+      connectionEpoch,
+      checkLiveness,
       fetchData,
       refresh,
       setClusterStatus }}>

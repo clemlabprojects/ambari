@@ -22,6 +22,7 @@ import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
+import { useClusterStatus } from '../../context/ClusterStatusContext';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -32,6 +33,11 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
   const [services, setServices] = useState<ClusterService[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  // Re-fetch these cluster-discovered lists (secrets, cert-manager issuers, secret stores, services)
+  // whenever the cluster connection is restored. Without this dependency the fetch is mount-only, so a
+  // resource created — or a connection repaired — after the picker first rendered would never appear
+  // until a full browser refresh (the reported "step 3 shows nothing until I reload" bug).
+  const { connectionEpoch } = useClusterStatus();
 
   // Parse lookupLabel to see if this is a configuration lookup
   // e.g. "ambari.clemlab.com/config-type=superset-python"
@@ -97,7 +103,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
 
   useEffect(() => {
     fetchServices();
-  }, [field.lookupLabel, field.serviceType, field.type]);
+  }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch]);
 
   // Handler for "Create New" button
   const handleCreateNew = () => {

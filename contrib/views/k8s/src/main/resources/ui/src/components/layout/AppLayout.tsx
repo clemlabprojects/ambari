@@ -92,7 +92,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
-  const { status, error, fetchData } = useClusterStatus();
+  const { status, error, fetchData, checkLiveness, connectionMessage } = useClusterStatus();
   const { mode, toggle: toggleTheme } = useThemeMode();
 
   // Detected target platform (kubernetes | openshift) from the same /cluster/capabilities probe
@@ -141,13 +141,18 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return () => window.clearInterval(id);
   }, [isOperationsModalOpen]);
 
-  // Continuous session heartbeat (like the main Ambari dashboard): a cheap authenticated ping every
-  // 8s so an expired session is detected and redirected to the Ambari login WITHOUT any user action
-  // or page refresh — on any page, even idle ones. The redirect itself is handled by handleAuthExpiry.
+  // Continuous heartbeat (like the main Ambari dashboard). Two independent, cheap checks every 8s so
+  // both failure modes are caught on ANY page (even idle ones) without a user action or page refresh:
+  //  - pingSession: an expired AMBARI session -> redirect to the Ambari login (via handleAuthExpiry).
+  //  - checkLiveness: a dead CLUSTER connection (token revoked/expired) -> flip the badge to
+  //    'disconnected', and auto-heal + refresh dependent data the moment it recovers.
   React.useEffect(() => {
-    const id = window.setInterval(() => { void pingSession(); }, 8000);
+    const id = window.setInterval(() => {
+      void pingSession();
+      void checkLiveness();
+    }, 8000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [checkLiveness]);
 
   /**
    * Build the sidebar menu. We use sub-menus (groups) to keep the top-level
@@ -257,6 +262,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <div className="app-sider-footer">
             <span>v1.0.0</span>
             {status === 'connected' && <Tag color="green" style={{ margin: 0 }}>connected</Tag>}
+            {status === 'disconnected' && <Tag color="orange" style={{ margin: 0 }}>disconnected</Tag>}
             {status === 'error' && <Tag color="red" style={{ margin: 0 }}>error</Tag>}
           </div>
         )}
@@ -289,6 +295,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </Tooltip>
               )}
               {status === 'connected' && <Tag color="green" style={{ margin: 0 }}><span className="kdps-live-dot" />CONNECTED</Tag>}
+              {status === 'disconnected' && (
+                <Tooltip title={connectionMessage || 'The cluster connection is down. Re-login on the Cluster settings page.'}>
+                  <Tag color="orange" style={{ margin: 0 }}>DISCONNECTED</Tag>
+                </Tooltip>
+              )}
               {status === 'error' && <Tag color="red" style={{ margin: 0 }}>CONNECTION ERROR</Tag>}
               <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
                 <Button

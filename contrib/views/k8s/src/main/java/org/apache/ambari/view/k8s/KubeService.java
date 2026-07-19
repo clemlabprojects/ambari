@@ -451,6 +451,30 @@ public class KubeService {
         }
     }
     
+    /**
+     * Live connectivity probe against the target cluster's API server.
+     *
+     * <p>Distinct from {@link #checkIsViewConfigured(InputStream)} (which only reports whether
+     * credentials were ever stored): this actually calls the cluster and reflects whether those
+     * credentials still authenticate. The UI uses it to keep the connection badge honest — so a token
+     * that was revoked out-of-band (e.g. the operator logged into the OpenShift console directly)
+     * flips the badge to "disconnected" instead of leaving a stale "connected" while requests 401.
+     *
+     * <p>Always returns HTTP 200 with a {@link org.apache.ambari.view.k8s.model.ConnectionHealth}
+     * payload whose {@code state} the frontend switches on; the probe's own failures are reported in
+     * the body, not as an HTTP error, so the poll itself never throws in the client.
+     *
+     * @return 200 with the {@code ConnectionHealth} JSON
+     */
+    @GET
+    @Path("/cluster/liveness")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getClusterLiveness() {
+        org.apache.ambari.view.k8s.model.ConnectionHealth health = getKubernetesService().pingCluster();
+        LOG.info("/cluster/liveness: probe result state={}", health.getState());
+        return Response.ok(health).build();
+    }
+
     @GET
     @Path("/cluster/stats")
     @Produces(MediaType.APPLICATION_JSON)
@@ -535,6 +559,19 @@ public class KubeService {
         if (e instanceof IllegalStateException) {
             LOG.warn("Attempt to access resource without configuration: {}", e.getMessage());
             return Response.status(Response.Status.PRECONDITION_FAILED).entity(e.getMessage()).build();
+        }
+        // Surface a rejected cluster token as a real 401 instead of collapsing it into a generic 500.
+        // This lets the frontend distinguish "your stored credentials are no longer valid — re-login"
+        // from an unexpected server error, and drives the connection badge to "disconnected".
+        if (e instanceof io.fabric8.kubernetes.client.KubernetesClientException) {
+            io.fabric8.kubernetes.client.KubernetesClientException kce =
+                    (io.fabric8.kubernetes.client.KubernetesClientException) e;
+            if (kce.getCode() == 401) {
+                LOG.warn("Kubernetes API returned 401 Unauthorized — the stored cluster credentials are no longer "
+                        + "valid (token revoked or expired): {}", kce.getMessage());
+                return Response.status(Response.Status.UNAUTHORIZED)
+                        .entity("K8S_UNAUTHORIZED: " + kce.getMessage()).build();
+            }
         }
         LOG.error("Unexpected Kubernetes API error", e);
         return Response.serverError().entity(e.getMessage()).build();

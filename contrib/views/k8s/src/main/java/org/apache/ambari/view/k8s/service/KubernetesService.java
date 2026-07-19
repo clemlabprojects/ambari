@@ -33,6 +33,7 @@ import io.fabric8.kubernetes.api.model.LocalObjectReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.NamespaceList;
+import io.fabric8.kubernetes.api.model.ListOptionsBuilder;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeAddress;
 import io.fabric8.kubernetes.api.model.NodeList;
@@ -115,6 +116,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import java.time.Instant;
@@ -421,7 +423,7 @@ public class KubernetesService {
     public List<ClusterNode> getNodes(int limit, int offset) {
         checkConfiguration();
         LOG.info("Fetching node list from Kubernetes API.");
-        var items = client.nodes().list().getItems();
+        var items = executeWithAuthRetry("list nodes", () -> client.nodes().list().getItems());
         int from = Math.min(Math.max(offset, 0), items.size());
         int to = Math.min(from + Math.max(limit, 1), items.size());
         List<Node> pageNodes = items.subList(from, to);
@@ -458,6 +460,128 @@ public class KubernetesService {
     }
 
     /**
+     * True when the given exception is an HTTP 401 (Unauthorized) from the Kubernetes/OpenShift API —
+     * i.e. the API server answered but rejected our bearer token. This is the signal that the stored
+     * credentials are no longer valid (typically an OpenShift token revoked early or expired), as
+     * opposed to a 403 (authenticated but not permitted) or a transport failure.
+     *
+     * @param e the client exception raised by a fabric8 call
+     * @return {@code true} if the exception carries HTTP status 401
+     */
+    private boolean isAuthFailure(KubernetesClientException e) {
+        return e != null && e.getCode() == 401;
+    }
+
+    /**
+     * Executes a Kubernetes API call and, on an authentication failure (HTTP 401), transparently
+     * re-authenticates and retries the call exactly ONCE.
+     *
+     * <p>This heals the common OpenShift scenario the operator hits after logging into the console
+     * directly: the console rotates/revokes the API token, so the token the view cached is refused
+     * with 401 <em>before</em> its nominal expiry — and nothing in the normal request path would
+     * otherwise notice until the token's expiry timestamp passed.
+     *
+     * <p>Re-authentication is only possible in the {@code openshift-login} auth mode, where the view
+     * holds the username/password and can mint a brand-new token via
+     * {@link OpenShiftLoginProvider#refresh()} followed by {@link #forceReloadClient()} (which rebuilds
+     * the fabric8 client so the new token is actually used). For a statically uploaded kubeconfig whose
+     * token cannot be renewed, the original 401 is rethrown so callers can surface a
+     * "disconnected / re-login required" state rather than silently failing.
+     *
+     * <p>The {@code call} supplier MUST read {@code this.client} at invocation time (e.g.
+     * {@code () -> client.nodes().list()}) so that, after a reload, the retry runs against the freshly
+     * built client rather than a stale captured reference.
+     *
+     * @param operation short human-readable label used in the logs (e.g. "list nodes")
+     * @param call      the API call to execute, and to retry once after re-authentication
+     * @param <T>       the call's return type
+     * @return the result of the call (first attempt, or the retry after a successful re-authentication)
+     */
+    private <T> T executeWithAuthRetry(String operation, Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (KubernetesClientException e) {
+            if (!isAuthFailure(e)) {
+                throw e;
+            }
+            LOG.warn("Kubernetes API call '{}' was rejected with HTTP 401 — the stored token is revoked or expired.",
+                    operation);
+            if (!configurationService.isOpenShiftLogin()) {
+                LOG.warn("Auth mode is not 'openshift-login', so the token cannot be auto-renewed for '{}'. "
+                        + "The operator must re-upload valid credentials on the Cluster settings page.", operation);
+                throw e;
+            }
+            LOG.info("Auth mode is 'openshift-login' — attempting to re-authenticate and retry '{}' once.", operation);
+            try {
+                configurationService.getOpenShiftLoginProvider().refresh();
+                boolean reloaded = forceReloadClient();
+                if (!reloaded) {
+                    LOG.error("Client reload after re-authentication reported not-configured; cannot retry '{}'.", operation);
+                    throw e;
+                }
+            } catch (KubernetesClientException reconnectKce) {
+                throw reconnectKce;
+            } catch (Exception reconnect) {
+                LOG.error("Auto-reconnect before retrying '{}' failed: {}", operation, reconnect.toString());
+                throw e; // surface the original 401 to the caller
+            }
+            LOG.info("Re-authentication succeeded — retrying '{}' with the refreshed token.", operation);
+            return call.get();
+        }
+    }
+
+    /**
+     * Actively probes the target cluster's API server to determine whether the stored credentials
+     * still authenticate RIGHT NOW.
+     *
+     * <p>Unlike {@link ViewConfigurationService#isConfigured()} — which only reports whether credentials
+     * were ever stored — this performs a real, cheap, authenticated call (a one-item namespace list) and
+     * therefore reflects live reachability, including a token that has been revoked or has expired. The
+     * probe is wrapped in {@link #executeWithAuthRetry} so an early-revoked OpenShift token is renewed
+     * transparently before the probe is allowed to report a failure.
+     *
+     * <p>Result mapping:
+     * <ul>
+     *   <li>call succeeds (HTTP 200) or is forbidden (HTTP 403) → {@link ConnectionHealth#connected()} —
+     *       a 403 still proves the token authenticated; it is merely not allowed to list namespaces.</li>
+     *   <li>HTTP 401 (even after a renew attempt) → {@link ConnectionHealth#unauthenticated(String)}.</li>
+     *   <li>anything else (timeout, TLS, connection refused) → {@link ConnectionHealth#unreachable(String)}.</li>
+     *   <li>view never configured → {@link ConnectionHealth#unconfigured()}.</li>
+     * </ul>
+     *
+     * @return a {@link ConnectionHealth} describing the live state of the cluster connection
+     */
+    public ConnectionHealth pingCluster() {
+        if (!isConfigured || client == null) {
+            LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
+            return ConnectionHealth.unconfigured();
+        }
+        try {
+            // Cheapest authenticated round-trip that reliably distinguishes 401 (bad token) from
+            // 403 (authenticated but not permitted): a namespace list capped to a single item.
+            executeWithAuthRetry("liveness probe",
+                    () -> client.namespaces().list(new ListOptionsBuilder().withLimit(1L).build()));
+            LOG.debug("pingCluster: cluster reachable and credentials valid (CONNECTED).");
+            return ConnectionHealth.connected();
+        } catch (KubernetesClientException e) {
+            if (isAuthFailure(e)) {
+                LOG.warn("pingCluster: cluster rejected the credentials with 401 even after a renew attempt "
+                        + "(UNAUTHENTICATED): {}", e.getMessage());
+                return ConnectionHealth.unauthenticated(e.getMessage());
+            }
+            if (e.getCode() == 403) {
+                LOG.debug("pingCluster: token authenticated but forbidden to list namespaces (treated as CONNECTED).");
+                return ConnectionHealth.connected();
+            }
+            LOG.warn("pingCluster: cluster API returned an error (UNREACHABLE): {}", e.getMessage());
+            return ConnectionHealth.unreachable(e.getMessage());
+        } catch (Exception e) {
+            LOG.warn("pingCluster: cluster API is unreachable (UNREACHABLE): {}", e.toString());
+            return ConnectionHealth.unreachable(e.toString());
+        }
+    }
+
+    /**
      * Returns the health status of all core Kubernetes components.
      *
      * @return list of {@link ComponentStatus} objects
@@ -465,9 +589,10 @@ public class KubernetesService {
     public List<ComponentStatus> getComponentStatuses() {
         checkConfiguration();
         LOG.info("Fetching component statuses from Kubernetes API.");
-        return client.componentstatuses().list().getItems().stream()
-                .map(this::toComponentStatus)
-                .collect(Collectors.toList());
+        return executeWithAuthRetry("list component statuses",
+                () -> client.componentstatuses().list().getItems().stream()
+                        .map(this::toComponentStatus)
+                        .collect(Collectors.toList()));
     }
     
     /**
@@ -479,7 +604,8 @@ public class KubernetesService {
         checkConfiguration();
         LOG.info("Fetching recent events from Kubernetes API.");
 
-        List<Event> eventItems = client.v1().events().inAnyNamespace().list().getItems();
+        List<Event> eventItems = executeWithAuthRetry("list cluster events",
+                () -> client.v1().events().inAnyNamespace().list().getItems());
 
         Comparator<Event> byTimeDescending = Comparator.comparing(
             this::eventInstantSafely,
@@ -508,8 +634,8 @@ public class KubernetesService {
         checkConfiguration();
         LOG.info("Calculating cluster stats from Kubernetes API.");
 
-        NodeList nodeList = client.nodes().list();
-        PodList podList = client.pods().inAnyNamespace().list();
+        NodeList nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
+        PodList podList = executeWithAuthRetry("list pods (stats)", () -> client.pods().inAnyNamespace().list());
         List<String> runningPods = podList.getItems().stream()
             .filter(pod -> "Running".equalsIgnoreCase(pod.getStatus().getPhase()))
             .map(pod -> pod.getMetadata().getName())
