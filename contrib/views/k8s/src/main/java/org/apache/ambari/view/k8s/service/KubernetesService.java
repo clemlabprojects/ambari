@@ -5348,6 +5348,75 @@ public class KubernetesService {
     }
 
     /**
+     * Lists the Secrets in a single namespace that a human might plausibly select in a form picker —
+     * e.g. a manually-created Kerberos keytab Secret for an EXTERNAL platform context (a standalone
+     * Ambari, or a CDP backend in a different realm, where KDPS does not issue the keytab itself).
+     *
+     * <p>Unlike {@link #listSecretsByLabel(String, String)}, this is scoped to ONE namespace and does
+     * NOT require a label: the keytab Secret the operator creates by hand (e.g.
+     * {@code kubectl -n <ns> create secret generic trino-cdp-keytab ...}) carries no KDPS label, so a
+     * label selector could never find it. Infrastructure Secrets that are never a user selection are
+     * filtered out (image-pull creds, ServiceAccount tokens, Helm release state). The {@code description}
+     * surfaces the Secret's data keys (e.g. "service.keytab, principal") so the operator can confirm at
+     * a glance that it holds the expected material.
+     *
+     * @param namespace the namespace to list Secrets in (typically the release/deploy namespace)
+     * @return list of {name, namespace, type, value, label, description} maps; empty if namespace is blank
+     */
+    public List<Map<String, String>> listSecretsInNamespace(String namespace) {
+        checkConfiguration();
+        if (namespace == null || namespace.isBlank()) {
+            LOG.warn("listSecretsInNamespace called with a blank namespace; returning no secrets.");
+            return Collections.emptyList();
+        }
+        LOG.info("Listing user-selectable secrets in namespace '{}'.", namespace);
+        List<Secret> secrets = executeWithAuthRetry("list secrets in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).list().getItems());
+        List<Map<String, String>> results = new ArrayList<>();
+        for (Secret s : secrets) {
+            if (s.getMetadata() == null) {
+                continue;
+            }
+            String name = s.getMetadata().getName();
+            String type = s.getType() == null ? "" : s.getType();
+            if (isInfrastructureSecret(name, type)) {
+                continue;
+            }
+            String keys = (s.getData() == null || s.getData().isEmpty())
+                    ? "" : String.join(", ", new java.util.TreeSet<>(s.getData().keySet()));
+            Map<String, String> item = new HashMap<>();
+            item.put("name", name);
+            item.put("namespace", namespace);
+            item.put("type", type.isBlank() ? "Opaque" : type);
+            item.put("value", name);
+            item.put("label", name);
+            item.put("description", keys.isBlank() ? type : ("keys: " + keys));
+            results.add(item);
+        }
+        LOG.info("Namespace '{}' has {} user-selectable secret(s) after filtering infrastructure secrets.",
+                namespace, results.size());
+        return results;
+    }
+
+    /**
+     * True for Secrets that are cluster/infrastructure plumbing and never a valid human selection in a
+     * picker: image-pull dockercfg / dockerconfigjson, ServiceAccount tokens, and Helm release state.
+     */
+    private boolean isInfrastructureSecret(String name, String type) {
+        if (type != null) {
+            switch (type) {
+                case "kubernetes.io/dockercfg":
+                case "kubernetes.io/dockerconfigjson":
+                case "kubernetes.io/service-account-token":
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return name != null && name.startsWith("sh.helm.release.v1");
+    }
+
+    /**
      * Reads the content of a managed configuration secret to display in the UI editor.
      */
     public String getManagedConfigContent(String namespace, String name, String filename) {

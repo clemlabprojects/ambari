@@ -18,7 +18,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Form, Select, AutoComplete, Button, Divider, Space, Typography } from 'antd';
-import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
+import { PlusOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
@@ -38,6 +38,14 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
   // resource created — or a connection repaired — after the picker first rendered would never appear
   // until a full browser refresh (the reported "step 3 shows nothing until I reload" bug).
   const { connectionEpoch } = useClusterStatus();
+
+  // The deploy target namespace, carried in this wizard form's initialValues (set on the General step).
+  // A label-less "secret-discovery" field lists the secrets in THIS namespace so an operator can pick a
+  // hand-created one — e.g. an external Kerberos keytab Secret that carries no KDPS label.
+  const form = Form.useFormInstance();
+  const watchedNamespace = Form.useWatch(['namespace'], form);
+  const targetNamespace = watchedNamespace
+    ?? (form && typeof form.getFieldValue === 'function' ? form.getFieldValue('namespace') : undefined);
 
   // Parse lookupLabel to see if this is a configuration lookup
   // e.g. "ambari.clemlab.com/config-type=superset-python"
@@ -64,18 +72,24 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
         return [{ label: `${res.release} (${res.namespace})`, value: JSON.stringify(res) }];
       }).catch(() => []);
     } else if (field.type === 'secret-discovery') {
-      // Dropdown populated from Kubernetes Secrets matching `lookupLabel`. The
-      // backend mirrors the {label, value} shape that ServiceSelect already
-      // renders, so we can reuse the same component. Used for Company CA
-      // selection (Secrets in the ambari-pki namespace) and any future
-      // Secret-backed picker.
-      if (!field.lookupLabel) {
-        console.warn('secret-discovery called without lookupLabel');
+      // Dropdown populated from Kubernetes Secrets. Two modes, both returning the {label, value} shape
+      // ServiceSelect renders:
+      //  - WITH lookupLabel  -> labelled secrets across namespaces (e.g. the Company CA picker in
+      //    ambari-pki).
+      //  - WITHOUT lookupLabel -> every user-selectable secret in the DEPLOY namespace, so an operator
+      //    can pick a hand-created one (e.g. an external Kerberos keytab Secret). This is the case the
+      //    external-keytab field needs; previously it bailed out and the dropdown was always empty.
+      if (field.lookupLabel) {
+        promise = getDiscoveredK8sSecrets(field.lookupLabel);
+      } else if (targetNamespace) {
+        promise = getDiscoveredK8sSecrets(undefined, targetNamespace);
+      } else {
+        // Namespace not chosen yet (operator hasn't completed the General step) — nothing to list.
+        console.warn('secret-discovery: no lookupLabel and no target namespace yet; leaving the picker empty');
         setServices([]);
         setIsLoading(false);
         return;
       }
-      promise = getDiscoveredK8sSecrets(field.lookupLabel);
     } else if (field.type === 'cluster-issuer-discovery') {
       // cert-manager.io ClusterIssuer / Issuer picker. Backend filters to Ready=True
       // by default; surface the issuer type (ca / acme / vault / selfSigned) in the
@@ -103,7 +117,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
 
   useEffect(() => {
     fetchServices();
-  }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch]);
+  }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch, targetNamespace]);
 
   // Handler for "Create New" button
   const handleCreateNew = () => {

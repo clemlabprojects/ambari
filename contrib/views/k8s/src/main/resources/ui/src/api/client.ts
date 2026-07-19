@@ -787,17 +787,20 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
 };
 
 /**
- * Fetches Kubernetes Secrets matching a label selector. Used by service.json form
- * fields of type "secret-discovery" — chiefly the Company CA picker which surfaces
- * Secrets stored in the `ambari-pki` namespace via the PKI registry.
- * Calls GET /api/discovery/secrets?label=...
+ * Fetches Kubernetes Secrets for a "secret-discovery" form field. Two modes:
+ *  - by LABEL (cross-namespace): the Company CA picker surfaces labelled Secrets in `ambari-pki`.
+ *  - by NAMESPACE (label-less): list every user-selectable Secret in a namespace so an operator can
+ *    pick a hand-created one (e.g. an external Kerberos keytab Secret that carries no KDPS label).
+ * Calls GET /api/discovery/secrets?label=... or ?namespace=...
  */
-export const getDiscoveredK8sSecrets = async (labelSelector: string): Promise<ClusterService[]> => {
+export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?: string): Promise<ClusterService[]> => {
     if (import.meta.env.DEV) {
-       console.log(`Mocking K8s Secret discovery for label: ${labelSelector}`);
+       console.log(`Mocking K8s Secret discovery (label=${labelSelector ?? ''}, namespace=${namespace ?? ''})`);
        return [];
     }
-    const params = new URLSearchParams({ label: labelSelector });
+    const params = new URLSearchParams();
+    if (labelSelector) params.set('label', labelSelector);
+    if (namespace) params.set('namespace', namespace);
     const response = await fetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
     return handleApiResponse(response);
 };

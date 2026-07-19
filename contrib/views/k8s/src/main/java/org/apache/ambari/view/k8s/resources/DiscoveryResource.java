@@ -411,21 +411,33 @@ public class DiscoveryResource {
     @GET
     @Path("/secrets")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response discoverK8sSecrets(@QueryParam("label") String label) {
+    public Response discoverK8sSecrets(@QueryParam("label") String label,
+                                       @QueryParam("namespace") String namespace) {
         try {
-            if (label == null || label.isBlank()) {
+            List<Map<String, String>> secrets;
+            if (namespace != null && !namespace.isBlank()) {
+                // Namespace-scoped, LABEL-LESS listing: surface every user-selectable Secret in the
+                // release namespace so an operator can pick a hand-created one (e.g. an external
+                // Kerberos keytab Secret that carries no KDPS label). Used by service.json
+                // "secret-discovery" fields that declare no lookupLabel.
+                LOG.info("/discovery/secrets: listing user-selectable secrets in namespace '{}'", namespace);
+                secrets = kubernetesService.listSecretsInNamespace(namespace);
+            } else if (label != null && !label.isBlank()) {
+                // Label-based, cross-namespace lookup (e.g. the Company CA picker in ambari-pki).
+                String key = label;
+                String value = null;
+                int eq = label.indexOf('=');
+                if (eq > 0) {
+                    key = label.substring(0, eq);
+                    value = label.substring(eq + 1);
+                }
+                secrets = kubernetesService.listSecretsByLabel(key, value);
+            } else {
                 return Response.status(Response.Status.BAD_REQUEST)
-                        .entity(Collections.singletonMap("error", "missing label query parameter"))
+                        .entity(Collections.singletonMap("error",
+                                "provide either a 'label' selector or a 'namespace' to list secrets"))
                         .build();
             }
-            String key = label;
-            String value = null;
-            int eq = label.indexOf('=');
-            if (eq > 0) {
-                key = label.substring(0, eq);
-                value = label.substring(eq + 1);
-            }
-            List<Map<String, String>> secrets = kubernetesService.listSecretsByLabel(key, value);
             // Rewrite into the {label, value} contract ServiceSelect expects.
             List<Map<String, String>> items = new ArrayList<>(secrets.size());
             for (Map<String, String> s : secrets) {
