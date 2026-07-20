@@ -4451,9 +4451,27 @@ public class CommandService {
                 this.commandUtils.addOverride(params, "hadoopConf.enabled", "true");
                 if (name.isBlank() || files == null || files.isEmpty()) continue;
 
-                // Render each site file: from the local cluster when available (real config), else an
-                // empty <configuration/> placeholder. Track whether ANY real config was sourced so we
-                // never clobber an operator-provided object with placeholders on a redeploy.
+                // For an EXTERNAL context with no local cluster, try to source the backend cluster's REAL
+                // site XML from the selected context — today a CDP context downloads it from Cloudera
+                // Manager's clientConfig (HDFS → core-site/hdfs-site, HIVE → hive-site). Returns
+                // "<name>.xml" -> content for whatever it could fetch; empty for non-CDP or on failure.
+                Map<String, String> contextSourced = java.util.Collections.emptyMap();
+                if (!hasLocalCluster) {
+                    String platformContextId = stringValue(params.get("_platformContextId"));
+                    if (platformContextId != null && !platformContextId.isBlank()) {
+                        try {
+                            contextSourced = new ContextService(this.ctx)
+                                    .downloadHadoopClientConfig(platformContextId, files);
+                        } catch (Exception ex) {
+                            LOG.warn("Could not download hadoop client config from context {}: {}",
+                                    platformContextId, ex.toString());
+                        }
+                    }
+                }
+
+                // Render each site file, in priority order: local Ambari cluster (MANAGED) → context
+                // download (CDP/CM) → empty <configuration/> placeholder. Track whether ANY real config
+                // was sourced so a placeholder-only object is never allowed to clobber an operator override.
                 Map<String, String> data = new LinkedHashMap<>();
                 boolean anyRealConfig = false;
                 for (String f : files) {
@@ -4468,8 +4486,12 @@ public class CommandService {
                             LOG.error("Failed to fetch config {} from cluster {}", f, cluster, ex);
                             throw new RuntimeException(ex);
                         }
+                    } else if (contextSourced.containsKey(f + ".xml")) {
+                        LOG.info("Using context-sourced (e.g. Cloudera Manager) '{}.xml' for this deploy.", f);
+                        xml = contextSourced.get(f + ".xml");
+                        anyRealConfig = true;
                     } else {
-                        LOG.info("No local cluster source for '{}' (external/standalone context) — using an "
+                        LOG.info("No source for '{}' (external context without downloadable config) — using an "
                                 + "empty {}.xml placeholder so the chart mount resolves; the operator can override it.", f, f);
                         xml = HadoopSiteXml.render(java.util.Collections.<String, String>emptyMap());
                     }

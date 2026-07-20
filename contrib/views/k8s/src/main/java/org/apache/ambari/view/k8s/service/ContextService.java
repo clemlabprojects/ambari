@@ -1062,6 +1062,94 @@ public class ContextService {
         }
     }
 
+    /**
+     * Downloads the backend cluster's real Hadoop client configuration (site XML) for an EXTERNAL
+     * context, so a KDPS-deployed service can mount the correct core-site/hdfs-site/hive-site for a
+     * different realm instead of an empty placeholder.
+     *
+     * <p>Currently implemented for <b>CDP</b> contexts: reads the Cloudera Manager connection from the
+     * context, resolves the HDFS service (for core-site/hdfs-site) and the HIVE service (for hive-site),
+     * downloads each service's {@code clientConfig} ZIP and extracts the requested files. Remote-Ambari
+     * and manual-upload sourcing are handled by their own paths; this returns an empty map for those
+     * kinds so the caller falls back accordingly.
+     *
+     * <p>Best-effort: any failure (unreachable CM, missing service, bad creds) logs and yields an empty
+     * map rather than throwing, so a deploy degrades to the placeholder instead of failing outright.
+     *
+     * @param contextId   the selected platform context id
+     * @param wantedFiles site file names, with or without ".xml" (e.g. ["core-site","hdfs-site","hive-site"])
+     * @return map of {@code <name>.xml} -> XML content for every file that was found; empty if none/unsupported
+     */
+    public Map<String, String> downloadHadoopClientConfig(String contextId, List<String> wantedFiles) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (contextId == null || contextId.isBlank() || DEFAULT_CONTEXT_ID.equals(contextId)
+                || wantedFiles == null || wantedFiles.isEmpty()) {
+            return out;
+        }
+        KdpsContextEntity entity = repo.findById(contextId);
+        if (entity == null || !KIND_CDP.equals(entity.getKind())) {
+            // Only CDP auto-download is implemented here; other kinds source config elsewhere.
+            return out;
+        }
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        String cmUrl = str(config.get("cmUrl"));
+        if (isBlank(cmUrl)) {
+            LOG.warn("downloadHadoopClientConfig: CDP context {} has no cmUrl", contextId);
+            return out;
+        }
+        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
+        String cmUser = str(config.get("cmUsername"));
+        String cmPass = readSecret(entity.getId(), "cmPassword");
+
+        // Split the requested files by the CM service that ships them.
+        java.util.Set<String> hdfsWanted = new java.util.LinkedHashSet<>();
+        java.util.Set<String> hiveWanted = new java.util.LinkedHashSet<>();
+        for (String f : wantedFiles) {
+            if (isBlank(f)) continue;
+            String bn = f.endsWith(".xml") ? f : f + ".xml";
+            if ("hive-site.xml".equalsIgnoreCase(bn)) {
+                hiveWanted.add(bn);
+            } else {
+                hdfsWanted.add(bn); // core-site.xml / hdfs-site.xml both live in the HDFS clientConfig
+            }
+        }
+
+        try {
+            org.apache.ambari.view.k8s.utils.CmActionClient cm =
+                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+            String cluster = str(config.get("clusterName"));
+            if (isBlank(cluster)) {
+                List<Map<String, Object>> cl = cm.listClusters();
+                if (!cl.isEmpty()) cluster = str(cl.get(0).get("name"));
+            }
+            if (isBlank(cluster)) {
+                LOG.warn("downloadHadoopClientConfig: CDP context {} — CM reports no clusters", contextId);
+                return out;
+            }
+            if (!hdfsWanted.isEmpty()) {
+                String hdfsSvc = cm.findServiceNameByType(cluster, "HDFS");
+                if (hdfsSvc != null) {
+                    out.putAll(cm.downloadClientConfigFiles(cluster, hdfsSvc, hdfsWanted));
+                } else {
+                    LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HDFS service for {}", cluster, hdfsWanted);
+                }
+            }
+            if (!hiveWanted.isEmpty()) {
+                String hiveSvc = cm.findServiceNameByType(cluster, "HIVE", "HIVE_ON_TEZ");
+                if (hiveSvc != null) {
+                    out.putAll(cm.downloadClientConfigFiles(cluster, hiveSvc, hiveWanted));
+                } else {
+                    LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HIVE service for {}", cluster, hiveWanted);
+                }
+            }
+            LOG.info("downloadHadoopClientConfig: CDP context {} cluster {} produced {} of requested {}",
+                    contextId, cluster, out.keySet(), wantedFiles);
+        } catch (Exception e) {
+            LOG.warn("downloadHadoopClientConfig: CDP context {} failed: {}", contextId, e.toString());
+        }
+        return out;
+    }
+
     private static boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
     private static String trim(String s) { return s == null ? "" : s.trim(); }
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }

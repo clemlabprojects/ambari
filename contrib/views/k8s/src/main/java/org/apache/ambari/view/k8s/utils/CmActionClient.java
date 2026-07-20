@@ -222,6 +222,78 @@ public class CmActionClient {
         return java.net.URLEncoder.encode(s == null ? "" : s, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
+    /**
+     * Finds the CM service NAME of the first service matching any of the given service TYPES
+     * (case-insensitive), e.g. {@code findServiceNameByType(cluster, "HDFS")} or
+     * {@code findServiceNameByType(cluster, "HIVE", "HIVE_ON_TEZ")}. The name may differ from the type
+     * (CM allows "hdfs", "hive-1", ...). Returns null when no such service exists.
+     */
+    public String findServiceNameByType(String cluster, String... types) throws Exception {
+        List<Map<String, Object>> services = listServices(cluster);
+        for (String wanted : types) {
+            for (Map<String, Object> s : services) {
+                if (wanted.equalsIgnoreCase(String.valueOf(s.get("type")))) {
+                    return String.valueOf(s.get("name"));
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Binary GET (used for the client-config ZIP, which is not JSON). */
+    private byte[] getBytes(String url) throws Exception {
+        HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(45)).GET();
+        if (authHeader != null) rb.header("Authorization", authHeader);
+        HttpResponse<byte[]> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofByteArray());
+        if (resp.statusCode() / 100 != 2) {
+            throw new IllegalStateException("CM GET " + url + " -> HTTP " + resp.statusCode());
+        }
+        return resp.body();
+    }
+
+    /**
+     * Downloads a service's client configuration from Cloudera Manager
+     * ({@code /clusters/{c}/services/{s}/clientConfig}, a ZIP) and extracts the requested site files by
+     * basename (e.g. {@code core-site.xml}, {@code hdfs-site.xml}, {@code hive-site.xml}). CM nests them
+     * under a directory in the ZIP, so we match on the entry's basename. The returned XML is the real,
+     * CM-generated config for the backend cluster's realm — used verbatim (not re-rendered).
+     *
+     * @param cluster         CM cluster name
+     * @param service         CM service name (from {@link #findServiceNameByType})
+     * @param wantedBasenames the file basenames to extract (e.g. {"core-site.xml","hdfs-site.xml"})
+     * @return basename -> XML content for every requested file found in the ZIP (missing files omitted)
+     */
+    public Map<String, String> downloadClientConfigFiles(String cluster, String service,
+                                                         java.util.Set<String> wantedBasenames) throws Exception {
+        String url = apiBase() + "/clusters/" + enc(cluster) + "/services/" + enc(service) + "/clientConfig";
+        byte[] zipBytes = getBytes(url);
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipInputStream zis =
+                     new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                String base = entry.getName();
+                int slash = Math.max(base.lastIndexOf('/'), base.lastIndexOf('\\'));
+                if (slash >= 0) {
+                    base = base.substring(slash + 1);
+                }
+                if (wantedBasenames.contains(base) && !out.containsKey(base)) {
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = zis.read(buf)) > 0) {
+                        bos.write(buf, 0, n);
+                    }
+                    out.put(base, bos.toString(StandardCharsets.UTF_8));
+                }
+            }
+        }
+        return out;
+    }
+
     /** Test connection: returns {ok, cmVersion, clusters[]} or throws with a friendly message. */
     public Map<String, Object> probe() {
         Map<String, Object> out = new java.util.LinkedHashMap<>();
