@@ -4281,9 +4281,31 @@ public class CommandService {
         // message if no krb5.conf can be sourced (instead of a cryptic pod "configmap not found" mount).
         boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
 
-        if (kerberosEnabled || contextKerberos || externalKeytabProvided) {
-            LOG.info("Kerberos enabled for this deploy (hostingCluster={}, fromContext={}, externalKeytab={}); preparing krb5.conf ConfigMap for Helm Chart",
-                    kerberosEnabled, contextKerberos, externalKeytabProvided);
+        // DESIGN RULE — an EXTERNAL/CDP/REMOTE context must NOT inherit the LOCAL Ambari cluster's
+        // Kerberos. Deploying an external-backend service against the internal realm is incorrect, and it
+        // would behave differently on a standalone Ambari (no local cluster) — breaking idempotency. So
+        // for an external context, Kerberos is OPT-IN and driven SOLELY by the operator's step-3 external
+        // keytab: with a keytab, Kerberos is on (the backend realm, via that keytab); without one, it is
+        // OFF regardless of the hosting cluster's security_enabled — no keytab minting, no local realm.
+        // The MANAGED (default) context keeps auto-Kerberos from its own cluster. To use an internal realm
+        // for an external backend an operator selects the MANAGED context (an ODP cluster with security on).
+        String selectedContextIdForKrb = stringValue(params.get("_platformContextId"));
+        boolean externalContextSelected = selectedContextIdForKrb != null && !selectedContextIdForKrb.isBlank()
+                && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextIdForKrb);
+        if (externalContextSelected) {
+            boolean localKerberos = kerberosEnabled;
+            kerberosEnabled = externalKeytabProvided; // external → keytab-driven only
+            if (localKerberos != kerberosEnabled) {
+                LOG.info("External context '{}' selected: ignoring the local cluster's Kerberos state ({}); "
+                        + "Kerberos for this deploy is {} (driven only by the step-3 external keytab).",
+                        selectedContextIdForKrb, localKerberos, kerberosEnabled ? "ENABLED" : "DISABLED");
+            }
+            params.put("kerberosClusterEnabled", kerberosEnabled);
+        }
+
+        if (kerberosEnabled || externalKeytabProvided) {
+            LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
+                    kerberosEnabled, externalKeytabProvided, contextKerberos);
 
             // Derive a unique ConfigMap name per release to avoid collisions across multiple installs
             String releaseName = request.getReleaseName() != null ? request.getReleaseName().trim() : "";
@@ -4589,10 +4611,12 @@ public class CommandService {
                             kerberosEnabled
                     );
                 }
-                // A selected EXTERNAL context (e.g. CDP) supplies its own realm/krb5, so Kerberos-only
-                // catalog enrichments must apply even when the Ambari-hosting cluster itself is not
-                // Kerberized (or is in a different realm).
-                if (contextKerberos) {
+                // An external keytab makes this a Kerberized deploy against the backend realm, so
+                // Kerberos-only catalog enrichments (e.g. the Hive principals) must apply even when the
+                // Ambari-hosting cluster itself is not Kerberized. NOTE: gated on the keytab, NOT merely
+                // on the context supplying a krb5.conf — Kerberos for an external context is opt-in via
+                // the step-3 keytab, so an external context without a keytab enriches nothing.
+                if (externalKeytabProvided) {
                     kerberosEnabledForCatalogEnrichments = true;
                 }
                 LOG.info("Catalog enrichment Kerberos flag resolved to {} (detected={}, paramsOverridePresent={})",
