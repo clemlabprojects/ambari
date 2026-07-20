@@ -53,6 +53,7 @@ const HelmReleasesPage: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
   const [isLoading, setIsLoading] = useState(false);
   const [showAllReleases, setShowAllReleases] = useState(false);
+  const [releaseSearch, setReleaseSearch] = useState('');
   const [statusByRelease, setStatusByRelease] = useState<Record<string, HelmRelease>>({});
   const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
   // TLS state per release, keyed by "<namespace>/<releaseName>". Loaded lazily after the
@@ -543,8 +544,27 @@ const HelmReleasesPage: React.FC = () => {
         );
     };
 
-    // All hooks must be called before any early returns
-    const displayed = useMemo(() => (showAllReleases ? helmReleases : helmReleases.filter(r => r.managedByUi)), [helmReleases, showAllReleases]);
+    // All hooks must be called before any early returns.
+    // Default view = releases KDPS manages, PLUS any release in a transitional/in-progress status
+    // (pending-install/upgrade/rollback, uninstalling) — those are exactly what an operator is actively
+    // debugging and must never be hidden behind the "Show all" toggle (this was the reported bug where a
+    // pending-upgrade release only appeared under "Show all"). "Show all" additionally reveals releases
+    // deployed outside KDPS. A name/namespace search filters whichever set is shown.
+    const displayed = useMemo(() => {
+        const transitional = (s?: string) => {
+            const v = String(s || '').toLowerCase();
+            return v.startsWith('pending-') || v === 'uninstalling' || v === 'unknown';
+        };
+        let base = showAllReleases
+            ? helmReleases
+            : helmReleases.filter(r => r.managedByUi || transitional(r.status));
+        const q = releaseSearch.trim().toLowerCase();
+        if (q) {
+            base = base.filter(r =>
+                (r.name || '').toLowerCase().includes(q) || (r.namespace || '').toLowerCase().includes(q));
+        }
+        return base;
+    }, [helmReleases, showAllReleases, releaseSearch]);
 
     if (status === 'error') {
         return <Result status="warning" title="Helm releases data not available." subTitle="Unable to retrieve cluster information." />;
@@ -962,7 +982,13 @@ const HelmReleasesPage: React.FC = () => {
             <div className="page-header">
                 <Title level={2}>Releases</Title>
                 <Space wrap>
-                    <Search placeholder="Search for a release..." style={{ width: 250 }} />
+                    <Search
+                      placeholder="Search for a release..."
+                      allowClear
+                      style={{ width: 250 }}
+                      value={releaseSearch}
+                      onChange={(e) => setReleaseSearch(e.target.value)}
+                    />
                     <Space>
                       <span>Show all</span>
                       <Switch size="small" checked={showAllReleases} onChange={setShowAllReleases} />
