@@ -24,6 +24,8 @@ import org.apache.ambari.view.k8s.model.kube.KubePod;
 import org.apache.ambari.view.k8s.model.kube.KubeServiceDTO;
 import org.apache.ambari.view.k8s.model.kube.KubeEventDTO;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
@@ -42,6 +44,8 @@ import java.util.Map;
 @Path("/workloads")
 @Produces(MediaType.APPLICATION_JSON)
 public class WorkloadsResource {
+
+    private static final Logger LOG = LoggerFactory.getLogger(WorkloadsResource.class);
 
     private final ViewContext ctx;
 
@@ -122,7 +126,25 @@ public class WorkloadsResource {
                             @PathParam("pod") String pod,
                             @QueryParam("container") String container,
                             @QueryParam("tailLines") Integer tailLines) {
-        return kube().tailPodLog(namespace, pod, container, tailLines == null ? 200 : tailLines);
+        try {
+            return kube().tailPodLog(namespace, pod, container, tailLines == null ? 200 : tailLines);
+        } catch (Exception ex) {
+            // A container that has not started yet (pod Pending / Init / ContainerCreating) or is
+            // crash-looping has no readable log stream, and the Kubernetes API errors — the common case
+            // while a Helm release is stuck in 'pending-upgrade'. Return a clear, human-readable message
+            // (HTTP 200, shown verbatim in the log panel) instead of a raw HTTP 500, so an operator
+            // debugging a stuck deploy sees WHY there are no logs rather than an opaque failure.
+            String reason = (ex.getMessage() == null || ex.getMessage().isBlank()) ? ex.toString() : ex.getMessage();
+            LOG.warn("Pod log fetch failed for {}/{} (container={}): {}", namespace, pod, container, reason);
+            return "— No logs available —\n\n"
+                    + "Could not read logs for container '" + (container == null || container.isBlank() ? "(default)" : container)
+                    + "' in pod " + namespace + "/" + pod + ".\n\n"
+                    + "Reason: " + reason + "\n\n"
+                    + "The container has most likely not started yet (pod Pending / Init / ContainerCreating) "
+                    + "or is crash-looping — often the case while a Helm release is in 'pending-upgrade'. "
+                    + "Check the pod's status and events (Describe) to see why it isn't running; "
+                    + "logs become available once the container starts.";
+        }
     }
 
     // ---- browse-view listings used by the Workloads & Networking tabs ----
