@@ -132,6 +132,19 @@ def setup_ranger_admin(upgrade_type=None):
     mode=0o755
   )
 
+  # AMBARI-538 (clemlab): Create Ranger Admin logs symlink systematically.
+  # ranger-admin-services.sh hardcodes the GC log to ${XAPOLICYMGR_EWS_DIR}/logs/gc-worker.log
+  # (i.e. {ranger_home}/ews/logs/), but neither the ranger-admin rpm scriptlets nor the stack
+  # scripts create ews/logs. A fresh install happens to have it, but on an already-installed
+  # cluster (e.g. a CDP->ODP binary swap replacing the parcel, which shipped ews/logs, with the
+  # rpm, which does not) it is absent -> the JVM cannot open the GC log -> "Could not create the
+  # Java Virtual Machine" -> Ranger Admin never binds (connection refused). Point ews/logs at the
+  # admin log dir, always (idempotent; not_if avoids clobbering a real logs dir on fresh installs).
+  Execute(('ln', '-sf', params.admin_log_dir, format('{ranger_home}/ews/logs')),
+    not_if = format("test -e {ranger_home}/ews/logs"),
+    only_if = format("test -d {ranger_home}/ews"),
+    sudo = True)
+
   if os.path.isfile(params.ranger_admin_default_file):
     File(params.ranger_admin_default_file, owner=params.unix_user, group=params.unix_group)
   else:

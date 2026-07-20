@@ -105,11 +105,22 @@ def spark_service(name, upgrade_type=None, action=None):
       Execute(create_catalog_cmd,
                 user = params.hive_user)
 
+      # SPARK_HOME and SPARK_CONF_DIR are set explicitly on every spark3 Execute below.
+      # /etc/profile.d/cdp-to-odp-takeover.sh exports SPARK_HOME=<stack_root>/current/spark2-client
+      # AND SPARK_CONF_DIR=<stack_root>/current/spark2-client/conf. The spark3 start/stop-history-server.sh
+      # scripts pick these up, causing two failures on any host where spark2 and spark3 coexist:
+      #   1) SPARK_HOME=spark2-client -> they resolve spark-daemon.sh under spark2-client (which has none)
+      #      -> rc 127.
+      #   2) SPARK_CONF_DIR=spark2/conf -> load-spark-env.sh sources spark2's spark-env.sh instead of
+      #      spark3's, so SPARK_PID_DIR (/var/run/spark3) and SPARK_LOG_DIR (/var/log/spark3) never get
+      #      set -> spark-daemon.sh defaults the pid to /tmp; Ambari's check of /var/run/spark3/...pid then
+      #      fails with "Pid file ... doesn't exist after starting" even though the JVM is up.
+      # Pinning both to spark3's own home/conf overrides the profile.d leak.
       historyserver_no_op_test = as_sudo(["test", "-f", params.spark_history_server_pid_file]) + " && " + as_sudo(["pgrep", "-F", params.spark_history_server_pid_file])
       try:
         Execute(params.spark_history_server_start,
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home},
+                environment={'JAVA_HOME': params.java_home, 'SPARK_HOME': params.spark_home, 'SPARK_CONF_DIR': params.spark_home + "/conf"},
                 not_if=historyserver_no_op_test)
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)
@@ -124,7 +135,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_thrift_server_start} --properties-file {spark_thrift_server_conf_file} {spark_thrift_cmd_opts_properties}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home},
+                environment={'JAVA_HOME': params.java_home, 'SPARK_HOME': params.spark_home, 'SPARK_CONF_DIR': params.spark_home + "/conf"},
                 not_if=thriftserver_no_op_test
         )
       except:
@@ -135,7 +146,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_history_server_stop}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home}
+                environment={'JAVA_HOME': params.java_home, 'SPARK_HOME': params.spark_home, 'SPARK_CONF_DIR': params.spark_home + "/conf"}
         )
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)
@@ -148,7 +159,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(format('{spark_thrift_server_stop}'),
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home}
+                environment={'JAVA_HOME': params.java_home, 'SPARK_HOME': params.spark_home, 'SPARK_CONF_DIR': params.spark_home + "/conf"}
         )
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)

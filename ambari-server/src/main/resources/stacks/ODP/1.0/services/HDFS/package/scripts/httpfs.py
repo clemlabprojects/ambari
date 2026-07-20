@@ -27,6 +27,7 @@ from hdfs import hdfs
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.version import format_stack_version
 from resource_management.core.exceptions import ComponentIsNotRunning
 
 
@@ -43,7 +44,14 @@ class HTTPFSGateway(Script):
     import params
     env.set_params(params)
 
-    if params.stack_version_formatted and check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, params.stack_version_formatted):
+    # Gate the odp-select flip on the TARGET upgrade version (params.version), NOT the cluster stack
+    # line (params.stack_version_formatted). During a CDPTOODP->ODP express upgrade the latter is "1.2"
+    # (the ODP stack line), which is < the hdfs_supports_httpfs min_version "1.2.2.0", so
+    # check_stack_feature returns False, select_packages is skipped, and HTTPFS_GATEWAY's
+    # /usr/odp/current symlink is left pointing at the CDP parcel -> the "Check Component Versions"
+    # finalize gate then fails on that host. params.version is the full target (e.g. 1.2.4.0-132) which
+    # satisfies the feature. This matches NAMENODE (unconditional) and ZOOKEEPER (gates on params.version).
+    if params.version and check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, format_stack_version(params.version)):
       stack_select.select_packages(params.version)
 
   def start(self, env, upgrade_type=None):
