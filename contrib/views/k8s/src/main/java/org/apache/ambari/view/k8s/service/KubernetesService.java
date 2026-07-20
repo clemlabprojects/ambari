@@ -4855,6 +4855,20 @@ public class KubernetesService {
 
 
     /**
+     * True when a ConfigMap with the given name exists in the namespace. Used to avoid clobbering an
+     * operator-provided ConfigMap (e.g. a hand-populated hadoop-conf) with generated placeholder content.
+     */
+    public boolean configMapExists(String namespace, String name) {
+        checkConfiguration();
+        try {
+            return client.configMaps().inNamespace(namespace).withName(name).get() != null;
+        } catch (Exception ex) {
+            LOG.warn("configMapExists check failed for {}/{}: {}", namespace, name, ex.toString());
+            return false;
+        }
+    }
+
+    /**
      * Create or update a ConfigMap with string data entries.
      * If immutable and content changed, we delete & recreate (mirrors Secret logic).
      */

@@ -230,6 +230,9 @@
       "target": {
         "path": "additionalCatalogs.hive"
       },
+      "when": {
+        "form": { "hiveCatalog.enabled": true }
+      },
       "properties": [
         {
           "key": "hive.config.resources",
@@ -251,7 +254,8 @@
         ]
       },
       "when": {
-        "kerberosEnabled": true
+        "kerberosEnabled": true,
+        "form": { "hiveCatalog.enabled": true }
       },
       "properties": [
         {
@@ -303,7 +307,8 @@
         ]
       },
       "when": {
-        "kerberosEnabled": true
+        "kerberosEnabled": true,
+        "form": { "hiveCatalog.enabled": true }
       },
       "properties": [
         {

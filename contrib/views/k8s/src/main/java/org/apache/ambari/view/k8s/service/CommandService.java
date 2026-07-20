@@ -2053,7 +2053,10 @@ public class CommandService {
             );
             @SuppressWarnings("unchecked")
             Map<String, Object> whenSpec = (Map<String, Object>) catalogEnrichmentSpec.get("when");
-            if (!shouldApplyCatalogEnrichment(whenSpec, kerberosEnabled)) {
+            Object ceFormValues = (params == null) ? null : params.get("formValues");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> ceFormMap = (ceFormValues instanceof Map) ? (Map<String, Object>) ceFormValues : null;
+            if (!shouldApplyCatalogEnrichment(whenSpec, kerberosEnabled, ceFormMap)) {
                 LOG.info("Catalog enrichment '{}' skipped due to 'when' conditions.", enrichmentName);
                 continue;
             }
@@ -2176,7 +2179,8 @@ public class CommandService {
      * @param kerberosEnabled true if Kerberos is enabled on the Ambari cluster
      * @return true when enrichment should run
      */
-    private boolean shouldApplyCatalogEnrichment(Map<String, Object> whenSpec, boolean kerberosEnabled) {
+    private boolean shouldApplyCatalogEnrichment(Map<String, Object> whenSpec, boolean kerberosEnabled,
+                                                 Map<String, Object> formValues) {
         if (whenSpec == null || whenSpec.isEmpty()) {
             return true;
         }
@@ -2187,7 +2191,31 @@ public class CommandService {
                 return false;
             }
         }
+        // Optional form-field gate: every entry in when.form must equal the deploy form value at that
+        // dotted path (AND). This lets an enrichment be gated on a wizard toggle — e.g. only build the
+        // Hive catalog when hiveCatalog.enabled=true — so a disabled feature never emits a partial,
+        // invalid catalog file (a hive.properties without connector.name would crash Trino at startup).
+        Object formSpecObj = whenSpec.get("form");
+        if (formSpecObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> formSpec = (Map<String, Object>) formSpecObj;
+            for (Map.Entry<String, Object> e : formSpec.entrySet()) {
+                Object actual = (formValues == null) ? null
+                        : ConfigResolutionService.getByDottedPath(formValues, e.getKey());
+                if (!catalogWhenFormMatches(actual, e.getValue())) {
+                    return false;
+                }
+            }
+        }
         return true;
+    }
+
+    /** True when a deploy form value matches a when.form expectation (boolean-aware, else string-equals). */
+    private boolean catalogWhenFormMatches(Object actual, Object expected) {
+        if (expected instanceof Boolean) {
+            return asBoolean(actual, false) == ((Boolean) expected);
+        }
+        return String.valueOf(expected).equals(String.valueOf(actual));
     }
 
     /**
@@ -4402,14 +4430,18 @@ public class CommandService {
         // resolved — there is nothing to read them from: skip the whole block instead of NPE-ing
         // in getDesiredConfigProperties(cluster=null,...). Deploys against an EXTERNAL/CDP context
         // or with no platform context never rely on these config maps.
-        if (hadoopRequiredConfigMaps != null && (ambariActionClient == null || cluster == null || cluster.isBlank())) {
-            LOG.warn("No local Ambari cluster available (standalone Ambari?) — skipping {} required Hadoop "
-                    + "config map(s); hadoopConf stays disabled for this deploy.", hadoopRequiredConfigMaps.size());
-            hadoopRequiredConfigMaps = null;
-        }
+        // A local Ambari cluster is the source for the real site XML (MANAGED). For an EXTERNAL / CDP /
+        // standalone context there is no local cluster to read from — but the chart still MOUNTS the
+        // hadoop-conf ConfigMap (the Hive/HDFS connector references /etc/hadoop/conf/core-site.xml etc.),
+        // so skipping it entirely made Trino crash with "file does not exist". Instead we ALWAYS create
+        // the ConfigMap: real site XML when a cluster is available, otherwise EMPTY-but-valid site XML so
+        // the mount resolves and the pods start. The operator then overrides the ConfigMap with the
+        // backend cluster's real core-site/hdfs-site — the Trino chart's mount is untouched either way.
+        boolean hasLocalCluster = (ambariActionClient != null && cluster != null && !cluster.isBlank());
         if (hadoopRequiredConfigMaps != null) {
-            LOG.info("Parsing Required Hadoop Config Maps");
-            Map<String, AmbariActionClient.AmbariConfigPropertiesTypes> defaultConfigs = ambariActionClient.getDefaultConfigTypes();
+            LOG.info("Parsing Required Hadoop Config Maps (hasLocalCluster={})", hasLocalCluster);
+            Map<String, AmbariActionClient.AmbariConfigPropertiesTypes> defaultConfigs =
+                    hasLocalCluster ? ambariActionClient.getDefaultConfigTypes() : java.util.Collections.emptyMap();
             for (Map<String, Object> spec : hadoopRequiredConfigMaps) {
                 String name = spec.get("cm_name").toString();
                 String kind = spec.get("cm_type").toString(); // "config-map" | "secret"
@@ -4419,50 +4451,68 @@ public class CommandService {
                 this.commandUtils.addOverride(params, "hadoopConf.enabled", "true");
                 if (name.isBlank() || files == null || files.isEmpty()) continue;
 
-                boolean asSecret = "secret".equalsIgnoreCase(kind);
-                if (asSecret) {
-                    Map<String, byte[]> data = new LinkedHashMap<>();
-                    for (String f : files) {
-                        if(defaultConfigs.containsKey(f)) {
-                            try {
-                                LOG.info("Fetching and Parsing default configs: {} from cluster {}", f, cluster);
-                                Map<String, String> fetchedConfig = ambariActionClient.getDesiredConfigProperties(cluster, f);
-                                String xml = HadoopSiteXml.render(fetchedConfig);
-                                if (xml != null) data.put( f + ".xml", xml.getBytes(StandardCharsets.UTF_8));
-                            } catch (Exception ex) {
-                                LOG.error("Failed to fetch config {} from cluster {}", f, cluster);
-                                throw new RuntimeException(ex);
-                            }
-                        }
-                    }
-                    if (!data.isEmpty()) {
-                        LOG.info("creating config map {} holding configurations for {}", name, files.toArray().toString());
-                        kubernetesService.createOrUpdateOpaqueSecret(
-                                request.getNamespace(), name, data);
-                    }
-                } else {
-                    Map<String, String> data = new LinkedHashMap<>();
-                    for (String f : files) {
+                // Render each site file: from the local cluster when available (real config), else an
+                // empty <configuration/> placeholder. Track whether ANY real config was sourced so we
+                // never clobber an operator-provided object with placeholders on a redeploy.
+                Map<String, String> data = new LinkedHashMap<>();
+                boolean anyRealConfig = false;
+                for (String f : files) {
+                    String xml;
+                    if (hasLocalCluster && defaultConfigs.containsKey(f)) {
                         try {
-                            LOG.info("Fetching and Parsing default configs: {} from cluster {}", f, cluster);
+                            LOG.info("Fetching and rendering '{}' from cluster {}", f, cluster);
                             Map<String, String> fetchedConfig = ambariActionClient.getDesiredConfigProperties(cluster, f);
-                            String xml = HadoopSiteXml.render(fetchedConfig);
-                            if (xml != null) data.put(f + ".xml", xml);
+                            xml = HadoopSiteXml.render(fetchedConfig);
+                            anyRealConfig = true;
                         } catch (Exception ex) {
-                            LOG.error("Failed to fetch config {} from cluster {}", f, cluster);
+                            LOG.error("Failed to fetch config {} from cluster {}", f, cluster, ex);
                             throw new RuntimeException(ex);
                         }
+                    } else {
+                        LOG.info("No local cluster source for '{}' (external/standalone context) — using an "
+                                + "empty {}.xml placeholder so the chart mount resolves; the operator can override it.", f, f);
+                        xml = HadoopSiteXml.render(java.util.Collections.<String, String>emptyMap());
                     }
-                    if (!data.isEmpty()) {
-                        LOG.info("creating secret {} holding configurations for {}", name, files.toArray().toString());
-                        String hadoopConfigMapNameHelmProperty = (String) spec.get("helm_values_property");
-                        if (hadoopConfigMapNameHelmProperty != null){
-                            this.commandUtils.addOverride(params, hadoopConfigMapNameHelmProperty, name);
-                        }
-                        kubernetesService.createOrUpdateConfigMap(
-                                request.getNamespace(), name, data,
-                                Map.of("managed-by","ambari-k8s-view"), Map.of());
+                    if (xml != null) {
+                        data.put(f + ".xml", xml);
                     }
+                }
+                if (data.isEmpty()) {
+                    continue;
+                }
+
+                // Wire the ConfigMap/Secret name into the chart so it mounts our object.
+                String hadoopConfigMapNameHelmProperty = (String) spec.get("helm_values_property");
+                if (hadoopConfigMapNameHelmProperty != null) {
+                    this.commandUtils.addOverride(params, hadoopConfigMapNameHelmProperty, name);
+                }
+
+                boolean asSecret = "secret".equalsIgnoreCase(kind);
+                // Placeholder-only (no real config sourced): create it ONLY if absent, so a redeploy never
+                // overwrites an operator's hand-populated core-site/hdfs-site. Real config always refreshes.
+                if (!anyRealConfig) {
+                    boolean exists = asSecret
+                            ? kubernetesService.getSecret(request.getNamespace(), name) != null
+                            : kubernetesService.configMapExists(request.getNamespace(), name);
+                    if (exists) {
+                        LOG.info("hadoop-conf {} '{}' already exists and no cluster config is available — "
+                                + "leaving the operator-provided content untouched.", kind, name);
+                        continue;
+                    }
+                }
+
+                if (asSecret) {
+                    LOG.info("Creating hadoop-conf secret {} holding {}", name, data.keySet());
+                    Map<String, byte[]> byteData = new LinkedHashMap<>();
+                    for (Map.Entry<String, String> e : data.entrySet()) {
+                        byteData.put(e.getKey(), e.getValue().getBytes(StandardCharsets.UTF_8));
+                    }
+                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, byteData);
+                } else {
+                    LOG.info("Creating hadoop-conf config map {} holding {} (realConfig={})", name, data.keySet(), anyRealConfig);
+                    kubernetesService.createOrUpdateConfigMap(
+                            request.getNamespace(), name, data,
+                            Map.of("managed-by", "ambari-k8s-view"), Map.of());
                 }
             }
         }
