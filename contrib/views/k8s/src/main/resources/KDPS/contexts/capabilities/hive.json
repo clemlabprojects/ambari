@@ -42,7 +42,7 @@
       "label": "HS2 transport mode",
       "type": "enum",
       "placeholder": "http",
-      "help": "http / binary. For a MANAGED context KDPS reads hive.server2.transport.mode from hive-site (defaults to binary when unset). Superset picks the SQLAlchemy driver from this: binary \u2192 hive:// (PyHive), http \u2192 impala:// (impyla over HTTP). For an EXTERNAL context, set it here.",
+      "help": "http / binary. For a MANAGED context KDPS reads hive.server2.transport.mode from hive-site (defaults to binary when unset). Superset picks the SQLAlchemy driver from this: binary → hive:// (PyHive), http → impala:// (impyla over HTTP). For an EXTERNAL context, set it here.",
       "managedResolver": "hive.transportMode",
       "group": "Hive",
       "options": [
@@ -81,7 +81,8 @@
       "appliesTo": "EXTERNAL",
       "placeholder": "hive/_HOST@CDP.EXAMPLE.COM",
       "help": "The Kerberos service principal of the backend Hive Metastore / HiveServer2 (e.g. CDP). Sets hive.metastore.service.principal in the Trino Hive catalog. Only needed for an EXTERNAL context whose Hive is in a different realm than the Ambari cluster.",
-      "group": "Hive"
+      "group": "Hive",
+      "managedResolver": "hive.servicePrincipal"
     },
     {
       "name": "clientPrincipal",
@@ -89,7 +90,7 @@
       "type": "string",
       "appliesTo": "EXTERNAL",
       "placeholder": "trino/_HOST@CDP.EXAMPLE.COM",
-      "help": "The Kerberos principal the deployed service authenticates AS to the backend Hive \u2014 this MUST match the principal inside the external keytab you provide at deploy time. Sets hive.metastore.client.principal / hive.hdfs.trino.principal in the Trino Hive catalog. EXTERNAL contexts only.",
+      "help": "The Kerberos principal the deployed service authenticates AS to the backend Hive — this MUST match the principal inside the external keytab you provide at deploy time. Sets hive.metastore.client.principal / hive.hdfs.trino.principal in the Trino Hive catalog. EXTERNAL contexts only.",
       "group": "Hive"
     }
   ]

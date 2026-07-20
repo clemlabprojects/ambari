@@ -833,6 +833,14 @@ public class ContextService {
                 rf.put("kerberos.realm", realm);
             }
             rf.put("hive.authMode", (realm != null && !realm.isBlank()) ? "kerberos" : "none");
+            // Hive Metastore SERVER (service) principal that Trino authenticates TO. CDP uses the
+            // convention hive/<host>@<REALM>; Trino substitutes _HOST with the metastore host from
+            // hive.metastore.uri, so the canonical hive/_HOST@<REALM> is correct and host-independent.
+            // Only for a kerberized backend (realm present). The deploy's own CLIENT identity comes from
+            // the operator's external keytab (step-3 principal field), not from here.
+            if (realm != null && !realm.isBlank()) {
+                rf.put("hive.servicePrincipal", "hive/_HOST@" + realm);
+            }
 
             for (Map<String, Object> svc : cm.listServices(cluster)) {
                 String type = str(svc.get("type"));

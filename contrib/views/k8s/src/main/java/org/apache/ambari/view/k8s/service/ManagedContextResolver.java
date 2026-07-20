@@ -80,6 +80,7 @@ public class ManagedContextResolver {
                 case "hive.transportMode":      return hiveTransportMode();
                 case "hive.authMode":           return hiveAuthMode();
                 case "hive.rangerServiceName":  return hs2Available() ? cluster + "_hive" : null;
+                case "hive.servicePrincipal":   return cfg("hive-site", "hive.metastore.kerberos.principal");
                 case "oidc.issuerUrl":          return oidcIssuer();
                 case "oidc.realm":              return oidcRealm();
                 case "oidc.adminRealm":         return cfg("oidc-env", "oidc_admin_realm");
