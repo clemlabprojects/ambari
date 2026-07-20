@@ -540,7 +540,7 @@ public class CommandUtils {
      * Used when a service is deployed against a backend (e.g. CDP) whose Kerberos realm differs
      * from the Ambari-hosting cluster.
      */
-    public void ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override) {
+    public boolean ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override) {
         final boolean fromContext = (krb5Override != null && !krb5Override.isBlank());
         final String krb5Path = "/etc/krb5.conf";
         File f = new File(krb5Path);
@@ -548,7 +548,7 @@ public class CommandUtils {
         if (!fromContext && (!f.exists() || !f.isFile())) {
             LOG.warn("Kerberos enabled but {} not found on this host and no context krb5.conf supplied; skipping krb5.conf ConfigMap creation (cm={})",
                     krb5Path, configMapName);
-            return;
+            return false;
         }
 
         try {
@@ -595,7 +595,9 @@ public class CommandUtils {
                     annotations
             );
 
-            LOG.info("Successfully created/updated krb5.conf ConfigMap {} in namespace {}", configMapName, namespace);
+            LOG.info("Successfully created/updated krb5.conf ConfigMap {} in namespace {} (source={})",
+                    configMapName, namespace, fromContext ? "platform-context" : krb5Path);
+            return true;
         } catch (Exception ex) {
             LOG.error("Failed to create/update krb5.conf ConfigMap {} in namespace {}: {}",
                     configMapName, namespace, ex.toString(), ex);

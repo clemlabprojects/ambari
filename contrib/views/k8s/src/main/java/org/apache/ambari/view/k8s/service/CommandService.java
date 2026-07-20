@@ -4227,17 +4227,40 @@ public class CommandService {
         }
         boolean contextKerberos = (contextKrb5 != null && !contextKrb5.isBlank());
 
-        if (kerberosEnabled || contextKerberos) {
-            LOG.info("Kerberos enabled for this deploy (hostingCluster={}, fromContext={}); preparing krb5.conf ConfigMap for Helm Chart",
-                    kerberosEnabled, contextKerberos);
+        // An external keytab Secret selected on the form (e.g. hive.externalKeytabSecret for a CDP
+        // backend in a different realm) turns Kerberos ON in the chart — the pods mount the keytab AND a
+        // krb5.conf ConfigMap. So Kerberos is REQUIRED for this deploy even when the hosting Ambari is not
+        // kerberized (standalone) and the context is a discovery-based CDP/EXTERNAL one. Detect it here so
+        // the krb5.conf ConfigMap is created for this case too — and so we can fail early with a clear
+        // message if no krb5.conf can be sourced (instead of a cryptic pod "configmap not found" mount).
+        boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
+
+        if (kerberosEnabled || contextKerberos || externalKeytabProvided) {
+            LOG.info("Kerberos enabled for this deploy (hostingCluster={}, fromContext={}, externalKeytab={}); preparing krb5.conf ConfigMap for Helm Chart",
+                    kerberosEnabled, contextKerberos, externalKeytabProvided);
 
             // Derive a unique ConfigMap name per release to avoid collisions across multiple installs
             String releaseName = request.getReleaseName() != null ? request.getReleaseName().trim() : "";
             String krb5ConfigMapName = (releaseName.isEmpty() ? "krb5-conf" : (releaseName + "-krb5-conf"));
 
             // 1) Create/update the ConfigMap — from the selected context's krb5.conf when supplied,
-            //    otherwise from the hosting cluster's /etc/krb5.conf.
-            this.commandUtils.ensureKrb5ConfConfigMap(request.getNamespace(), krb5ConfigMapName, contextKrb5);
+            //    otherwise from the hosting cluster's /etc/krb5.conf. Returns false when NEITHER source
+            //    exists (a standalone Ambari + external/CDP context whose krb5.conf field is empty).
+            boolean krb5Created = this.commandUtils.ensureKrb5ConfConfigMap(
+                    request.getNamespace(), krb5ConfigMapName, contextKrb5);
+
+            if (!krb5Created) {
+                // Kerberos is on for this deploy but no krb5.conf could be sourced. Fail NOW with an
+                // actionable message rather than letting the pod fail later with the opaque
+                // "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found".
+                throw new IllegalStateException(
+                        "Kerberos is enabled for this deploy but no krb5.conf could be found: the selected "
+                        + "platform context has no krb5.conf and this Ambari host has no /etc/krb5.conf. "
+                        + "For a backend in a different Kerberos realm (e.g. CDP), paste that realm's krb5.conf "
+                        + "into the platform context — Contexts → <your context> → Kerberos → krb5.conf — "
+                        + "then redeploy. (Expected ConfigMap: " + krb5ConfigMapName + " in namespace "
+                        + request.getNamespace() + ".)");
+            }
 
             // 2) Inject Helm overrides so the chart mounts it:
             //    global.security.kerberos.enabled = true
@@ -4776,7 +4799,7 @@ public class CommandService {
         // externalServiceTargets kerberos mode): the pods use that operator-provided keytab
         // (PRE_PROVISIONED), and principals in a backend (e.g. CDP) realm are not issuable by the
         // hosting KDC anyway.
-        boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
+        // externalKeytabProvided was computed earlier (at the krb5.conf ConfigMap gate) and reused here.
         if (preProvisionedKerberosMode && externalKeytabProvided) {
             LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
         } else if (preProvisionedKerberosMode) {
