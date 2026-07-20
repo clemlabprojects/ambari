@@ -806,8 +806,17 @@ public class CommandService {
         if (oidcCtx != null && oidcCtx.hasContextOidcAdminCreds()) {
             return true;
         }
-        // (c) managed cluster with oidc-env enabled
-        if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+        // (c) managed cluster with oidc-env enabled — ONLY for the MANAGED (default) context.
+        // DESIGN RULE (mirrors Kerberos): a selected EXTERNAL/CDP/REMOTE context must NOT auto-register
+        // OIDC clients against the LOCAL Ambari cluster's Keycloak — that would register against the
+        // internal realm (wrong for an external backend) and behave differently on a standalone Ambari
+        // (non-idempotent). For an external context OIDC is opt-in: it comes ONLY from a selected security
+        // profile (a) or the context's own OIDC admin creds (b). To use the internal Keycloak for an
+        // external backend, an operator selects the MANAGED context instead.
+        String selectedContextId = stringValue(params == null ? null : params.get("_platformContextId"));
+        boolean externalContextSelected = selectedContextId != null && !selectedContextId.isBlank()
+                && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextId);
+        if (!externalContextSelected && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
             try {
                 String adminUrl = ambariActionClient.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
                 if (adminUrl != null && !adminUrl.isBlank()) {
@@ -817,10 +826,12 @@ public class CommandService {
                 LOG.debug("oidc-env not readable on cluster {}; managed OIDC path unavailable: {}", cluster, ex.toString());
             }
         }
-        LOG.info("Service {} declares oidc[] but no OIDC provider is configured "
-                        + "(no security-profile OIDC, no context OIDC admin creds, no managed oidc-env); "
+        LOG.info("Service {} declares oidc[] but no OIDC provider is configured for this deploy "
+                        + "(no security-profile OIDC, no context OIDC admin creds{}); "
                         + "skipping OIDC client registration and deploying without OIDC login.",
-                serviceKey);
+                serviceKey, externalContextSelected
+                        ? ", and the local cluster's oidc-env is ignored for an external context"
+                        : ", no managed oidc-env");
         return false;
     }
 
