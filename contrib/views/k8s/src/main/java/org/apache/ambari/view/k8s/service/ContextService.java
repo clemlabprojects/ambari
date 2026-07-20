@@ -480,10 +480,13 @@ public class ContextService {
                 rc.setOidcVerifyTls(rf.get("oidc.verifyTls"));
                 rc.setOidcPrincipalDomain(rf.get("oidc.principalDomain"));
             }
-            // Admin (client-registration) creds are populated ONLY for EXTERNAL/REMOTE. The default
-            // local MANAGED context deliberately leaves these null so the OIDC registration step keeps
-            // reading the local Ambari oidc-env (with credential-store alias resolution) unchanged.
-            if (KIND_EXTERNAL.equals(rc.getKind()) || KIND_REMOTE.equals(rc.getKind())) {
+            // Admin (client-registration) creds are populated for the operator-supplied context kinds
+            // EXTERNAL/REMOTE/CDP — Cloudera Manager does not manage Keycloak, so a CDP context supplies
+            // its OIDC admin creds by hand exactly like an EXTERNAL one. The default local MANAGED context
+            // deliberately leaves these null so the OIDC registration step keeps reading the local Ambari
+            // oidc-env (with credential-store alias resolution) unchanged.
+            if (KIND_EXTERNAL.equals(rc.getKind()) || KIND_REMOTE.equals(rc.getKind())
+                    || KIND_CDP.equals(rc.getKind())) {
                 rc.setOidcAdminRealm(defaultStr(rf.get("oidc.adminRealm"), "master"));
                 rc.setOidcAdminClientId(rf.get("oidc.adminClientId"));
                 if (issuer != null && !issuer.isBlank()) {

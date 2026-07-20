@@ -610,7 +610,9 @@ const ServiceWizardPage: React.FC = () => {
     const secretsSet = resolvedSel.secretFieldsSet || [];
     const missing: string[] = [];
     for (const r of reqs) {
-      if (r.appliesTo && r.appliesTo !== resolvedSel.kind) continue;
+      // `appliesTo` is a comma-list of context kinds (e.g. "EXTERNAL,CDP"); the requirement applies
+      // when the selected context's kind is one of them.
+      if (r.appliesTo && !r.appliesTo.split(',').map((s: string) => s.trim().toUpperCase()).includes(String(resolvedSel.kind).toUpperCase())) continue;
       if (r.when && !dotGet(installValues, r.when)) continue;
       for (const fn of (r.fields || [])) {
         const key = `${r.capability}.${fn}`;

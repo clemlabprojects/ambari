@@ -168,6 +168,71 @@ export default function ContextsPage() {
         .filter((f) => f.appliesTo !== "MANAGED")
         .map((f) => ({ cap, f })));
 
+  // A capability field's `appliesTo` is a comma-list of context KINDS it must be entered for by hand.
+  // Absent → EXTERNAL only (the historical default); a "MANAGED" entry means the value is resolved live
+  // and is never a manual field. This lets a field (e.g. krb5.conf or Keycloak admin creds) apply to
+  // BOTH EXTERNAL and CDP — Cloudera Manager cannot discover those, so a CDP context must supply them too.
+  const appliesToKind = (appliesTo: string | undefined, kind: string): boolean => {
+    if (!appliesTo) return kind === "EXTERNAL";
+    const kinds = appliesTo.split(",").map((s) => s.trim().toUpperCase());
+    if (kinds.includes("MANAGED")) return false;
+    return kinds.includes(kind.toUpperCase());
+  };
+
+  // Capability fields a CDP context must supply by hand (Kerberos krb5.conf, OIDC/Keycloak creds) —
+  // everything else about a CDP cluster is discovered from Cloudera Manager.
+  const cdpCapabilityFields = () =>
+    schema.flatMap((cap) =>
+      (cap.fields || [])
+        .filter((f) => appliesToKind(f.appliesTo, "CDP"))
+        .map((f) => ({ cap, f })));
+
+  // Render capability schema fields (flattened to {cap, capLabel, f}) grouped by their `group`
+  // (Security/Auth, Hive, Atlas, Ranger). Shared by the EXTERNAL and CDP forms so both render identically.
+  const renderCapabilityGroups = (
+    entries: Array<{ cap: string; capLabel: string; f: any }>
+  ): React.ReactNode => {
+    if (!entries.length) return null;
+    const groupOf = (e: (typeof entries)[number]) => e.f.group || e.capLabel;
+    const preferred = ["Security & Authentication", "Hive", "Atlas", "Ranger"];
+    const order: string[] = [];
+    entries.forEach((e) => { const g = groupOf(e); if (!order.includes(g)) order.push(g); });
+    order.sort((a, b) => {
+      const ia = preferred.indexOf(a); const ib = preferred.indexOf(b);
+      if (ia === -1 && ib === -1) return 0;
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+    return order.map((g) => (
+      <div key={g}>
+        <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 4, fontWeight: 600 }}>
+          {g}
+        </Paragraph>
+        {entries.filter((e) => groupOf(e) === g).map(({ cap, f }) => {
+          const key = fieldKey(cap, f.name);
+          let input: React.ReactNode;
+          if (f.type === "password") {
+            input = <Input.Password placeholder={editing && f.secret ? "(unchanged)" : f.placeholder} />;
+          } else if (f.type === "enum") {
+            input = <Select options={(f.options || []).map((o: string) => ({ value: o, label: o }))} />;
+          } else if (f.type === "boolean") {
+            input = <Select options={[{ value: true, label: "true" }, { value: false, label: "false" }]} />;
+          } else if (f.type === "textarea") {
+            input = <Input.TextArea rows={8} placeholder={f.placeholder} style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }} />;
+          } else {
+            input = <Input placeholder={f.placeholder} />;
+          }
+          return (
+            <Form.Item key={key} name={key} label={f.label || f.name} tooltip={f.help}>
+              {input}
+            </Form.Item>
+          );
+        })}
+      </div>
+    ));
+  };
+
   const openAdd = () => {
     setEditing(null);
     setProbeResult(null);
@@ -199,7 +264,11 @@ export default function ContextsPage() {
       vals.rangerHiveService = ctx.config?.rangerHiveService;
       vals.federationUser = ctx.config?.federationUser;
       vals.autoConfigureRemote = ctx.config?.autoConfigureRemote !== false; // default true
-      // cm/ranger/atlas passwords not prefilled — write-only, shown as "(unchanged)"
+      // Manual capability fields (Kerberos/OIDC) stored on the CDP context — prefill the non-secret ones.
+      cdpCapabilityFields().forEach(({ cap, f }) => {
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+      });
+      // cm/ranger/atlas passwords + capability secrets not prefilled — write-only, shown as "(unchanged)"
     } else {
       externalFields().forEach(({ cap, f }) => {
         if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
@@ -249,6 +318,14 @@ export default function ContextsPage() {
         if (values.cmPassword) payload.secrets!.cmPassword = values.cmPassword;
         if (values.rangerAdminPassword) payload.secrets!.rangerAdminPassword = values.rangerAdminPassword;
         if (values.federationPassword) payload.secrets!.federationPassword = values.federationPassword;
+        // Manual capability fields CM can't discover (Kerberos krb5.conf, OIDC/Keycloak creds): persist
+        // them into config/secrets exactly like an EXTERNAL context so deploys can resolve them.
+        cdpCapabilityFields().forEach(({ cap, f }) => {
+          const v = values[fieldKey(cap.capability, f.name)];
+          if (v === undefined || v === null || v === "") return;
+          if (f.secret) payload.secrets![f.name] = v;   // only sent when typed → no clobber on edit
+          else payload.config![f.name] = v;
+        });
       } else {
         payload = {
           id: values.id, name: values.name, kind: "EXTERNAL",
@@ -649,59 +726,36 @@ export default function ContextsPage() {
             </>
           )}
 
+          {/* CDP: Cloudera Manager discovers Hive/Ranger/Atlas, but it cannot discover a mountable
+              krb5.conf or Keycloak client-registration creds. Surface exactly those capability fields
+              (appliesTo includes CDP) so a cross-realm / OIDC CDP deploy can be configured. */}
+          {watchedKind === "CDP" && (() => {
+            const entries = cdpCapabilityFields().map(({ cap, f }) => ({
+              cap: cap.capability, capLabel: cap.label || cap.capability, f,
+            }));
+            if (!entries.length) return null;
+            return (
+              <>
+                <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+                  Cloudera Manager cannot discover these — provide them for a cross-realm Kerberos or
+                  OIDC deploy (e.g. paste the CDP realm's krb5.conf).
+                </Paragraph>
+                {renderCapabilityGroups(entries)}
+              </>
+            );
+          })()}
+
           {/* EXTERNAL: fields rendered from the per-capability context schema
               (KDPS/contexts/capabilities/*.json). A company adds a capability by dropping a
-              fragment file — this form picks it up. */}
-          {watchedKind === "EXTERNAL" && (() => {
-            // Flatten EXTERNAL fields across all capabilities and bucket them by `group` (falling
-            // back to the capability label), so shared concerns — Security/Auth, Hive, Atlas,
-            // Ranger — group together instead of one scattered section per capability. Grouping is
-            // purely presentational; the stored config key stays fieldKey(capability, name).
-            const entries = schema.flatMap((cap) =>
+              fragment file — this form picks it up. Grouping (Security/Auth, Hive, Atlas, Ranger)
+              is purely presentational; the stored config key stays fieldKey(capability, name). */}
+          {watchedKind === "EXTERNAL" && renderCapabilityGroups(
+            schema.flatMap((cap) =>
               (cap.fields || [])
                 .filter((f) => f.appliesTo !== "MANAGED")
                 .map((f) => ({ cap: cap.capability, capLabel: cap.label || cap.capability, f }))
-            );
-            if (!entries.length) return null;
-            const groupOf = (e: (typeof entries)[number]) => e.f.group || e.capLabel;
-            const preferred = ["Security & Authentication", "Hive", "Atlas", "Ranger"];
-            const order: string[] = [];
-            entries.forEach((e) => { const g = groupOf(e); if (!order.includes(g)) order.push(g); });
-            order.sort((a, b) => {
-              const ia = preferred.indexOf(a); const ib = preferred.indexOf(b);
-              if (ia === -1 && ib === -1) return 0;
-              if (ia === -1) return 1;
-              if (ib === -1) return -1;
-              return ia - ib;
-            });
-            return order.map((g) => (
-              <div key={g}>
-                <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 4, fontWeight: 600 }}>
-                  {g}
-                </Paragraph>
-                {entries.filter((e) => groupOf(e) === g).map(({ cap, f }) => {
-                  const key = fieldKey(cap, f.name);
-                  let input: React.ReactNode;
-                  if (f.type === "password") {
-                    input = <Input.Password placeholder={editing && f.secret ? "(unchanged)" : f.placeholder} />;
-                  } else if (f.type === "enum") {
-                    input = <Select options={(f.options || []).map((o) => ({ value: o, label: o }))} />;
-                  } else if (f.type === "boolean") {
-                    input = <Select options={[{ value: true, label: "true" }, { value: false, label: "false" }]} />;
-                  } else if (f.type === "textarea") {
-                    input = <Input.TextArea rows={8} placeholder={f.placeholder} style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }} />;
-                  } else {
-                    input = <Input placeholder={f.placeholder} />;
-                  }
-                  return (
-                    <Form.Item key={key} name={key} label={f.label || f.name} tooltip={f.help}>
-                      {input}
-                    </Form.Item>
-                  );
-                })}
-              </div>
-            ));
-          })()}
+            )
+          )}
         </Form>
       </Modal>
 

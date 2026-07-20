@@ -368,7 +368,7 @@ export const deleteHelmRepo = (id: string) =>
 export interface PlatformContext {
   id: string;
   name: string;
-  kind: "MANAGED" | "EXTERNAL" | "REMOTE";
+  kind: "MANAGED" | "EXTERNAL" | "REMOTE" | "CDP";
   clusterName?: string;
   description?: string;
   config?: Record<string, any>;
