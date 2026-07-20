@@ -78,7 +78,7 @@
       "name": "servicePrincipal",
       "label": "Hive service principal (SPN)",
       "type": "string",
-      "appliesTo": "EXTERNAL",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "hive/_HOST@CDP.EXAMPLE.COM",
       "help": "The Kerberos service principal of the backend Hive Metastore / HiveServer2 (e.g. CDP). Sets hive.metastore.service.principal in the Trino Hive catalog. Only needed for an EXTERNAL context whose Hive is in a different realm than the Ambari cluster.",
       "group": "Hive",
@@ -88,7 +88,7 @@
       "name": "clientPrincipal",
       "label": "Hive client principal",
       "type": "string",
-      "appliesTo": "EXTERNAL",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "trino/_HOST@CDP.EXAMPLE.COM",
       "help": "The Kerberos principal the deployed service authenticates AS to the backend Hive — this MUST match the principal inside the external keytab you provide at deploy time. Sets hive.metastore.client.principal / hive.hdfs.trino.principal in the Trino Hive catalog. EXTERNAL contexts only.",
       "group": "Hive"

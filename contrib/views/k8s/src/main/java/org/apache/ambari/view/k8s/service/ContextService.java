@@ -657,7 +657,13 @@ public class ContextService {
                 }
                 String value = null;
                 if (managed) {
-                    if (f.managedResolver != null && resolver != null) {
+                    // An explicit operator-entered value in the context config OVERRIDES the live
+                    // resolver, so an auto-resolved field (e.g. the Hive metastore service principal on a
+                    // MANAGED/REMOTE context) can be overridden per context. Blank/absent → resolve live.
+                    String override = str(config.get(f.name));
+                    if (override != null && !override.isBlank()) {
+                        value = override;
+                    } else if (f.managedResolver != null && resolver != null) {
                         value = resolver.resolve(f.managedResolver);
                     }
                 } else {

@@ -181,11 +181,15 @@ export default function ContextsPage() {
 
   // Capability fields a CDP context must supply by hand (Kerberos krb5.conf, OIDC/Keycloak creds) —
   // everything else about a CDP cluster is discovered from Cloudera Manager.
-  const cdpCapabilityFields = () =>
+  // Capability fields the operator may set on an auto-discovering context (CDP / REMOTE) — either
+  // things the source can't discover (Kerberos krb5.conf, OIDC creds) or overrides of a discovered
+  // value (e.g. the Hive metastore service principal). Filtered by the field's appliesTo for the kind.
+  const capabilityFieldsForKind = (kind: string) =>
     schema.flatMap((cap) =>
       (cap.fields || [])
-        .filter((f) => appliesToKind(f.appliesTo, "CDP"))
+        .filter((f) => appliesToKind(f.appliesTo, kind))
         .map((f) => ({ cap, f })));
+  const cdpCapabilityFields = () => capabilityFieldsForKind("CDP");
 
   // Render capability schema fields (flattened to {cap, capLabel, f}) grouped by their `group`
   // (Security/Auth, Hive, Atlas, Ranger). Shared by the EXTERNAL and CDP forms so both render identically.
@@ -255,6 +259,10 @@ export default function ContextsPage() {
       vals.remoteAmbariUrl = ctx.config?.remoteAmbariUrl;
       vals.remoteUsername = ctx.config?.remoteUsername;
       vals.verifySsl = ctx.config?.verifySsl !== false; // default true
+      // Optional capability overrides (e.g. hive service principal) stored on the context.
+      capabilityFieldsForKind("REMOTE").forEach(({ cap, f }) => {
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+      });
       // password intentionally not prefilled — write-only, shown as "(unchanged)"
     } else if (ctx.kind === "CDP") {
       vals.cmUrl = ctx.config?.cmUrl;
@@ -297,6 +305,13 @@ export default function ContextsPage() {
           secrets: {},
         };
         if (values.remotePassword) payload.secrets!.remotePassword = values.remotePassword;
+        // Persist optional capability overrides (e.g. hive service principal) entered on the REMOTE form.
+        capabilityFieldsForKind("REMOTE").forEach(({ cap, f }) => {
+          const v = values[fieldKey(cap.capability, f.name)];
+          if (v === undefined || v === null || v === "") return;
+          if (f.secret) payload.secrets![f.name] = v;
+          else payload.config![f.name] = v;
+        });
       } else if (values.kind === "CDP") {
         // CDP / Cloudera Manager: KDPS discovers Hive/Ranger/Atlas from CM. CM connection creds +
         // (CM-opaque) Ranger/Atlas admin creds are stored; passwords are write-only.
@@ -643,6 +658,22 @@ export default function ContextsPage() {
                       options={(probeResult.clusters || []).map((c) => ({ value: c, label: c }))} />
                   : <Input placeholder="e.g. prod" />}
               </Form.Item>
+              {(() => {
+                // Optional overrides for a REMOTE context (e.g. the Hive metastore service principal):
+                // leave blank to use what KDPS reads from the remote Ambari.
+                const entries = capabilityFieldsForKind("REMOTE").map(({ cap, f }) => ({
+                  cap: cap.capability, capLabel: cap.label || cap.capability, f,
+                }));
+                if (!entries.length) return null;
+                return (
+                  <>
+                    <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+                      Optional overrides — leave blank to use the values discovered from the remote Ambari.
+                    </Paragraph>
+                    {renderCapabilityGroups(entries)}
+                  </>
+                );
+              })()}
             </>
           )}
 
