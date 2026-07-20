@@ -269,6 +269,7 @@
         },
         {
           "key": "hive.metastore.client.principal",
+          "valueFromForm": "hive.externalKeytabPrincipal",
           "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
         },
@@ -282,6 +283,7 @@
         },
         {
           "key": "hive.hdfs.trino.principal",
+          "valueFromForm": "hive.externalKeytabPrincipal",
           "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.coordinator.principal}}"
         },
@@ -319,6 +321,7 @@
         },
         {
           "key": "hive.metastore.client.principal",
+          "valueFromForm": "hive.externalKeytabPrincipal",
           "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
         },
@@ -332,6 +335,7 @@
         },
         {
           "key": "hive.hdfs.trino.principal",
+          "valueFromForm": "hive.externalKeytabPrincipal",
           "valueFromContext": "hive.clientPrincipal",
           "valueFromTemplate": "{{kerberos.entries.worker.principal}}"
         },
@@ -2456,7 +2460,16 @@
           "label": "External Trino service keytab Secret",
           "type": "secret-discovery",
           "excludeFromValues": true,
-          "help": "Only for an EXTERNAL platform context (no Ambari to issue keytabs), e.g. a CDP backend in a DIFFERENT Kerberos realm. Pick a Kubernetes Secret in the release namespace holding keys 'service.keytab' (the Trino SERVICE keytab issued by the backend realm's KDC) and 'principal'. This is the Trino service identity — it mounts globally at /etc/security/keytabs/service.keytab and is used for EVERY Kerberos-authenticated backend Trino talks to: Hive metastore, HDFS, the Ranger plugin, and any other federated ODP service (not Hive only). Providing it selects PRE_PROVISIONED mode with your keytab instead of an Ambari-issued one; leave blank for a same-realm MANAGED (Ambari) context. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab --from-literal=principal=trino/host@CDP.EXAMPLE.COM."
+          "help": "Only for an EXTERNAL platform context (no Ambari to issue keytabs), e.g. a CDP backend in a DIFFERENT Kerberos realm. Pick a Kubernetes Secret in the release namespace holding key 'service.keytab' (the Trino SERVICE keytab issued by the backend realm's KDC). This is the Trino service identity — it mounts globally at /etc/security/keytabs/service.keytab and is used for EVERY Kerberos-authenticated backend Trino talks to: Hive metastore, HDFS, the Ranger plugin, and any other federated ODP service (not Hive only). Providing it selects PRE_PROVISIONED mode with your keytab instead of an Ambari-issued one; leave blank for a same-realm MANAGED (Ambari) context. Set the matching principal in the field below. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab."
+        },
+        {
+          "name": "hive.externalKeytabPrincipal",
+          "label": "External Trino service principal",
+          "type": "string",
+          "excludeFromValues": true,
+          "condition": { "field": "hive.externalKeytabSecret", "operator": "non-empty" },
+          "placeholder": "svc-trino@CDP.EXAMPLE.COM",
+          "help": "The Kerberos principal inside the external keytab above — the identity Trino authenticates AS to Hive / HDFS / Ranger. Set it per deploy so each Trino service can carry its own principal (not a shared/generic one). If left blank, KDPS falls back to a 'principal' key in the Secret. Only used when an external keytab is selected."
         },
         {
           "name": "hadoopGroupMapping",
@@ -2604,7 +2617,7 @@
         "kerberos": {
           "label": "Kerberos / SASL GSSAPI (external keytab)",
           "secretField": "hive.externalKeytabSecret",
-          "secretKeys": ["service.keytab", "principal"],
+          "secretKeys": ["service.keytab"],
           "applyTo": {
             "global.security.kerberos.injectionMode":              "PRE_PROVISIONED",
             "global.security.kerberos.keytab.secretName":          "{{secret.name}}",

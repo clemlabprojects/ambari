@@ -788,7 +788,16 @@
           "type": "secret-discovery",
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding keys 'keytab' (the service keytab issued by the backend realm's KDC) and 'principal' (e.g. superset/host@CDP.REALM). Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab --from-literal=principal=superset/host@CDP.EXAMPLE.COM. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+          "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding key 'keytab' (the service keytab issued by the backend realm's KDC). Set the matching principal in the field below. Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+        },
+        {
+          "name": "hiveDb.externalKeytabPrincipal",
+          "label": "External Superset service principal",
+          "type": "string",
+          "condition": { "field": "hiveDb.externalKeytabSecret", "operator": "non-empty" },
+          "excludeFromValues": true,
+          "placeholder": "superset@CDP.EXAMPLE.COM",
+          "help": "The Kerberos principal inside the external keytab above — the identity the Superset kinit sidecar authenticates AS to Hive. Set it per deploy so each Superset service can carry its own principal. If left blank, KDPS falls back to a 'principal' key in the Secret. Only used when an external keytab is selected."
         }
       ]
     },
@@ -1143,12 +1152,14 @@
         "kerberos": {
           "label": "Kerberos / SASL GSSAPI (external keytab)",
           "secretField": "hiveDb.externalKeytabSecret",
-          "secretKeys": ["keytab", "principal"],
+          "secretKeys": ["keytab"],
           "applyTo": {
             "global.security.kerberos.keytab.secretName":      "{{secret.name}}",
-            "global.security.kerberos.keytab.secretDataKey":   "keytab",
-            "global.security.kerberos.kinitSidecar.principal": "{{secret.data.principal | b64decode | trim}}"
-          }
+            "global.security.kerberos.keytab.secretDataKey":   "keytab"
+          },
+          "principalField": "hiveDb.externalKeytabPrincipal",
+          "principalSecretKey": "principal",
+          "principalApplyTo": ["global.security.kerberos.kinitSidecar.principal"]
         }
       }
     }

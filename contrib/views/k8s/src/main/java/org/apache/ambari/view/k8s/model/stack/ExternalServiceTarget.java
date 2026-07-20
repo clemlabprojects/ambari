@@ -102,5 +102,27 @@ public class ExternalServiceTarget {
          * that just toggle an enable-flag may have an empty or null applyTo.
          */
         public Map<String, String> applyTo;
+
+        /**
+         * Dotted form-field name where the operator types the Kerberos principal that matches the
+         * external keytab (e.g. {@code hive.externalKeytabPrincipal} → "svc-trino@REALM"). Lets the
+         * principal be configured PER service instance rather than baked only into the Secret. Optional.
+         */
+        public String principalField;
+
+        /**
+         * Secret key to fall back to for the principal when {@link #principalField} is blank/absent
+         * (its value is base64-decoded and trimmed). Defaults to {@code "principal"} when a principal
+         * is needed and this is not set. Optional.
+         */
+        public String principalSecretKey;
+
+        /**
+         * Helm paths to set with the resolved principal (from {@link #principalField}, else the
+         * {@link #principalSecretKey} in the Secret). When neither yields a value the paths are left
+         * unset so the chart can auto-detect the principal from the keytab (e.g. OpenMetadata's
+         * {@code klist}). Optional — omit for services that always auto-detect.
+         */
+        public List<String> principalApplyTo;
     }
 }

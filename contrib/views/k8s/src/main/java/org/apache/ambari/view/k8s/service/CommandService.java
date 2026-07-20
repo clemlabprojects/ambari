@@ -2465,6 +2465,24 @@ public class CommandService {
             return directValue;
         }
 
+        // valueFromForm: an explicit per-deploy wizard field wins over every other source. This is how
+        // the operator sets, PER service instance, the Kerberos principal that matches the external
+        // keytab they supplied (e.g. hive.externalKeytabPrincipal). Blank/unset falls through to the
+        // context / Ambari / template sources below, so the MANAGED (Ambari-hosting) path is unchanged.
+        String formLookup = resolveStringValue(propertySpec.get("valueFromForm"), null);
+        if (formLookup != null && !formLookup.isBlank()) {
+            Object formValues = (params == null) ? null : params.get("formValues");
+            if (formValues instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Object fv = ConfigResolutionService.getByDottedPath((Map<String, Object>) formValues, formLookup);
+                String formValue = resolveStringValue(fv, null);
+                if (formValue != null && !formValue.isBlank()) {
+                    LOG.info("Catalog enrichment valueFromForm '{}' resolved to an operator-supplied value.", formLookup);
+                    return formValue;
+                }
+            }
+        }
+
         // valueFromContext: resolve a "<capability>.<field>" key from the selected platform
         // context's resolved fields (e.g. an EXTERNAL CDP context's hive.servicePrincipal).
         // Preferred over valueFromAmbari so a property can declare BOTH — the context value wins
@@ -9848,9 +9866,72 @@ public class CommandService {
             for (Map.Entry<String, String> ov : overrides.entrySet()) {
                 this.commandUtils.addOverride(params, ov.getKey(), ov.getValue());
             }
+
+            // (5) Resolve the service principal PER deploy: an operator-typed field wins (so each
+            // Trino/Superset/OM instance can carry its own svc-* identity), else the Secret's principal
+            // key (base64-decoded), else nothing — in which case the paths are left unset and the chart
+            // auto-detects the principal from the keytab (e.g. OpenMetadata's klist). Only runs when the
+            // mode declares principalApplyTo, so services that always auto-detect are untouched.
+            if (mode.principalApplyTo != null && !mode.principalApplyTo.isEmpty()) {
+                String principal = resolveExternalKeytabPrincipal(mode, formValues, secretData);
+                if (principal != null && !principal.isBlank()) {
+                    for (String path : mode.principalApplyTo) {
+                        this.commandUtils.addOverride(params, path, principal);
+                    }
+                    LOG.info("applyExternalServiceCredentials: target='{}' applied service principal to {}",
+                            targetKey, mode.principalApplyTo);
+                } else {
+                    LOG.info("applyExternalServiceCredentials: target='{}' has no explicit principal "
+                            + "(field + secret key both empty); leaving {} unset for keytab auto-detection.",
+                            targetKey, mode.principalApplyTo);
+                }
+            }
+
             LOG.info("applyExternalServiceCredentials: target='{}' mode='{}' url='{}' wrote {} helm overrides",
                     targetKey, modeName, url, overrides.size());
         }
+    }
+
+    /**
+     * Resolves the Kerberos principal for an external-keytab auth mode, in priority order:
+     * <ol>
+     *   <li>the operator-typed form field {@link ExternalServiceTarget.AuthMode#principalField}
+     *       (per-deploy, so each service instance can carry its own identity),</li>
+     *   <li>the Secret key {@link ExternalServiceTarget.AuthMode#principalSecretKey}
+     *       (default {@code "principal"}), base64-decoded and trimmed,</li>
+     *   <li>otherwise {@code null} — the caller then leaves the principal unset so the chart can
+     *       auto-detect it from the keytab.</li>
+     * </ol>
+     *
+     * @param mode       the auth mode declaring the principal field/secret-key
+     * @param formValues the deploy form values (holds the operator-typed principal)
+     * @param secretData the picked Secret's data map (base64-encoded values), may be null
+     * @return the resolved principal, or {@code null} when neither source supplies one
+     */
+    private String resolveExternalKeytabPrincipal(org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode mode,
+                                                  Map<String, Object> formValues,
+                                                  Map<String, String> secretData) {
+        // 1) operator-typed field
+        if (mode.principalField != null && !mode.principalField.isBlank()) {
+            Object fv = ConfigResolutionService.getByDottedPath(formValues, mode.principalField);
+            String typed = fv == null ? "" : String.valueOf(fv).trim();
+            if (!typed.isEmpty()) {
+                return typed;
+            }
+        }
+        // 2) Secret key fallback (base64-decoded)
+        String secretKey = (mode.principalSecretKey != null && !mode.principalSecretKey.isBlank())
+                ? mode.principalSecretKey : "principal";
+        if (secretData != null && secretData.get(secretKey) != null && !secretData.get(secretKey).isBlank()) {
+            try {
+                return new String(java.util.Base64.getDecoder().decode(secretData.get(secretKey).trim()),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            } catch (IllegalArgumentException ex) {
+                LOG.warn("External keytab principal: Secret key '{}' is not valid base64: {}", secretKey, ex.toString());
+            }
+        }
+        // 3) none → chart auto-detects from the keytab
+        return null;
     }
 
     /**
