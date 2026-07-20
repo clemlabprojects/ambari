@@ -1,0 +1,34 @@
+{
+  "capability": "hadoop",
+  "label": "Hadoop client config",
+  "order": 40,
+  "fields": [
+    {
+      "name": "coreSiteXml",
+      "label": "core-site.xml",
+      "type": "textarea",
+      "appliesTo": "EXTERNAL",
+      "placeholder": "<?xml version=\"1.0\"?>\n<configuration>\n  <property><name>fs.defaultFS</name><value>hdfs://...</value></property>\n</configuration>",
+      "help": "Paste the backend cluster's core-site.xml. Only for a manually-managed EXTERNAL context — KDPS mounts it (with hdfs-site.xml) at /etc/hadoop/conf so services (e.g. Trino's Hive/HDFS connector) can reach the backend. For CDP contexts KDPS downloads this automatically from Cloudera Manager; for a REMOTE Ambari context it reads it from the remote Ambari; leave blank there.",
+      "group": "Hadoop client configuration"
+    },
+    {
+      "name": "hdfsSiteXml",
+      "label": "hdfs-site.xml",
+      "type": "textarea",
+      "appliesTo": "EXTERNAL",
+      "placeholder": "<?xml version=\"1.0\"?>\n<configuration>\n  <property><name>dfs.nameservices</name><value>...</value></property>\n</configuration>",
+      "help": "Paste the backend cluster's hdfs-site.xml (needed to resolve the HDFS nameservice / namenode HA). Manual EXTERNAL context only; auto-sourced for CDP and REMOTE Ambari contexts.",
+      "group": "Hadoop client configuration"
+    },
+    {
+      "name": "hiveSiteXml",
+      "label": "hive-site.xml",
+      "type": "textarea",
+      "appliesTo": "EXTERNAL",
+      "placeholder": "<?xml version=\"1.0\"?>\n<configuration>\n  <property><name>hive.metastore.uris</name><value>thrift://...:9083</value></property>\n</configuration>",
+      "help": "Optional. Paste the backend cluster's hive-site.xml for services that read it directly. Manual EXTERNAL context only; auto-sourced for CDP and REMOTE Ambari contexts.",
+      "group": "Hadoop client configuration"
+    }
+  ]
+}

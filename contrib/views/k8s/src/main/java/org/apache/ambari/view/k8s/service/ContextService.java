@@ -1067,14 +1067,18 @@ public class ContextService {
      * context, so a KDPS-deployed service can mount the correct core-site/hdfs-site/hive-site for a
      * different realm instead of an empty placeholder.
      *
-     * <p>Currently implemented for <b>CDP</b> contexts: reads the Cloudera Manager connection from the
-     * context, resolves the HDFS service (for core-site/hdfs-site) and the HIVE service (for hive-site),
-     * downloads each service's {@code clientConfig} ZIP and extracts the requested files. Remote-Ambari
-     * and manual-upload sourcing are handled by their own paths; this returns an empty map for those
-     * kinds so the caller falls back accordingly.
+     * <p>Sourced per context kind:
+     * <ul>
+     *   <li><b>CDP</b> — download each service's {@code clientConfig} ZIP from Cloudera Manager
+     *       (HDFS → core-site/hdfs-site, HIVE → hive-site) and extract the files.</li>
+     *   <li><b>REMOTE</b> (remote Ambari) — read the site configs from the remote Ambari's desired
+     *       config and render them to XML (same source as a MANAGED cluster, but the remote one).</li>
+     *   <li><b>EXTERNAL</b> (manual) — use the site XML the operator pasted into the context's Hadoop
+     *       capability fields (coreSiteXml / hdfsSiteXml / hiveSiteXml).</li>
+     * </ul>
      *
-     * <p>Best-effort: any failure (unreachable CM, missing service, bad creds) logs and yields an empty
-     * map rather than throwing, so a deploy degrades to the placeholder instead of failing outright.
+     * <p>Best-effort: any failure logs and yields an empty map rather than throwing, so a deploy degrades
+     * to the placeholder instead of failing outright.
      *
      * @param contextId   the selected platform context id
      * @param wantedFiles site file names, with or without ".xml" (e.g. ["core-site","hdfs-site","hive-site"])
@@ -1087,15 +1091,33 @@ public class ContextService {
             return out;
         }
         KdpsContextEntity entity = repo.findById(contextId);
-        if (entity == null || !KIND_CDP.equals(entity.getKind())) {
-            // Only CDP auto-download is implemented here; other kinds source config elsewhere.
+        if (entity == null) {
             return out;
         }
+        String kind = entity.getKind();
+        try {
+            if (KIND_CDP.equals(kind)) {
+                hadoopConfigFromCdp(entity, contextId, wantedFiles, out);
+            } else if (KIND_REMOTE.equals(kind)) {
+                hadoopConfigFromRemoteAmbari(entity, contextId, wantedFiles, out);
+            } else if (KIND_EXTERNAL.equals(kind)) {
+                hadoopConfigFromManualUpload(entity, contextId, wantedFiles, out);
+            }
+            // MANAGED is sourced by the caller from the local Ambari cluster (not here).
+        } catch (Exception e) {
+            LOG.warn("downloadHadoopClientConfig: context {} (kind {}) failed: {}", contextId, kind, e.toString());
+        }
+        return out;
+    }
+
+    /** CDP: download HDFS/HIVE clientConfig ZIPs from Cloudera Manager and extract the requested files. */
+    private void hadoopConfigFromCdp(KdpsContextEntity entity, String contextId,
+                                     List<String> wantedFiles, Map<String, String> out) throws Exception {
         Map<String, Object> config = parseConfig(entity.getConfigJson());
         String cmUrl = str(config.get("cmUrl"));
         if (isBlank(cmUrl)) {
             LOG.warn("downloadHadoopClientConfig: CDP context {} has no cmUrl", contextId);
-            return out;
+            return;
         }
         boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
         String cmUser = str(config.get("cmUsername"));
@@ -1114,40 +1136,90 @@ public class ContextService {
             }
         }
 
-        try {
-            org.apache.ambari.view.k8s.utils.CmActionClient cm =
-                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
-            String cluster = str(config.get("clusterName"));
-            if (isBlank(cluster)) {
-                List<Map<String, Object>> cl = cm.listClusters();
-                if (!cl.isEmpty()) cluster = str(cl.get(0).get("name"));
-            }
-            if (isBlank(cluster)) {
-                LOG.warn("downloadHadoopClientConfig: CDP context {} — CM reports no clusters", contextId);
-                return out;
-            }
-            if (!hdfsWanted.isEmpty()) {
-                String hdfsSvc = cm.findServiceNameByType(cluster, "HDFS");
-                if (hdfsSvc != null) {
-                    out.putAll(cm.downloadClientConfigFiles(cluster, hdfsSvc, hdfsWanted));
-                } else {
-                    LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HDFS service for {}", cluster, hdfsWanted);
-                }
-            }
-            if (!hiveWanted.isEmpty()) {
-                String hiveSvc = cm.findServiceNameByType(cluster, "HIVE", "HIVE_ON_TEZ");
-                if (hiveSvc != null) {
-                    out.putAll(cm.downloadClientConfigFiles(cluster, hiveSvc, hiveWanted));
-                } else {
-                    LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HIVE service for {}", cluster, hiveWanted);
-                }
-            }
-            LOG.info("downloadHadoopClientConfig: CDP context {} cluster {} produced {} of requested {}",
-                    contextId, cluster, out.keySet(), wantedFiles);
-        } catch (Exception e) {
-            LOG.warn("downloadHadoopClientConfig: CDP context {} failed: {}", contextId, e.toString());
+        org.apache.ambari.view.k8s.utils.CmActionClient cm =
+                new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+        String cluster = str(config.get("clusterName"));
+        if (isBlank(cluster)) {
+            List<Map<String, Object>> cl = cm.listClusters();
+            if (!cl.isEmpty()) cluster = str(cl.get(0).get("name"));
         }
-        return out;
+        if (isBlank(cluster)) {
+            LOG.warn("downloadHadoopClientConfig: CDP context {} — CM reports no clusters", contextId);
+            return;
+        }
+        if (!hdfsWanted.isEmpty()) {
+            String hdfsSvc = cm.findServiceNameByType(cluster, "HDFS");
+            if (hdfsSvc != null) {
+                out.putAll(cm.downloadClientConfigFiles(cluster, hdfsSvc, hdfsWanted));
+            } else {
+                LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HDFS service for {}", cluster, hdfsWanted);
+            }
+        }
+        if (!hiveWanted.isEmpty()) {
+            String hiveSvc = cm.findServiceNameByType(cluster, "HIVE", "HIVE_ON_TEZ");
+            if (hiveSvc != null) {
+                out.putAll(cm.downloadClientConfigFiles(cluster, hiveSvc, hiveWanted));
+            } else {
+                LOG.warn("downloadHadoopClientConfig: CDP cluster {} has no HIVE service for {}", cluster, hiveWanted);
+            }
+        }
+        LOG.info("downloadHadoopClientConfig: CDP context {} cluster {} produced {} of requested {}",
+                contextId, cluster, out.keySet(), wantedFiles);
+    }
+
+    /** REMOTE Ambari: read each site config from the remote Ambari's desired config and render to XML. */
+    private void hadoopConfigFromRemoteAmbari(KdpsContextEntity entity, String contextId,
+                                              List<String> wantedFiles, Map<String, String> out) {
+        AmbariActionClient remote = buildRemoteClient(entity);
+        String remoteCluster = entity.getClusterName();
+        if (remote == null || isBlank(remoteCluster)) {
+            LOG.warn("downloadHadoopClientConfig: REMOTE context {} has no reachable Ambari/cluster", contextId);
+            return;
+        }
+        for (String f : wantedFiles) {
+            if (isBlank(f)) continue;
+            String bn = f.endsWith(".xml") ? f : f + ".xml";
+            String configType = bn.substring(0, bn.length() - ".xml".length()); // core-site, hdfs-site, hive-site
+            try {
+                Map<String, String> props = remote.getDesiredConfigProperties(remoteCluster, configType);
+                if (props != null && !props.isEmpty()) {
+                    out.put(bn, org.apache.ambari.view.k8s.utils.HadoopSiteXml.render(props));
+                }
+            } catch (Exception ex) {
+                LOG.warn("downloadHadoopClientConfig: REMOTE context {} could not read {} from {}: {}",
+                        contextId, configType, remoteCluster, ex.toString());
+            }
+        }
+        LOG.info("downloadHadoopClientConfig: REMOTE context {} cluster {} produced {} of requested {}",
+                contextId, remoteCluster, out.keySet(), wantedFiles);
+    }
+
+    /** EXTERNAL manual: use the site XML the operator pasted into the context's Hadoop capability fields. */
+    private void hadoopConfigFromManualUpload(KdpsContextEntity entity, String contextId,
+                                              List<String> wantedFiles, Map<String, String> out) {
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        for (String f : wantedFiles) {
+            if (isBlank(f)) continue;
+            String bn = f.endsWith(".xml") ? f : f + ".xml";
+            String key = hadoopManualFieldKey(bn); // core-site.xml -> coreSiteXml, etc.
+            if (key == null) continue;
+            String xml = str(config.get(key));
+            if (!isBlank(xml)) {
+                out.put(bn, xml);
+            }
+        }
+        LOG.info("downloadHadoopClientConfig: EXTERNAL(manual) context {} produced {} of requested {}",
+                contextId, out.keySet(), wantedFiles);
+    }
+
+    /** Maps a site file basename to the context's manual-upload config key (Hadoop capability field). */
+    private static String hadoopManualFieldKey(String basename) {
+        switch (basename.toLowerCase()) {
+            case "core-site.xml": return "coreSiteXml";
+            case "hdfs-site.xml": return "hdfsSiteXml";
+            case "hive-site.xml": return "hiveSiteXml";
+            default: return null;
+        }
     }
 
     private static boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
