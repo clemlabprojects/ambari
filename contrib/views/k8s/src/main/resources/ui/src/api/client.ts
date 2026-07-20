@@ -332,7 +332,12 @@ async function fetchJson<T = unknown>(
     throw new Error(`HTTP ${response.status} – ${text || response.statusText}`);
   }
   if (response.status === 204) return undefined as unknown as T; // No-content
-  return response.json() as Promise<T>;
+  // Tolerate a successful response with an EMPTY body (e.g. a 200 OK from DELETE): calling
+  // response.json() on "" throws "SyntaxError: unexpected end of data". Read the text first and only
+  // parse when there's something to parse, so void endpoints resolve cleanly (and callers refresh).
+  const body = await response.text();
+  if (!body) return undefined as unknown as T;
+  return JSON.parse(body) as T;
 }
 
 function fetchWithTimeout(input: RequestInfo, init: RequestInit = {}, timeoutMs = 60000): Promise<Response> {
