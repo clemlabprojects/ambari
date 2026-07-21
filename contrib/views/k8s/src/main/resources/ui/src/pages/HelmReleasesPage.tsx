@@ -551,9 +551,12 @@ const HelmReleasesPage: React.FC = () => {
     // pending-upgrade release only appeared under "Show all"). "Show all" additionally reveals releases
     // deployed outside KDPS. A name/namespace search filters whichever set is shown.
     const displayed = useMemo(() => {
+        // Any non-"deployed" lifecycle state an operator needs to watch. Normalized to be format-proof
+        // across Helm status spellings (pending-install / PENDING_INSTALL / pending_upgrade / ...).
         const transitional = (s?: string) => {
-            const v = String(s || '').toLowerCase();
-            return v.startsWith('pending-') || v === 'uninstalling' || v === 'unknown';
+            const v = String(s || '').toLowerCase().replace(/_/g, '-');
+            return v.startsWith('pending') || v === 'uninstalling' || v === 'uninstalled'
+                || v === 'superseded' || v === 'unknown';
         };
         let base = showAllReleases
             ? helmReleases
