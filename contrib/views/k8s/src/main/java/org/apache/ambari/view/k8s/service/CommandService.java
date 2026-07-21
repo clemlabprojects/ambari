@@ -4470,11 +4470,19 @@ public class CommandService {
         // the ConfigMap: real site XML when a cluster is available, otherwise EMPTY-but-valid site XML so
         // the mount resolves and the pods start. The operator then overrides the ConfigMap with the
         // backend cluster's real core-site/hdfs-site — the Trino chart's mount is untouched either way.
+        // Source of the hadoop site XML, mirroring the Kerberos/OIDC rule: a selected EXTERNAL context
+        // sources from the CONTEXT (CDP → Cloudera Manager, REMOTE → remote Ambari, manual → pasted XML),
+        // NOT from the local cluster — even when this Ambari also manages a local cluster. The local
+        // cluster is used ONLY for the MANAGED/default context. This is what makes a CDP deploy work on an
+        // Ambari that happens to manage its own cluster (previously it wrongly pulled the LOCAL config, or
+        // created nothing valid → Trino crashed with "core-site.xml does not exist").
         boolean hasLocalCluster = (ambariActionClient != null && cluster != null && !cluster.isBlank());
+        boolean useLocalClusterConfig = hasLocalCluster && !externalContextSelected;
         if (hadoopRequiredConfigMaps != null) {
-            LOG.info("Parsing Required Hadoop Config Maps (hasLocalCluster={})", hasLocalCluster);
+            LOG.info("Parsing Required Hadoop Config Maps (hasLocalCluster={}, externalContext={}, useLocalClusterConfig={})",
+                    hasLocalCluster, externalContextSelected, useLocalClusterConfig);
             Map<String, AmbariActionClient.AmbariConfigPropertiesTypes> defaultConfigs =
-                    hasLocalCluster ? ambariActionClient.getDefaultConfigTypes() : java.util.Collections.emptyMap();
+                    useLocalClusterConfig ? ambariActionClient.getDefaultConfigTypes() : java.util.Collections.emptyMap();
             for (Map<String, Object> spec : hadoopRequiredConfigMaps) {
                 String name = spec.get("cm_name").toString();
                 String kind = spec.get("cm_type").toString(); // "config-map" | "secret"
@@ -4484,12 +4492,12 @@ public class CommandService {
                 this.commandUtils.addOverride(params, "hadoopConf.enabled", "true");
                 if (name.isBlank() || files == null || files.isEmpty()) continue;
 
-                // For an EXTERNAL context with no local cluster, try to source the backend cluster's REAL
-                // site XML from the selected context — today a CDP context downloads it from Cloudera
-                // Manager's clientConfig (HDFS → core-site/hdfs-site, HIVE → hive-site). Returns
-                // "<name>.xml" -> content for whatever it could fetch; empty for non-CDP or on failure.
+                // For a selected EXTERNAL context, source the backend cluster's REAL site XML from the
+                // context: CDP downloads it from Cloudera Manager's clientConfig (HDFS → core-site/
+                // hdfs-site, HIVE → hive-site), REMOTE reads it from the remote Ambari, manual uses the
+                // operator-pasted XML. Returns "<name>.xml" -> content for whatever it could source.
                 Map<String, String> contextSourced = java.util.Collections.emptyMap();
-                if (!hasLocalCluster) {
+                if (externalContextSelected) {
                     String platformContextId = stringValue(params.get("_platformContextId"));
                     if (platformContextId != null && !platformContextId.isBlank()) {
                         try {
@@ -4509,9 +4517,9 @@ public class CommandService {
                 boolean anyRealConfig = false;
                 for (String f : files) {
                     String xml;
-                    if (hasLocalCluster && defaultConfigs.containsKey(f)) {
+                    if (useLocalClusterConfig && defaultConfigs.containsKey(f)) {
                         try {
-                            LOG.info("Fetching and rendering '{}' from cluster {}", f, cluster);
+                            LOG.info("Fetching and rendering '{}' from local cluster {}", f, cluster);
                             Map<String, String> fetchedConfig = ambariActionClient.getDesiredConfigProperties(cluster, f);
                             xml = HadoopSiteXml.render(fetchedConfig);
                             anyRealConfig = true;
