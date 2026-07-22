@@ -445,6 +445,11 @@ def refresh_yarn():
     Logger.info("Yarn already refreshed")
     return
 
+  # yarn_kinit_cmd is empty when YARN ATS/timeline is not installed (e.g. CDP->ODP takeover):
+  # without a yarn ticket we cannot run rmadmin, so skip the refresh entirely in that case.
+  if params.security_enabled and not params.yarn_kinit_cmd:
+    Logger.info("Skipping YARN superuser-group refresh: no YARN timeline principal/keytab (ATS not installed)")
+    return
   if params.security_enabled:
     Execute(params.yarn_kinit_cmd, user = params.yarn_user)
   Execute("yarn rmadmin -refreshSuperUserGroupsConfiguration", user = params.yarn_user)

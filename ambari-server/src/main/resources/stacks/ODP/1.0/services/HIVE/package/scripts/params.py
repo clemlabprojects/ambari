@@ -694,10 +694,15 @@ if security_enabled:
   hive_principal = hive_server_principal.replace('_HOST', hostname.lower())
   hive_keytab = config['configurations']['hive-site']['hive.server2.authentication.kerberos.keytab']
 
-  yarn_principal_name = config['configurations']['yarn-site']['yarn.timeline-service.principal']
-  yarn_principal_name = yarn_principal_name.replace('_HOST', hostname.lower())
-  yarn_keytab = config['configurations']['yarn-site']['yarn.timeline-service.keytab']
-  yarn_kinit_cmd = format("{kinit_path_local} -kt {yarn_keytab} {yarn_principal_name};")
+  # YARN Timeline Service (ATS) may be absent (e.g. a CDP->ODP takeover cluster never installs
+  # YARN_TIMELINE, yarn.timeline-service.enabled=false) -> these yarn-site keys do not exist and a
+  # direct read makes the params import raise at HIVE_METASTORE/HS2 stop/start during the express
+  # upgrade. Read defensively; refresh_yarn() skips when yarn_kinit_cmd is empty.
+  yarn_principal_name = default("/configurations/yarn-site/yarn.timeline-service.principal", None)
+  if yarn_principal_name:
+    yarn_principal_name = yarn_principal_name.replace('_HOST', hostname.lower())
+  yarn_keytab = default("/configurations/yarn-site/yarn.timeline-service.keytab", None)
+  yarn_kinit_cmd = format("{kinit_path_local} -kt {yarn_keytab} {yarn_principal_name};") if (yarn_keytab and yarn_principal_name) else ""
 
 hive_cluster_token_zkstore = default("/configurations/hive-site/hive.cluster.delegation.token.store.zookeeper.znode", None)
 jaas_file = os.path.join(hive_config_dir, 'zkmigrator_jaas.conf')
