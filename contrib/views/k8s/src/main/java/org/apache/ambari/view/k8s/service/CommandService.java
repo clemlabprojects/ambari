@@ -6964,6 +6964,27 @@ public class CommandService {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
                     });
+                    // Stamp the KDPS "managed-by" label on the Helm release Secret so the Releases page can
+                    // recognise this release as KDPS-deployed from a k8s-native signal (survives a view
+                    // rebuild/redeploy or DataStore reset, and works the same on OpenShift/vanilla). Helm
+                    // writes the release Secret at the START of install (status=pending-install) and only
+                    // THEN waits for pod readiness; deployOrUpgrade below blocks on that wait. So we tag from
+                    // a short-lived background poller that runs CONCURRENTLY with the wait — this way a
+                    // release that stays pending-install or ends up failed is tagged too, not only a release
+                    // whose pods become ready (the reported bug: KDPS releases only visible under "Show all").
+                    final String tagNs = namespace, tagRelease = releaseName;
+                    Thread releaseTagger = new Thread(() -> {
+                        for (int attempt = 0; attempt < 60; attempt++) { // ~60 * 3s = up to 3 min
+                            try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+                            try {
+                                if (this.kubernetesService.tagHelmReleaseSecrets(tagNs, tagRelease) > 0) {
+                                    return; // release Secret exists and is now tagged
+                                }
+                            } catch (Exception ignore) { /* best-effort */ }
+                        }
+                    }, "kdps-release-tagger-" + releaseName);
+                    releaseTagger.setDaemon(true);
+                    releaseTagger.start();
                     try {
                         runWithCancellation(id, child.getCommandStatusId(), () ->
                                 this.helmService.deployOrUpgrade(
@@ -6973,6 +6994,9 @@ public class CommandService {
                         this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
                     } finally {
                         if (heartbeatDeploy != null) heartbeatDeploy.cancel(false);
+                        // Final belt-and-suspenders tag for the success path (and stop the poller).
+                        this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
+                        releaseTagger.interrupt();
                     }
 
                     /** storing metadata for the deployed helm release **/

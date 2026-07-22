@@ -178,6 +178,12 @@ public class HelmResource {
         int to = Math.min(from + Math.max(limit, 1), total);
         List<Release> page = releases.subList(from, to);
 
+        // Robust "deployed by KDPS" signal: the KDPS label stamped on each Helm release Secret at deploy
+        // time (see KubernetesService.tagHelmReleaseSecrets). Read once, k8s-native — so a release still
+        // shows in the default view even when the view's own DataStore metadata is missing (view rebuilt
+        // / redeployed, different cluster, OpenShift). Empty on error → we degrade to DataStore metadata.
+        final java.util.Set<String> kdpsManaged = kubernetesService.listKdpsManagedReleaseKeys();
+
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         Map<String,String> versionCache = new HashMap<>();
         // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
@@ -189,9 +195,10 @@ public class HelmResource {
         for (Release release : page) {
             HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
 
+            boolean kdpsLabelled = kdpsManaged.contains(releaseDto.namespace + "/" + releaseDto.name);
             K8sReleaseEntity metadata = releaseMetadataService.find(releaseDto.namespace, releaseDto.name);
             if (metadata != null) {
-                releaseDto.managedByUi = metadata.isManagedByUi();
+                releaseDto.managedByUi = metadata.isManagedByUi() || kdpsLabelled;
                 releaseDto.serviceKey = metadata.getServiceKey();
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
@@ -229,7 +236,7 @@ public class HelmResource {
                 }
 
             } else {
-                releaseDto.managedByUi = false;
+                releaseDto.managedByUi = kdpsLabelled;
                 releaseDto.restartRequired = false;
             }
 
