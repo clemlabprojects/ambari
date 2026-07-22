@@ -1648,13 +1648,27 @@ public class CommandService {
                                         "/etc/security/keytabs/service.keytab"
                                 );
                                 rangerPrincipalPrefix = rangerPrincipalPrefix + "-" + request.getNamespace();
+                                // The Ranger plugin logs in with the SAME mounted keytab as the service
+                                // (krb5_keytab_path), whose principal was shortened to fit FreeIPA's 32-char
+                                // uid limit when it was minted (see normalizeKerberosPrincipalLength). Apply
+                                // the identical normalization here so the plugin's login principal AND the
+                                // policy/tag download auth-users match the principal that actually exists in
+                                // the keytab + KDC — otherwise the plugin kinits as a non-existent principal
+                                // (or Ranger authorizes the wrong name) and policy download is denied.
+                                // The normalizer is deterministic and a no-op for names ≤32, so short
+                                // principals are unaffected.
+                                String rangerPrincipalFull =
+                                        normalizeKerberosPrincipalLength(rangerPrincipalPrefix + "@" + kerberosRealm);
+                                int atIdx = rangerPrincipalFull.indexOf('@');
+                                String rangerPrincipalPrimary =
+                                        atIdx >= 0 ? rangerPrincipalFull.substring(0, atIdx) : rangerPrincipalFull;
                                 rangerSecurityConfig.put(
                                         "ranger.plugin." + rangerServiceType + ".ugi.login.type",
                                         "keytab"
                                 );
                                 rangerSecurityConfig.put(
                                         "ranger.plugin." + rangerServiceType + ".ugi.keytab.principal",
-                                        rangerPrincipalPrefix + "@" + kerberosRealm
+                                        rangerPrincipalFull
                                 );
                                 rangerSecurityConfig.put(
                                         "ranger.plugin." + rangerServiceType + ".ugi.keytab.file",
@@ -1664,8 +1678,8 @@ public class CommandService {
                                         "ranger.plugin." + rangerServiceType + ".ugi.initialize",
                                         "true"
                                 );
-                                rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrefix);
-                                rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrefix);
+                                rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrimary);
+                                rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrimary);
                             }
                         } catch (Exception ex) {
                             LOG.warn("Failed to resolve Kerberos realm for Ranger config: {}", ex.toString());
