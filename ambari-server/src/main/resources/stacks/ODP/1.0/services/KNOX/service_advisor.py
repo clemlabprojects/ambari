@@ -24,7 +24,13 @@ import traceback
 import re
 import socket
 import fnmatch
-from lxml import etree
+# lxml was imported here but never used (all XML work below uses stdlib xml.etree.ElementTree).
+# A hard import crashed the whole KNOX ServiceAdvisor load on hosts whose ambari-server python
+# lacks python-lxml -> guard it so the advisor still loads. (No 'etree' reference remains.)
+try:
+    from lxml import etree
+except ImportError:
+    etree = None
 import xml.etree.ElementTree as ET
 
 

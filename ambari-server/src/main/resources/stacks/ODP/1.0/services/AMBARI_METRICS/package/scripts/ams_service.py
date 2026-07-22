@@ -91,7 +91,8 @@ def ams_service(name, action):
     elif action == 'stop':
       daemon_cmd = format("{cmd} stop")
       Execute(daemon_cmd,
-              user=params.ams_user
+              user=params.ams_user,
+              environment=monitor_env
       )
 
       pass
@@ -101,12 +102,22 @@ def ams_service(name, action):
     pid_file = format("{ams_monitor_pid_dir}/ambari-metrics-monitor.pid")
     no_op_test = format("ls {pid_file} >/dev/null 2>&1 && ps `cat {pid_file}` >/dev/null 2>&1")
 
+    # /usr/sbin/ambari-metrics-monitor resolves python ITSELF, hardcoding /usr/bin/python3 as
+    # first choice -- which may be a newer side-installed interpreter (e.g. rh-python38 via
+    # alternatives) that cannot import resource_monitoring from /usr/lib/python3.6/site-packages
+    # -> the monitor dies "No module named 'resource_monitoring'". The launcher honors a pre-set
+    # $PYTHON but sources ams-env.sh only AFTER resolving it, so it must come from the Execute
+    # environment. Follow the ambari-python-wrap pin (kept on the ambari-build python).
+    monitor_python = os.path.realpath('/usr/bin/ambari-python-wrap')
+    monitor_env = {'PYTHON': monitor_python} if os.path.isfile(monitor_python) else {}
+
     if action == 'start':
       daemon_cmd = format("{cmd} start")
       
       try:
         Execute(daemon_cmd,
-                user=params.ams_user
+                user=params.ams_user,
+                environment=monitor_env
         )
       except:
         show_logs(params.ams_monitor_log_dir, params.ams_user)
@@ -117,7 +128,8 @@ def ams_service(name, action):
 
       daemon_cmd = format("{cmd} stop")
       Execute(daemon_cmd,
-              user=params.ams_user
+              user=params.ams_user,
+              environment=monitor_env
       )
 
       pass

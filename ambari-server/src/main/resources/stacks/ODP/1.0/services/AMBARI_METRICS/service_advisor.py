@@ -337,8 +337,8 @@ class AMBARI_METRICSRecommender(service_advisor.ServiceAdvisor):
 
     putAmsEnvProperty("metrics_collector_heapsize", collector_heapsize)
 
-    putAmsSiteProperty("timeline.metrics.cache.size", max(100, int(log(total_sinks_count)) * 100))
-    putAmsSiteProperty("timeline.metrics.cache.commit.interval", min(10, max(12 - int(log(total_sinks_count)), 2)))
+    putAmsSiteProperty("timeline.metrics.cache.size", max(100, int(log(max(total_sinks_count, 1))) * 100))
+    putAmsSiteProperty("timeline.metrics.cache.commit.interval", min(10, max(12 - int(log(max(total_sinks_count, 1))), 2)))
 
     # blockCache = 0.3, memstore = 0.35, phoenix-server = 0.15, phoenix-client = 0.25
     putAmsHbaseSiteProperty("hfile.block.cache.size", 0.3)

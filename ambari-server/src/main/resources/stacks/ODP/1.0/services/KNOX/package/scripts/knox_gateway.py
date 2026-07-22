@@ -163,6 +163,23 @@ class KnoxGatewayDefault(KnoxGateway):
       show_logs(params.knox_logs_dir, params.knox_user)
       raise
 
+    # Consolidate the pid file with the REAL gateway JVM. knox-functions.sh records $! at launch,
+    # but its error/cleanup paths `rm -f $APP_PID_FILE` and a concurrent second invocation (e.g. a
+    # port-bind race during an upgrade restart) can leave {knox_pid_dir}/gateway.pid holding a dead
+    # pid while a perfectly healthy gateway keeps serving -> Ambari status = INSTALLED though Knox
+    # is up (seen repeatedly on takeover+upgrade restarts). After the readiness-polled start
+    # returns, rewrite the pid file from the live process list. Prefer the JVM whose environ pins
+    # KNOX_GATEWAY_DATA_DIR to our data dir (discriminates a co-resident IDBroker, which runs the
+    # same gateway.jar); fall back to the sole gateway.jar process of the knox user.
+    Execute(format(
+        "kpid=''; "
+        "for p in $(pgrep -f 'bin/gateway.jar' -u {knox_user}); do "
+        "  if tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | grep -q '^KNOX_GATEWAY_DATA_DIR={knox_gateway_data_dir}$'; then kpid=$p; break; fi; "
+        "done; "
+        "[ -z \"$kpid\" ] && [ \"$(pgrep -f 'bin/gateway.jar' -u {knox_user} | wc -l)\" = '1' ] && kpid=$(pgrep -f 'bin/gateway.jar' -u {knox_user}); "
+        "if [ -n \"$kpid\" ]; then echo $kpid > {knox_pid_dir}/gateway.pid; chown {knox_user}:{knox_group} {knox_pid_dir}/gateway.pid; fi"),
+        tries=3, try_sleep=5)
+
   def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
