@@ -3866,6 +3866,91 @@ public class KubernetesService {
         }
     }
 
+    /** Label KDPS stamps on every Helm release Secret it deploys, so the Releases page can identify
+     *  "deployed by the KDPS view" from a k8s-native signal that survives view redeploys, DataStore
+     *  resets and cluster type (OpenShift/vanilla) — independent of the view's own metadata store. */
+    public static final String KDPS_MANAGED_LABEL_KEY = "kdps.clemlab.com/managed-by";
+    public static final String KDPS_MANAGED_LABEL_VALUE = "k8s-view";
+
+    /**
+     * Stamp the KDPS "managed-by" label onto the Helm release storage Secret(s) of a release. Helm 3
+     * keeps release state in Secrets labeled {@code owner=helm,name=<release>} (one per revision); we
+     * add {@code kdps.clemlab.com/managed-by=k8s-view} to each so {@link #listKdpsManagedReleaseKeys()}
+     * can later recognise the release as KDPS-deployed. Best-effort: a failure here never breaks the
+     * deploy (the DataStore metadata is still written as before).
+     *
+     * @param namespace   the release namespace
+     * @param releaseName the Helm release name
+     * @return the number of Helm release Secrets found for this release (0 while Helm has not yet
+     *         written the release state — the caller can poll on this to tag as soon as it appears,
+     *         so pending/failed releases are tagged too, not only successful ones)
+     */
+    public int tagHelmReleaseSecrets(String namespace, String releaseName) {
+        if (client == null || namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()) {
+            return 0;
+        }
+        try {
+            List<Secret> releaseSecrets = client.secrets().inNamespace(namespace)
+                    .withLabel("owner", "helm")
+                    .withLabel("name", releaseName)
+                    .list().getItems();
+            for (Secret s : releaseSecrets) {
+                if (s.getMetadata() == null) continue;
+                Map<String, String> labels = s.getMetadata().getLabels();
+                if (labels == null) {
+                    labels = new HashMap<>();
+                    s.getMetadata().setLabels(labels);
+                }
+                if (KDPS_MANAGED_LABEL_VALUE.equals(labels.get(KDPS_MANAGED_LABEL_KEY))) {
+                    continue; // already tagged
+                }
+                labels.put(KDPS_MANAGED_LABEL_KEY, KDPS_MANAGED_LABEL_VALUE);
+                client.secrets().inNamespace(namespace).withName(s.getMetadata().getName()).patch(s);
+            }
+            if (!releaseSecrets.isEmpty()) {
+                LOG.info("Tagged {} Helm release Secret(s) for {}/{} with {}={}",
+                        releaseSecrets.size(), namespace, releaseName, KDPS_MANAGED_LABEL_KEY, KDPS_MANAGED_LABEL_VALUE);
+            }
+            return releaseSecrets.size();
+        } catch (Exception ex) {
+            LOG.warn("tagHelmReleaseSecrets failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return 0;
+        }
+    }
+
+    /**
+     * The set of Helm releases KDPS has deployed, read from the k8s-native label
+     * {@link #KDPS_MANAGED_LABEL_KEY} stamped on their release Secrets (see
+     * {@link #tagHelmReleaseSecrets}). Returned as {@code "<namespace>/<releaseName>"} keys, where the
+     * release name comes from the Helm {@code name} label on the Secret (its own name is
+     * {@code sh.helm.release.v1.<release>.v<rev>}). This is the robust source of truth for the Releases
+     * page "deployed by KDPS" default filter — it does not depend on the view's DataStore metadata,
+     * which can go missing across a view rebuild/redeploy or on a different cluster.
+     *
+     * @return set of "namespace/releaseName"; empty on any error (caller degrades to DataStore metadata)
+     */
+    public java.util.Set<String> listKdpsManagedReleaseKeys() {
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        if (client == null) return keys;
+        try {
+            List<Secret> secrets = client.secrets().inAnyNamespace()
+                    .withLabel("owner", "helm")
+                    .withLabel(KDPS_MANAGED_LABEL_KEY, KDPS_MANAGED_LABEL_VALUE)
+                    .list().getItems();
+            for (Secret s : secrets) {
+                if (s.getMetadata() == null || s.getMetadata().getLabels() == null) continue;
+                String ns = s.getMetadata().getNamespace();
+                String rel = s.getMetadata().getLabels().get("name"); // Helm stores the release name here
+                if (ns != null && rel != null && !rel.isBlank()) {
+                    keys.add(ns + "/" + rel);
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("listKdpsManagedReleaseKeys failed: {}", ex.toString());
+        }
+        return keys;
+    }
+
     /**
      * Fetch a Secret by name from a namespace, or null if absent.
      * Public helper used by ReleaseTlsService to read tls.crt for cert parsing.
