@@ -498,6 +498,50 @@ public class CommandService {
         return resolvedValue;
     }
 
+    /** FreeIPA caps a principal's primary component (its uid) at 32 characters. */
+    private static final int MAX_IPA_PRINCIPAL_PRIMARY = 32;
+
+    /**
+     * Ensures a Kerberos principal's PRIMARY component (the part before '@') fits FreeIPA's 32-char uid
+     * limit. KDPS's default per-deploy principal ({@code <service>-<namespace>@REALM}) can exceed it
+     * (e.g. {@code trino-coordinator-sodata-trino-ns} = 33), and IPA then rejects it with
+     * "invalid 'login': can be at most 32 characters". When too long, the primary is shortened
+     * DETERMINISTICALLY — a readable prefix plus a short stable hash of the full name — so (a) IPA
+     * accepts it, (b) two long names sharing a prefix don't collide, and (c) it is identical on every
+     * redeploy (the same IPA principal + keytab are reused, not recreated).
+     *
+     * <p>Only user-style principals (no {@code /instance}) are touched; service principals
+     * ({@code service/host@REALM}) follow different IPA rules and are left as-is. MIT KDC has no such
+     * limit; AD is stricter (20-char sAMAccountName) — either way an operator can set an explicit
+     * {@code principalTemplate} on the service's kerberos[] entry to control the name.
+     *
+     * @param principal the rendered principal (e.g. {@code primary@REALM})
+     * @return the same principal, or one with a shortened primary when it exceeded the limit
+     */
+    private String normalizeKerberosPrincipalLength(String principal) {
+        if (principal == null || principal.isBlank()) {
+            return principal;
+        }
+        int at = principal.indexOf('@');
+        String primary = at >= 0 ? principal.substring(0, at) : principal;
+        String realmPart = at >= 0 ? principal.substring(at) : "";
+        if (primary.contains("/") || primary.length() <= MAX_IPA_PRINCIPAL_PRIMARY) {
+            return principal;
+        }
+        String hash = Integer.toHexString(primary.hashCode() & 0x7fffffff);
+        if (hash.length() > 6) {
+            hash = hash.substring(0, 6);
+        }
+        String prefix = primary.substring(0, MAX_IPA_PRINCIPAL_PRIMARY - hash.length() - 1)
+                .replaceAll("-+$", "");
+        String shortened = prefix + "-" + hash;
+        LOG.warn("Kerberos principal primary '{}' ({} chars) exceeds the {}-char KDC limit (FreeIPA uid); "
+                        + "shortened deterministically to '{}'. Set an explicit principalTemplate on the "
+                        + "service's kerberos[] entry to control the name.",
+                primary, primary.length(), MAX_IPA_PRINCIPAL_PRIMARY, shortened);
+        return shortened + realmPart;
+    }
+
     /**
      * Replace a single {{token}} placeholder in a template with a concrete value.
      *
@@ -634,6 +678,7 @@ public class CommandService {
                     releaseName,
                     kerberosRealm == null ? "" : kerberosRealm
             );
+            resolvedPrincipal = normalizeKerberosPrincipalLength(resolvedPrincipal);
             String secretName = resolveKerberosEntrySecretName(
                     kerberosEntry,
                     serviceName,
@@ -2889,6 +2934,7 @@ public class CommandService {
                     releaseName,
                     kerberosRealm
             );
+            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
             if (principalFqdn == null || principalFqdn.isBlank()) {
                 LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
                 continue;
@@ -4982,6 +5028,7 @@ public class CommandService {
                                     kerberosRealm,
                                     kerberosExtraTokens
                             );
+                            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
                             if (principalFqdn == null || principalFqdn.isBlank()) {
                                 LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
                                 continue;
