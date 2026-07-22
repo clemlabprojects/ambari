@@ -2623,6 +2623,7 @@
           "label": "Kerberos / SASL GSSAPI (external keytab)",
           "secretField": "hive.externalKeytabSecret",
           "secretKeys": ["service.keytab"],
+          "principalField": "hive.externalKeytabPrincipal",
           "applyTo": {
             "global.security.kerberos.injectionMode":              "PRE_PROVISIONED",
             "global.security.kerberos.keytab.secretName":          "{{secret.name}}",

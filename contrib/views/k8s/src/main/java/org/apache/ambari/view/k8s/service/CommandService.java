@@ -1647,21 +1647,38 @@ public class CommandService {
                                         spec.get("krb5_keytab_path"),
                                         "/etc/security/keytabs/service.keytab"
                                 );
-                                rangerPrincipalPrefix = rangerPrincipalPrefix + "-" + request.getNamespace();
                                 // The Ranger plugin logs in with the SAME mounted keytab as the service
-                                // (krb5_keytab_path), whose principal was shortened to fit FreeIPA's 32-char
-                                // uid limit when it was minted (see normalizeKerberosPrincipalLength). Apply
-                                // the identical normalization here so the plugin's login principal AND the
-                                // policy/tag download auth-users match the principal that actually exists in
-                                // the keytab + KDC — otherwise the plugin kinits as a non-existent principal
-                                // (or Ranger authorizes the wrong name) and policy download is denied.
-                                // The normalizer is deterministic and a no-op for names ≤32, so short
-                                // principals are unaffected.
-                                String rangerPrincipalFull =
-                                        normalizeKerberosPrincipalLength(rangerPrincipalPrefix + "@" + kerberosRealm);
-                                int atIdx = rangerPrincipalFull.indexOf('@');
-                                String rangerPrincipalPrimary =
-                                        atIdx >= 0 ? rangerPrincipalFull.substring(0, atIdx) : rangerPrincipalFull;
+                                // (krb5_keytab_path). Its principal must MATCH what's in that keytab:
+                                //  • EXTERNAL context: the operator's external keytab holds THEIR principal
+                                //    (e.g. trino/coordinator@DEV01, from hive.externalKeytabPrincipal) — the
+                                //    same one wired to Hive/HDFS. Use it verbatim (including its own realm).
+                                //  • MANAGED context: KDPS mints <krb5_princ_srv>-<namespace> in the local
+                                //    realm, shortened to fit FreeIPA's 32-char uid (AMBARI-560/562) — apply
+                                //    the identical normalization so the plugin principal + download auth-users
+                                //    match the minted keytab.
+                                // Otherwise the plugin kinits as a principal absent from its keytab (or Ranger
+                                // authorizes the wrong name) and policy download is denied.
+                                String externalRangerPrincipal = resolveExternalRangerPrincipal(request);
+                                String rangerPrincipalFull;
+                                String rangerPrincipalPrimary;
+                                if (externalRangerPrincipal != null && !externalRangerPrincipal.isBlank()) {
+                                    rangerPrincipalFull = externalRangerPrincipal;
+                                    int at = rangerPrincipalFull.indexOf('@');
+                                    String prim = at >= 0 ? rangerPrincipalFull.substring(0, at) : rangerPrincipalFull;
+                                    // Ranger authorizes the short name: a svc/host principal maps to its service
+                                    // component under Ranger's default auth_to_local; a user-style one to itself.
+                                    int slash = prim.indexOf('/');
+                                    rangerPrincipalPrimary = slash >= 0 ? prim.substring(0, slash) : prim;
+                                    LOG.info("Ranger plugin principal (external keytab) for {} = {} (auth-users={})",
+                                            type, rangerPrincipalFull, rangerPrincipalPrimary);
+                                } else {
+                                    rangerPrincipalPrefix = rangerPrincipalPrefix + "-" + request.getNamespace();
+                                    rangerPrincipalFull =
+                                            normalizeKerberosPrincipalLength(rangerPrincipalPrefix + "@" + kerberosRealm);
+                                    int atIdx = rangerPrincipalFull.indexOf('@');
+                                    rangerPrincipalPrimary =
+                                            atIdx >= 0 ? rangerPrincipalFull.substring(0, atIdx) : rangerPrincipalFull;
+                                }
                                 rangerSecurityConfig.put(
                                         "ranger.plugin." + rangerServiceType + ".ugi.login.type",
                                         "keytab"
@@ -10283,6 +10300,54 @@ public class CommandService {
             }
         }
         return false;
+    }
+
+    /**
+     * The external Kerberos principal the operator supplied for this deploy (via a service's
+     * {@code externalServiceTargets} kerberos {@code principalField}, e.g. {@code hive.externalKeytabPrincipal}
+     * for Trino or {@code hiveDb.externalKeytabPrincipal} for Superset), or null when no external keytab is
+     * in play. This is the SAME principal wired to the Hive/HDFS connectors, so the Ranger plugin — which
+     * mounts the same external keytab — must log in as it (AMBARI-563 external-context companion to 562).
+     *
+     * @param request the deploy request (serviceKey + formValues)
+     * @return the operator-entered external principal, or null
+     */
+    private String resolveExternalRangerPrincipal(HelmDeployRequest request) {
+        try {
+            if (request == null || !deployUsesExternalKeytab(request.getFormValues())) {
+                return null;
+            }
+            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+            if (def == null || def.externalServiceTargets == null) {
+                return null;
+            }
+            Map<String, Object> fv = request.getFormValues();
+            for (org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget t : def.externalServiceTargets.values()) {
+                if (t == null || t.authModes == null) {
+                    continue;
+                }
+                org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode krb = t.authModes.get("kerberos");
+                if (krb == null) {
+                    continue;
+                }
+                // Only consider a target whose keytab Secret is actually set on this deploy.
+                if (krb.secretField != null && !krb.secretField.isBlank()) {
+                    Object sec = ConfigResolutionService.getByDottedPath(fv, krb.secretField);
+                    if (sec == null || String.valueOf(sec).isBlank()) {
+                        continue;
+                    }
+                }
+                if (krb.principalField != null && !krb.principalField.isBlank()) {
+                    Object pv = ConfigResolutionService.getByDottedPath(fv, krb.principalField);
+                    if (pv != null && !String.valueOf(pv).isBlank()) {
+                        return String.valueOf(pv).trim();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("resolveExternalRangerPrincipal failed: {}", e.toString());
+        }
+        return null;
     }
 
     /**
