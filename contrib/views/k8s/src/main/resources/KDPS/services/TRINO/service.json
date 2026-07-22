@@ -69,7 +69,7 @@
     "ranger-trino-security": {
       "service_type": "trino",
       "superusers": "trino, lbakalian",
-      "krb5_princ_srv": "trino-coordinator",
+      "krb5_princ_srv": "trino",
       "krb5_keytab_path": "/etc/security/keytabs/service.keytab",
       "ranger_policymgr_file": "/etc/trino/ranger/ranger-policymgr-ssl-trino.xml",
       "helm_values_ranger_policymgr_file": "ranger.policymgrssl_path",
@@ -83,7 +83,7 @@
     },
     "ranger-trino-audit": {
       "service_type": "trino",
-      "krb5_princ_srv": "trino-coordinator",
+      "krb5_princ_srv": "trino",
       "type": "ranger-audit",
       "cm_name": "ranger-trino-audit",
       "cm_type": "config-map",
@@ -210,7 +210,7 @@
     {
       "key": "coordinator",
       "serviceName": "trino-coordinator",
-      "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+      "principalTemplate": "trino-{{namespace}}@{{realm}}",
       "secretNameTemplate": "{{releaseName}}-keytab",
       "keyNameInSecret": "service.keytab",
       "mountPath": "/etc/security/keytabs"
@@ -218,8 +218,8 @@
     {
       "key": "worker",
       "serviceName": "trino-worker",
-      "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
-      "secretNameTemplate": "{{releaseName}}-worker-keytab",
+      "principalTemplate": "trino-{{namespace}}@{{realm}}",
+      "secretNameTemplate": "{{releaseName}}-keytab",
       "keyNameInSecret": "service.keytab",
       "mountPath": "/etc/security/keytabs"
     }
