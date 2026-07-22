@@ -695,15 +695,17 @@ const ServiceWizardPage: React.FC = () => {
               endpoints: (def as any)?.endpoints || undefined,
               mounts: isUpgrade ? null : ((installValues as any)?.mounts || (def as any)?.mounts || null),
               dependencies: isUpgrade ? null : ((def as any)?.dependencies || null),
-              // Context-dependent blocks are omitted when the deploy is wired to no platform
-              // context (standalone service): the Ranger spec targets the selected context's
-              // Ranger, and requiredConfigMaps are materialized from the LOCAL managed cluster's
-              // configs — meaningless (and standalone-fatal) without one. requiredConfigMaps are
-              // therefore only sent for a MANAGED-context deploy.
+              // Context-dependent blocks are omitted only when the deploy is wired to NO platform
+              // context (standalone service, 'none'): there is no backend to source Ranger or the
+              // hadoop-conf site XML from. For a MANAGED context the backend materializes
+              // requiredConfigMaps from the LOCAL cluster; for an EXTERNAL/CDP/REMOTE context it
+              // sources them FROM the context (CDP → Cloudera Manager clientConfig, REMOTE → remote
+              // Ambari, manual → pasted XML) per AMBARI-558 — so requiredConfigMaps MUST be sent for
+              // every real context, not just MANAGED. Gating it to MANAGED-only left external deploys
+              // with no trino-hadoop-conf ConfigMap while Trino still referenced /etc/hadoop/conf/*.xml,
+              // failing with "file does not exist". Mirror the Ranger gate (context-agnostic).
               ranger: isUpgrade || selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
-              requiredConfigMaps: (isUpgrade
-                  || selectedCtxId === 'none'
-                  || ((contexts.find((c) => c.id === selectedCtxId)?.kind ?? 'MANAGED') !== 'MANAGED'))
+              requiredConfigMaps: (isUpgrade || selectedCtxId === 'none')
                 ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
               tls: (installValues as any)?.tls || undefined,
