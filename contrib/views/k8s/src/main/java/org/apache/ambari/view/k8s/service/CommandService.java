@@ -4374,6 +4374,22 @@ public class CommandService {
             params.put("kerberosClusterEnabled", kerberosEnabled);
         }
 
+        // A backend whose auth mode resolves to Kerberos (e.g. Superset's hiveDb.authMode=kerberos, auto-
+        // detected from a kerberized CDP Hive) makes the chart mount a krb5.conf ConfigMap + a keytab —
+        // but Kerberos for an external context is driven ONLY by the operator's external keytab (554). If
+        // the operator selected the kerberized backend but attached NO keytab, kerberosEnabled stays false,
+        // the view creates neither the krb5.conf ConfigMap nor wires the keytab, and the pod later dies with
+        // the opaque "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found". Fail NOW with an
+        // actionable message pointing at the missing keytab selection.
+        if (externalContextSelected && !externalKeytabProvided && deployHasKerberizedExternalTarget(request)) {
+            throw new IllegalStateException(
+                    "The selected platform backend uses Kerberos authentication, but no external keytab "
+                    + "Secret was attached for this deploy. Create the service's keytab Secret in namespace '"
+                    + request.getNamespace() + "' (holding the service.keytab / keytab for the backend realm) "
+                    + "and select it in the wizard step 3 ('External ... service keytab Secret'), then redeploy. "
+                    + "Without it the pod cannot kinit and the krb5.conf/keytab volume mounts fail.");
+        }
+
         if (kerberosEnabled || externalKeytabProvided) {
             LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
                     kerberosEnabled, externalKeytabProvided, contextKerberos);
@@ -10265,6 +10281,45 @@ public class CommandService {
             if (v != null && !String.valueOf(v).isBlank()) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * True when this deploy selects a Kerberos auth mode on any of the service's
+     * {@code externalServiceTargets} (its {@code modeField} in the form resolves to {@code "kerberos"} —
+     * e.g. Superset's {@code hiveDb.authMode}, auto-resolved from a kerberized CDP Hive). Such a backend
+     * makes the chart mount a krb5.conf ConfigMap + keytab, so the deploy REQUIRES an external keytab.
+     * Used to fail early with an actionable message when the operator selected Kerberos but attached none,
+     * instead of the opaque pod-side "configmap {@code <release>-krb5-conf} not found" mount failure.
+     *
+     * @param request the deploy request (serviceKey + formValues)
+     * @return true when a kerberized external target is selected in the form
+     */
+    private boolean deployHasKerberizedExternalTarget(HelmDeployRequest request) {
+        try {
+            if (request == null || request.getServiceKey() == null || request.getServiceKey().isBlank()) {
+                return false;
+            }
+            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+            if (def == null || def.externalServiceTargets == null) {
+                return false;
+            }
+            Map<String, Object> fv = request.getFormValues();
+            if (fv == null) {
+                return false;
+            }
+            for (org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget t : def.externalServiceTargets.values()) {
+                if (t == null || t.modeField == null || t.modeField.isBlank()) {
+                    continue;
+                }
+                Object mode = ConfigResolutionService.getByDottedPath(fv, t.modeField);
+                if (mode != null && "kerberos".equalsIgnoreCase(String.valueOf(mode).trim())) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("deployHasKerberizedExternalTarget failed: {}", e.toString());
         }
         return false;
     }
