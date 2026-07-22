@@ -7393,9 +7393,18 @@ public class CommandService {
                             try {
                                 Optional<byte[]> existing =
                                         this.kubernetesService.readOpaqueSecretKeyAsBytes(reuseNs, reuseSec, reuseKey);
-                                if (existing.isPresent() && existing.get().length > 0) {
-                                    LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' already holds keytab '{}' ({} bytes) — reusing, NOT re-keying the KDC",
-                                            reuseNs, reuseSec, reuseKey, existing.get().length);
+                                // Reuse ONLY when the stored keytab is actually for the principal we're about
+                                // to issue. If the principal scheme changed (e.g. AMBARI-564 renamed
+                                // trino-coordinator-<ns> → trino-<ns>), the old Secret holds a keytab for a
+                                // now-defunct principal; reusing it would make the pod kinit as a principal
+                                // that no longer matches its config. In that case fall through to issuance:
+                                // the new principal does not exist in the KDC yet, so it is created and a fresh
+                                // keytab overwrites the Secret — the view self-heals. Same-principal redeploys
+                                // still reuse (generate-once, no KDC re-key → no "Preauthentication failed").
+                                if (existing.isPresent() && existing.get().length > 0
+                                        && keytabContainsPrincipal(existing.get(), principalFqdn)) {
+                                    LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' already holds keytab '{}' ({} bytes) for principal '{}' — reusing, NOT re-keying the KDC",
+                                            reuseNs, reuseSec, reuseKey, existing.get().length, principalFqdn);
                                     appendCommandLog(id, "Reusing existing keytab in Secret " + reuseNs + "/" + reuseSec
                                             + " (generate-once; no KDC re-key)");
                                     Map<String, Object> reusedRes = new LinkedHashMap<>();
@@ -7405,6 +7414,11 @@ public class CommandService {
                                     reusedRes.put("payloadSha256", sha256Hex(existing.get()));
                                     childSt.setResultJson(gson.toJson(reusedRes));
                                     break; // skip KDC issuance entirely
+                                } else if (existing.isPresent() && existing.get().length > 0) {
+                                    LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' holds a keytab for a DIFFERENT principal than "
+                                            + "requested '{}' (principal scheme changed) — re-issuing to self-heal (the new principal "
+                                            + "does not exist in the KDC, so this creates it and overwrites the Secret)",
+                                            reuseNs, reuseSec, principalFqdn);
                                 }
                             } catch (Exception reuseCheck) {
                                 LOG.warn("KEYTAB_ISSUE_PRINCIPAL: could not check Secret '{}/{}' for reuse ({}); proceeding to issue",
@@ -8152,6 +8166,72 @@ public class CommandService {
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    /**
+     * True when the MIT/IPA keytab bytes contain an entry for {@code wantedPrincipal} ({@code primary@REALM},
+     * where a service principal's primary is {@code service/instance}). Used by the KEYTAB_ISSUE_PRINCIPAL
+     * reuse short-circuit to re-issue (self-heal) when the stored keytab is for a DIFFERENT principal than
+     * requested — e.g. after the principal scheme changed on an upgrade (AMBARI-564).
+     *
+     * <p>Parses the standard {@code 0x0502} (big-endian) keytab format. On any parse failure — or an
+     * unrecognised format — returns {@code true}, i.e. assume it matches and keep the safe
+     * "reuse, do not re-key" behaviour; we only force a re-issue when we can positively confirm the
+     * requested principal is absent.
+     *
+     * @param keytab          raw keytab bytes from the Secret
+     * @param wantedPrincipal the principal about to be issued ({@code primary@REALM})
+     * @return true if the keytab contains the principal, or the bytes cannot be confidently parsed
+     */
+    private boolean keytabContainsPrincipal(byte[] keytab, String wantedPrincipal) {
+        if (keytab == null || keytab.length < 2 || wantedPrincipal == null || wantedPrincipal.isBlank()) {
+            return true;
+        }
+        try {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(keytab).order(java.nio.ByteOrder.BIG_ENDIAN);
+            int v0 = buf.get() & 0xff;
+            int v1 = buf.get() & 0xff;
+            if (v0 != 0x05 || v1 != 0x02) {
+                return true; // not the format we parse → don't force a re-key
+            }
+            while (buf.remaining() >= 4) {
+                int size = buf.getInt();
+                if (size == 0) {
+                    break;
+                }
+                if (size < 0) { // deleted-entry hole
+                    buf.position(Math.min(buf.limit(), buf.position() + (-size)));
+                    continue;
+                }
+                int entryStart = buf.position();
+                if (size > buf.remaining()) {
+                    return true; // truncated/unexpected → be safe
+                }
+                int numComponents = buf.getShort() & 0xffff;
+                int realmLen = buf.getShort() & 0xffff;
+                byte[] realmB = new byte[realmLen];
+                buf.get(realmB);
+                String realm = new String(realmB, StandardCharsets.UTF_8);
+                StringBuilder primary = new StringBuilder();
+                for (int i = 0; i < numComponents; i++) {
+                    int clen = buf.getShort() & 0xffff;
+                    byte[] cb = new byte[clen];
+                    buf.get(cb);
+                    if (i > 0) {
+                        primary.append('/');
+                    }
+                    primary.append(new String(cb, StandardCharsets.UTF_8));
+                }
+                if ((primary + "@" + realm).equals(wantedPrincipal)) {
+                    return true;
+                }
+                buf.position(entryStart + size); // skip nameType/timestamp/vno/keyblock
+            }
+            return false; // parsed OK, principal not present
+        } catch (Exception e) {
+            LOG.warn("keytabContainsPrincipal: parse failed ({}); assuming match to avoid a re-key", e.toString());
+            return true;
         }
     }
 
