@@ -179,10 +179,18 @@ public class HelmResource {
         List<Release> page = releases.subList(from, to);
 
         // Robust "deployed by KDPS" signal: the KDPS label stamped on each Helm release Secret at deploy
-        // time (see KubernetesService.tagHelmReleaseSecrets). Read once, k8s-native — so a release still
-        // shows in the default view even when the view's own DataStore metadata is missing (view rebuilt
-        // / redeployed, different cluster, OpenShift). Empty on error → we degrade to DataStore metadata.
-        final java.util.Set<String> kdpsManaged = kubernetesService.listKdpsManagedReleaseKeys();
+        // time (see KubernetesService.tagHelmReleaseSecrets). Read k8s-native — so a release still shows
+        // in the default view even when the view's own DataStore metadata is missing (view rebuilt /
+        // redeployed, different cluster). Scoped to the namespaces of the releases we just listed (NOT
+        // cluster-wide) so a namespace-scoped view ServiceAccount — the norm on a real OpenShift — can
+        // read it; a cluster-wide query would 403 and hide every release. Empty on error → we degrade to
+        // DataStore metadata.
+        final java.util.Set<String> listedNamespaces = new java.util.HashSet<>();
+        for (Release r : page) {
+            if (r.getNamespace() != null && !r.getNamespace().isEmpty()) listedNamespaces.add(r.getNamespace());
+        }
+        if (namespace != null && !namespace.isEmpty()) listedNamespaces.add(namespace);
+        final java.util.Set<String> kdpsManaged = kubernetesService.listKdpsManagedReleaseKeys(listedNamespaces);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         Map<String,String> versionCache = new HashMap<>();
