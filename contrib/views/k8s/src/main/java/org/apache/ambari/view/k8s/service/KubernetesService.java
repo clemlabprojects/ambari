@@ -3927,26 +3927,39 @@ public class KubernetesService {
      * page "deployed by KDPS" default filter — it does not depend on the view's DataStore metadata,
      * which can go missing across a view rebuild/redeploy or on a different cluster.
      *
+     * <p>Scoped to the given namespaces (one label-list call per namespace) rather than cluster-wide:
+     * the view's ServiceAccount on a real OpenShift is typically namespace-scoped, so a cluster-wide
+     * {@code secrets().inAnyNamespace()} would 403 and silently return nothing (the bug that made the
+     * Releases page empty at a customer even though the release Secrets WERE labelled). We only ever
+     * need the namespaces that the release listing already returned — which the SA can read by
+     * definition, since it just listed releases there.
+     *
+     * @param namespaces the namespaces to check (typically the distinct namespaces of the listed releases)
      * @return set of "namespace/releaseName"; empty on any error (caller degrades to DataStore metadata)
      */
-    public java.util.Set<String> listKdpsManagedReleaseKeys() {
+    public java.util.Set<String> listKdpsManagedReleaseKeys(java.util.Collection<String> namespaces) {
         java.util.Set<String> keys = new java.util.HashSet<>();
-        if (client == null) return keys;
-        try {
-            List<Secret> secrets = client.secrets().inAnyNamespace()
-                    .withLabel("owner", "helm")
-                    .withLabel(KDPS_MANAGED_LABEL_KEY, KDPS_MANAGED_LABEL_VALUE)
-                    .list().getItems();
-            for (Secret s : secrets) {
-                if (s.getMetadata() == null || s.getMetadata().getLabels() == null) continue;
-                String ns = s.getMetadata().getNamespace();
-                String rel = s.getMetadata().getLabels().get("name"); // Helm stores the release name here
-                if (ns != null && rel != null && !rel.isBlank()) {
-                    keys.add(ns + "/" + rel);
+        if (client == null || namespaces == null || namespaces.isEmpty()) return keys;
+        java.util.Set<String> distinct = new java.util.HashSet<>();
+        for (String ns : namespaces) {
+            if (ns != null && !ns.isBlank()) distinct.add(ns);
+        }
+        for (String ns : distinct) {
+            try {
+                List<Secret> secrets = client.secrets().inNamespace(ns)
+                        .withLabel("owner", "helm")
+                        .withLabel(KDPS_MANAGED_LABEL_KEY, KDPS_MANAGED_LABEL_VALUE)
+                        .list().getItems();
+                for (Secret s : secrets) {
+                    if (s.getMetadata() == null || s.getMetadata().getLabels() == null) continue;
+                    String rel = s.getMetadata().getLabels().get("name"); // Helm stores the release name here
+                    if (rel != null && !rel.isBlank()) {
+                        keys.add(ns + "/" + rel);
+                    }
                 }
+            } catch (Exception ex) {
+                LOG.warn("listKdpsManagedReleaseKeys: namespace {} failed: {}", ns, ex.toString());
             }
-        } catch (Exception ex) {
-            LOG.warn("listKdpsManagedReleaseKeys failed: {}", ex.toString());
         }
         return keys;
     }
