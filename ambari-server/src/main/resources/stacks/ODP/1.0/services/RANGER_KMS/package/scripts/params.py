@@ -55,6 +55,7 @@ stack_supports_ranger_kerberos = check_stack_feature(StackFeature.RANGER_KERBERO
 stack_supports_pid = check_stack_feature(StackFeature.RANGER_KMS_PID_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_DB_SUPPORT, version_for_stack_feature_checks)
 stack_supports_ranger_kms_ssl = check_stack_feature(StackFeature.RANGER_KMS_SSL, version_for_stack_feature_checks)
+stack_supports_ranger_kms_logback = check_stack_feature(StackFeature.RANGER_KMS_LOGBACK, version_for_stack_feature_checks)
 stack_supports_multiple_env_sh_files = check_stack_feature(StackFeature.MULTIPLE_ENV_SH_FILES_SUPPORT, version_for_stack_feature_checks)
 
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
@@ -80,6 +81,8 @@ ranger_kms_log_maxbackupindex = default('/configurations/kms-log4j/ranger_kms_lo
 
 jdk_location = config['ambariLevelParams']['jdk_location']
 kms_log4j = config['configurations']['kms-log4j']['content']
+# Ranger KMS 2.x (ODP 1.3.1.0+) logs via logback; the config type only exists there (None on older stacks).
+kms_logback = default("/configurations/kms-logback/content", None)
 
 # ranger host
 ranger_admin_hosts = config['clusterHostInfo']['ranger_admin_hosts']

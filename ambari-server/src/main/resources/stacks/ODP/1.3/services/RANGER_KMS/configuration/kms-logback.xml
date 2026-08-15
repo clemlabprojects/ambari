@@ -1,0 +1,115 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_adding_forbidden="true">
+  <!-- Ranger KMS 2.x (ODP 1.3.1.0+) logs via logback: the launcher passes
+       -Dlogback.configurationFile=file:<conf>/kms-logback.xml and ignores kms-log4j.properties entirely.
+       This managed config type is rendered to kms-logback.xml in the KMS conf dir so the logging
+       configuration survives conf-dir recreation (odp-conf-select creates empty versioned dirs) and so
+       the log size/retention knobs from kms-log4j actually take effect. It mirrors the packaged
+       WEB-INF/classes/conf.dist/kms-logback.xml (all appenders/loggers preserved) with the rolling
+       policies upgraded to SizeAndTimeBasedRollingPolicy wired to the existing kms-log4j UI properties
+       (ranger_kms_log_maxfilesize / ranger_kms_log_maxbackupindex and their audit counterparts). -->
+  <property>
+    <name>content</name>
+    <display-name>kms-logback template</display-name>
+    <description>Logback configuration for Ranger KMS 2.x (ODP 1.3.1.0+); overrides the packaged conf.dist/kms-logback.xml. Size/retention values come from the kms-log4j properties.</description>
+    <value><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
+<configuration scan="true">
+  <appender name="kms-audit" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <!--See http://logback.qos.ch/manual/appenders.html#RollingFileAppender-->
+    <!--and http://logback.qos.ch/manual/appenders.html#SizeAndTimeBasedRollingPolicy-->
+    <!--for further documentation-->
+    <Append>true</Append>
+    <File>${kms.log.dir}/kms-audit-${hostname}-${user}.log</File>
+    <encoder>
+      <pattern>%d{ISO8601} %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${kms.log.dir}/kms-audit-${hostname}-${user}.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+      <maxFileSize>{{ranger_kms_audit_log_maxfilesize}}MB</maxFileSize>
+      <maxHistory>{{ranger_kms_audit_log_maxbackupindex}}</maxHistory>
+      <cleanHistoryOnStart>true</cleanHistoryOnStart>
+    </rollingPolicy>
+  </appender>
+  <appender name="kms-metric" class="ch.qos.logback.core.FileAppender">
+    <!--See also http://logback.qos.ch/manual/appenders.html#RollingFileAppender-->
+    <Append>false</Append>
+    <File>${kms.log.dir}/ranger_kms_metric_data_for_${metric.type}.log</File>
+    <encoder>
+      <pattern>%m%n</pattern>
+    </encoder>
+  </appender>
+  <appender name="kms" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <!--See http://logback.qos.ch/manual/appenders.html#RollingFileAppender-->
+    <!--and http://logback.qos.ch/manual/appenders.html#SizeAndTimeBasedRollingPolicy-->
+    <!--for further documentation-->
+    <File>${kms.log.dir}/ranger-kms-${hostname}-${user}.log</File>
+    <Append>true</Append>
+    <encoder>
+      <pattern>%d{ISO8601} %-5p [%t] %c{1} \(%F:%L\) - %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${kms.log.dir}/ranger-kms-${hostname}-${user}.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+      <maxFileSize>{{ranger_kms_log_maxfilesize}}MB</maxFileSize>
+      <maxHistory>{{ranger_kms_log_maxbackupindex}}</maxHistory>
+      <cleanHistoryOnStart>true</cleanHistoryOnStart>
+    </rollingPolicy>
+  </appender>
+  <logger name="com.sun.jersey.server.wadl.generators.WadlGeneratorJAXBGrammarGenerator" level="OFF"/>
+  <logger name="kms-audit" additivity="false" level="INFO">
+    <appender-ref ref="kms-audit"/>
+  </logger>
+  <logger name="org.apache.hadoop" level="INFO"/>
+  <logger name="org.apache.hadoop.conf" level="INFO"/>
+  <logger name="org.apache.hadoop.crypto.key.kms.server.KMSMetricUtil" level="INFO">
+    <appender-ref ref="kms-metric"/>
+  </logger>
+  <logger name="org.apache.ranger" level="INFO"/>
+  <root level="WARN">
+    <appender-ref ref="kms"/>
+  </root>
+</configuration>
+]]></value>
+    <value-attributes>
+      <type>content</type>
+      <show-property-name>false</show-property-name>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>
