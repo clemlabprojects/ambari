@@ -330,6 +330,18 @@ def kms(upgrade_type=None):
       mode=0o644
     )
 
+    # Ranger KMS 2.x (ODP 1.3.1.0+) logs via logback (the launcher passes -Dlogback.configurationFile
+    # pointing at <conf>/kms-logback.xml and ignores kms-log4j.properties). Render the managed
+    # kms-logback.xml so logging survives conf-dir recreation and honors the kms-log4j size/retention
+    # properties. Gated on the stack feature so older stacks keep the log4j-only behavior.
+    if params.stack_supports_ranger_kms_logback and params.kms_logback:
+      File(os.path.join(params.kms_conf_dir, "kms-logback.xml"),
+        owner=params.kms_user,
+        group=params.kms_group,
+        content=InlineTemplate(params.kms_logback),
+        mode=0o644
+      )
+
     # core-site.xml linking required by setup for HDFS encryption
     XmlConfig("core-site.xml",
       conf_dir=params.kms_conf_dir,
