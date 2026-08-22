@@ -3039,7 +3039,11 @@ public class BlueprintConfigurationProcessor {
         if (!hiveHooksClean.isEmpty()) {
           return StringUtils.join(hiveHooksClean, ",");
         } else {
-          return " ";
+          // An empty hook list must stay empty. Hive 4 (HIVE-28768) reads hook lists with
+          // Configuration.getStringCollection(), for which a whitespace-only value is one token
+          // that Class.forName() then rejects with ClassNotFoundException, breaking every query on
+          // an Atlas-less cluster. An empty value yields no tokens at all.
+          return "";
         }
       }
     });
