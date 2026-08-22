@@ -659,8 +659,11 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
       # Remove the atlas hook since Atlas service is not present.
       hive_hooks = [x for x in hive_hooks if x != atlas_hook_class]
 
-    # Convert hive_hooks back to a csv, unless there are 0 elements, which should be " "
-    hooks_value = " " if len(hive_hooks) == 0 else ",".join(hive_hooks)
+    # Convert hive_hooks back to a csv. An empty list must stay empty: Hive 4 (HIVE-28768) reads
+    # hook lists with Configuration.getStringCollection(), for which a whitespace-only value is one
+    # token that Class.forName() then rejects with ClassNotFoundException, breaking every query. An
+    # empty value yields no tokens at all, so it is the only safe way to express "no hooks".
+    hooks_value = ",".join(hive_hooks)
     putHiveSiteProperty("hive.exec.post.hooks", hooks_value)
 
     # This is no longer used in HDP 2.5, but still needed in HDP 2.3 and 2.4
