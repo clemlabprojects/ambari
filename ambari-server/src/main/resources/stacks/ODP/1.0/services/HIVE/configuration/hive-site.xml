@@ -362,6 +362,9 @@ limitations under the License.
       A pre-execution hook is specified as the name of a Java class which implements the
       org.apache.hadoop.hive.ql.hooks.ExecuteWithHookContext interface.
     </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <depends-on>
       <property>
         <type>hive-env</type>
@@ -381,6 +384,9 @@ limitations under the License.
       A post-execution hook is specified as the name of a Java class which implements the
       org.apache.hadoop.hive.ql.hooks.ExecuteWithHookContext interface.
     </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <depends-on>
       <property>
         <type>hive-env</type>
@@ -412,6 +418,9 @@ limitations under the License.
       An on-failure hook is specified as the name of Java class which implements the
       org.apache.hadoop.hive.ql.hooks.ExecuteWithHookContext interface.
     </description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <depends-on>
       <property>
         <type>hive-env</type>
