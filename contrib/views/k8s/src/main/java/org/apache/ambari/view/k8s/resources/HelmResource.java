@@ -193,7 +193,6 @@ public class HelmResource {
         final java.util.Set<String> kdpsManaged = kubernetesService.listKdpsManagedReleaseKeys(listedNamespaces);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
-        Map<String,String> versionCache = new HashMap<>();
         // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
         final int poolSize = Math.max(2, Math.min(8, page.size()));
         ExecutorService workerPool = Executors.newFixedThreadPool(poolSize);
@@ -314,28 +313,14 @@ public class HelmResource {
                         releaseDto.endpoints = new ArrayList<>(endpointsById.values());
                     }
 
-                    // If version is still missing, attempt to resolve via helm show chart
+                    // If the version couldn't be parsed from the `helm list` chart string, read the
+                    // DEPLOYED version straight from the release Secret's chart.metadata.version — i.e.
+                    // what is actually running on the cluster (source of truth). No remote registry
+                    // 'helm show chart' round-trip (slow + resolves the wrong thing + fails "not found"
+                    // for OCI refs) and no stale DB value.
                     if (releaseDto.version == null || releaseDto.version.isBlank()) {
-                        String chartRef = metadata != null && metadata.getChartRef() != null && !metadata.getChartRef().isBlank()
-                                ? metadata.getChartRef()
-                                : releaseDto.chart;
-                        String cacheKey = chartRef + "::" + (metadata != null ? metadata.getVersion() : "");
-                        String resolved = versionCache.get(cacheKey);
-                        if (resolved == null) {
-                            // Only attempt a remote 'helm show chart' for a resolvable ref
-                            // (repo_name/chart or oci://...). A bare local/sub-chart ref such as
-                            // "airflow-1.5.0-xxx" always fails with "non-absolute URLs should be in form
-                            // of repo_name/path_to_chart" — skip it to avoid log noise and a slow call.
-                            boolean resolvable = chartRef != null
-                                    && (chartRef.contains("/") || chartRef.startsWith("oci://"));
-                            resolved = resolvable
-                                    ? helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null)
-                                    : null;
-                            versionCache.put(cacheKey, resolved == null ? "" : resolved);
-                        }
-                        if (resolved != null && !resolved.isBlank()) {
-                            releaseDto.version = resolved;
-                        }
+                        releaseDto.version = kubernetesService.deployedChartVersion(
+                                releaseDto.namespace, releaseDto.name);
                     }
                 } catch (Exception ex) {
                     LOG.warn("Async refresh failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
