@@ -50,7 +50,7 @@ const HelmReleasesPage: React.FC = () => {
   const [helmReleases, setHelmReleases] = useState<HelmRelease[]>([]);
   const [totalReleases, setTotalReleases] = useState(0);
   const [pageIndex, setPageIndex] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [isLoading, setIsLoading] = useState(false);
   const [showAllReleases, setShowAllReleases] = useState(false);
   const [releaseSearch, setReleaseSearch] = useState('');
@@ -194,12 +194,17 @@ const HelmReleasesPage: React.FC = () => {
       // Kick off per-release TLS state lookups in parallel — non-blocking, populates
       // the badges as results arrive. A failure on any single release just leaves
       // that row showing the empty placeholder.
-      items.forEach((r) => {
-        const key = `${r.namespace}/${r.name}`;
-        getReleaseTlsState(r.namespace, r.name)
-          .then((entries) => setTlsByRelease((prev) => ({ ...prev, [key]: entries })))
-          .catch(() => setTlsByRelease((prev) => ({ ...prev, [key]: [] })));
-      });
+      // Only fetch TLS badges for KDPS-managed releases (the default view). A cluster can hold many
+      // non-KDPS releases; firing a /tls call for every one of them makes the page slow (and they don't
+      // show a TLS badge anyway). Releases revealed under "Show all" simply show the empty placeholder.
+      items
+        .filter((r) => r.managedByUi || r.deploymentMode === 'FLUX_GITOPS')
+        .forEach((r) => {
+          const key = `${r.namespace}/${r.name}`;
+          getReleaseTlsState(r.namespace, r.name)
+            .then((entries) => setTlsByRelease((prev) => ({ ...prev, [key]: entries })))
+            .catch(() => setTlsByRelease((prev) => ({ ...prev, [key]: [] })));
+        });
     } catch (e: any) {
       const errorMessage = e?.message || 'Failed to load releases';
       console.error('Failed to fetch Helm releases:', e);
