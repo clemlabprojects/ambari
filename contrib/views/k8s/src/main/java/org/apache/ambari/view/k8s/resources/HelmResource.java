@@ -322,7 +322,15 @@ public class HelmResource {
                         String cacheKey = chartRef + "::" + (metadata != null ? metadata.getVersion() : "");
                         String resolved = versionCache.get(cacheKey);
                         if (resolved == null) {
-                            resolved = helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null);
+                            // Only attempt a remote 'helm show chart' for a resolvable ref
+                            // (repo_name/chart or oci://...). A bare local/sub-chart ref such as
+                            // "airflow-1.5.0-xxx" always fails with "non-absolute URLs should be in form
+                            // of repo_name/path_to_chart" — skip it to avoid log noise and a slow call.
+                            boolean resolvable = chartRef != null
+                                    && (chartRef.contains("/") || chartRef.startsWith("oci://"));
+                            resolved = resolvable
+                                    ? helmService.resolveChartVersion(chartRef, metadata != null ? metadata.getVersion() : null)
+                                    : null;
                             versionCache.put(cacheKey, resolved == null ? "" : resolved);
                         }
                         if (resolved != null && !resolved.isBlank()) {
