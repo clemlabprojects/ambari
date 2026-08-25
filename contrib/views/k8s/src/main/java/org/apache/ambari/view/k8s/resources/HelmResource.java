@@ -402,6 +402,38 @@ public class HelmResource {
     }
 
     /**
+     * "Adopt" a release into the KDPS view: stamp the KDPS managed-by label on its Helm release
+     * Secret(s) so it appears in the Releases default filter. Used for releases installed before the
+     * automatic tagging existed (or by another tool) — the operator adopts them from "Show all" instead
+     * of a manual {@code kubectl label}. Idempotent; namespace-scoped (no cluster-wide permission).
+     *
+     * @param namespace release namespace
+     * @param releaseName release name
+     * @return HTTP 200 with the number of release Secrets tagged; 404 when the release has none
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/adopt")
+    public Response adoptRelease(@PathParam("namespace") String namespace,
+                                 @PathParam("release") String releaseName) {
+        try {
+            authHelper.checkWritePermission();
+            int tagged = kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
+            if (tagged <= 0) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "No Helm release Secret found for " + namespace + "/" + releaseName))
+                        .build();
+            }
+            LOG.info("Adopted release {}/{} into KDPS view ({} Secret(s) tagged)", namespace, releaseName, tagged);
+            return Response.ok(Map.of("adopted", true, "namespace", namespace,
+                    "release", releaseName, "taggedSecrets", tagged)).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
      * Re-run Kerberos keytab creation steps for a deployed release without re-installing the chart.
      * This schedules an async command which can be tracked in the background operations list.
      *

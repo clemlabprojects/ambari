@@ -965,6 +965,16 @@ export const regenerateReleaseKeytabs = async (namespace: string, releaseName: s
 };
 
 /**
+ * Adopt a release into the KDPS view: stamps the KDPS managed-by label on its Helm release
+ * Secret(s) so it appears in the Releases default filter. For releases installed before automatic
+ * tagging existed (or by another tool). Idempotent; namespace-scoped.
+ */
+export const adoptRelease = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/adopt`;
+  return fetchJson<{ adopted: boolean; taggedSecrets: number }>(requestPath, { method: 'POST' });
+};
+
+/**
  * Re-register the OIDC client in Keycloak for a deployed release.
  * Idempotent: updates the existing client if it already exists.
  */
