@@ -3965,6 +3965,88 @@ public class KubernetesService {
     }
 
     /**
+     * Build a release's Helm revision history from its Helm release Secrets
+     * ({@code sh.helm.release.v1.<name>.v<N>}) using the k8s API — no {@code helm} CLI binary (the Ambari
+     * server has none, which caused "Cannot run program helm") and no cluster-wide permission
+     * (namespace-scoped, like the KDPS label read). Each Secret's {@code release} field is
+     * {@code base64(base64(gzip(JSON)))}; we decode it and surface the same fields as
+     * {@code helm history -o json}: revision, updated, status, chart, app_version, description.
+     *
+     * @param namespace   release namespace
+     * @param releaseName Helm release name
+     * @return revisions ordered ascending by revision number
+     */
+    public List<Map<String, Object>> helmReleaseHistory(String namespace, String releaseName) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (client == null || namespace == null || namespace.isBlank()
+                || releaseName == null || releaseName.isBlank()) {
+            return out;
+        }
+        try {
+            List<Secret> secrets = client.secrets().inNamespace(namespace)
+                    .withLabel("owner", "helm").withLabel("name", releaseName)
+                    .list().getItems();
+            for (Secret s : secrets) {
+                if (s.getData() == null || s.getData().get("release") == null) continue;
+                Map<String, Object> rel = decodeHelmReleasePayload(s.getData().get("release"));
+                if (rel == null) continue;
+                Map<String, Object> e = new LinkedHashMap<>();
+                Object version = rel.get("version");
+                e.put("revision", version instanceof Number ? ((Number) version).intValue() : version);
+                Object infoObj = rel.get("info");
+                if (infoObj instanceof Map) {
+                    Map<?, ?> info = (Map<?, ?>) infoObj;
+                    e.put("status", info.get("status"));
+                    e.put("updated", info.get("last_deployed"));
+                    e.put("description", info.get("description"));
+                }
+                Object chartObj = rel.get("chart");
+                if (chartObj instanceof Map) {
+                    Object metaObj = ((Map<?, ?>) chartObj).get("metadata");
+                    if (metaObj instanceof Map) {
+                        Map<?, ?> meta = (Map<?, ?>) metaObj;
+                        e.put("chart", meta.get("name") + "-" + meta.get("version"));
+                        e.put("app_version", meta.get("appVersion"));
+                    }
+                }
+                out.add(e);
+            }
+            out.sort(java.util.Comparator.comparingInt(x -> {
+                Object r = x.get("revision");
+                try {
+                    return r instanceof Number ? ((Number) r).intValue() : Integer.parseInt(String.valueOf(r));
+                } catch (Exception ex) {
+                    return 0;
+                }
+            }));
+        } catch (Exception ex) {
+            LOG.warn("helmReleaseHistory failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            throw new RuntimeException("Failed to read helm history for " + namespace + "/" + releaseName
+                    + ": " + ex.getMessage(), ex);
+        }
+        return out;
+    }
+
+    /** Decode a Helm release Secret's {@code release} field: k8s-base64 → helm-base64 → gzip → JSON map. */
+    private Map<String, Object> decodeHelmReleasePayload(String k8sBase64Value) {
+        try {
+            byte[] helmB64 = java.util.Base64.getDecoder().decode(k8sBase64Value.trim());
+            byte[] gz = java.util.Base64.getMimeDecoder()
+                    .decode(new String(helmB64, java.nio.charset.StandardCharsets.UTF_8).trim());
+            try (java.util.zip.GZIPInputStream gis =
+                         new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(gz))) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(gis.readAllBytes(), Map.class);
+                return m;
+            }
+        } catch (Exception e) {
+            LOG.warn("decodeHelmReleasePayload failed: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
      * Fetch a Secret by name from a namespace, or null if absent.
      * Public helper used by ReleaseTlsService to read tls.crt for cert parsing.
      */

@@ -781,8 +781,9 @@ public class HelmResource {
     public Response getReleaseHistory(@PathParam("namespace") String namespace,
                                       @PathParam("release") String releaseName) {
         try {
-            List<Map<String, Object>> history = new HelmService(viewContext)
-                    .history(namespace, releaseName, getKubeconfigContents());
+            // Read history from the Helm release Secrets via the k8s Java client (no `helm` CLI binary —
+            // the Ambari server has none — and no cluster-wide permission). See AMBARI history fix.
+            List<Map<String, Object>> history = kubernetesService.helmReleaseHistory(namespace, releaseName);
             return Response.ok(history).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
