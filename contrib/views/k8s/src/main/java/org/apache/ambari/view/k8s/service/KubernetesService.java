@@ -4027,6 +4027,52 @@ public class KubernetesService {
         return out;
     }
 
+    /**
+     * The DEPLOYED chart version of a release, read from its latest Helm release Secret's
+     * {@code chart.metadata.version} — i.e. what is actually running on the cluster (the source of
+     * truth), NOT a remote registry lookup and NOT a stale DB value. Used as the accurate fallback for
+     * the Releases list when the version can't be parsed from the {@code helm list} chart string.
+     * Namespace-scoped; returns null when unavailable.
+     *
+     * @param namespace   release namespace
+     * @param releaseName Helm release name
+     * @return the deployed chart version (e.g. {@code 1.43.6}) or null
+     */
+    public String deployedChartVersion(String namespace, String releaseName) {
+        if (client == null || namespace == null || namespace.isBlank()
+                || releaseName == null || releaseName.isBlank()) {
+            return null;
+        }
+        try {
+            List<Secret> secrets = client.secrets().inNamespace(namespace)
+                    .withLabel("owner", "helm").withLabel("name", releaseName)
+                    .list().getItems();
+            Secret latest = null;
+            int maxRev = -1;
+            for (Secret s : secrets) {
+                if (s.getMetadata() == null || s.getMetadata().getLabels() == null) continue;
+                String v = s.getMetadata().getLabels().get("version");
+                int rev = -1;
+                try { rev = v != null ? Integer.parseInt(v) : -1; } catch (NumberFormatException ignore) { }
+                if (rev > maxRev) { maxRev = rev; latest = s; }
+            }
+            if (latest == null || latest.getData() == null || latest.getData().get("release") == null) {
+                return null;
+            }
+            Map<String, Object> rel = decodeHelmReleasePayload(latest.getData().get("release"));
+            if (rel != null && rel.get("chart") instanceof Map) {
+                Object metaObj = ((Map<?, ?>) rel.get("chart")).get("metadata");
+                if (metaObj instanceof Map) {
+                    Object ver = ((Map<?, ?>) metaObj).get("version");
+                    return ver != null ? String.valueOf(ver) : null;
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("deployedChartVersion failed for {}/{}: {}", namespace, releaseName, ex.toString());
+        }
+        return null;
+    }
+
     /** Decode a Helm release Secret's {@code release} field: k8s-base64 → helm-base64 → gzip → JSON map. */
     private Map<String, Object> decodeHelmReleasePayload(String k8sBase64Value) {
         try {
