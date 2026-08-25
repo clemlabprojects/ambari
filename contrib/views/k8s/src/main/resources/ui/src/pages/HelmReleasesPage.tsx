@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { API_BASE_URL } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
@@ -291,6 +291,24 @@ const HelmReleasesPage: React.FC = () => {
    * Re-run keytab generation for a release without redeploying Helm.
    * This schedules a background command and opens the operations drawer for tracking.
    */
+  /**
+   * Adopt a release into the KDPS view: stamps the KDPS managed-by label on its Helm release Secret
+   * so it appears in the default Releases filter (for releases installed before automatic tagging).
+   * Refreshes the list on success so the row moves into the default view.
+   */
+  const triggerAdopt = async (release: HelmRelease) => {
+    const hide = message.loading(`Adopting ${release.name}...`, 0);
+    try {
+      await adoptRelease(release.namespace, release.name);
+      message.success(`Adopted ${release.name} into the KDPS view`);
+      await fetchReleases();
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to adopt release');
+    } finally {
+      hide();
+    }
+  };
+
   const triggerKeytabRegeneration = async (release: HelmRelease) => {
     const hide = message.loading(`Regenerating keytabs for ${release.name}...`, 0);
     try {
@@ -633,6 +651,12 @@ const HelmReleasesPage: React.FC = () => {
           icon: <ReloadOutlined />,
           label: 'Resync / restart',
           onClick: () => resyncRelease(record, 'Resyncing release...')
+        }] : []),
+        ...(!record.managedByUi ? [{
+          key: 'adopt',
+          icon: <PlusOutlined />,
+          label: 'Adopt into KDPS view',
+          onClick: () => triggerAdopt(record)
         }] : []),
         ...(supportsKerberosRegeneration ? [{
           key: 'regenerate-keytabs',
