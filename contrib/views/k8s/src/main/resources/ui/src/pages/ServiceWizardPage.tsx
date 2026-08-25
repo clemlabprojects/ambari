@@ -28,7 +28,7 @@ import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
-import { applyBindingTargets, buildVarContext, deleteAtStr } from '../components/ServiceInstallationModal/bindings';
+import { applyBindingTargets, buildVarContext, deleteAtStr, deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -223,6 +223,24 @@ const ServiceWizardPage: React.FC = () => {
                 };
               });
               initial.kerberos = kerberosObj;
+            }
+            // UPGRADE mode: overlay the release's ACTUAL deployed values on top of the chart defaults so
+            // the form reflects what is running in production, not defaults. Submitting an upgrade seeded
+            // with defaults would silently overwrite the live config — so if we cannot read the current
+            // values, ABORT rather than fall back to defaults.
+            if (isUpgrade) {
+              try {
+                const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
+                if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {
+                  deepMerge(initial, deployed); // deployed values win over defaults
+                } else {
+                  throw new Error('empty values');
+                }
+              } catch (ve: any) {
+                message.error(`Could not load the current values for ${initial.releaseName} — upgrade aborted to avoid overwriting the running config with defaults.`);
+                setLoading(false);
+                return;
+              }
             }
             setInstallValues(initial);
         } catch(e) { message.error("Failed to load definition"); }
