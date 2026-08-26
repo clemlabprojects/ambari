@@ -171,13 +171,18 @@ class KnoxGatewayDefault(KnoxGateway):
     # returns, rewrite the pid file from the live process list. Prefer the JVM whose environ pins
     # KNOX_GATEWAY_DATA_DIR to our data dir (discriminates a co-resident IDBroker, which runs the
     # same gateway.jar); fall back to the sole gateway.jar process of the knox user.
+    # Runs as the knox user: knox can enumerate its own gateway JVMs, read its own
+    # /proc/<pid>/environ and write its own pid dir, so this needs no privilege on either agent
+    # mode (a bare Execute runs as the agent user, which on non-root agents can do none of those),
+    # and the pid file ends up knox-owned by construction.
     Execute(format(
         "kpid=''; "
         "for p in $(pgrep -f 'bin/gateway.jar' -u {knox_user}); do "
         "  if tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | grep -q '^KNOX_GATEWAY_DATA_DIR={knox_gateway_data_dir}$'; then kpid=$p; break; fi; "
         "done; "
         "[ -z \"$kpid\" ] && [ \"$(pgrep -f 'bin/gateway.jar' -u {knox_user} | wc -l)\" = '1' ] && kpid=$(pgrep -f 'bin/gateway.jar' -u {knox_user}); "
-        "if [ -n \"$kpid\" ]; then echo $kpid > {knox_pid_dir}/gateway.pid; chown {knox_user}:{knox_group} {knox_pid_dir}/gateway.pid; fi"),
+        "if [ -n \"$kpid\" ]; then echo $kpid > {knox_pid_dir}/gateway.pid; fi"),
+        user=params.knox_user,
         tries=3, try_sleep=5)
 
   def stop(self, env, upgrade_type=None):
