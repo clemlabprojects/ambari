@@ -25,6 +25,7 @@ import './fonts.css';
 import './index.css';
 import { ClusterStatusProvider } from './context/ClusterStatusContext.tsx';
 import { ThemeModeProvider, useThemeMode } from './context/ThemeModeContext.tsx';
+import { ReduceMotionProvider, useReduceMotion } from './context/ReduceMotionContext.tsx';
 
 /** Clemlab brand faces (self-hosted in fonts.css), with safe system fallbacks. */
 const FONT_SANS =
@@ -40,13 +41,19 @@ const FONT_MONO =
  */
 const ThemedRoot: React.FC = () => {
   const { mode } = useThemeMode();
+  const { reduceMotion } = useReduceMotion();
   const dark = mode === 'dark';
   return (
     <ConfigProvider
       componentSize="small"
+      // In reduce-motion mode, disable the click ripple and collapse antd's motion durations to
+      // near-zero — the biggest source of continuous repaints (costly over Citrix/VDI). The
+      // reduce-motion class on <html> (see index.css) flattens the rest globally.
+      wave={{ disabled: reduceMotion }}
       theme={{
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
+          ...(reduceMotion ? { motionDurationFast: '0s', motionDurationMid: '0s', motionDurationSlow: '0s' } : {}),
           fontFamily: FONT_SANS,
           fontFamilyCode: FONT_MONO,
           // Outfit is a light-ish variable font; 12px read too thin. Bump the base size and make
@@ -103,7 +110,9 @@ const ThemedRoot: React.FC = () => {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeModeProvider>
-      <ThemedRoot />
+      <ReduceMotionProvider>
+        <ThemedRoot />
+      </ReduceMotionProvider>
     </ThemeModeProvider>
   </React.StrictMode>,
 );

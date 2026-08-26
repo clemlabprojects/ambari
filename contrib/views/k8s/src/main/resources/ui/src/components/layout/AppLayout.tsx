@@ -39,9 +39,11 @@ import {
   ApiOutlined,
   BulbOutlined,
   BulbFilled,
+  ThunderboltFilled,
 } from '@ant-design/icons';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
 import { useThemeMode } from '../../context/ThemeModeContext';
+import { useReduceMotion } from '../../context/ReduceMotionContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import NamespaceSelector from './NamespaceSelector';
 import { listCommands, getClusterCapabilities, pingSession } from '../../api/client';
@@ -94,6 +96,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { status, error, fetchData, checkLiveness, connectionMessage } = useClusterStatus();
   const { mode, toggle: toggleTheme } = useThemeMode();
+  const { reduceMotion, toggle: toggleReduceMotion } = useReduceMotion();
 
   // Detected target platform (kubernetes | openshift) from the same /cluster/capabilities probe
   // that gates the OpenShift-only deploy fields. Surfaced in the brand so the operator can see at
@@ -301,6 +304,15 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </Tooltip>
               )}
               {status === 'error' && <Tag color="red" style={{ margin: 0 }}>CONNECTION ERROR</Tag>}
+              <Tooltip title={reduceMotion ? 'Performance mode ON — animations reduced (best over Citrix/remote desktop)' : 'Reduce motion (faster over Citrix/remote desktop)'}>
+                <Button
+                  icon={reduceMotion ? <ThunderboltFilled /> : <ThunderboltOutlined />}
+                  onClick={toggleReduceMotion}
+                  className="action-button"
+                  aria-label="toggle reduced motion"
+                  type={reduceMotion ? 'primary' : 'default'}
+                />
+              </Tooltip>
               <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
                 <Button
                   icon={mode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
