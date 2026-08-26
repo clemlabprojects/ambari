@@ -1063,6 +1063,51 @@ public class WebHookConfigurationService {
         return sb.toString();
     }
 
+    /**
+     * Parse every X.509 certificate found in a PEM string (supports a bundle carrying an
+     * intermediate chain). Returns an empty list for null/blank input.
+     */
+    public static List<X509Certificate> parsePemCertificates(String pem) {
+        if (pem == null || pem.isBlank()) {
+            return new ArrayList<>();
+        }
+        try {
+            java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+            List<X509Certificate> out = new ArrayList<>();
+            for (java.security.cert.Certificate c : cf.generateCertificates(
+                    new java.io.ByteArrayInputStream(pem.getBytes(StandardCharsets.UTF_8)))) {
+                if (c instanceof X509Certificate x) {
+                    out.add(x);
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse PEM certificates: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Build a JKS truststore (trustedCertEntry per cert) from a cert list, protected by
+     * {@code password}. Shared by the trust-bundle and truststore-registry paths so both emit an
+     * identical JVM-consumable {@code truststore.jks}.
+     */
+    public static byte[] buildJksFromCerts(List<X509Certificate> certs, char[] password) {
+        try {
+            java.security.KeyStore ks = java.security.KeyStore.getInstance("JKS");
+            ks.load(null, null);
+            int i = 0;
+            for (X509Certificate c : certs) {
+                ks.setCertificateEntry("ca-" + (i++), c);
+            }
+            try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream()) {
+                ks.store(baos, password);
+                return baos.toByteArray();
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to build JKS truststore: " + e.getMessage(), e);
+        }
+    }
+
     // Return earliest NotAfter among certs (used for rotation decisions).
     public static Instant earliestExpiry(List<X509Certificate> certs) {
         return certs.stream()

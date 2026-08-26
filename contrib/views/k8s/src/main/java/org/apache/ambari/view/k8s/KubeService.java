@@ -28,6 +28,7 @@ import org.apache.ambari.view.k8s.model.UserPermissions;
 import org.apache.ambari.view.k8s.resources.*;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
@@ -720,6 +721,67 @@ public class KubeService {
     public Response listTruststores(@javax.ws.rs.QueryParam("namespace") String namespace) {
         try {
             return Response.ok(getKubernetesService().listTruststores(namespace)).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    private TruststoreRegistryService truststoreRegistry() {
+        return new TruststoreRegistryService(viewContext, getKubernetesService());
+    }
+
+    /** Create a truststore from a public certificate PEM. Body: {name, caCertPem, default?, description?}. */
+    @POST
+    @Path("/truststores")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response createTruststore(Map<String, Object> body) {
+        try {
+            if (body == null) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "request body is required")).build();
+            }
+            String name = body.get("name") == null ? null : String.valueOf(body.get("name"));
+            String caCertPem = body.get("caCertPem") == null ? null : String.valueOf(body.get("caCertPem"));
+            boolean makeDefault = Boolean.parseBoolean(String.valueOf(body.getOrDefault("default", false)));
+            String description = body.get("description") == null ? null : String.valueOf(body.get("description"));
+            return Response.ok(truststoreRegistry().create(name, caCertPem, makeDefault, description)).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /** Toggle the default flag on a managed truststore. Body: {default: bool}. */
+    @PUT
+    @Path("/truststores/{namespace}/{name}/default")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response setTruststoreDefault(@PathParam("namespace") String namespace,
+                                         @PathParam("name") String name,
+                                         Map<String, Object> body) {
+        try {
+            boolean value = body == null || !body.containsKey("default")
+                    ? true : Boolean.parseBoolean(String.valueOf(body.get("default")));
+            return Response.ok(truststoreRegistry().setDefault(namespace, name, value)).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /** Delete a managed truststore (refuses non view-managed / per-release truststores). */
+    @DELETE
+    @Path("/truststores/{namespace}/{name}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response deleteTruststore(@PathParam("namespace") String namespace,
+                                     @PathParam("name") String name) {
+        try {
+            truststoreRegistry().delete(namespace, name);
+            return Response.ok(Map.of("deleted", true, "namespace", namespace, "name", name)).build();
+        } catch (IllegalArgumentException iae) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
             return handleError(e);
         }

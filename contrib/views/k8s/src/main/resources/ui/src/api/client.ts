@@ -1294,6 +1294,7 @@ export async function submitHelmDeploy(payload: {
   values: any;
   serviceKey?: string;
   securityProfile?: string;
+  truststoreRefs?: string[];
   repoId?: string;
   deploymentMode?: string;
   git?: any;
@@ -1557,6 +1558,10 @@ export interface TruststoreSummary {
   jvmReady: boolean;
   pemReady: boolean;
   certificates: TruststoreCert[];
+  /** Trusted by every release (default truststore). */
+  isDefault?: boolean;
+  /** Created via the Truststores tab (can be edited/deleted). */
+  managed?: boolean;
 }
 
 /** List Secrets matching {@code *-truststore} with parsed ca.crt summaries. */
@@ -1564,3 +1569,32 @@ export const listTruststores = async (namespace?: string): Promise<TruststoreSum
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
   return fetchJson<TruststoreSummary[]>(`/truststores${qs}`);
 };
+
+/** Create a truststore from a public certificate PEM (trust anchor, no private key). */
+export const createTruststore = async (
+  name: string,
+  caCertPem: string,
+  makeDefault: boolean,
+  description?: string,
+): Promise<{ namespace: string; name: string; caCount: number; isDefault: boolean; managed: boolean }> =>
+  fetchJson(`/truststores`, {
+    method: 'POST',
+    body: JSON.stringify({ name, caCertPem, default: makeDefault, description }),
+  });
+
+/** Toggle the default flag on a managed truststore (multiple may be default). */
+export const setTruststoreDefault = async (
+  namespace: string,
+  name: string,
+  value: boolean,
+): Promise<{ namespace: string; name: string; isDefault: boolean }> =>
+  fetchJson(`/truststores/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/default`, {
+    method: 'PUT',
+    body: JSON.stringify({ default: value }),
+  });
+
+/** Delete a managed truststore. */
+export const deleteTruststore = async (namespace: string, name: string): Promise<void> =>
+  fetchJson<void>(`/truststores/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });

@@ -3573,6 +3573,10 @@ public class KubernetesService {
         public boolean pemReady;
         /** Parsed certs in {@code ca.crt}; one entry per cert block. */
         public List<Map<String, Object>> certificates;
+        /** Trusted by every release (annotation {@code ambari.clemlab.com/trust-default=true}). */
+        public boolean isDefault;
+        /** Created via the view's Truststores tab (label {@code resource-type=truststore}); can be edited/deleted. */
+        public boolean managed;
     }
 
     /**
@@ -3604,6 +3608,12 @@ public class KubernetesService {
                 ts.namespace = s.getMetadata().getNamespace();
                 ts.name = name;
                 ts.releaseName = name.substring(0, name.length() - "-truststore".length());
+                Map<String, String> tsAnnotations = s.getMetadata().getAnnotations();
+                Map<String, String> tsLabels = s.getMetadata().getLabels();
+                ts.isDefault = tsAnnotations != null
+                        && Boolean.parseBoolean(tsAnnotations.getOrDefault("ambari.clemlab.com/trust-default", "false"));
+                ts.managed = tsLabels != null
+                        && "truststore".equals(tsLabels.get("ambari.clemlab.com/resource-type"));
                 Map<String, String> data = s.getData() != null ? s.getData() : java.util.Collections.emptyMap();
                 ts.jvmReady = data.containsKey("truststore.jks") && data.containsKey("truststore.password");
                 ts.pemReady = data.containsKey("ca.crt");

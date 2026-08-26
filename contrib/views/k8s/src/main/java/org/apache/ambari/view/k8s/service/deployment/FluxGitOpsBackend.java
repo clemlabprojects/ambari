@@ -48,6 +48,7 @@ import org.apache.ambari.view.k8s.service.GitCredentialService;
 import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.service.TrustBundleService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
@@ -450,55 +451,25 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 LOG.warn("Failed to prepare Kerberos config map for {}/{}: {}", namespace, release, ex.getMessage());
             }
         }
-        // Truststore from Ambari truststore
+        // Truststore for downstream TLS clients — shared with the direct deploy path via
+        // TrustBundleService: merges (deduped) the Ambari server SSL CA + Ambari Internal CA +
+        // operator truststores (defaults + those selected for this release), and provisions even
+        // when Ambari itself is not on SSL. Passwords are credential-store/alias resolved.
         try {
-            String truststorePath = viewContext.getAmbariProperty("ssl.trustStore.path");
-            if (truststorePath != null && !truststorePath.isBlank()) {
-                String truststoreType = Optional.ofNullable(viewContext.getAmbariProperty("ssl.trustStore.type"))
-                        .filter(s -> !s.isBlank()).orElse("JKS");
-                String truststorePasswordProp = Optional.ofNullable(viewContext.getAmbariProperty("ssl.trustStore.password")).orElse("");
-                char[] truststorePasswordChars = truststorePasswordProp.toCharArray();
-
-                byte[] truststoreBytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(truststorePath));
-                String truststoreSecretName = release + "-truststore";
-                Map<String, byte[]> truststoreData = new LinkedHashMap<>();
-                truststoreData.put("truststore.jks", truststoreBytes);
-                truststoreData.put("truststore.password", new String(truststorePasswordChars).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                // Optional PEM bundle
-                try {
-                    java.security.KeyStore keyStore = org.apache.ambari.view.k8s.service.WebHookConfigurationService.loadKeyStore(java.nio.file.Paths.get(truststorePath), truststorePasswordChars, truststoreType);
-                    StringBuilder pemBuilder = new StringBuilder();
-                    var aliasesEnum = keyStore.aliases();
-                    while (aliasesEnum.hasMoreElements()) {
-                        String certificateAlias = aliasesEnum.nextElement();
-                        java.security.cert.Certificate certificate = keyStore.getCertificate(certificateAlias);
-                        if (certificate instanceof java.security.cert.X509Certificate x509Certificate) {
-                            pemBuilder.append("-----BEGIN CERTIFICATE-----\n")
-                                    .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
-                                            .encodeToString(x509Certificate.getEncoded()))
-                                    .append("\n-----END CERTIFICATE-----\n");
-                        }
-                    }
-                    if (pemBuilder.length() > 0) {
-                        truststoreData.put("ca.crt", pemBuilder.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    }
-                } catch (Exception certificateEx) {
-                    LOG.warn("Failed to build PEM bundle from Ambari truststore: {}", certificateEx.toString());
+            TrustBundleService trustBundleService = new TrustBundleService(viewContext, kubernetesService);
+            TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
+                    namespace, release, request.getTruststoreRefs());
+            if (truststoreResult.provisioned()) {
+                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                    addOverride(explicitOverrides, override.getKey(), override.getValue());
                 }
-                kubernetesService.createOrUpdateOpaqueSecret(
-                        namespace,
-                        truststoreSecretName,
-                        truststoreData
-                );
-                addOverride(explicitOverrides, "global.security.tls.enabled", "true");
-                addOverride(explicitOverrides, "global.security.tls.truststore.enabled", "true");
-                addOverride(explicitOverrides, "global.security.tls.truststoreSecret", truststoreSecretName);
-                addOverride(explicitOverrides, "global.security.tls.truststoreKey", "truststore.jks");
-                addOverride(explicitOverrides, "global.security.tls.truststorePasswordKey", "truststore.password");
-                LOG.info("Provisioned truststore Secret '{}' in namespace '{}' from Ambari truststore {}", truststoreSecretName, namespace, truststorePath);
+                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                        truststoreResult.secretName(), truststoreResult.caCount(), namespace);
+            } else {
+                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
             }
         } catch (Exception ex) {
-            LOG.warn("Failed to provision truststore Secret from Ambari truststore: {}", ex.toString());
+            LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
         }
         // Global stack configs / config instantiations
         try {
