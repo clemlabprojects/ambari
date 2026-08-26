@@ -4460,96 +4460,26 @@ public class CommandService {
         );
         mergeTemplateVariablesIntoParams(params, kerberosTemplateVariableMap, "kerberos");
 
-        // ---------- Truststore from Ambari truststore (for downstream TLS clients)
-        // This builds a Secret from the company CA truststore and also injects the Ambari internal CA cert
-        // so both can be trusted by downstream clients. Helm wiring uses global.security.tls.*. ----------
+        // ---------- Truststore for downstream TLS clients ----------
+        // Merges (deduped) the Ambari server SSL CA + Ambari Internal CA + operator truststores
+        // (defaults + those selected for this release) into a single <release>-truststore Secret and
+        // wires global.security.tls.*. Assembly lives in TrustBundleService so the direct and GitOps
+        // paths stay identical; it provisions even when Ambari itself is not on SSL.
         try {
-            String truststorePath = ctx.getAmbariProperty("ssl.trustStore.path");
-            if (truststorePath != null && !truststorePath.isBlank()) {
-                String truststoreType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type"))
-                        .filter(s -> !s.isBlank()).orElse("JKS");
-                String truststorePassProp = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password")).orElse("");
-                char[] truststorePassword = ambariAliasResolver.resolve(ctx, truststorePassProp);
-
-                byte[] truststoreBytes = Files.readAllBytes(Paths.get(truststorePath));
-                String truststoreSecretName = request.getReleaseName() + "-truststore";
-                Map<String, byte[]> data = new LinkedHashMap<>();
-                // Merge internal CA cert into the company truststore (single keystore/Secret to mount).
-                byte[] mergedTruststoreBytes = truststoreBytes;
-                StringBuilder pemBundle = new StringBuilder();
-                try {
-                    KeyStore keyStore = WebHookConfigurationService.loadKeyStore(Paths.get(truststorePath), truststorePassword, truststoreType);
-                    // Append existing certificates to PEM bundle and track if internal CA is already present.
-                    var aliases = keyStore.aliases();
-                    while (aliases.hasMoreElements()) {
-                        String alias = aliases.nextElement();
-                        Certificate certificate = keyStore.getCertificate(alias);
-                        if (certificate instanceof X509Certificate x509) {
-                            pemBundle.append("-----BEGIN CERTIFICATE-----\n")
-                                    .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
-                                            .encodeToString(x509.getEncoded()))
-                                    .append("\n-----END CERTIFICATE-----\n");
-                        }
-                    }
-                    // Load Ambari internal CA cert and add it if not already present.
-                    WebHookConfigurationService webHookCfg = new WebHookConfigurationService(ctx, this.kubernetesService);
-                    var internalCa = webHookCfg.ensureAmbariCertificateAuthority();
-                    X509Certificate internalCaCert = (X509Certificate) java.security.cert.CertificateFactory.getInstance("X.509")
-                            .generateCertificate(new java.io.ByteArrayInputStream(internalCa.caCertificatePem().getBytes(StandardCharsets.UTF_8)));
-                    boolean hasInternalCa = false;
-                    var verifyAliases = keyStore.aliases();
-                    while (verifyAliases.hasMoreElements()) {
-                        String alias = verifyAliases.nextElement();
-                        Certificate certificate = keyStore.getCertificate(alias);
-                        if (certificate instanceof X509Certificate x509) {
-                            try {
-                                x509.verify(internalCaCert.getPublicKey());
-                                hasInternalCa = true;
-                                break;
-                            } catch (Exception ignored) {
-                                // not the same cert
-                            }
-                        }
-                    }
-                    if (!hasInternalCa) {
-                        keyStore.setCertificateEntry("ambari-internal-ca", internalCaCert);
-                        pemBundle.append("-----BEGIN CERTIFICATE-----\n")
-                                .append(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'})
-                                        .encodeToString(internalCaCert.getEncoded()))
-                                .append("\n-----END CERTIFICATE-----\n");
-                        try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream()) {
-                            keyStore.store(baos, truststorePassword);
-                            mergedTruststoreBytes = baos.toByteArray();
-                        }
-                    }
-                } catch (Exception e) {
-                    LOG.warn("Failed to merge internal CA into truststore {}; using original truststore only: {}", truststorePath, e.toString());
+            TrustBundleService trustBundleService = new TrustBundleService(ctx, this.kubernetesService);
+            TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
+                    request.getNamespace(), request.getReleaseName(), request.getTruststoreRefs());
+            if (truststoreResult.provisioned()) {
+                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                    this.commandUtils.addOverride(params, override.getKey(), override.getValue());
                 }
-
-                data.put("truststore.jks", mergedTruststoreBytes);
-                data.put("truststore.password", new String(truststorePassword).getBytes(StandardCharsets.UTF_8));
-                if (pemBundle.length() > 0) {
-                    data.put("ca.crt", pemBundle.toString().getBytes(StandardCharsets.UTF_8));
-                }
-
-                kubernetesService.createOrUpdateOpaqueSecret(
-                        request.getNamespace(),
-                        truststoreSecretName,
-                        data
-                );
-
-                this.commandUtils.addOverride(params, "global.security.tls.enabled", "true");
-                this.commandUtils.addOverride(params, "global.security.tls.truststore.enabled", "true");
-                this.commandUtils.addOverride(params, "global.security.tls.truststoreSecret", truststoreSecretName);
-                this.commandUtils.addOverride(params, "global.security.tls.truststoreKey", "truststore.jks");
-                this.commandUtils.addOverride(params, "global.security.tls.truststorePasswordKey", "truststore.password");
-
-                LOG.info("Provisioned truststore Secret '{}' in namespace '{}' from Ambari truststore {}", truststoreSecretName, request.getNamespace(), truststorePath);
+                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                        truststoreResult.secretName(), truststoreResult.caCount(), request.getNamespace());
             } else {
-                LOG.info("Ambari truststore path not configured; skipping truststore Secret provisioning");
+                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
             }
         } catch (Exception ex) {
-            LOG.warn("Failed to provision truststore Secret from Ambari truststore: {}", ex.toString());
+            LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
         }
         // The required Hadoop config maps are MATERIALIZED FROM THE LOCAL (managed) cluster's
         // desired configs. On a standalone Ambari (no cluster) — or when the cluster could not be

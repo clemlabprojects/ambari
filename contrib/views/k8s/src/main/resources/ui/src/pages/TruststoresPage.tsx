@@ -17,9 +17,9 @@
  */
 
 import React from 'react';
-import { Alert, Button, Card, Empty, Input, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
-import { DatabaseOutlined, ReloadOutlined } from '@ant-design/icons';
-import { listTruststores, type TruststoreCert, type TruststoreSummary } from '../api/client';
+import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Tooltip, Typography, Upload, message } from 'antd';
+import { DatabaseOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons';
+import { listTruststores, createTruststore, setTruststoreDefault, deleteTruststore, type TruststoreCert, type TruststoreSummary } from '../api/client';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
 
 const { Title, Paragraph, Text } = Typography;
@@ -47,6 +47,68 @@ const TruststoresPage: React.FC = () => {
   }, [namespace]);
 
   React.useEffect(() => { load(); }, [load]);
+
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [busyRow, setBusyRow] = React.useState<string | null>(null);
+  const [form] = Form.useForm();
+
+  const submitCreate = async () => {
+    try {
+      const v = await form.validateFields();
+      setSaving(true);
+      await createTruststore(v.name, v.caCertPem, !!v.makeDefault, v.description);
+      message.success(`Truststore "${v.name}" created`);
+      setCreateOpen(false);
+      form.resetFields();
+      load();
+    } catch (e: any) {
+      if (e?.errorFields) return; // form validation error, already shown inline
+      message.error(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleDefault = async (row: TruststoreSummary, value: boolean) => {
+    const key = `${row.namespace}/${row.name}`;
+    setBusyRow(key);
+    try {
+      await setTruststoreDefault(row.namespace, row.name, value);
+      message.success(`"${row.name}" ${value ? 'set as default' : 'removed from defaults'}`);
+      load();
+    } catch (e: any) {
+      message.error(e?.message || String(e));
+    } finally {
+      setBusyRow(null);
+    }
+  };
+
+  const removeTruststore = async (row: TruststoreSummary) => {
+    const key = `${row.namespace}/${row.name}`;
+    setBusyRow(key);
+    try {
+      await deleteTruststore(row.namespace, row.name);
+      message.success(`Truststore "${row.name}" deleted`);
+      load();
+    } catch (e: any) {
+      message.error(e?.message || String(e));
+    } finally {
+      setBusyRow(null);
+    }
+  };
+
+  // Read a .pem/.crt/.cer file the operator picks and drop its text into the PEM field.
+  const beforeUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const existing = form.getFieldValue('caCertPem');
+      const text = String(reader.result || '');
+      form.setFieldsValue({ caCertPem: existing ? `${existing.trimEnd()}\n${text}` : text });
+    };
+    reader.readAsText(file);
+    return false; // prevent antd's automatic upload
+  };
 
   const filtered = React.useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -106,6 +168,9 @@ const TruststoresPage: React.FC = () => {
             <Tooltip title="Refresh">
               <Button icon={<ReloadOutlined />} onClick={load} />
             </Tooltip>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Create truststore
+            </Button>
           </Space>
         }
         extra={
@@ -157,10 +222,105 @@ const TruststoresPage: React.FC = () => {
                   </Space>
                 ),
               },
+              {
+                title: 'Type',
+                key: 'type',
+                width: 110,
+                render: (_v: any, row: TruststoreSummary) => row.managed
+                  ? <Tag color="geekblue" style={{ margin: 0 }}>managed</Tag>
+                  : <Tooltip title="Auto-created for a release; edit via the install wizard"><Tag style={{ margin: 0 }}>release</Tag></Tooltip>,
+              },
+              {
+                title: 'Default',
+                key: 'default',
+                width: 90,
+                render: (_v: any, row: TruststoreSummary) => (
+                  <Tooltip title={row.managed ? 'Trust this in every release' : 'Only managed truststores can be marked default'}>
+                    <Switch
+                      size="small"
+                      checked={!!row.isDefault}
+                      disabled={!row.managed || busyRow === `${row.namespace}/${row.name}`}
+                      onChange={(v) => toggleDefault(row, v)}
+                    />
+                  </Tooltip>
+                ),
+              },
+              {
+                title: '',
+                key: 'actions',
+                width: 60,
+                render: (_v: any, row: TruststoreSummary) => row.managed ? (
+                  <Popconfirm
+                    title="Delete this truststore?"
+                    description="Releases already deployed keep their merged bundle until redeployed."
+                    okText="Delete"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => removeTruststore(row)}
+                  >
+                    <Button size="small" danger type="text" icon={<DeleteOutlined />}
+                            loading={busyRow === `${row.namespace}/${row.name}`} />
+                  </Popconfirm>
+                ) : null,
+              },
             ] as any}
           />
         )}
       </Card>
+
+      <Modal
+        title="Create truststore"
+        open={createOpen}
+        onCancel={() => { setCreateOpen(false); form.resetFields(); }}
+        onOk={submitCreate}
+        okText="Create"
+        confirmLoading={saving}
+        destroyOnClose
+        width={640}
+      >
+        <Paragraph type="secondary" style={{ marginTop: 0 }}>
+          Paste (or upload) a company's <Text strong>public</Text> certificate in PEM format — a trust
+          anchor, no private key. Mark it default to trust it in every release, or select it per
+          release in the install wizard (step 3).
+        </Paragraph>
+        <Form form={form} layout="vertical" initialValues={{ makeDefault: false }}>
+          <Form.Item
+            name="name"
+            label="Name"
+            rules={[
+              { required: true, message: 'A name is required' },
+              { pattern: /[a-zA-Z0-9]/, message: 'Must contain at least one alphanumeric character' },
+            ]}
+          >
+            <Input placeholder="e.g. acme-corp-ad" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="description" label="Description (optional)">
+            <Input placeholder="e.g. Active Directory LDAPS issuing CA" autoComplete="off" />
+          </Form.Item>
+          <Form.Item
+            name="caCertPem"
+            label="Certificate PEM"
+            rules={[
+              { required: true, message: 'Paste or upload a certificate PEM' },
+              {
+                validator: (_r, v) =>
+                  v && v.includes('BEGIN CERTIFICATE')
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('Expected a PEM containing "BEGIN CERTIFICATE"')),
+              },
+            ]}
+          >
+            <Input.TextArea rows={8} placeholder={'-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----'} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+          </Form.Item>
+          <Space style={{ marginBottom: 12 }}>
+            <Upload accept=".pem,.crt,.cer,.txt" showUploadList={false} beforeUpload={beforeUpload}>
+              <Button icon={<UploadOutlined />}>Upload .pem / .crt file</Button>
+            </Upload>
+          </Space>
+          <Form.Item name="makeDefault" valuePropName="checked">
+            <Checkbox>Trust in every release by default</Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
     </>
   );
 };

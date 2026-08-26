@@ -18,12 +18,12 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout, Steps, Button, message, notification, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider } from 'antd';
-import { ApiOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons';
+import { ApiOutlined, PlusOutlined, WarningOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -62,6 +62,12 @@ const ServiceWizardPage: React.FC = () => {
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
+  const [managedTruststores, setManagedTruststores] = useState<TruststoreSummary[]>([]);
+  useEffect(() => {
+    listTruststores()
+      .then((all) => setManagedTruststores(all.filter((t) => t.managed)))
+      .catch(() => setManagedTruststores([]));
+  }, []);
   const [configOverrides, setConfigOverrides] = useState<Record<string, any>>({}); // Step 3 data
   // Validity flag for each password-typed property, keyed by `${cfg}/${prop}`.
   // PropertyRenderer reports the boolean here whenever its local confirm state's
@@ -813,6 +819,10 @@ const ServiceWizardPage: React.FC = () => {
               })(),
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
+              // Managed truststores selected to trust in this release (defaults are always merged
+              // server-side). Names come from the Truststores tab.
+              truststoreRefs: ((installValues as any)?.truststoreRefs && (installValues as any).truststoreRefs.length)
+                ? (installValues as any).truststoreRefs : undefined,
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
               // Snapshot of raw form state (envelope keys stripped) so backend can read
@@ -971,6 +981,39 @@ const ServiceWizardPage: React.FC = () => {
               </Card>
             );
           })()}
+
+          {/* Trusted truststores: operator-created truststores (Truststores tab) to trust in this
+              release. Defaults are always merged server-side, so this only adds extras. */}
+          <Card style={{ marginBottom: 16 }}
+            title={<span style={{ fontSize: 15 }}><DatabaseOutlined /> Trusted truststores</span>}>
+            <Select
+              mode="multiple"
+              allowClear
+              style={{ width: '100%' }}
+              placeholder="Select truststore(s) to trust in this release"
+              value={(installValues as any)?.truststoreRefs || []}
+              onChange={(v) => setInstallValues((prev: any) => ({ ...prev, truststoreRefs: v }))}
+              options={managedTruststores.map((t) => ({
+                value: t.name,
+                label: `${t.name}${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
+              }))}
+              notFoundContent={<span style={{ fontSize: 12 }}>No managed truststores — create one in the Truststores tab</span>}
+              dropdownRender={(menu) => (
+                <>
+                  {menu}
+                  <Divider style={{ margin: '6px 0' }} />
+                  <Button type="text" icon={<PlusOutlined />} style={{ width: '100%', textAlign: 'left' }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => window.open('#/truststores', '_blank')}>
+                    Add / manage truststores
+                  </Button>
+                </>
+              )}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+              Default truststores are trusted automatically; selections here add to them.
+            </Typography.Text>
+          </Card>
 
           {/* #6: context details on demand (replaces the inline undertitle) */}
           <Modal title={<span><ApiOutlined /> Platform context details</span>}
