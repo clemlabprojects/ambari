@@ -229,10 +229,30 @@ const ServiceWizardPage: React.FC = () => {
             // with defaults would silently overwrite the live config — so if we cannot read the current
             // values, ABORT rather than fall back to defaults.
             if (isUpgrade) {
+              // Re-assert the release identity AFTER applyDefaults: the service.json form can declare
+              // a `namespace` (and would a `releaseName`) defaultValue — e.g. TRINO defaults namespace
+              // to 'trino-ns' — which applyDefaults writes over the real values passed from the
+              // Releases page. Left unfixed, getReleaseValues queries the wrong namespace (empty →
+              // false "could not load" abort) and a submitted upgrade would target the wrong namespace
+              // and create a new release instead of upgrading the running one.
+              if (upgradeState?.namespace) initial.namespace = upgradeState.namespace;
+              if (upgradeState?.releaseName) initial.releaseName = upgradeState.releaseName;
+              // Preserve the DEPLOYED chart + version so the "Chart (override)" field is populated and
+              // the upgrade re-uses the running chart (e.g. clemlab-trino) instead of the service.json
+              // default (trinodb/trino), which would silently switch charts.
+              if (upgradeState?.chart) initial.chartOverride = upgradeState.chart;
+              if (upgradeState?.version) initial.version = upgradeState.version;
               try {
                 const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
                 if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {
                   deepMerge(initial, deployed); // deployed values win over defaults
+                  // The Hostname (DNS) form field is scalar `ingress.host`, but charts store the host
+                  // under the `ingress.hosts[]` array — back-map so the field reflects the deployed host.
+                  const deployedHost = initial?.ingress?.hosts?.[0]?.host;
+                  if (deployedHost && !initial?.ingress?.host) {
+                    initial.ingress = initial.ingress || {};
+                    initial.ingress.host = deployedHost;
+                  }
                 } else {
                   throw new Error('empty values');
                 }

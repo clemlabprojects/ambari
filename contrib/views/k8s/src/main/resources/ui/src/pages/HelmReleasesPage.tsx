@@ -637,6 +637,11 @@ const HelmReleasesPage: React.FC = () => {
                 releaseName: record.name,
                 namespace: record.namespace,
                 repoId: record.repoId,
+                // Preserve the DEPLOYED chart on upgrade — otherwise the wizard falls back to the
+                // service.json default chart (e.g. trinodb/trino) instead of the running one
+                // (clemlab-trino), silently switching charts.
+                chart: (record as any).chartRef || record.chart,
+                version: (record as any).version,
                 deploymentMode: record.deploymentMode,
                 git: gitOptionsForRelease(record),
                 securityProfile: record.securityProfile,
