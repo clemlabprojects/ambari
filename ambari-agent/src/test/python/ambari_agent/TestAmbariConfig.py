@@ -18,6 +18,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
+import os
+import tempfile
 from unittest import TestCase
 from ambari_agent.AmbariConfig import AmbariConfig
 import sys
@@ -82,3 +84,70 @@ class TestAmbariConfig(TestCase):
     config.set("agent", AmbariConfig.COMMAND_FILE_RETENTION_POLICY_PROPERTY, "invalid_value")
     self.assertEqual(config.command_file_retention_policy,
                      AmbariConfig.COMMAND_FILE_RETENTION_POLICY_KEEP)
+
+  def test_cache_dir_and_derived_paths(self):
+    """
+    Test that cache_dir and derived cache paths (stacks_dir, alerts_cachedir, etc.)
+    are correctly initialized and can be individually updated via their setters.
+    """
+    config = AmbariConfig()
+
+    # Initial state - cache_dir uses built-in default (/tmp)
+    self.assertEqual(config.cache_dir, "/tmp")
+
+    # Derived paths should be based on default cache_dir (/tmp)
+    self.assertEqual(config.stacks_dir, os.path.join("/tmp", "stacks"))
+    self.assertEqual(config.alerts_cachedir, os.path.join("/tmp", "alerts"))
+    self.assertEqual(config.cluster_cache_dir, os.path.join("/tmp", "cluster_cache"))
+    self.assertEqual(config.common_services_dir, os.path.join("/tmp", "common-services"))
+    self.assertEqual(config.extensions_dir, os.path.join("/tmp", "extensions"))
+    self.assertEqual(config.host_scripts_dir, os.path.join("/tmp", "host_scripts"))
+
+    # Test that derived path setters work correctly
+    new_stacks_dir = "/custom/stacks"
+    config.stacks_dir = new_stacks_dir
+    self.assertEqual(config.stacks_dir, new_stacks_dir)
+
+    new_alerts_dir = "/custom/alerts"
+    config.alerts_cachedir = new_alerts_dir
+    self.assertEqual(config.alerts_cachedir, new_alerts_dir)
+
+    new_cluster_cache_dir = "/custom/cluster_cache"
+    config.cluster_cache_dir = new_cluster_cache_dir
+    self.assertEqual(config.cluster_cache_dir, new_cluster_cache_dir)
+
+    new_common_services_dir = "/custom/common-services"
+    config.common_services_dir = new_common_services_dir
+    self.assertEqual(config.common_services_dir, new_common_services_dir)
+
+    new_extensions_dir = "/custom/extensions"
+    config.extensions_dir = new_extensions_dir
+    self.assertEqual(config.extensions_dir, new_extensions_dir)
+
+    new_host_scripts_dir = "/custom/host_scripts"
+    config.host_scripts_dir = new_host_scripts_dir
+    self.assertEqual(config.host_scripts_dir, new_host_scripts_dir)
+
+  def test_derived_paths_follow_cache_dir_from_ini(self):
+    """
+    Regression test for the /tmp/stacks alert failure: derived cache paths must be
+    recalculated from cache_dir after the real agent ini is read over the built-in
+    unit-test defaults (cache_dir=/tmp).
+    """
+    config = AmbariConfig()
+    self.assertEqual(config.stacks_dir, os.path.join("/tmp", "stacks"))
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as ini:
+      ini.write("[agent]\ncache_dir=/var/lib/ambari-agent/cache\n")
+      ini_path = ini.name
+    try:
+      config.read(ini_path)
+      self.assertEqual(config.cache_dir, "/var/lib/ambari-agent/cache")
+      self.assertEqual(config.stacks_dir, "/var/lib/ambari-agent/cache/stacks")
+      self.assertEqual(config.host_scripts_dir, "/var/lib/ambari-agent/cache/host_scripts")
+      self.assertEqual(config.common_services_dir, "/var/lib/ambari-agent/cache/common-services")
+      self.assertEqual(config.extensions_dir, "/var/lib/ambari-agent/cache/extensions")
+      self.assertEqual(config.cluster_cache_dir, "/var/lib/ambari-agent/cache/cluster_cache")
+      self.assertEqual(config.alerts_cachedir, "/var/lib/ambari-agent/cache/alerts")
+    finally:
+      os.unlink(ini_path)
