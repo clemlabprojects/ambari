@@ -142,3 +142,39 @@ body {
   background: rgba(var(--accent-rgb), 0.16) !important;
   outline: 1px solid var(--accent);
 }
+
+/* ---------------------------------------------------------------------------
+ * Reduce-motion mode (Citrix/VDI performance + accessibility).
+ * Toggled via <html class="reduce-motion"> (see ReduceMotionContext), and also
+ * honoured automatically when the OS requests reduced motion. In a remote-desktop
+ * session every animated frame is re-encoded and streamed, so flattening
+ * transitions/animations removes the biggest source of perceived lag. antd's own
+ * motion tokens + click wave are disabled in main.tsx; this covers everything else
+ * (CSS transitions, keyframe animations, smooth scrolling, spinners).
+ * ------------------------------------------------------------------------- */
+/* Flatten OUR OWN chrome's transitions/animations. Deliberately EXCLUDE antd elements
+ * ([class*="ant-"]): antd popups (Dropdown/Select/Modal/Popover/Tooltip/Drawer) mount via
+ * rc-motion and depend on animationend/transitionend firing at their real duration — a blanket
+ * !important override left them invisible (regression: the Releases burger menu never opened when
+ * the OS requested reduced motion). antd's own motion is disabled the supported way via the
+ * ConfigProvider motion tokens + wave in main.tsx when this mode is on, so we never touch .ant-*.
+ *
+ * Also NOTE: there is intentionally no unconditional `@media (prefers-reduced-motion)` block — the
+ * OS preference is honoured by seeding this mode's default in ReduceMotionContext (which adds the
+ * .reduce-motion class), so the user can always toggle it back off; a raw media query could not be
+ * overridden and is what caused the popup breakage. */
+:root.reduce-motion *:not([class*="ant-"]),
+:root.reduce-motion *:not([class*="ant-"])::before,
+:root.reduce-motion *:not([class*="ant-"])::after {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  transition-delay: 0s !important;
+}
+:root.reduce-motion { scroll-behavior: auto !important; }
+/* Spinners are purely decorative (not a mount gate), so freezing them is safe even though .ant-*. */
+:root.reduce-motion .ant-spin-dot,
+:root.reduce-motion .ant-spin-dot-item {
+  animation: none !important;
+}
