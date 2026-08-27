@@ -164,7 +164,8 @@ public class HelmResource {
     @Path("/releases")
     public HelmReleasesResponse list(@QueryParam("namespace") String namespace,
                                      @QueryParam("limit") @DefaultValue("50") int limit,
-                                     @QueryParam("offset") @DefaultValue("0") int offset) {
+                                     @QueryParam("offset") @DefaultValue("0") int offset,
+                                     @QueryParam("managedOnly") @DefaultValue("false") boolean managedOnly) {
         final String kubeconfigContent = getKubeconfigContents();
         final HelmService helmService = new HelmService(viewContext);
         final GlobalConfigService globalConfigService = new GlobalConfigService();
@@ -172,25 +173,41 @@ public class HelmResource {
         final SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
 
         List<Release> releases = helmService.list(namespace, kubeconfigContent);
-        int total = releases.size();
-
-        int from = Math.min(Math.max(offset, 0), total);
-        int to = Math.min(from + Math.max(limit, 1), total);
-        List<Release> page = releases.subList(from, to);
 
         // Robust "deployed by KDPS" signal: the KDPS label stamped on each Helm release Secret at deploy
         // time (see KubernetesService.tagHelmReleaseSecrets). Read k8s-native — so a release still shows
         // in the default view even when the view's own DataStore metadata is missing (view rebuilt /
-        // redeployed, different cluster). Scoped to the namespaces of the releases we just listed (NOT
-        // cluster-wide) so a namespace-scoped view ServiceAccount — the norm on a real OpenShift — can
-        // read it; a cluster-wide query would 403 and hide every release. Empty on error → we degrade to
-        // DataStore metadata.
+        // redeployed, different cluster). Scoped to the namespaces of the releases (NOT cluster-wide) so a
+        // namespace-scoped view ServiceAccount can read it; a cluster-wide query would 403 and hide every
+        // release. Built from ALL releases, not just one page, so the managed set is complete. Empty on
+        // error → we degrade to DataStore metadata.
         final java.util.Set<String> listedNamespaces = new java.util.HashSet<>();
-        for (Release r : page) {
+        for (Release r : releases) {
             if (r.getNamespace() != null && !r.getNamespace().isEmpty()) listedNamespaces.add(r.getNamespace());
         }
         if (namespace != null && !namespace.isEmpty()) listedNamespaces.add(namespace);
         final java.util.Set<String> kdpsManaged = kubernetesService.listKdpsManagedReleaseKeys(listedNamespaces);
+
+        // Compute the "managed by the UI" flag for EVERY release and, for the default (managed-only)
+        // view, filter BEFORE paginating. Paginating first and filtering the page hid managed releases
+        // that sort past the first page — e.g. superset/trino on a 38-release cluster where the first
+        // page held none. Metadata is captured here and reused in the loop below (no second lookup).
+        final java.util.Map<String, K8sReleaseEntity> metaByKey = new java.util.HashMap<>();
+        final List<Release> effective = new ArrayList<>();
+        for (Release r : releases) {
+            String key = r.getNamespace() + "/" + r.getName();
+            K8sReleaseEntity md = releaseMetadataService.find(r.getNamespace(), r.getName());
+            metaByKey.put(key, md);
+            boolean managed = kdpsManaged.contains(key) || (md != null && md.isManagedByUi());
+            if (!managedOnly || managed) {
+                effective.add(r);
+            }
+        }
+
+        int total = effective.size();
+        int from = Math.min(Math.max(offset, 0), total);
+        int to = Math.min(from + Math.max(limit, 1), total);
+        List<Release> page = effective.subList(from, to);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
@@ -203,7 +220,7 @@ public class HelmResource {
             HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
 
             boolean kdpsLabelled = kdpsManaged.contains(releaseDto.namespace + "/" + releaseDto.name);
-            K8sReleaseEntity metadata = releaseMetadataService.find(releaseDto.namespace, releaseDto.name);
+            K8sReleaseEntity metadata = metaByKey.get(releaseDto.namespace + "/" + releaseDto.name);
             if (metadata != null) {
                 releaseDto.managedByUi = metadata.isManagedByUi() || kdpsLabelled;
                 releaseDto.serviceKey = metadata.getServiceKey();

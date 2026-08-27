@@ -181,11 +181,13 @@ const HelmReleasesPage: React.FC = () => {
    * and reset pagination state. Errors are surfaced to the user and we clear
    * stale data on failure to avoid displaying outdated rows.
    */
-  const fetchReleases = React.useCallback(async (pageNum = pageIndex, size = pageSize) => {
+  const fetchReleases = React.useCallback(async (pageNum = pageIndex, size = pageSize, managedOnly = !showAllReleases) => {
     setIsLoading(true);
     try {
       const offset = (pageNum - 1) * size;
-      const releasesResponse = await getHelmReleases(size, offset);
+      // Filter to KDPS-managed releases server-side (before pagination) unless "Show all" is on, so
+      // managed releases that sort onto a later page are not hidden by a page-local filter.
+      const releasesResponse = await getHelmReleases(size, offset, managedOnly);
       const items = releasesResponse.items || [];
       setHelmReleases(items);
       setTotalReleases(releasesResponse.total || 0);
@@ -215,7 +217,7 @@ const HelmReleasesPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [pageIndex, pageSize]);
+  }, [pageIndex, pageSize, showAllReleases]);
 
   useEffect(() => {
     void fetchReleases(1, pageSize);
@@ -1028,7 +1030,8 @@ const HelmReleasesPage: React.FC = () => {
                     />
                     <Space>
                       <span>Show all</span>
-                      <Switch size="small" checked={showAllReleases} onChange={setShowAllReleases} />
+                      <Switch size="small" checked={showAllReleases}
+                        onChange={(checked) => { setShowAllReleases(checked); void fetchReleases(1, pageSize, !checked); }} />
                     </Space>
                     <Space align="center" size={4}>
                       <Switch size="small" checked={autoRefreshEnabled} onChange={setAutoRefreshEnabled} />
@@ -1114,7 +1117,7 @@ const HelmReleasesPage: React.FC = () => {
               pagination={{
                 current: pageIndex,
                 pageSize,
-                total: showAllReleases ? totalReleases : displayed.length,
+                total: totalReleases,
                 onChange: (p, ps) => fetchReleases(p, ps),
                 showSizeChanger: true,
                 showTotal: (t, range) => `${range[0]}-${range[1]} of ${t}`
