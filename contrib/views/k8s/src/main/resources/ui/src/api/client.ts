@@ -934,12 +934,14 @@ export const getComponentStatuses = async () => {
   return handleApiResponse(response);
 };
 
-export const getHelmReleases = async (limit = 20, offset = 0) => {
+export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = false) => {
     if (import.meta.env.DEV) {
         if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
         return getMockHelmReleases();
     }
-    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    // managedOnly filters to KDPS-managed releases SERVER-SIDE (before pagination) so managed
+    // releases that sort onto a later page are not hidden by a page-local client filter.
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset), managedOnly: String(managedOnly) });
     const response = await fetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
     return handleApiResponse(response);
 };
