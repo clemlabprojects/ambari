@@ -4232,7 +4232,8 @@ public class KubernetesService {
      */
     public void applyCertManagerCertificate(String namespace, String certName, String secretName,
                                             String issuerName, String issuerKind,
-                                            java.util.List<String> dnsNames, Integer durationHours) {
+                                            java.util.List<String> dnsNames, Integer durationHours,
+                                            Map<String, Object> subject) {
         checkConfiguration();
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(certName, "certName");
@@ -4245,6 +4246,36 @@ public class KubernetesService {
         Map<String, Object> spec = new java.util.LinkedHashMap<>();
         spec.put("secretName", secretName);
         spec.put("dnsNames", dnsNames);
+
+        // Subject DN. Some CAs enforce an end-entity profile that mandates DN elements (CN, OU, O, or
+        // custom fields), so we let the caller supply them. cert-manager's `literalSubject` (needs the
+        // LiteralCertificateSubject feature gate) is the only way to emit non-standard DN OIDs (e.g. a
+        // custom "Team" attribute); it is mutually exclusive with commonName/subject. Otherwise we set
+        // commonName (defaulting to the first host so the ubiquitous "CN is mandatory" rejection is
+        // avoided) plus standard organizations / organizationalUnits.
+        Map<String, Object> subj = subject == null ? java.util.Collections.emptyMap() : subject;
+        String literalSubject = subj.get("literalSubject") == null ? null : String.valueOf(subj.get("literalSubject")).trim();
+        if (literalSubject != null && !literalSubject.isEmpty()) {
+            spec.put("literalSubject", literalSubject);
+        } else {
+            String commonName = subj.get("commonName") == null ? null : String.valueOf(subj.get("commonName")).trim();
+            if (commonName == null || commonName.isEmpty()) {
+                commonName = dnsNames.get(0);
+            }
+            spec.put("commonName", commonName);
+            Map<String, Object> subjectBlock = new java.util.LinkedHashMap<>();
+            for (String key : new String[]{"organizations", "organizationalUnits", "countries",
+                    "localities", "provinces", "streetAddresses", "postalCodes"}) {
+                Object v = subj.get(key);
+                if (v instanceof java.util.List<?> l && !l.isEmpty()) {
+                    subjectBlock.put(key, l);
+                }
+            }
+            if (!subjectBlock.isEmpty()) {
+                spec.put("subject", subjectBlock);
+            }
+        }
+
         // duration controls the validity. renewBefore is set to 1/6 of duration so
         // cert-manager rotates well before expiry without thrashing.
         int dur = durationHours == null ? 2160 : durationHours;
