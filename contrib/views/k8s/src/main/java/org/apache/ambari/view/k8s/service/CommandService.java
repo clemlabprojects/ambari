@@ -3471,7 +3471,8 @@ public class CommandService {
     private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace,
                                                    String certName, String secretName,
                                                    String issuerName, String issuerKind,
-                                                   List<String> dnsNames, Integer durationHours) {
+                                                   List<String> dnsNames, Integer durationHours,
+                                                   Map<String, Object> subject) {
         String stepId = root.getId() + "-tls-cm-" + UUID.randomUUID();
         CommandEntity step = new CommandEntity();
         step.setId(stepId);
@@ -3487,6 +3488,7 @@ public class CommandService {
         params.put("issuerKind", issuerKind == null || issuerKind.isBlank() ? "ClusterIssuer" : issuerKind);
         params.put("dnsNames", dnsNames);
         if (durationHours != null) params.put("durationHours", durationHours);
+        if (subject != null && !subject.isEmpty()) params.put("subject", subject);
         step.setParamsJson(gson.toJson(params));
         CommandStatusEntity st = new CommandStatusEntity();
         st.setId(stepId + "-status");
@@ -4229,8 +4231,24 @@ public class CommandService {
                         "INGRESS_TLS_CERTMANAGER: issuerName and at least one DNS name (ingress.host) are required."
                                 + " Pick a ClusterIssuer from the dropdown in the wizard's TLS mode section.");
             } else {
+                // Optional subject DN for CAs that enforce an end-entity profile (CN/OU/O, or a raw
+                // literalSubject for custom OIDs like "Team"). Accepts a single value or a list for each.
+                Map<String, Object> certSubject = new LinkedHashMap<>();
+                Object cn = ingressTlsCM.get("commonName");
+                if (cn != null && !String.valueOf(cn).isBlank()) certSubject.put("commonName", String.valueOf(cn));
+                Object lit = ingressTlsCM.get("literalSubject");
+                if (lit != null && !String.valueOf(lit).isBlank()) certSubject.put("literalSubject", String.valueOf(lit));
+                for (String[] keys : new String[][]{
+                        {"organization", "organizations"}, {"organizationalUnit", "organizationalUnits"},
+                        {"country", "countries"}, {"locality", "localities"}, {"province", "provinces"}}) {
+                    Object raw = ingressTlsCM.containsKey(keys[1]) ? ingressTlsCM.get(keys[1]) : ingressTlsCM.get(keys[0]);
+                    List<String> vals = new ArrayList<>();
+                    if (raw instanceof List<?> l) { for (Object o : l) if (o != null && !String.valueOf(o).isBlank()) vals.add(String.valueOf(o)); }
+                    else if (raw != null && !String.valueOf(raw).isBlank()) vals.add(String.valueOf(raw));
+                    if (!vals.isEmpty()) certSubject.put(keys[1], vals);
+                }
                 String stepId = appendIngressTlsCertManagerStep(rootCommand, request.getNamespace(),
-                        certName, secretName, issuerName, issuerKind, dnsNames, durationHours);
+                        certName, secretName, issuerName, issuerKind, dnsNames, durationHours, certSubject);
                 childCommands.add(stepId);
                 this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
                 this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", dnsNames.get(0));
@@ -7209,8 +7227,11 @@ public class CommandService {
                         if (issuerName == null || issuerName.isBlank()) {
                             throw new IllegalStateException("INGRESS_TLS_CERTMANAGER: issuerName is required");
                         }
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> certSubject = childParams.get("subject") instanceof Map<?, ?> m
+                                ? (Map<String, Object>) m : null;
                         this.kubernetesService.applyCertManagerCertificate(namespace, certName, secretName,
-                                issuerName, issuerKind, dnsNames, durationHours);
+                                issuerName, issuerKind, dnsNames, durationHours, certSubject);
                         appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: applied Certificate "
                                 + namespace + "/" + certName + " issuer=" + issuerKind + "/" + issuerName);
                     }

@@ -17,8 +17,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout, Steps, Button, message, notification, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider } from 'antd';
-import { ApiOutlined, PlusOutlined, WarningOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { Layout, Steps, Button, message, notification, Spin, theme, Row, Col, Card, Segmented, Switch, Alert, Typography, Space, Progress, Modal, Select, Descriptions, Tag, Divider, Input } from 'antd';
+import { ApiOutlined, PlusOutlined, WarningOutlined, DatabaseOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
@@ -792,6 +792,14 @@ const ServiceWizardPage: React.FC = () => {
                 if (tlsMode === 'signedByClusterIssuer') {
                   const cm = (installValues as any)?.ingress?.certManager || {};
                   const validityDays = parseInt(cm.validityDays, 10);
+                  const trim = (v: any) => (v && String(v).trim() ? String(v).trim() : undefined);
+                  // O and OU accept multiple comma-separated values → emitted as repeated DN elements
+                  // (e.g. OU=dept,OU=team). This covers CAs that require an extra OU like "Team" using
+                  // only standard cert-manager subject fields — no LiteralCertificateSubject gate needed.
+                  const csv = (v: any) => {
+                    const parts = String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
+                    return parts.length ? parts : undefined;
+                  };
                   return {
                     ingressTlsCertManager: {
                       issuerName: cm.issuerName,
@@ -799,6 +807,10 @@ const ServiceWizardPage: React.FC = () => {
                       secretName: `${installValues.releaseName}-ingress-tls`,
                       ingressHost: (installValues as any)?.ingress?.host,
                       durationHours: (Number.isFinite(validityDays) ? validityDays : 90) * 24,
+                      commonName: trim(cm.commonName),
+                      organizations: csv(cm.organization),
+                      organizationalUnits: csv(cm.organizationalUnit),
+                      literalSubject: trim(cm.literalSubject),
                     },
                   };
                 }
@@ -1014,6 +1026,45 @@ const ServiceWizardPage: React.FC = () => {
               Default truststores are trusted automatically; selections here add to them.
             </Typography.Text>
           </Card>
+
+          {/* Certificate subject for cert-manager mode — only when a strict CA requires a DN
+              (e.g. "CN/OU is mandatory"). Optional; blank ⇒ cert-manager defaults CN to the host. */}
+          {((installValues as any)?.ingress?.tlsMode === 'signedByClusterIssuer') && (
+            <Card style={{ marginBottom: 16 }}
+              title={<span style={{ fontSize: 15 }}><SafetyCertificateOutlined /> Certificate subject</span>}>
+              <Typography.Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
+                Only needed if your CA enforces a subject DN (e.g. "CN/OU is mandatory"). Leave blank otherwise.
+              </Typography.Paragraph>
+              {(() => {
+                const cm = (installValues as any)?.ingress?.certManager || {};
+                const setCM = (k: string, v: string) => setInstallValues((prev: any) => ({
+                  ...prev,
+                  ingress: { ...(prev.ingress || {}), certManager: { ...((prev.ingress || {}).certManager || {}), [k]: v } },
+                }));
+                return (
+                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                    <Input placeholder="Common Name (default: host)" value={cm.commonName || ''}
+                      onChange={(e) => setCM('commonName', e.target.value)} />
+                    <Input placeholder="Organization (O) — comma-separated for multiple" value={cm.organization || ''}
+                      onChange={(e) => setCM('organization', e.target.value)} />
+                    <Input placeholder="Organizational Unit (OU) — comma-separated, e.g. dept, team" value={cm.organizationalUnit || ''}
+                      onChange={(e) => setCM('organizationalUnit', e.target.value)} />
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      CN/O/OU are standard and need no cluster-admin changes. If your CA wants an extra
+                      element like "Team", add it as a second OU (comma-separated).
+                    </Typography.Text>
+                    <Input.TextArea rows={2} value={cm.literalSubject || ''}
+                      placeholder="Advanced (rarely needed): literal subject, e.g. CN=host,OU=x,O=y,2.5.4.72=team"
+                      onChange={(e) => setCM('literalSubject', e.target.value)} />
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      literalSubject overrides CN/O/OU and is only for custom DN OIDs — it requires the
+                      cert-manager LiteralCertificateSubject feature gate (cluster-admin).
+                    </Typography.Text>
+                  </Space>
+                );
+              })()}
+            </Card>
+          )}
 
           {/* #6: context details on demand (replaces the inline undertitle) */}
           <Modal title={<span><ApiOutlined /> Platform context details</span>}
