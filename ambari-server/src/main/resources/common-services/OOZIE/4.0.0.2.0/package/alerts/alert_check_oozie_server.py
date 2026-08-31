@@ -233,7 +233,7 @@ def get_check_result(oozie_url, host_name, configurations, parameters, only_kini
     Execute(command, environment=env, user=user)
 
     return (RESULT_CODE_OK, ["Successful connection to {0}".format(oozie_url)])
-  except KerberosPropertiesNotFound, ex:
+  except KerberosPropertiesNotFound as ex:
     return (RESULT_CODE_UNKNOWN, [str(ex)])
   except Exception as ex:
     return (RESULT_CODE_CRITICAL, [str(ex)])
