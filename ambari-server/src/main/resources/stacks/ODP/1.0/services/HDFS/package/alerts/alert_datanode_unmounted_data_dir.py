@@ -101,7 +101,7 @@ def execute(configurations={}, parameters={}, host_name=None):
         continue
 
     # parse the path in case it contains a URI scheme
-    data_dir = urlparse.urlparse(data_dir).path
+    data_dir = urlparse(data_dir).path
 
     normalized_data_dirs.add(data_dir)
 
