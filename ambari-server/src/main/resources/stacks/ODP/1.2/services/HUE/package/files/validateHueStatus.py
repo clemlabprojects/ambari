@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 """
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -32,10 +32,10 @@ def main():
   timeout_seconds = 5
   try:
     s = socket.create_connection((options.hostname, int(options.port)),timeout=timeout_seconds)
-    print "Successfully connected to %s on port %s" % (options.hostname, options.port)
+    print("Successfully connected to %s on port %s" % (options.hostname, options.port))
     s.close()
-  except socket.error, e:
-    print "Connection to %s on port %s failed: %s" % (options.hostname, options.port, e)
+  except socket.error as e:
+    print("Connection to %s on port %s failed: %s" % (options.hostname, options.port, e))
     exit(1)
 
 if __name__ == "__main__":
