@@ -78,7 +78,8 @@ def main():
   for host in hosts:
     httpCode = make_connection(host, port, https.lower() == "true", protocol)
 
-    if httpCode != 200:
+    # 302 (redirect to the index page or to the HTTPS port) also proves the UI is up
+    if httpCode not in (200, 302):
       print("Cannot access WEB UI on: http://" + host + ":" + port if not https.lower() == "true" else "Cannot access WEB UI on: https://" + host + ":" + port)
       exit(1)
 
