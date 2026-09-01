@@ -30,11 +30,13 @@ def setup_ranger_atlas(upgrade_type=None):
 
     if params.enable_ranger_atlas and params.xa_audit_hdfs_is_enabled:
       if params.has_namenode:
+        # /ranger/audit is the shared audit root for ALL services; it must stay hdfs-owned
+        # (like every other setup_ranger_* does) or other services cannot create their subdirs
         params.HdfsResource("/ranger/audit",
                             type="directory",
                             action="create_on_execute",
-                            owner=params.metadata_user,
-                            group=params.user_group,
+                            owner=params.hdfs_user,
+                            group=params.hdfs_user,
                             mode=0o755,
                             recursive_chmod=True
         )
