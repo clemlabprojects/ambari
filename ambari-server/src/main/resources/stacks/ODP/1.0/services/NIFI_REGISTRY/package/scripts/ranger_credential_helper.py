@@ -69,7 +69,7 @@ def call_keystore(libpath, filepath, aliasKey, aliasValue='', getorcreate='get')
             print("Error getting value!! Error: " + str(error))
         
     else:
-        print 'Invalid Arguments!!'
+        print('Invalid Arguments!!')
     
 if __name__ == '__main__':
     main()
