@@ -150,14 +150,14 @@ def dbversionBasedOnUserName(userName):
 
 # Compatibility python 3 and python 2
 def set_env_val(command):
-    if sys.version_info[0] < 3:  # Python 2
-        TEXT_MODE = {"universal_newlines": True}
-    else:  # Python 3 and later
-        TEXT_MODE = {"text": True}
+    # universal_newlines is the portable spelling of text mode: the text= keyword only
+    # exists since Python 3.7, and this script can run under Python 3.6 (RHEL/Rocky 8).
+    TEXT_MODE = {"universal_newlines": True}
     proc = subprocess.Popen(command, stdout = subprocess.PIPE, **TEXT_MODE)
     for line in proc.stdout:
          (key, _, value) = line.partition("=")
-         os.environ[key] = value.rstrip()
+         if key:  # skip empty lines from the sourced environment
+             os.environ[key] = value.rstrip()
     proc.communicate()
 
 def run_env_file(path):
