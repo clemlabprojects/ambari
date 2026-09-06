@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.40",
+  "version": "0.12.41",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -79,6 +79,44 @@
     {
       "name": "trinoPort",
       "from": { "type": "form", "field": "ui_trino_port" }
+    },
+    {
+      "comment": "Default Trino catalog for the Superset connection URL (trino://host:port/<catalog>). Defaults to 'hive'; other catalogs remain reachable via catalog.schema.table.",
+      "name": "trinoCatalog",
+      "from": { "type": "form", "field": "ui_trino_catalog" }
+    },
+    {
+      "comment": "How Superset authenticates TO the Trino coordinator, matching the security profile Trino was deployed with (none / tls / ldap / kerberos). Impersonation is applied for ALL of these — see the import_datasources_trino.yaml bindings.",
+      "name": "trinoAuthMode",
+      "from": { "type": "form", "field": "ui_trino_auth_mode" }
+    },
+    {
+      "name": "trinoSvcUser",
+      "from": { "type": "form", "field": "ui_trino_svc_user" }
+    },
+    {
+      "name": "trinoSvcPassword",
+      "from": { "type": "form", "field": "ui_trino_svc_password" }
+    },
+    {
+      "comment": "true when Trino has no client auth (plain HTTP). URL only, plus impersonation.",
+      "name": "trinoModeNone",
+      "from": { "type": "equals", "var": "trinoAuthMode", "value": "none", "caseInsensitive": true }
+    },
+    {
+      "comment": "true when Trino is HTTPS with no login (TLS transport only). connect_args http_scheme=https + verify against the mounted CA, plus impersonation.",
+      "name": "trinoModeTls",
+      "from": { "type": "equals", "var": "trinoAuthMode", "value": "tls", "caseInsensitive": true }
+    },
+    {
+      "comment": "true when Trino uses LDAP/AD password auth. Superset authenticates with a service account (BasicAuthentication over HTTPS) and impersonates the logged-in user via the Trino session user.",
+      "name": "trinoModeLdap",
+      "from": { "type": "equals", "var": "trinoAuthMode", "value": "ldap", "caseInsensitive": true }
+    },
+    {
+      "comment": "true when Trino uses Kerberos (SPNEGO). Superset authenticates with the pod's ccache (KerberosAuthentication over HTTPS) and impersonates the logged-in user.",
+      "name": "trinoModeKerberos",
+      "from": { "type": "equals", "var": "trinoAuthMode", "value": "kerberos", "caseInsensitive": true }
     },
     {
       "name": "runAsUserOverride",
@@ -550,12 +588,70 @@
       ]
     },
     {
-      "name": "superset-db-connection",
-      "skipIfVarEmpty": "trinoHost",
+      "comment": "Trino database (auth=none): plain HTTP, no login. Superset connects over the trino:// SQLAlchemy dialect and, because impersonate_user is true, sets the Trino session user to the logged-in Superset user (TrinoEngineSpec.update_impersonation_config) — so Ranger authorises each person individually. Written to import_datasources_trino.yaml (NOT import_datasources.yaml) so it never collides with the Platform Hive database; the chart bootstrap imports every import_datasources*.yaml. Fires only when a Trino host is set AND the auth mode is 'none'.",
+      "name": "superset-trino-datasource-none",
+      "skipIfVarEmpty": ["trinoHost", "trinoModeNone"],
       "targets": [
         {
-          "path": "extraEnv.TRINO_URL",
-          "from": { "type": "template", "template": "trino://${trinoHost}:${trinoPort}" }
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources_trino.yaml": "databases:\n- database_name: Platform Trino\n  sqlalchemy_uri: trino://${trinoHost}:${trinoPort}/${trinoCatalog}\n  extra: '{\"engine_params\": {\"connect_args\": {\"source\": \"superset-kdps\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Trino database (auth=tls): HTTPS transport, no client login. connect_args forces http_scheme=https and verifies against the CA the chart mounts at /etc/security/truststore/ca.crt (requires the Superset TLS truststore to be configured). Impersonation as above. Fires when a Trino host is set AND the auth mode is 'tls'.",
+      "name": "superset-trino-datasource-tls",
+      "skipIfVarEmpty": ["trinoHost", "trinoModeTls"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources_trino.yaml": "databases:\n- database_name: Platform Trino\n  sqlalchemy_uri: trino://${trinoHost}:${trinoPort}/${trinoCatalog}\n  extra: '{\"engine_params\": {\"connect_args\": {\"source\": \"superset-kdps\", \"http_scheme\": \"https\", \"verify\": \"/etc/security/truststore/ca.crt\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Trino database (auth=ldap): HTTPS + Basic auth with an LDAP/AD service account, expressed as encrypted_extra {auth_method: basic} (TrinoEngineSpec.update_params_from_encrypted_extra builds trino.auth.BasicAuthentication and forces https). Queries still run as the logged-in user via impersonation — the service account only needs impersonation rights on Trino (Ranger). Fires when a Trino host is set AND the auth mode is 'ldap'.",
+      "name": "superset-trino-datasource-ldap",
+      "skipIfVarEmpty": ["trinoHost", "trinoModeLdap"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources_trino.yaml": "databases:\n- database_name: Platform Trino\n  sqlalchemy_uri: trino://${trinoHost}:${trinoPort}/${trinoCatalog}\n  extra: '{\"engine_params\": {\"connect_args\": {\"source\": \"superset-kdps\", \"verify\": \"/etc/security/truststore/ca.crt\"}}}'\n  encrypted_extra: '{\"auth_method\": \"basic\", \"auth_params\": {\"username\": \"${trinoSvcUser}\", \"password\": \"${trinoSvcPassword}\"}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Trino database (auth=kerberos): HTTPS + SPNEGO, expressed as encrypted_extra {auth_method: kerberos} → trino.auth.KerberosAuthentication using the pod's krb5.conf and the ccache the kinit sidecar keeps at KRB5CCNAME, verifying against the mounted CA. Impersonation sets the Trino session user to the logged-in user. Fires when a Trino host is set AND the auth mode is 'kerberos'.",
+      "name": "superset-trino-datasource-kerberos",
+      "skipIfVarEmpty": ["trinoHost", "trinoModeKerberos"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources_trino.yaml": "databases:\n- database_name: Platform Trino\n  sqlalchemy_uri: trino://${trinoHost}:${trinoPort}/${trinoCatalog}\n  extra: '{\"engine_params\": {\"connect_args\": {\"source\": \"superset-kdps\"}}}'\n  encrypted_extra: '{\"auth_method\": \"kerberos\", \"auth_params\": {\"config\": \"/etc/krb5.conf\", \"service_name\": \"trino\", \"ca_bundle\": \"/etc/security/truststore/ca.crt\"}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
         }
       ]
     },
@@ -740,7 +836,47 @@
       "type": "number",
       "defaultValue": 8080,
       "excludeFromValues": true,
-      "help": "Trino coordinator port (default 8080)."
+      "help": "Trino coordinator port. Auto-filled when you pick a discovered Trino above (8080 for plain HTTP, the HTTPS port when TLS/LDAP/OIDC is enabled)."
+    },
+    {
+      "name": "ui_trino_auth_mode",
+      "label": "Trino authentication",
+      "type": "select",
+      "defaultValue": "none",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_host", "operator": "non-empty" },
+      "options": [
+        { "label": "None (plain HTTP, no login)", "value": "none" },
+        { "label": "TLS only (HTTPS, no login)", "value": "tls" },
+        { "label": "LDAP / Active Directory (service account)", "value": "ldap" },
+        { "label": "Kerberos (SPNEGO)", "value": "kerberos" }
+      ],
+      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen."
+    },
+    {
+      "name": "ui_trino_catalog",
+      "label": "Default Trino catalog",
+      "type": "string",
+      "defaultValue": "hive",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_host", "operator": "non-empty" },
+      "help": "Default catalog for the Superset → Trino connection (e.g. hive, iceberg). Other catalogs stay reachable with catalog.schema.table."
+    },
+    {
+      "name": "ui_trino_svc_user",
+      "label": "Trino service username",
+      "type": "string",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
+      "help": "LDAP/AD service account Superset uses to authenticate the connection to Trino. Queries still RUN as the logged-in user (impersonation); this account only needs permission to impersonate."
+    },
+    {
+      "name": "ui_trino_svc_password",
+      "label": "Trino service password",
+      "type": "password",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
+      "help": "Password for the Trino service account above."
     },
     {
       "name": "hiveDatabase",
