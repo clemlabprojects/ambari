@@ -69,7 +69,7 @@ describe('Trino KEDA — platform-conditional triggers', () => {
     const keda = build('openshift');
     expect(keda.triggers).toHaveLength(4);
     for (const t of keda.triggers) {
-      expect(t.metadata.serverAddress).toBe('https://thanos-querier.openshift-monitoring.svc:9092');
+      expect(t.metadata.serverAddress).toBe('https://thanos-querier.openshift-monitoring.svc:9091');
       expect(t.metadata.authModes).toBe('bearer');
       expect(t.authenticationRef).toEqual({ name: 'trino-trino-keda-auth' });
     }
