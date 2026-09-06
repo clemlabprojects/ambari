@@ -715,6 +715,74 @@ public final class OmAtlasProvisioning {
         return id;
     }
 
+    /**
+     * EXTERNAL-context path: grant {@code trinoUser} the Trino {@code impersonate} access on the
+     * {@code trinouser=*} resource in the given Trino Ranger service, so a Superset-style Trino
+     * database connection (authenticating as {@code trinoUser}) can run every user's queries as
+     * that user (the Trino session user). Create-or-find a dedicated policy; idempotent — if the
+     * policy already exists its id is returned unchanged (Ranger append semantics are unnecessary
+     * here because the resource set is a single {@code trinouser=*}). (MANAGED contexts grant via
+     * the Ambari server instead.)
+     */
+    public static long createOrFindTrinoImpersonatePolicy(String rangerAdminUrl, String rangerUser,
+                                                          String rangerPassword, String trinoServiceName,
+                                                          String policyName, String trinoUser,
+                                                          long timeoutMs) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        ensureRangerUserExists(rangerAdminUrl, basic, trinoUser);
+
+        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, policyName);
+        if (existing != null) {
+            LOG.info("OmAtlasProvisioning: Ranger Trino impersonate policy '{}' already exists (id={}) — left unchanged",
+                    policyName, existing);
+            return existing;
+        }
+
+        JsonObject p = new JsonObject();
+        p.addProperty("service", trinoServiceName);
+        p.addProperty("name", policyName);
+        p.addProperty("description", "KDPS-managed: allow the Superset service user to impersonate end users on Trino.");
+        p.addProperty("isAuditEnabled", true);
+        p.addProperty("isEnabled", true);
+        p.addProperty("policyType", 0);
+        p.addProperty("policyPriority", 0);
+        JsonObject resources = new JsonObject();
+        JsonObject r = new JsonObject();
+        r.add("values", arrayOf("*"));
+        r.addProperty("isExcludes", false);
+        r.addProperty("isRecursive", false);
+        resources.add("trinouser", r);
+        p.add("resources", resources);
+        JsonObject item = new JsonObject();
+        item.add("users", arrayOf(trinoUser));
+        item.add("groups", new JsonArray());
+        item.add("roles", new JsonArray());
+        item.add("accesses", arrayOfObjects(new String[]{"impersonate"}, "isAllowed", true));
+        item.addProperty("delegateAdmin", false);
+        JsonArray items = new JsonArray();
+        items.add(item);
+        p.add("policyItems", items);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
+        configureSsl(conn);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", basic);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        try (var os = conn.getOutputStream()) {
+            os.write(GSON.toJson(p).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IllegalStateException("Ranger Trino impersonate policy create failed: HTTP " + code + " — " + readBody(conn, true));
+        }
+        long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
+        LOG.info("OmAtlasProvisioning: Ranger Trino impersonate policy '{}' created (id={})", policyName, id);
+        return id;
+    }
+
     /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
     private static long appendHiveSelectToPolicy(String rangerAdminUrl, String basic, String policyName,
                                                  long policyId, String omUser, long timeoutMs) throws Exception {
