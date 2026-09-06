@@ -466,12 +466,26 @@ const HelmReleasesPage: React.FC = () => {
    * Detect a chart version drift between what is deployed and what the catalog ships with.
    * Returns the catalog version when an in-place upgrade is offered, otherwise undefined.
    */
+  // Semantic-version compare: returns >0 when a>b, <0 when a<b, 0 when equal. Missing/segment-less
+  // parts count as 0. Used so we only ever offer an UPGRADE (catalog newer than deployed), never a
+  // downgrade dressed up as one — downgrades are done from Revision History.
+  const cmpSemver = (a?: string, b?: string): number => {
+    const pa = String(a || '').split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b || '').split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d > 0 ? 1 : -1;
+    }
+    return 0;
+  };
+
   const upgradeAvailableFor = useCallback((release: HelmRelease): string | undefined => {
     const catalogVersion = catalogVersionFor(release);
     if (!catalogVersion) return undefined;
     if (!release.version) return undefined;
-    if (release.version === catalogVersion) return undefined;
     if (release.deploymentMode === 'FLUX_GITOPS') return undefined;
+    // Only when the catalog ships a STRICTLY NEWER version than what is deployed.
+    if (cmpSemver(catalogVersion, release.version) <= 0) return undefined;
     return catalogVersion;
   }, [catalogVersionFor]);
 
@@ -885,10 +899,10 @@ const HelmReleasesPage: React.FC = () => {
             const upgradeTargetVersion = upgradeAvailableFor(r);
             return (
               <Space size={4} direction="vertical" align="start">
-                <span>{r.chart}</span>
+                <span style={{ whiteSpace: 'nowrap' }}>{String(r.chart || '').trim()}</span>
                 {r.version ? (
                   <Space size={4}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>v{r.version}</Text>
+                    <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>v{String(r.version).trim()}</Text>
                     {upgradeTargetVersion ? (
                       <Tooltip title={`Catalog ships chart v${upgradeTargetVersion}. Click the row menu to upgrade in place.`}>
                         <Tag color="gold" style={{ marginLeft: 0 }}>Upgrade → v{upgradeTargetVersion}</Tag>
