@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.41",
+  "version": "0.12.42",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -117,6 +117,11 @@
       "comment": "true when Trino uses Kerberos (SPNEGO). Superset authenticates with the pod's ccache (KerberosAuthentication over HTTPS) and impersonates the logged-in user.",
       "name": "trinoModeKerberos",
       "from": { "type": "equals", "var": "trinoAuthMode", "value": "kerberos", "caseInsensitive": true }
+    },
+    {
+      "comment": "true when Trino uses OIDC/OAUTH2. Superset presents a Keycloak service JWT (client-credentials, kept fresh by the trino-jwt sidecar and read per request by the kdps_file_jwt custom auth) over HTTPS and impersonates the logged-in user. Requires the Trino JWT authenticator (chart >= 1.43.7).",
+      "name": "trinoModeOidc",
+      "from": { "type": "equals", "var": "trinoAuthMode", "value": "oidc", "caseInsensitive": true }
     },
     {
       "name": "runAsUserOverride",
@@ -656,6 +661,28 @@
       ]
     },
     {
+      "comment": "Trino database (auth=oidc): HTTPS + a Keycloak service JWT. encrypted_extra auth_method=kdps_file_jwt selects the custom auth registered in superset_config.py (the chart's ALLOWED_EXTRA_AUTHENTICATIONS), which reads a fresh token per request from the file the trino-jwt sidecar refreshes; TrinoEngineSpec forces http_scheme=https for any encrypted_extra auth. The second target flips trinoJwt.enabled=true so the chart runs the refresh sidecar (it reuses the Superset OIDC client Secret — that client must have service accounts enabled). Impersonation runs each query as the logged-in user. Requires Trino chart >= 1.43.7 (JWT authenticator). Fires when a Trino host is set AND the auth mode is 'oidc'.",
+      "name": "superset-trino-datasource-oidc",
+      "skipIfVarEmpty": ["trinoHost", "trinoModeOidc"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources_trino.yaml": "databases:\n- database_name: Platform Trino\n  sqlalchemy_uri: trino://${trinoHost}:${trinoPort}/${trinoCatalog}\n  extra: '{\"engine_params\": {\"connect_args\": {\"source\": \"superset-kdps\", \"verify\": \"/etc/security/truststore/ca.crt\"}}}'\n  encrypted_extra: '{\"auth_method\": \"kdps_file_jwt\", \"auth_params\": {}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        },
+        {
+          "path": "trinoJwt.enabled",
+          "op": "set",
+          "from": { "type": "template", "template": "true" }
+        }
+      ]
+    },
+    {
       "comment": "HTTP-transport Hive (hive.server2.transport.mode=http, or unknown → safe default): reached over impyla (impala:// SQLAlchemy driver) with HTTP+GSSAPI+SSL. The database is LABELLED 'Platform Hive (impyla, HTTP)' so customers understand it targets HiveServer2 over the impyla driver, NOT an Impala daemon. Fires only when Hive is enabled (hiveHostPort) AND the transport is not binary (hiveModeHttp).",
       "name": "superset-hive-datasource-http",
       "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp"],
@@ -849,9 +876,10 @@
         { "label": "None (plain HTTP, no login)", "value": "none" },
         { "label": "TLS only (HTTPS, no login)", "value": "tls" },
         { "label": "LDAP / Active Directory (service account)", "value": "ldap" },
-        { "label": "Kerberos (SPNEGO)", "value": "kerberos" }
+        { "label": "Kerberos (SPNEGO)", "value": "kerberos" },
+        { "label": "OIDC / JWT (service token, SSO)", "value": "oidc" }
       ],
-      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen."
+      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7)."
     },
     {
       "name": "ui_trino_catalog",
@@ -877,6 +905,14 @@
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
       "help": "Password for the Trino service account above."
+    },
+    {
+      "name": "ui_trino_oidc_principal",
+      "label": "Trino service principal (for the impersonation grant)",
+      "type": "string",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_auth_mode", "value": "oidc" },
+      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS auto-grants it 'impersonate' on the Trino Ranger repo. Leave blank if you prefer to grant the impersonation policy yourself (the exact principal depends on your Keycloak claim mapping)."
     },
     {
       "name": "hiveDatabase",

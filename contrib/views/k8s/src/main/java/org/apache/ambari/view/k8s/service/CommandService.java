@@ -5380,6 +5380,10 @@ public class CommandService {
                                             serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
                                 }
                                 trinoPrincipal = kerbServiceName + "-" + request.getNamespace();
+                            } else if ("oidc".equals(trinoAuthMode)) {
+                                // The principal Trino derives from Superset's service JWT depends on
+                                // the Keycloak claim mapping, so it is operator-supplied (optional).
+                                trinoPrincipal = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_oidc_principal"));
                             }
                         }
                         if (trinoPrincipal != null && !trinoPrincipal.isBlank()) {
