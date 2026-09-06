@@ -262,6 +262,20 @@ public enum CommandType {
      */
     RANGER_POLICY_GRANT_HIVE_READ,
 
+    /**
+     * Grants a service's Trino authentication principal {@code impersonate} on the Trino Ranger
+     * service repo (resource {@code trinouser=*}), so a Superset-style Trino database connection
+     * can run every user's queries as that user (the Trino session user), while the connection
+     * itself authenticates as the service principal. Queued post-deploy for services that build a
+     * Trino database connection in an impersonating auth mode (declared via platformOp
+     * {@code ranger.trinoImpersonateGrant}; queued only when a Trino host is set AND the auth mode
+     * is ldap or kerberos — none/tls set the session user directly and need no impersonation
+     * grant). Dual path like {@link #RANGER_POLICY_GRANT_HIVE_READ}: a context with direct Ranger
+     * admin creds (external CDP / manual) grants over REST; a managed context delegates to the
+     * Ambari server. Idempotent (create-or-find + user pre-registration).
+     */
+    RANGER_POLICY_GRANT_TRINO_IMPERSONATE,
+
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
 

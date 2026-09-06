@@ -5354,6 +5354,57 @@ public class CommandService {
                         }
                     }
 
+                    // Superset (or any service building a Trino database connection) authenticates
+                    // to Trino as a SERVICE principal and impersonates the end-user (Trino session
+                    // user). For Ranger to authorise that, the service principal needs 'impersonate'
+                    // on the Trino Ranger repo. Declared via platformOp (op=ranger.trinoImpersonateGrant).
+                    // Only the ldap/kerberos modes authenticate as a distinct principal that must be
+                    // granted; none/tls set the session user directly and need no grant (oidc/jwt is
+                    // wired with P2). Dual routing (context REST vs Ambari server) is chosen at execute.
+                    if (hasPlatformOp(serviceDef, "ranger.trinoImpersonateGrant")) {
+                        Map<String, Object> fv = request.getFormValues() != null
+                                ? request.getFormValues() : Collections.emptyMap();
+                        String trinoHost = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_host"));
+                        String trinoAuthMode = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_auth_mode"))
+                                .toLowerCase(Locale.ROOT);
+                        String trinoPrincipal = null;
+                        if (!trinoHost.isBlank()) {
+                            if ("ldap".equals(trinoAuthMode)) {
+                                trinoPrincipal = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_svc_user"));
+                            } else if ("kerberos".equals(trinoAuthMode)) {
+                                // Ranger short name = <kerberos serviceName>-<namespace> (realm stripped
+                                // by auth_to_local), the same principal Superset uses for the Hive grant.
+                                String kerbServiceName = request.getReleaseName();
+                                if (serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
+                                    kerbServiceName = resolveStringValue(
+                                            serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
+                                }
+                                trinoPrincipal = kerbServiceName + "-" + request.getNamespace();
+                            }
+                        }
+                        if (trinoPrincipal != null && !trinoPrincipal.isBlank()) {
+                            Map<String, Object> grantParams = new LinkedHashMap<>();
+                            grantParams.put("releaseName", request.getReleaseName());
+                            grantParams.put("namespace", request.getNamespace());
+                            grantParams.put("serviceKey", request.getServiceKey());
+                            grantParams.put("_principal", trinoPrincipal);
+                            String trinoGrantPcId = stringValue(ConfigResolutionService.getByDottedPath(fv, "platformContextId"));
+                            if (!trinoGrantPcId.isBlank()) grantParams.put("_platformContextId", trinoGrantPcId);
+                            if (params.get("_cluster") != null) grantParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) grantParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) grantParams.put("_callerHeaders", params.get("_callerHeaders"));
+                            this.commandPlanFactory.createRangerPolicyGrantTrinoImpersonate(rootCommand, grantParams);
+                            LOG.info("Queued RANGER_POLICY_GRANT_TRINO_IMPERSONATE post-deploy step for release '{}' "
+                                    + "(principal='{}', mode='{}', context='{}')",
+                                    request.getReleaseName(), trinoPrincipal, trinoAuthMode,
+                                    trinoGrantPcId.isBlank() ? "default" : trinoGrantPcId);
+                        } else if (!trinoHost.isBlank()) {
+                            LOG.info("ranger.trinoImpersonateGrant: Trino host set but auth mode '{}' needs no "
+                                    + "impersonation grant (or the LDAP service user is blank) — skipping for release '{}'",
+                                    trinoAuthMode, request.getReleaseName());
+                        }
+                    }
+
                     // Atlas federation: queue only when the wizard toggle is on. The step
                     // body re-checks atlasFederation.enabled at execute time so a reapply
                     // after the toggle was flipped off still fails loudly instead of
@@ -6718,6 +6769,12 @@ public class CommandService {
                 case RANGER_POLICY_GRANT_HIVE_READ -> {
                     if (!remoteConfigGate(childParams, "Ranger Hive SELECT grant", childSt, id)) {
                         String result = grantRangerHiveReadViaAmbari(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
+                }
+                case RANGER_POLICY_GRANT_TRINO_IMPERSONATE -> {
+                    if (!remoteConfigGate(childParams, "Ranger Trino impersonate grant", childSt, id)) {
+                        String result = grantRangerTrinoImpersonate(childParams);
                         if (result != null) childSt.setResultJson(result);
                     }
                 }
@@ -9146,6 +9203,22 @@ public class CommandService {
         return (cluster == null || cluster.isBlank()) ? "hive" : cluster + "_hive";
     }
 
+    /**
+     * Trino Ranger service-repo name, mirroring {@link #resolveHiveRangerServiceName}: an explicit
+     * {@code _trinoRangerServiceName} wins, then the platform context's {@code trino.rangerServiceName}
+     * resolved field, else the managed default {@code <cluster>_trino}.
+     */
+    private String resolveTrinoRangerServiceName(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc, String cluster) {
+        String explicit = stringValue(childParams.get("_trinoRangerServiceName"));
+        if (!explicit.isBlank()) return explicit;
+        if (rc != null && rc.getResolvedFields() != null) {
+            Object v = rc.getResolvedFields().get("trino.rangerServiceName");
+            if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
+        }
+        return (cluster == null || cluster.isBlank()) ? "trino" : cluster + "_trino";
+    }
+
     private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
             org.apache.ambari.view.k8s.model.ResolvedContext rc, String namespace, String releaseName) {
         // Ranger maps the kerberos principal oma-ing-<ns>@<realm> to user oma-ing-<ns> (KDPS kerberos
@@ -9976,6 +10049,83 @@ public class CommandService {
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("hiveServiceName", hiveService);
+        result.put("principal", principal);
+        result.put("requestId", req);
+        result.put("via", "ambari-server-action");
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@link CommandType#RANGER_POLICY_GRANT_TRINO_IMPERSONATE}: grants the deploying
+     * service's Trino auth principal {@code impersonate} on the Trino Ranger service repo (resource
+     * {@code trinouser=*}), so a Superset-style Trino database connection can run every user's
+     * queries as that user (impersonation) while the connection authenticates as the service
+     * principal. Same dual routing as {@link #grantRangerHiveReadViaAmbari}: a context that carries
+     * its own Ranger admin creds (external CDP / manual) grants directly over REST; otherwise a
+     * managed context delegates to the Ambari server, which holds the Ranger password.
+     *
+     * <p>Params (threaded from the post-deploy dispatch): {@code _cluster}, {@code _baseUri},
+     * {@code _callerHeaders}, {@code _principal} (the Trino auth principal — the LDAP service user
+     * or the Kerberos short name), {@code _trinoRangerServiceName} (defaults to {@code <cluster>_trino}),
+     * {@code releaseName} (policy-name uniqueness).
+     */
+    String grantRangerTrinoImpersonate(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String baseUriStr = (String) childParams.get("_baseUri");
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String trinoService = resolveTrinoRangerServiceName(childParams, rc, cluster);
+
+        String principal = stringValue(childParams.get("_principal"));
+        if (principal.isBlank()) {
+            throw new IllegalStateException("Missing _principal in RANGER_POLICY_GRANT_TRINO_IMPERSONATE params.");
+        }
+
+        String policyName = "kdps-" + releaseName + "-trino-impersonate";
+        int timeoutSeconds = 60;
+
+        // Context Ranger creds win → direct REST against the context's Ranger (external CDP / manual);
+        // otherwise a managed context delegates the grant to the Ambari server.
+        if (rc != null && rc.hasDirectRangerCreds()) {
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+                    rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                    trinoService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+            LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' via context Ranger (direct REST, policy id={})",
+                    principal, trinoService, pid);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("trinoServiceName", trinoService);
+            result.put("principal", principal);
+            result.put("policyId", pid);
+            result.put("via", "context-ranger-rest");
+            return gson.toJson(result);
+        }
+
+        if (cluster == null || baseUriStr == null) {
+            throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_TRINO_IMPERSONATE params "
+                    + "(and the selected context supplies no Ranger admin credentials for the direct-REST path).");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+        java.net.URI baseUri = java.net.URI.create(baseUriStr);
+        AmbariActionClient ambari = new AmbariActionClient(ctx,
+                baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        int req = ambari.submitRangerPolicyGrant(
+                trinoService, principal, "impersonate",
+                "{\"trinouser\":[\"*\"]}",
+                policyName,
+                "KDPS: Superset service user Trino impersonation",
+                timeoutSeconds,
+                "KDPS Superset->Trino: grant impersonate to " + principal);
+        if (!ambari.waitUntilComplete(req, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ambari ranger_policy request " + req
+                    + " (trino impersonate) did not complete successfully");
+        }
+
+        LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' (Ambari request {})",
+                principal, trinoService, req);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("trinoServiceName", trinoService);
         result.put("principal", principal);
         result.put("requestId", req);
         result.put("via", "ambari-server-action");

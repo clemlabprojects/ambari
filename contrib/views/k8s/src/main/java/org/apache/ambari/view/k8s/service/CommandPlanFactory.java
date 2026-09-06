@@ -864,6 +864,20 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans a single {@code RANGER_POLICY_GRANT_TRINO_IMPERSONATE} child command — grants the
+     * deploying service's Trino auth principal {@code impersonate} on the Trino Ranger service repo
+     * so a Superset-style Trino database connection can run each user's queries as that user. Dual
+     * path (context direct-REST vs Ambari-server) is chosen at execute time. Reuses the generic
+     * {@link #queueAtlasFederationStep} single-step queuer.
+     */
+    public void createRangerPolicyGrantTrinoImpersonate(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.RANGER_POLICY_GRANT_TRINO_IMPERSONATE,
+                "Ranger: grant Superset impersonate on Trino repo",
+                "-ranger-trino-grant-");
+    }
+
+    /**
      * Shared queue-step helper for the three Atlas federation provisioning step
      * types. All follow the same shape (one child, no children of their own,
      * params snapshot from the dispatcher, self-persisting root child list).

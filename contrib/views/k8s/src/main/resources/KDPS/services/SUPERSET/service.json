@@ -1307,7 +1307,8 @@
     { "capability": "hive", "fields": ["hs2HostPort", "authMode"], "when": "hiveDb.enabled" }
   ],
   "platformOps": [
-    { "op": "ranger.hiveGrant", "when": "hiveDb.enabled" }
+    { "op": "ranger.hiveGrant", "when": "hiveDb.enabled" },
+    { "op": "ranger.trinoImpersonateGrant", "when": "ui_trino_host" }
   ],
   "securityCoupling": {
     "requireIngress": true,
