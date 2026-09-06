@@ -27,6 +27,7 @@
     { "name": "ldap.baseDn", "displayName": "Base DN", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.baseDn" },
     { "name": "ldap.groupSearchBase", "displayName": "Group Search Base", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchBase" },
     { "name": "ldap.groupSearchFilter", "displayName": "Group Search Filter", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupSearchFilter" },
+    { "name": "ldap.groupRdnAttribute", "displayName": "Group Name Attribute", "description": "RDN that names a group inside a memberOf DN, used to match admin groups by short name. 'cn' for AD and most directories; set 'ou' or other for some slapd setups.", "type": "string", "modes": ["ldap"], "helmPath": "global.security.auth.ldap.groupRdnAttribute", "default": "cn" },
     {
       "name": "ldap.groupAuthPattern",
       "displayName": "LDAP Group Auth Pattern",
