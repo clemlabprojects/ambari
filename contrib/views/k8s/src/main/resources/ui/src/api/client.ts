@@ -1311,6 +1311,9 @@ export async function submitHelmDeploy(payload: {
   ranger?: any;
   requiredConfigMaps?: any;
   dynamicValues?: any;
+  // Optional chart-version override, sent as the deploy's ?version= (helm --version). Blank ⇒ backend
+  // default (catalog/latest). For OCI charts the version MUST go here, never tagged onto the chart ref.
+  version?: string;
   // Snapshot of the wizard's raw form state (envelope keys stripped) so the backend can
   // read excludeFromValues form fields when resolving service-definition variables like
   // {{jupyterHost}} in OIDC redirectUriTemplate. See HelmDeployRequest.formValues.
@@ -1319,6 +1322,10 @@ export async function submitHelmDeploy(payload: {
   // always propagate repoId as a query param to help the backend resolve the repository deterministically
   if (payload.repoId && !params.has('repoId')) {
     params.set('repoId', payload.repoId);
+  }
+  // chart-version override → helm --version (never appended to an OCI chart ref)
+  if (payload.version && String(payload.version).trim() && !params.has('version')) {
+    params.set('version', String(payload.version).trim());
   }
   const url = `${API_BASE_URL}/commands/helm/deploy?${params.toString()}`;
   const response = await fetch(url, {
