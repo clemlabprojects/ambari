@@ -113,6 +113,9 @@ const InstallStep: React.FC<InstallStepProps> = ({
             <Form.Item name="chartOverride" label="Chart (override)" tooltip="Override the default chart reference; leave blank to use service.json chart">
                 <Input placeholder={definition?.chart || 'repo/chart'} />
             </Form.Item>
+            <Form.Item name="version" label="Version (override)" tooltip="Pin a specific chart version (e.g. 0.12.39) sent as helm --version. Leave blank for the catalog default / latest. For OCI charts do NOT put the version in the Chart field — use this.">
+                <Input placeholder={definition?.version ? `default: ${definition.version}` : 'latest / catalog default'} />
+            </Form.Item>
             <Form.Item name="securityProfile" label="Security Profile" tooltip="Pick the auth profile to apply (LDAP/AD/OIDC truststore wiring)">
                 <Select allowClear placeholder="Default profile">
                   {Object.keys(securityProfiles).map((p: string) => (

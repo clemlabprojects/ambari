@@ -723,7 +723,12 @@ const ServiceWizardPage: React.FC = () => {
           const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
           const params = new URLSearchParams();
           if (installValues.repoId) params.set('repoId', installValues.repoId as string);
-          if ((def as any)?.version) params.set('version', String((def as any).version));
+          // Version precedence: the "Version (override)" field wins over the service.json catalog
+          // default. In upgrade mode this is pre-filled with the deployed version (so a config-only
+          // upgrade keeps the running chart version); type e.g. 0.12.39 to bump the chart in place.
+          const versionOverride = (installValues.version && String(installValues.version).trim())
+            || ((def as any)?.version ? String((def as any).version) : '');
+          if (versionOverride) params.set('version', versionOverride);
 
           const { id } = await submitHelmDeploy({
               chart: chartRef,
