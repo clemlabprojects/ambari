@@ -151,6 +151,7 @@ export interface SecurityConfig {
     baseDn?: string;
     groupSearchBase?: string;
     groupSearchFilter?: string;
+    groupRdnAttribute?: string;
     groupAuthPattern?: string;
     referral?: string;
     startTls?: boolean;

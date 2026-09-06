@@ -30,6 +30,7 @@ public class LdapConfig {
     public String baseDn;
     public String groupSearchBase;
     public String groupSearchFilter;
+    public String groupRdnAttribute;
     public String groupAuthPattern;
     public String referral;
     public boolean startTls;
