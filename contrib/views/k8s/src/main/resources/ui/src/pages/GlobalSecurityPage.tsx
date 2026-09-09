@@ -21,6 +21,7 @@ import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Typography, m
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { getSecurityConfig, getSecurityProfileUsage, getSecuritySchema, saveSecurityConfig, deleteSecurityProfile } from '../api/client';
 import type { SecurityConfig, SecurityProfiles } from '../api/client';
+import { buildProfileFields } from './globalSecurityFields';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -176,13 +177,22 @@ const GlobalSecurityPage: React.FC = () => {
     );
 
   const applyProfileToForm = (cfg?: SecurityConfig, fallbackMode?: string) => {
+    // Load a profile into the form WITHOUT inheriting the previously selected one. Fields are
+    // nested (e.g. ldap.adUrl -> ['ldap','adUrl']) and antd v5 setFieldsValue DEEP-MERGES, so it
+    // cannot clear a leaf by passing an empty object; combined with preserve=true (the default),
+    // the hidden AD/LDAP/OIDC sections keep their values when the mode changes. Without clearing,
+    // "+ New profile" or switching profiles would inherit the previous profile's fields — most
+    // visibly the ldap.ad* fields for an AD profile, and dangerously a bind DN/password.
+    // So: reset, then explicitly blank every schema field, then overlay the target profile.
+    form.resetFields();
+    const fields = buildProfileFields(schemaProperties, cfg);
     const extraList = Object.entries(cfg?.extraProperties || {}).map(([key, value]) => ({
       key,
       value: value ?? '',
     }));
     form.setFieldsValue({
+      ...fields,
       mode: cfg?.mode || fallbackMode || defaultMode || 'none',
-      ...cfg,
       extraPropertiesList: extraList,
     });
   };
