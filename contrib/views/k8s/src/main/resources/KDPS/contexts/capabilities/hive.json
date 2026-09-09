@@ -7,6 +7,7 @@
       "name": "metastoreUri",
       "label": "Hive Metastore URI",
       "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "thrift://hms.example.com:9083",
       "managedResolver": "hive.metastoreUri",
       "group": "Hive"
@@ -15,6 +16,7 @@
       "name": "hs2JdbcUrl",
       "label": "HiveServer2 JDBC URL",
       "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "jdbc:hive2://hs2.example.com:10000/",
       "managedResolver": "hive.hs2JdbcUrl",
       "group": "Hive"
@@ -23,6 +25,7 @@
       "name": "hs2HostPort",
       "label": "HiveServer2 host:port",
       "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "hs2.example.com:10001",
       "help": "HiveServer2 endpoint the OM connector dials. For a MANAGED context KDPS computes the HTTP-transport port from hive-site; for an EXTERNAL context, provide it here.",
       "managedResolver": "hive.hs2HostPort",
@@ -32,6 +35,7 @@
       "name": "scheme",
       "label": "Connection scheme",
       "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "hive+https",
       "help": "hive+https / hive+http / hive. For a MANAGED context KDPS derives it from hive.server2.transport.mode + use.SSL; for an EXTERNAL context, set it here.",
       "managedResolver": "hive.scheme",
@@ -41,8 +45,9 @@
       "name": "transportMode",
       "label": "HS2 transport mode",
       "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "http",
-      "help": "http / binary. For a MANAGED context KDPS reads hive.server2.transport.mode from hive-site (defaults to binary when unset). Superset picks the SQLAlchemy driver from this: binary → hive:// (PyHive), http → impala:// (impyla over HTTP). For an EXTERNAL context, set it here.",
+      "help": "http / binary. For a MANAGED context KDPS reads hive.server2.transport.mode from hive-site (defaults to binary when unset). Superset picks the SQLAlchemy driver from this: binary \u2192 hive:// (PyHive), http \u2192 impala:// (impyla over HTTP). For an EXTERNAL context, set it here.",
       "managedResolver": "hive.transportMode",
       "group": "Hive",
       "options": [
@@ -55,6 +60,7 @@
       "name": "authMode",
       "label": "Authentication",
       "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "kerberos",
       "help": "kerberos / ldap / none. For a MANAGED context KDPS derives it from hive.server2.authentication.",
       "managedResolver": "hive.authMode",
@@ -69,6 +75,7 @@
       "name": "rangerServiceName",
       "label": "Hive Ranger service name",
       "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "cl1_hive",
       "help": "Name of the Ranger service (repository) protecting this Hive. KDPS grants the deployed service's read access here (e.g. Superset column reflection, OpenMetadata ingestion). For a MANAGED context KDPS derives it as <cluster>_hive; for an EXTERNAL context set it to the backend cluster's Hive Ranger repo name.",
       "managedResolver": "hive.rangerServiceName",
@@ -90,7 +97,7 @@
       "type": "string",
       "appliesTo": "EXTERNAL,CDP,REMOTE",
       "placeholder": "trino/_HOST@CDP.EXAMPLE.COM",
-      "help": "The Kerberos principal the deployed service authenticates AS to the backend Hive — this MUST match the principal inside the external keytab you provide at deploy time. Sets hive.metastore.client.principal / hive.hdfs.trino.principal in the Trino Hive catalog. EXTERNAL contexts only.",
+      "help": "The Kerberos principal the deployed service authenticates AS to the backend Hive \u2014 this MUST match the principal inside the external keytab you provide at deploy time. Sets hive.metastore.client.principal / hive.hdfs.trino.principal in the Trino Hive catalog. EXTERNAL contexts only.",
       "group": "Hive"
     }
   ]
