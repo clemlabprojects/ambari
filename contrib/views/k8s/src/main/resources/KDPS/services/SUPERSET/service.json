@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.42",
+  "version": "0.12.44",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -346,6 +346,19 @@
         "type": "form",
         "field": "security.adminGroups"
       }
+    },
+    {
+      "name": "dynamicRoleRaw",
+      "from": { "type": "form", "field": "security.dynamicRoleFromGroup" }
+    },
+    {
+      "comment": "true only when the operator turned dynamic role mapping ON — gates the binding below.",
+      "name": "dynamicRoleOn",
+      "from": { "type": "equals", "var": "dynamicRoleRaw", "value": "true", "caseInsensitive": true }
+    },
+    {
+      "name": "dynamicRolePattern",
+      "from": { "type": "form", "field": "security.dynamicRolePattern" }
     },
     {
       "name": "ingressCertManagerIssuerName",
@@ -810,6 +823,22 @@
             "type": "var",
             "name": "adminGroups"
           }
+        }
+      ]
+    },
+    {
+      "comment": "Dynamic role mapping: fires only when the operator toggled it on. Sets global.security.dynamicRoleFromGroup=true (the chart maps it to SECURITY_DYNAMIC_ROLE_FROM_GROUP) and, when provided, the role-name pattern. Superset then grants any role whose name matches an IdP group at login — no restart. Requires superset chart >= 0.12.43.",
+      "name": "superset-dynamic-role-mapping",
+      "skipIfVarEmpty": "dynamicRoleOn",
+      "targets": [
+        {
+          "path": "global.security.dynamicRoleFromGroup",
+          "from": { "type": "template", "template": "true" }
+        },
+        {
+          "path": "global.security.dynamicRolePattern",
+          "skipIfVarEmpty": "dynamicRolePattern",
+          "from": { "type": "var", "name": "dynamicRolePattern" }
         }
       ]
     },
@@ -1290,6 +1319,22 @@
           "label": "Admin groups (comma-separated)",
           "type": "string",
           "help": "Optional list of IdP groups to map to the Admin role (e.g., LDAP/OIDC groups)."
+        },
+        {
+          "name": "security.dynamicRoleFromGroup",
+          "label": "Dynamic role mapping from IdP groups",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "When ON, at each login Superset grants any role whose NAME matches one of the user's AD/LDAP or OIDC groups — looked up live from the DB, so a role you create in the Superset UI takes effect on the next login with NO restart. Use the pattern below to restrict which role names may be auto-granted."
+        },
+        {
+          "name": "security.dynamicRolePattern",
+          "label": "Auto-grant role name pattern (regex)",
+          "type": "string",
+          "excludeFromValues": true,
+          "condition": { "field": "security.dynamicRoleFromGroup", "value": true },
+          "help": "Optional regex a role name must match to be auto-granted (e.g. ^ad_). Leave blank to allow any role whose name matches a group. Recommended in production so an arbitrary IdP group cannot match a sensitive role like Admin or sql_lab."
         }
       ]
     },
