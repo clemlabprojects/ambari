@@ -48,6 +48,13 @@ public class FormField {
 
     // For discovery/selectors
     public String lookupLabel;
+    // A discovery/selector field (k8s-discovery, service-select, hadoop-discovery) auto-fills these
+    // OTHER form fields with the picked service's host/port. They MUST be declared here: FormField
+    // uses @JsonIgnoreProperties(ignoreUnknown=true), so undeclared properties are silently dropped
+    // on load and never reach the UI — which disabled Trino host auto-fill (ui_trino_host stayed
+    // empty, so the Superset→Trino datasource import was skipped).
+    public String targetHost;
+    public String targetPort;
     public String placeholder;
     public String tooltip;
 

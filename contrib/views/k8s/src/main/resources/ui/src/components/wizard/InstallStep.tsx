@@ -22,6 +22,7 @@ import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
 import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContextValuesContext, type ResolvedContextInfo } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
+import { FieldSyncContext } from '../ServiceInstallationModal/fieldSync';
 
 interface InstallStepProps {
   definition: any;
@@ -102,6 +103,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
 
   if (mode === 'general') {
       return (
+        <FieldSyncContext.Provider value={onValuesChange}>
         <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
             <Typography.Title level={4}>Deployment Basics</Typography.Title>
             <Form.Item name="releaseName" label="Release Name" rules={[{ required: true }]}>
@@ -213,6 +215,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
               </Card>
             )}
         </Form>
+        </FieldSyncContext.Provider>
       );
   }
 
@@ -246,7 +249,8 @@ const InstallStep: React.FC<InstallStepProps> = ({
     <ExternalAuthTargetsContext.Provider value={(definition as any)?.externalServiceTargets}>
     <ResolvedContextValuesContext.Provider value={resolvedContext || undefined}>
     <ContextLinkedFieldsContext.Provider value={contextLinkedFields}>
-    <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
+    <FieldSyncContext.Provider value={onValuesChange}>
+        <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
         {mode === 'storage' ? (
           <>
             <Typography.Title level={4}>Storage / Mounts</Typography.Title>
@@ -289,6 +293,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
           </>
         )}
     </Form>
+        </FieldSyncContext.Provider>
     </ContextLinkedFieldsContext.Provider>
     </ResolvedContextValuesContext.Provider>
     </ExternalAuthTargetsContext.Provider>
