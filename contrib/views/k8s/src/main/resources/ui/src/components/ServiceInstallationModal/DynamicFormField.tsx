@@ -23,12 +23,16 @@ import ServiceSelect from './ServiceSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
+import { FieldSyncContext } from './fieldSync';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();
+  // antd setFieldValue/setFieldsValue do NOT fire the Form's onValuesChange, so any programmatic
+  // set below must call this to push the value into the wizard's installValues. See fieldSync.ts.
+  const syncFields = React.useContext(FieldSyncContext);
   const rules = [{ required: (field as any).required, message: `Field '${field.label}' is required.` }];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
@@ -133,6 +137,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               const port = typeof svcOrVal === 'object' ? svcOrVal?.port : undefined;
               if (f.targetHost && host != null) form.setFieldValue(f.targetHost.split('.'), host);
               if (f.targetPort && port != null) form.setFieldValue(f.targetPort.split('.'), Number(port));
+              syncFields?.();
             }}
           />
         );
@@ -228,6 +233,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               const port = typeof svcOrVal === 'object' ? svcOrVal?.port : undefined;
               if (f.targetHost && host != null) form.setFieldValue(f.targetHost.split('.'), host);
               if (f.targetPort && port != null) form.setFieldValue(f.targetPort.split('.'), Number(port));
+              syncFields?.();
             }}
           />
         );
