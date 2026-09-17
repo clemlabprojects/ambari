@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.k8s.service;
 
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
@@ -87,6 +88,15 @@ public class ManagedContextResolver {
                 case "oidc.adminClientId":      return cfg("oidc-env", "oidc_admin_client_id");
                 case "oidc.verifyTls":          return cfg("oidc-env", "oidc_verify_tls");
                 case "oidc.principalDomain":    return cfg("oidc-env", "oidc_principal_domain");
+                // ----- Apache Polaris (Iceberg REST catalog), managed by Ambari as the POLARIS service -----
+                case "polaris.restUri":            return polarisRestUri();
+                case "polaris.managementUri":      return polarisManagementUri();
+                case "polaris.realm":              return polarisRealm();
+                case "polaris.realmHeaderName":    return polarisAvailable() ? t(cfg("polaris-application-properties", "polaris.realm-context.header-name")) : null;
+                case "polaris.realmHeaderRequired":return polarisAvailable() ? t(cfg("polaris-application-properties", "polaris.realm-context.require-header")) : null;
+                case "polaris.catalog":            return polarisAvailable() ? t(cfg("polaris-env", "polaris_ozone_catalog_name")) : null;
+                case "polaris.authType":           return polarisAvailable() ? t(cfg("polaris-application-properties", "polaris.authentication.type")) : null;
+                case "polaris.tlsEnabled":         return polarisAvailable() ? String.valueOf(polarisTls()) : null;
                 default:
                     return null;
             }
@@ -256,6 +266,59 @@ public class ManagedContextResolver {
     }
 
     // ----- helpers -----
+
+
+    // ----- Polaris (Iceberg REST catalog) -----
+    // Resolved from the Ambari-managed POLARIS service: POLARIS_SERVER host + polaris-env
+    // (polaris_ssl_enabled, polaris_ozone_catalog_name) + polaris-application-properties
+    // (quarkus.http.port / quarkus.http.ssl-port, realm-context.*, authentication.type). All
+    // return null when POLARIS is not installed, so the capability stays unresolved and the Trino
+    // "Iceberg catalog (Polaris)" group is neither auto-enabled nor pre-filled.
+    private List<String> polarisHosts;
+    private Boolean polarisResolved;
+
+    private boolean polarisAvailable() throws Exception {
+        if (polarisResolved == null) {
+            try {
+                polarisHosts = ambari.getComponentHosts(cluster, "POLARIS", "POLARIS_SERVER");
+            } catch (Exception e) {
+                polarisHosts = Collections.emptyList();
+            }
+            polarisResolved = polarisHosts != null && !polarisHosts.isEmpty();
+        }
+        return polarisResolved;
+    }
+
+    private boolean polarisTls() {
+        return "true".equalsIgnoreCase(t(cfg("polaris-env", "polaris_ssl_enabled")));
+    }
+
+    private String polarisBase() throws Exception {
+        if (!polarisAvailable()) return null;
+        boolean tls = polarisTls();
+        String port = tls ? cfg("polaris-application-properties", "quarkus.http.ssl-port")
+                          : cfg("polaris-application-properties", "quarkus.http.port");
+        if (blank(port)) port = tls ? "8443" : "8181";
+        return (tls ? "https" : "http") + "://" + polarisHosts.get(0) + ":" + t(port);
+    }
+
+    private String polarisRestUri() throws Exception {
+        String base = polarisBase();
+        return base == null ? null : base + "/api/catalog";
+    }
+
+    private String polarisManagementUri() throws Exception {
+        String base = polarisBase();
+        return base == null ? null : base + "/api/management/v1";
+    }
+
+    private String polarisRealm() throws Exception {
+        if (!polarisAvailable()) return null;
+        String realms = cfg("polaris-application-properties", "polaris.realm-context.realms");
+        if (blank(realms)) realms = cfg("polaris-env", "polaris_bootstrap_realms");
+        if (blank(realms)) return "POLARIS";
+        return realms.split(",")[0].trim();
+    }
 
     private String cfg(String type, String key) {
         try {

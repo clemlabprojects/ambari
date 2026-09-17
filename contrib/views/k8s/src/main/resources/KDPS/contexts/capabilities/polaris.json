@@ -1,0 +1,85 @@
+{
+  "capability": "polaris",
+  "label": "Apache Polaris (Iceberg REST catalog)",
+  "order": 45,
+  "fields": [
+    {
+      "name": "restUri",
+      "label": "Polaris Iceberg REST URI",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "https://polaris.example.com:8181/api/catalog",
+      "help": "Base URI of the Polaris Iceberg REST catalog API that Trino's iceberg connector (iceberg.catalog.type=rest) and dbt target. For a MANAGED context KDPS derives it from the POLARIS_SERVER host, polaris_ssl_enabled and quarkus.http(.ssl)-port; for an EXTERNAL/CDP/REMOTE context, provide it here.",
+      "managedResolver": "polaris.restUri",
+      "group": "Polaris"
+    },
+    {
+      "name": "managementUri",
+      "label": "Polaris management API URI",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "https://polaris.example.com:8181/api/management/v1",
+      "help": "Polaris management API (principals, catalogs, grants). Used by KDPS to provision / verify the service principal a deployed Trino or dbt authenticates with.",
+      "managedResolver": "polaris.managementUri",
+      "group": "Polaris"
+    },
+    {
+      "name": "realm",
+      "label": "Polaris realm",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "POLARIS",
+      "help": "Realm the catalog lives in (polaris.realm-context.realms). Sent as the realm header when the server requires it.",
+      "managedResolver": "polaris.realm",
+      "group": "Polaris"
+    },
+    {
+      "name": "realmHeaderName",
+      "label": "Realm header name",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "Polaris-Realm",
+      "managedResolver": "polaris.realmHeaderName",
+      "group": "Polaris"
+    },
+    {
+      "name": "realmHeaderRequired",
+      "label": "Realm header required",
+      "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "options": ["true", "false"],
+      "help": "polaris.realm-context.require-header. Trino's iceberg REST client cannot send a custom realm header, so a single-realm Polaris used by Trino must resolve the default realm (require-header=false).",
+      "managedResolver": "polaris.realmHeaderRequired",
+      "group": "Polaris"
+    },
+    {
+      "name": "catalog",
+      "label": "Iceberg catalog (warehouse) name",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "ozone",
+      "help": "The Polaris catalog Trino/dbt should use as its warehouse (iceberg.rest-catalog.warehouse). ODP bootstraps an Ozone-backed catalog (polaris_ozone_catalog_name).",
+      "managedResolver": "polaris.catalog",
+      "group": "Polaris"
+    },
+    {
+      "name": "authType",
+      "label": "Polaris authentication type",
+      "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "options": ["internal", "oidc", "mixed"],
+      "help": "polaris.authentication.type. 'internal' = Polaris token broker (OAuth2 client-credentials with a principal's client id/secret); 'oidc' = tokens from the external IdP.",
+      "managedResolver": "polaris.authType",
+      "group": "Polaris"
+    },
+    {
+      "name": "tlsEnabled",
+      "label": "TLS enabled",
+      "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "options": ["true", "false"],
+      "managedResolver": "polaris.tlsEnabled",
+      "group": "Polaris"
+    }
+  ]
+}
