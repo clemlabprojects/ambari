@@ -22,6 +22,7 @@ import os
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions.constants import Direction
 from resource_management.libraries.functions.security_commons import build_expectations
@@ -138,10 +139,24 @@ class KnoxGatewayDefault(KnoxGateway):
 
     update_knox_logfolder_permissions()
 
+    # gateway.sh start (TEST_APP_STATUS=true) confirms readiness by polling
+    # $KNOX_GATEWAY_DATA_DIR/gatewayServer.status for "STARTED", defaulting KNOX_GATEWAY_DATA_DIR to
+    # $KNOX_HOME/data when unset. The gateway writes that status file under gateway-site's
+    # gateway.data.dir -- pinned to /var/lib/knox/gateway/data by the CDPTOODP takeover to preserve the
+    # CDP master secret, which != $KNOX_HOME/data. gateway.sh also defaults APP_LOG_DIR/APP_PID_DIR to
+    # $KNOX_HOME/{logs,pids} (root-owned) unless exported. It sources bin/knox-env.sh for these, but that
+    # file is rpm-owned (ships them commented out) and is overwritten on every knox rpm upgrade -- so
+    # export them from here instead. Without KNOX_GATEWAY_DATA_DIR the readiness poll never finds the
+    # status file and gateway.sh blocks until timeout -> the Ambari Execute hangs.
+    knox_gateway_data_dir = default("/configurations/gateway-site/gateway.data.dir", params.knox_data_dir)
+
     try:
       Execute(daemon_cmd,
               user=params.knox_user,
-              environment={'JAVA_HOME': params.java_home, 'HADOOP_CONF_DIR': '/etc/hadoop/conf'},
+              environment={'JAVA_HOME': params.java_home, 'HADOOP_CONF_DIR': '/etc/hadoop/conf',
+                           'KNOX_GATEWAY_LOG_DIR': params.knox_logs_dir,
+                           'KNOX_GATEWAY_PID_DIR': params.knox_pid_dir,
+                           'KNOX_GATEWAY_DATA_DIR': knox_gateway_data_dir},
               not_if=no_op_test
       )
     except:
