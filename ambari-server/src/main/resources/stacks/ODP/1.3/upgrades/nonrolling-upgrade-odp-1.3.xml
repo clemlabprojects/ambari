@@ -211,6 +211,8 @@
         <component>HBASE_REGIONSERVER</component>
         <component>HBASE_MASTER</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
 
       <service name="KAFKA">
@@ -595,6 +597,8 @@
         <component>HBASE_REGIONSERVER</component>
         <component>HBASE_CLIENT</component>
         <component>PHOENIX_QUERY_SERVER</component>
+        <component>HBASE_THRIFTSERVER</component>
+        <component>HBASE_RESTSERVER</component>
       </service>
     </group>
 
@@ -1106,6 +1110,18 @@
       </component>
 
       <component name="HBASE_REGIONSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+
+      <component name="HBASE_THRIFTSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+
+      <component name="HBASE_RESTSERVER">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>
