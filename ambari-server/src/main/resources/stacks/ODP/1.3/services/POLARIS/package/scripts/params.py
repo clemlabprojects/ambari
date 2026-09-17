@@ -529,6 +529,17 @@ if security_enabled:
     "-Djava.security.auth.login.config={polaris_jaas_conf} -Djavax.security.auth.useSubjectCredsOnly=false -Dsolr.httpclient.builder.factory=org.apache.solr.client.solrj.impl.Krb5HttpClientBuilder"
   )
 
+# Ozone S3 access id of the polaris principal, for the Ozone-backed (no-STS) Polaris catalog.
+# 'ozone s3 getsecret' names the S3 access id after the Kerberos principal; the secret is
+# polaris_ozone_principal_secret, which the start-time bootstrap enforces on Ozone (setsecret) and
+# writes into the catalog properties, and which polaris_server.py hands to the server JVM as
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: with stsUnavailable=true Polaris vends NO credentials
+# and its own FileIO (table metadata writes on commit) resolves them through the AWS SDK default
+# chain, which is otherwise empty ("Unable to load credentials from any of the providers").
+polaris_ozone_s3_access_id = ""
+if has_ozone_service and polaris_ozone_s3_endpoint and polaris_ozone_principal_secret:
+  polaris_ozone_s3_access_id = polaris_jaas_principal if (security_enabled and polaris_jaas_principal) else polaris_user
+
 # Ranger plugin integration expands Ambari templates, computes repository
 # metadata, and injects plugin-specific runtime keys for Polaris.
 ranger_policy_configs = []

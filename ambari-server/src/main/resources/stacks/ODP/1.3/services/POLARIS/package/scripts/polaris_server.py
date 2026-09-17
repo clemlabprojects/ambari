@@ -141,6 +141,17 @@ class PolarisServer(Script):
     runtime_env["POLARIS_JAVA_OPTS"] = params.polaris_opts
     runtime_env["HADOOP_CONF_DIR"] = params.hadoop_conf_dir
 
+    # Ozone-backed catalog (no STS): Polaris vends nothing and its own FileIO (table metadata
+    # writes on commit) resolves credentials through the AWS SDK default chain, so hand the server
+    # the polaris principal's Ozone S3 credential via the environment provider. It is the same value
+    # the start-time bootstrap enforces on Ozone and writes into the catalog (params.polaris_ozone_s3_access_id).
+    s3_access_id = str(getattr(params, "polaris_ozone_s3_access_id", "")).strip()
+    s3_secret = str(getattr(params, "polaris_ozone_principal_secret", "")).strip()
+    if s3_access_id and s3_secret:
+      runtime_env["AWS_ACCESS_KEY_ID"] = s3_access_id
+      runtime_env["AWS_SECRET_ACCESS_KEY"] = s3_secret
+      runtime_env.setdefault("AWS_REGION", str(getattr(params, "polaris_ozone_s3_region", "us-east-1")).strip() or "us-east-1")
+
     no_op_test = format('test -f {polaris_pid_file} && ps -p `cat {polaris_pid_file}` >/dev/null 2>&1')
     # Polaris runtime launcher is foreground; daemonize it for Ambari service control.
     start_cmd = format(
