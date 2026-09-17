@@ -28,7 +28,7 @@ import yaml from 'yaml';
 import debounce from 'lodash.debounce';
 
 import { getHelmRepos, getAvailableServices, submitHelmDeploy, getCommandStatus, getSecurityConfig, type CommandStatus } from '../../api/client';
-import { SERVICE_ICONS } from '../../assets/services';
+import { serviceIcon } from '../../assets/services';
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
@@ -1393,7 +1393,7 @@ const handleServiceChange = (value: string) => {
           <Form.Item name="svcKey" label={serviceLabel} rules={[{ required: true, message: 'Please choose a service' }]}>
             <Select onChange={handleServiceChange} disabled={mode === 'upgrade'} optionLabelProp="label">
               {Object.keys(availableServices).map(key => {
-                const icon = SERVICE_ICONS[key.toUpperCase()];
+                const icon = serviceIcon(key);
                 const label = availableServices[key].label;
                 const optionContent = (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>

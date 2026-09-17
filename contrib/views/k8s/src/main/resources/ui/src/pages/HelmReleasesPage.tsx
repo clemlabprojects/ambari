@@ -33,7 +33,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
-import { SERVICE_ICONS } from '../assets/services';
+import { serviceIcon } from '../assets/services';
 
 import './Page.css';
 
@@ -1338,7 +1338,7 @@ const HelmReleasesPage: React.FC = () => {
                 )}
                 {Object.keys(serviceDefinitions).map((key) => {
                   const svc = serviceDefinitions[key];
-                  const icon = SERVICE_ICONS[key.toUpperCase()];
+                  const icon = serviceIcon(key);
                   return (
                     <Col key={key} xs={24} sm={12}>
                       <div

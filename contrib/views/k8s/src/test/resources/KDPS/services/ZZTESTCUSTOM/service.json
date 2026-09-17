@@ -1,0 +1,6 @@
+{
+  "label": "ZZ Test Custom (drop-in, NOT in catalog.json)",
+  "chart": "example/zz-test-custom",
+  "version": "0.0.1",
+  "form": []
+}
