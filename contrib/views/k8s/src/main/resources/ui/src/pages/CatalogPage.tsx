@@ -27,7 +27,7 @@ import {
   ShopOutlined,
 } from '@ant-design/icons';
 import { getAvailableServices, getClusterCapabilities, getCatalogAppVersions, type ClusterCapabilities } from '../api/client';
-import { SERVICE_ICONS } from '../assets/services';
+import { serviceIcon } from '../assets/services';
 
 const { Title, Paragraph } = Typography;
 
@@ -152,7 +152,7 @@ const CatalogPage: React.FC = () => {
             const needs = detectCapabilities(svc);
             const certManagerOk = !!capabilities?.certManager?.installed;
             const externalSecretsOk = !!capabilities?.externalSecrets?.installed;
-            const iconUrl = SERVICE_ICONS[name.toUpperCase()];
+            const iconUrl = serviceIcon(name);
             const appVersion = appVersions[name];
             return (
               <Col xs={24} sm={12} md={12} lg={8} xl={6} key={name} style={{ display: 'flex' }}>
