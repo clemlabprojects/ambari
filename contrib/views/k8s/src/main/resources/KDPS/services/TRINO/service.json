@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.7",
+  "version": "1.43.10",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -711,6 +711,22 @@
         "overrideFields": ["hiveCatalog.metastoreUri"]
       }
     },
+    {
+      "name": "polarisRestUri",
+      "from": { "type": "context", "key": "polaris.restUri", "enabledField": "icebergCatalog.enabled", "overrideFields": ["icebergCatalog.restUri"] }
+    },
+    {
+      "name": "polarisWarehouse",
+      "from": { "type": "context", "key": "polaris.catalog", "enabledField": "icebergCatalog.enabled", "overrideFields": ["icebergCatalog.warehouse"] }
+    },
+    { "name": "polarisClientId",         "from": { "type": "form", "field": "icebergCatalog.clientId" } },
+    { "name": "polarisClientSecret",     "from": { "type": "form", "field": "icebergCatalog.clientSecret" } },
+    { "name": "polarisCredentialSecret", "from": { "type": "form", "field": "icebergCatalog.credentialSecret" } },
+    { "name": "icebergS3Endpoint",       "from": { "type": "form", "field": "icebergCatalog.s3Endpoint" } },
+    { "name": "icebergS3Region",         "from": { "type": "form", "field": "icebergCatalog.s3Region" } },
+    { "name": "icebergS3AccessKey",      "from": { "type": "form", "field": "icebergCatalog.s3AccessKey" } },
+    { "name": "icebergS3SecretKey",      "from": { "type": "form", "field": "icebergCatalog.s3SecretKey" } },
+    { "name": "icebergS3CredentialSecret","from": { "type": "form", "field": "icebergCatalog.s3CredentialSecret" } },
     {
       "name": "internalSharedSecret",
       "from": {
@@ -1598,6 +1614,66 @@
             "template": "connector.name=hive\nhive.metastore.uri=${hiveMetastoreUri}\nhive.security=allow-all\n"
           }
         }
+      ]
+    },
+    {
+      "name": "iceberg-catalog",
+      "_description": "Trino 'iceberg' catalog on the Platform Context's Apache Polaris REST catalog. The OAuth2 client credential is NOT written here: the view fills polarisCredential.* and the clemlab-trino chart (>=1.43.9) appends iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_CLIENT_ID}:${ENV:POLARIS_CLIENT_SECRET} from a Secret — the view interpolator would blank a literal ${ENV:...}.",
+      "skipIfVarEmpty": ["polarisRestUri", "polarisWarehouse"],
+      "targets": [
+        {
+          "path": "additionalCatalogs.iceberg",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "connector.name=iceberg\niceberg.catalog.type=rest\niceberg.rest-catalog.uri=${polarisRestUri}\niceberg.rest-catalog.warehouse=${polarisWarehouse}\niceberg.rest-catalog.security=OAUTH2\niceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL\niceberg.rest-catalog.vended-credentials-enabled=true\nfs.native-s3.enabled=true\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "iceberg-catalog-s3-endpoint",
+      "skipIfVarEmpty": ["polarisRestUri", "polarisWarehouse", "icebergS3Endpoint"],
+      "targets": [
+        {
+          "path": "additionalCatalogs.iceberg",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "connector.name=iceberg\niceberg.catalog.type=rest\niceberg.rest-catalog.uri=${polarisRestUri}\niceberg.rest-catalog.warehouse=${polarisWarehouse}\niceberg.rest-catalog.security=OAUTH2\niceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL\niceberg.rest-catalog.vended-credentials-enabled=true\nfs.native-s3.enabled=true\ns3.endpoint=${icebergS3Endpoint}\ns3.path-style-access=true\ns3.region=${icebergS3Region}\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "iceberg-polaris-credential-inline",
+      "skipIfVarEmpty": ["polarisRestUri", "polarisClientId"],
+      "targets": [
+        { "path": "polarisCredential.clientId",     "op": "set", "from": { "type": "template", "template": "${polarisClientId}" } },
+        { "path": "polarisCredential.clientSecret", "op": "set", "from": { "type": "template", "template": "${polarisClientSecret}" } }
+      ]
+    },
+    {
+      "name": "iceberg-polaris-credential-secret",
+      "skipIfVarEmpty": ["polarisRestUri", "polarisCredentialSecret"],
+      "targets": [
+        { "path": "polarisCredential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${polarisCredentialSecret}" } }
+      ]
+    },
+    {
+      "name": "iceberg-s3-credential-inline",
+      "_description": "Static S3 keys for a Polaris catalog on a no-STS object store (Ozone S3 gateway / MinIO). The chart (>=1.43.10) exposes them as ICEBERG_S3_ACCESS_KEY/ICEBERG_S3_SECRET_KEY from a Secret, appends s3.aws-access-key/s3.aws-secret-key=${ENV:...} to the iceberg catalog and turns Polaris credential vending off there.",
+      "skipIfVarEmpty": ["polarisRestUri", "icebergS3AccessKey"],
+      "targets": [
+        { "path": "s3Credential.accessKey", "op": "set", "from": { "type": "template", "template": "${icebergS3AccessKey}" } },
+        { "path": "s3Credential.secretKey", "op": "set", "from": { "type": "template", "template": "${icebergS3SecretKey}" } }
+      ]
+    },
+    {
+      "name": "iceberg-s3-credential-secret",
+      "skipIfVarEmpty": ["polarisRestUri", "icebergS3CredentialSecret"],
+      "targets": [
+        { "path": "s3Credential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${icebergS3CredentialSecret}" } }
       ]
     },
     {
@@ -2609,6 +2685,105 @@
       ]
         }
       ]
+    },
+    {
+      "name": "icebergIntegration",
+      "label": "Iceberg catalog (Apache Polaris)",
+      "type": "group",
+      "fields": [
+        {
+          "name": "icebergCatalog.enabled",
+          "label": "Enable Iceberg catalog (Polaris REST)",
+          "type": "boolean",
+          "defaultValue": false,
+          "autoEnableWhenContext": "polaris",
+          "help": "When ON, KDPS creates a Trino 'iceberg' catalog backed by the Apache Polaris REST catalog of the selected Platform Context (right panel), so Trino reads and writes Iceberg tables natively. Auto-enabled when the selected context exposes Polaris (ODP: the Ambari-managed POLARIS service). Prerequisites on the Polaris side: polaris.realm-context.require-header=false (Trino cannot send the realm header) and the Polaris TLS CA in the Trino truststore."
+        },
+        {
+          "name": "icebergCatalog.restUri",
+          "label": "Polaris REST catalog URI",
+          "type": "context-resolved",
+          "contextField": "polaris.restUri",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Delivered by KDPS from the selected Platform Context (for example https://polaris-host:8443/api/catalog). Toggle Override only for a context without an Ambari to resolve it."
+        },
+        {
+          "name": "icebergCatalog.warehouse",
+          "label": "Polaris catalog (warehouse)",
+          "type": "context-resolved",
+          "contextField": "polaris.catalog",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Name of the Polaris catalog Trino mounts as its 'iceberg' catalog (ODP default: the pre-provisioned Ozone catalog). Toggle Override to point at another Polaris catalog."
+        },
+        {
+          "name": "icebergCatalog.credentialSecret",
+          "label": "Existing Polaris credential Secret",
+          "type": "secret-discovery",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Optional. A Kubernetes Secret in the release namespace holding keys 'client_id' and 'client_secret' of a Polaris principal granted a catalog role on the catalog above. When set, it takes precedence over the Client ID / Client secret fields below. Create it first, e.g.: kubectl -n <ns> create secret generic trino-polaris --from-literal=client_id=... --from-literal=client_secret=..."
+        },
+        {
+          "name": "icebergCatalog.clientId",
+          "label": "Polaris client ID",
+          "type": "string",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "OAuth2 client id of the Polaris principal Trino authenticates as (Polaris internal authentication). KDPS stores it in a chart-managed Kubernetes Secret and the catalog references it as ${ENV:POLARIS_CLIENT_ID} — the secret never appears in the catalog ConfigMap."
+        },
+        {
+          "name": "icebergCatalog.clientSecret",
+          "label": "Polaris client secret",
+          "type": "string",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "OAuth2 client secret of the principal above."
+        },
+        {
+          "name": "icebergCatalog.s3Endpoint",
+          "label": "S3 endpoint override (Ozone S3 gateway)",
+          "type": "string",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "placeholder": "http://ozone-s3g.example:9878",
+          "help": "Optional. Set when the Iceberg data lives on an S3-compatible store that is not AWS (ODP: the Ozone S3 gateway). KDPS then adds s3.endpoint, s3.path-style-access=true and s3.region to the catalog. Leave blank for AWS S3."
+        },
+        {
+          "name": "icebergCatalog.s3Region",
+          "label": "S3 region",
+          "type": "string",
+          "defaultValue": "us-east-1",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Region string sent with the S3 requests. Any value works for Ozone (default us-east-1); use the real region for AWS S3."
+        },
+        {
+          "name": "icebergCatalog.s3CredentialSecret",
+          "label": "Existing S3 credential Secret (no-STS object store)",
+          "type": "secret-discovery",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Optional. Kubernetes Secret in the release namespace with keys 'access_key' and 'secret_key' for the object store behind the Polaris catalog. Needed when the store cannot vend credentials through Polaris (ODP: Ozone S3 gateway, MinIO; no STS). When set, it takes precedence over the two fields below and KDPS disables Polaris credential vending for this catalog."
+        },
+        {
+          "name": "icebergCatalog.s3AccessKey",
+          "label": "S3 access key (no-STS object store)",
+          "type": "string",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Optional. Static S3 access key Trino uses to read and write Iceberg data when Polaris cannot vend credentials (Ozone S3 gateway / MinIO). Stored in a chart-managed Kubernetes Secret and referenced as ${ENV:ICEBERG_S3_ACCESS_KEY}; leave blank on AWS S3 with STS."
+        },
+        {
+          "name": "icebergCatalog.s3SecretKey",
+          "label": "S3 secret key (no-STS object store)",
+          "type": "string",
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Secret key matching the access key above."
+        }
+      ]
     }
   ],
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
@@ -2643,6 +2818,11 @@
       "capability": "hive",
       "fields": ["metastoreUri"],
       "when": "hiveCatalog.enabled"
+    },
+    {
+      "capability": "polaris",
+      "fields": ["restUri", "catalog"],
+      "when": "icebergCatalog.enabled"
     }
   ],
   "securityCoupling": {
