@@ -16,6 +16,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import datetime
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -623,13 +626,19 @@ def bootstrap_ozone_catalog():
   ozone_security = getattr(params, "ozone_security_enabled", False)
 
   try:
+    volume_name, bucket_name = _parse_volume_and_bucket(base_location, allowed_locations)
+
     Logger.info("Step 1/3: Resolving Ozone S3 credentials.")
-    access_id, secret = _resolve_ozone_s3_credentials(ozone_security)
+    access_id, secret, catalog_in_sync = _resolve_ozone_s3_credentials(
+      ozone_security,
+      s3_endpoint=s3_endpoint,
+      s3_region=s3_region,
+      bucket_name=bucket_name,
+      catalog_name=catalog_name,
+    )
     if not access_id or not secret:
       Logger.warning("Skipping Ozone catalog bootstrap; could not resolve Ozone S3 credentials.")
       return
-
-    volume_name, bucket_name = _parse_volume_and_bucket(base_location, allowed_locations)
 
     Logger.info("Step 2/3: Creating Ozone volume '{0}' and bucket '{1}'.".format(volume_name, bucket_name))
     _create_ozone_storage(volume_name, bucket_name, ozone_security)
@@ -647,6 +656,7 @@ def bootstrap_ozone_catalog():
       path_style_access=path_style_access,
       access_key_id=access_id,
       secret_key=secret,
+      refresh_credentials=not catalog_in_sync,
     )
 
     Logger.info("Polaris Ozone catalog bootstrap completed (catalog={0}).".format(catalog_name))
@@ -655,79 +665,104 @@ def bootstrap_ozone_catalog():
     Logger.warning("Polaris Ozone catalog bootstrap failed: {0}".format(err))
 
 
-def _resolve_ozone_s3_credentials(require_kerberos):
+def _resolve_ozone_s3_credentials(require_kerberos, s3_endpoint="", s3_region="us-east-1",
+                                  bucket_name="", catalog_name=""):
   """
-  Returns (access_id, secret) for connecting Polaris to the Ozone S3 gateway.
+  Returns (access_id, secret, catalog_in_sync) for connecting Polaris to the Ozone S3 gateway.
 
-  Flow:
-    1. Run 'ozone s3 getsecret' as the polaris user (with kinit if kerberos).
-    2. If secret is missing, fall back to admin 'tenant get-secret'.
-    3. If still missing, use polaris_ozone_principal_secret from config and
-       enforce it via admin setsecret.
+  `polaris_ozone_principal_secret` is the single source of truth: the Polaris server itself
+  receives it in its start environment (polaris_server.py) for the metadata writes it performs on
+  commit, and the catalog hands the same value to clients — so Ozone must accept exactly it.
+
+  Verify first, write only when needed. 'ozone s3 getsecret' creates the S3 secret entry but NEVER
+  prints an existing secret, and 'setsecret' would overwrite the value under test, so the check is
+  a signed request against the gateway:
+    * accepted     -> nothing is written, and the catalog is refreshed only if it drifted.
+    * rejected     -> 'setsecret' installs the configured secret and the caller refreshes the
+                      catalog, which is how a first install and an operator-driven rotation work.
+    * inconclusive -> nothing is touched, so a gateway outage can never invalidate the credential
+                      a working catalog is already using.
+
+  Without this, every restart re-ran 'setsecret' with the configured value while the catalog kept
+  the secret it was created with: the two drifted apart and every S3 call failed the signature
+  check, surfacing as HTTP 403 "User doesn't have the right to access this resource".
   """
   import params
 
   configured_secret = str(getattr(params, "polaris_ozone_principal_secret", "")).strip()
+  if not configured_secret:
+    Logger.warning(
+      "polaris_ozone_principal_secret is empty; cannot establish an Ozone S3 credential for Polaris."
+    )
+    return "", "", False
+
+  # 1. Access id. getsecret creates the S3 secret entry on first run and always prints the id.
+  access_id = ""
   retries = 6
   retry_sleep = 5
-
-  Logger.info(
-    "Resolving Ozone S3 credentials via getsecret (kerberos={0}, user={1}).".format(
-      require_kerberos,
-      str(getattr(params, "polaris_user", "polaris"))
-    )
-  )
-
-  access_id = ""
-  secret = ""
   for attempt in range(1, retries + 1):
-    access_id, secret = _ozone_getsecret(require_kerberos=require_kerberos)
-    if access_id and secret:
+    access_id, _ = _ozone_getsecret(require_kerberos=require_kerberos)
+    if access_id:
       break
     if attempt < retries:
       Logger.warning(
-        "getsecret returned incomplete credentials (attempt {0}/{1}); retrying in {2}s.".format(
+        "getsecret did not return an access id (attempt {0}/{1}); retrying in {2}s.".format(
           attempt, retries, retry_sleep
         )
       )
       time.sleep(retry_sleep)
-
+  if not access_id:
+    access_id = str(getattr(params, "polaris_ozone_s3_access_id", "")).strip()
   if not access_id:
     Logger.warning(
-      "Unable to resolve Ozone access id via 'ozone s3 getsecret' as user '{0}'.".format(
+      "Unable to determine the Ozone S3 access id for user '{0}'.".format(
         str(getattr(params, "polaris_user", "polaris"))
       )
     )
-    return "", ""
+    return "", "", False
 
-  if not secret:
-    Logger.warning(
-      "getsecret returned access id '{0}' without secret; trying admin fallback.".format(access_id)
+  # 2. What the existing catalog currently hands to clients (empty on a first install).
+  catalog = _polaris_catalog_get(catalog_name)
+  catalog_secret = ""
+  if catalog:
+    catalog_secret = str((catalog.get("properties") or {}).get("s3.secret-access-key", "")).strip()
+
+  # 3. Does Ozone already accept the configured secret?
+  verdict = _s3_credential_accepted(access_id, configured_secret, s3_endpoint, s3_region, bucket_name)
+
+  if verdict is True:
+    Logger.info(
+      "Ozone S3 credential for '{0}' is already valid; leaving it untouched.".format(access_id)
     )
-    secret = _ozone_getsecret_admin(access_id, require_kerberos=require_kerberos)
+    return access_id, configured_secret, catalog_secret == configured_secret
 
-  final_secret = str(secret or "").strip()
-  if not final_secret:
-    final_secret = configured_secret
-    if final_secret:
-      Logger.warning(
-        "Ozone secret unavailable from getsecret; trying admin setsecret with configured secret."
-      )
-      reset_secret = _ozone_setsecret_admin(
-        access_id=access_id,
-        secret=final_secret,
-        require_kerberos=require_kerberos
-      )
-      if reset_secret:
-        final_secret = reset_secret
-
-  if not final_secret:
+  if verdict is None:
+    fallback = catalog_secret or configured_secret
     Logger.warning(
-      "Unable to resolve Ozone secret for access id '{0}'.".format(access_id)
+      "Could not verify the Ozone S3 credential for '{0}'; keeping the current one and leaving "
+      "the catalog unchanged.".format(access_id)
     )
-    return "", ""
+    return access_id, fallback, True
 
-  return access_id, final_secret
+  # 4. Rejected: install the configured secret and let the caller refresh the catalog.
+  Logger.info(
+    "Ozone S3 credential for '{0}' is missing or stale; installing the configured secret.".format(access_id)
+  )
+  applied_secret = _ozone_setsecret_admin(
+    access_id=access_id,
+    secret=configured_secret,
+    require_kerberos=require_kerberos
+  )
+  final_secret = str(applied_secret or "").strip() or configured_secret
+
+  recheck = _s3_credential_accepted(access_id, final_secret, s3_endpoint, s3_region, bucket_name)
+  if recheck is False:
+    Logger.warning(
+      "The Ozone S3 gateway still rejects the credential for '{0}' after setsecret.".format(access_id)
+    )
+    return "", "", False
+
+  return access_id, final_secret, catalog_secret == final_secret
 
 
 def _ozone_getsecret(require_kerberos):
@@ -745,23 +780,6 @@ def _ozone_getsecret(require_kerberos):
   elif access_id:
     Logger.info("Resolved access id '{0}' but no secret from getsecret output.".format(access_id))
   return access_id, secret
-
-
-def _ozone_getsecret_admin(access_id, require_kerberos):
-  if not access_id:
-    return ""
-  output = _run_ozone(
-    args=["tenant", "user", "get-secret", access_id],
-    run_as="admin",
-    require_kerberos=require_kerberos,
-    checked=False
-  )
-  _, secret = _parse_s3_credentials(output)
-  if secret:
-    Logger.info("Resolved Ozone secret for '{0}' via admin get-secret.".format(access_id))
-  else:
-    Logger.warning("Admin get-secret did not return a secret for '{0}'.".format(access_id))
-  return secret
 
 
 def _ozone_setsecret_admin(access_id, secret, require_kerberos):
@@ -1131,21 +1149,10 @@ def _ranger_http(method, url, username, password, json_body=None, timeout=20):
     return status, {"_raw": raw}
 
 
-def _create_catalog(
-  catalog_name,
-  base_location,
-  allowed_locations,
-  s3_endpoint,
-  s3_region,
-  path_style_access,
-  access_key_id,
-  secret_key,
-):
+def _polaris_cli_context():
   """
-  Creates a Polaris catalog backed by S3-compatible storage (Ozone) using the polaris CLI.
-
-  Secrets (admin password, S3 access id, S3 secret) are written to temp files and injected
-  via bash variable substitution so they never appear on the command line in Ambari logs.
+  Resolves (cli_path, base_url, realm, realm_header) for polaris CLI invocations, so every
+  bootstrap call targets the same binary, endpoint and realm.
   """
   import params
 
@@ -1159,9 +1166,8 @@ def _create_catalog(
     None
   )
   if not polaris_cli:
-    raise Fail("Polaris CLI binary not found; cannot create catalog.")
+    raise Fail("Polaris CLI binary not found.")
 
-  # Resolve Polaris API base URL
   base_url = str(getattr(params, "polaris_service_url", "")).strip().rstrip("/")
   if not base_url:
     protocol = str(getattr(params, "polaris_protocol", "http")).strip().lower()
@@ -1169,7 +1175,6 @@ def _create_catalog(
     port = str(getattr(params, "polaris_port", "8181")).strip() or "8181"
     base_url = "{0}://{1}:{2}".format(protocol, host, port)
 
-  # Resolve realm context (passed to CLI so it targets the right Polaris realm)
   app_props = getattr(params, "application_properties", {}) or {}
   realm_header = str(app_props.get("polaris.realm-context.header-name", "Polaris-Realm")).strip() or "Polaris-Realm"
   realms_source = str(getattr(params, "polaris_bootstrap_realms_raw", "")).strip()
@@ -1177,6 +1182,153 @@ def _create_catalog(
     realms_source = str(app_props.get("polaris.realm-context.realms", "POLARIS")).strip()
   realms = [r.strip() for r in realms_source.split(",") if r.strip()]
   realm = realms[0] if realms else "POLARIS"
+
+  return polaris_cli, base_url, realm, realm_header
+
+
+def _polaris_catalog_get(catalog_name):
+  """
+  Returns the catalog as a dict, or None when it does not exist yet or cannot be read.
+  Used to learn which S3 credential the existing catalog hands to clients, so the bootstrap
+  rewrites it only when it actually drifted.
+  """
+  import params
+
+  if not catalog_name:
+    return None
+
+  try:
+    polaris_cli, base_url, realm, realm_header = _polaris_cli_context()
+  except Fail as err:
+    Logger.warning("Cannot read Polaris catalog '{0}': {1}".format(catalog_name, err))
+    return None
+
+  pid_dir = str(getattr(params, "polaris_pid_dir", "/var/run/polaris")).strip()
+  admin_secret_file = "{0}/polaris-catalog-get-secret.tmp".format(pid_dir)
+  wrapper_script = "{0}/polaris-catalog-get.sh".format(pid_dir)
+  polaris_user = str(getattr(params, "polaris_user", "polaris"))
+
+  parts = [shlex.quote(polaris_cli)]
+  parts += ["--base-url", shlex.quote(base_url)]
+  parts += ["--client-id", shlex.quote(str(params.polaris_admin_username))]
+  parts += ["--client-secret", '"$POLARIS_ADMIN_SECRET"']
+  parts += ["--realm", shlex.quote(realm)]
+  parts += ["--header", shlex.quote(realm_header)]
+  parts += ["catalogs", "get", shlex.quote(catalog_name)]
+  wrapper_content = "\n".join([
+    "#!/bin/bash",
+    "# Auto-generated by Ambari Polaris catalog bootstrap - do not edit",
+    "set +x",
+    "POLARIS_ADMIN_SECRET=$(cat {0})".format(shlex.quote(admin_secret_file)),
+    "exec " + " ".join(parts),
+    "",
+  ])
+
+  try:
+    File(admin_secret_file, content=str(params.polaris_admin_password),
+         owner=polaris_user, group=params.user_group, mode=0o600)
+    File(wrapper_script, content=wrapper_content,
+         owner=polaris_user, group=params.user_group, mode=0o700)
+    rc, out, err = get_user_call_output(wrapper_script, user=polaris_user, quiet=True, is_checked_call=False)
+    if rc != 0:
+      return None
+    start = str(out or "").find("{")
+    if start < 0:
+      return None
+    return json.loads(out[start:])
+  except Exception as err:
+    Logger.warning("Could not read Polaris catalog '{0}': {1}".format(catalog_name, err))
+    return None
+  finally:
+    for tmp_file in [admin_secret_file, wrapper_script]:
+      File(tmp_file, action="delete")
+
+
+def _s3_credential_accepted(access_id, secret, s3_endpoint, s3_region, bucket_name, timeout=10):
+  """
+  Authenticates a single signed (AWS SigV4) list request against the Ozone S3 gateway.
+
+  Returns True when the gateway accepts the credential, False when it rejects it, and None when
+  the answer is inconclusive (gateway unreachable, endpoint not configured). This is the only way
+  to check an Ozone S3 secret: 'ozone s3 getsecret' prints the access id but never an existing
+  secret, and 'setsecret' would overwrite the very value we are trying to validate.
+  """
+  if not (access_id and secret and s3_endpoint and bucket_name):
+    return None
+
+  parsed = urllib.parse.urlparse(s3_endpoint if "://" in s3_endpoint else "http://" + s3_endpoint)
+  scheme = parsed.scheme or "http"
+  host = parsed.netloc
+  if not host:
+    return None
+  region = str(s3_region or "us-east-1").strip() or "us-east-1"
+
+  now = datetime.datetime.utcnow()
+  amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+  date_stamp = now.strftime("%Y%m%d")
+  payload_hash = hashlib.sha256(b"").hexdigest()
+  canonical_uri = "/" + urllib.parse.quote(str(bucket_name).strip("/"), safe="")
+  canonical_query = "list-type=2&max-keys=1"
+  headers = {"host": host, "x-amz-content-sha256": payload_hash, "x-amz-date": amz_date}
+  signed_headers = ";".join(sorted(headers))
+  canonical_headers = "".join("{0}:{1}\n".format(k, headers[k]) for k in sorted(headers))
+  canonical_request = "\n".join(
+    ["GET", canonical_uri, canonical_query, canonical_headers, signed_headers, payload_hash]
+  )
+  scope = "{0}/{1}/s3/aws4_request".format(date_stamp, region)
+  string_to_sign = "\n".join(
+    ["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical_request.encode()).hexdigest()]
+  )
+  signing_key = ("AWS4" + secret).encode()
+  for part in (date_stamp, region, "s3", "aws4_request"):
+    signing_key = hmac.new(signing_key, part.encode(), hashlib.sha256).digest()
+  signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+  headers["Authorization"] = "AWS4-HMAC-SHA256 Credential={0}/{1}, SignedHeaders={2}, Signature={3}".format(
+    access_id, scope, signed_headers, signature
+  )
+
+  url = "{0}://{1}{2}?{3}".format(scheme, host, canonical_uri, canonical_query)
+  request = urllib.request.Request(url, headers=headers, method="GET")
+  context = ssl._create_unverified_context() if scheme == "https" else None
+  try:
+    urllib.request.urlopen(request, timeout=timeout, context=context)
+    return True
+  except urllib.error.HTTPError as err:
+    if err.code in (401, 403):
+      return False
+    Logger.warning(
+      "Ozone S3 credential check for '{0}' returned HTTP {1}; treating it as inconclusive.".format(
+        access_id, err.code
+      )
+    )
+    return None
+  except Exception as err:
+    Logger.warning(
+      "Ozone S3 credential check for '{0}' could not reach {1}: {2}".format(access_id, s3_endpoint, err)
+    )
+    return None
+
+
+def _create_catalog(
+  catalog_name,
+  base_location,
+  allowed_locations,
+  s3_endpoint,
+  s3_region,
+  path_style_access,
+  access_key_id,
+  secret_key,
+  refresh_credentials=True,
+):
+  """
+  Creates a Polaris catalog backed by S3-compatible storage (Ozone) using the polaris CLI.
+
+  Secrets (admin password, S3 access id, S3 secret) are written to temp files and injected
+  via bash variable substitution so they never appear on the command line in Ambari logs.
+  """
+  import params
+
+  polaris_cli, base_url, realm, realm_header = _polaris_cli_context()
 
   # Temp files for secrets - written with mode 0o600, owned by polaris user.
   # Injected via bash $(cat FILE) so the actual values never appear on the command line.
@@ -1267,7 +1419,45 @@ def _create_catalog(
 
       lowered = merged.lower()
       if "already exists" in lowered or "http 409" in lowered or "conflict" in lowered:
-        Logger.info("Polaris catalog '{0}' already exists; skipping.".format(catalog_name))
+        if not refresh_credentials:
+          Logger.info(
+            "Polaris catalog '{0}' already exists and carries the current S3 credential; "
+            "nothing to update.".format(catalog_name)
+          )
+          return
+        # The credential drifted (first install, or an operator rotation): realign what the catalog
+        # hands to clients, since they read s3.access-key-id / s3.secret-access-key from it.
+        update_parts = [shlex.quote(polaris_cli)]
+        update_parts += ["--base-url", shlex.quote(base_url)]
+        update_parts += ["--client-id", shlex.quote(str(params.polaris_admin_username))]
+        update_parts += ["--client-secret", '"$POLARIS_ADMIN_SECRET"']
+        update_parts += ["--realm", shlex.quote(realm)]
+        update_parts += ["--header", shlex.quote(realm_header)]
+        update_parts += ["catalogs", "update"]
+        update_parts += ["--set-property", '"s3.access-key-id=$OZONE_S3_ACCESS"']
+        update_parts += ["--set-property", '"s3.secret-access-key=$OZONE_S3_SECRET"']
+        update_parts.append(shlex.quote(catalog_name))
+        update_content = "\n".join([
+          "#!/bin/bash",
+          "# Auto-generated by Ambari Polaris catalog bootstrap - do not edit",
+          "set +x",
+          "POLARIS_ADMIN_SECRET=$(cat {0})".format(shlex.quote(admin_secret_file)),
+          "OZONE_S3_ACCESS=$(cat {0})".format(shlex.quote(s3_access_file)),
+          "OZONE_S3_SECRET=$(cat {0})".format(shlex.quote(s3_secret_file)),
+          "exec " + " \\\n  ".join(update_parts),
+          "",
+        ])
+        File(wrapper_script, content=update_content,
+             owner=polaris_user, group=params.user_group, mode=0o700)
+        urc, uout, uerr = get_user_call_output(wrapper_script, user=polaris_user, quiet=True, is_checked_call=False)
+        if urc == 0:
+          Logger.info("Polaris catalog '{0}' already exists; refreshed its S3 credential properties.".format(catalog_name))
+        else:
+          Logger.warning(
+            "Polaris catalog '{0}' already exists but refreshing its S3 credential properties failed (rc={1}): {2}".format(
+              catalog_name, urc, "\n".join(filter(None, [uout, uerr])).strip() or "<empty>"
+            )
+          )
         return
 
       if attempt < retries:
