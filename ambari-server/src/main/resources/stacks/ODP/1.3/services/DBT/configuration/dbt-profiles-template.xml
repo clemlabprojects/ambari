@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+  <property>
+    <name>content</name>
+    <display-name>profiles.yml template</display-name>
+    <description>The connection profile dbt reads, as a template. Ambari renders it with the values
+      from dbt-env and writes the result to profiles.yml every time the service is configured, so
+      this file is the one place to change how dbt connects.
+
+      The default covers the warehouses the package has adapters for and that a stack commonly runs:
+      Trino, Spark or Hive over thrift, Impala and PostgreSQL. Every other adapter in the package —
+      oracle, snowflake, bigquery, redshift, databricks, duckdb, athena, sqlserver, teradata,
+      clickhouse — is reached by editing this template, which is why it is a template and not a
+      fixed file.</description>
+    <value>
+{#
+ # Connection profile for dbt. Rendered by Ambari from dbt-env; edit the template in the service
+ # configuration rather than this file, because the file is rewritten on every configure.
+ #}
+{% if not dbt_host %}
+# No host is configured for this service, so there is nothing to connect to yet and no profile is
+# written. dbt itself works: `dbt --version`, `dbt compile`, `dbt parse`.
+#
+# Set the host in the service configuration, or write the profile you need into this template.
+{% else %}
+{{dbt_profile_name}}:
+  target: {{dbt_target}}
+  outputs:
+    {{dbt_target}}:
+{% if dbt_adapter_type == 'trino' %}
+      type: trino
+      method: {{dbt_auth_method}}
+      host: {{dbt_host}}
+      port: {{dbt_port}}
+      database: {{dbt_database}}
+      schema: {{dbt_schema}}
+      threads: {{dbt_threads}}
+      timezone: UTC
+      retries: 3
+      user: {{dbt_connection_user}}
+{% if dbt_auth_method == 'none' %}
+      http_scheme: {{dbt_http_scheme}}
+{% endif %}
+{% if dbt_auth_method == 'ldap' %}
+      password: {{dbt_password}}
+{% endif %}
+{% if dbt_auth_method == 'jwt' %}
+      jwt_token: {{dbt_jwt_token}}
+{% endif %}
+{% if dbt_auth_method == 'kerberos' %}
+      {# No keytab here on purpose: on a secured cluster people run dbt as themselves after
+         kinit, and dbt uses the ticket in their cache. A headless keytab would make every
+         transformation look like one shared identity in the engine's audit log. #}
+      service_name: {{dbt_kerberos_service_name}}
+      mutual_authentication: false
+{% endif %}
+{% elif dbt_adapter_type == 'spark' %}
+      {# Hive is reached this way too: HiveServer2 speaks the same thrift protocol. #}
+      type: spark
+      method: {{dbt_spark_method}}
+      host: {{dbt_host}}
+      port: {{dbt_port}}
+      schema: {{dbt_schema}}
+      threads: {{dbt_threads}}
+      user: {{dbt_connection_user}}
+{% if dbt_auth_method == 'kerberos' %}
+      auth: KERBEROS
+      kerberos_service_name: {{dbt_kerberos_service_name}}
+{% endif %}
+{% if dbt_auth_method == 'ldap' %}
+      password: {{dbt_password}}
+{% endif %}
+{% elif dbt_adapter_type == 'impala' %}
+      type: impala
+      host: {{dbt_host}}
+      port: {{dbt_port}}
+      dbname: {{dbt_database}}
+      schema: {{dbt_schema}}
+      threads: {{dbt_threads}}
+{% if dbt_auth_method == 'kerberos' %}
+      auth_type: kerberos
+      kerberos_service_name: {{dbt_kerberos_service_name}}
+      use_http_transport: false
+      use_ssl: true
+{% elif dbt_auth_method == 'ldap' %}
+      auth_type: ldap
+      username: {{dbt_connection_user}}
+      password: {{dbt_password}}
+      use_ssl: true
+{% else %}
+      auth_type: insecure
+{% endif %}
+{% elif dbt_adapter_type == 'postgres' %}
+      type: postgres
+      host: {{dbt_host}}
+      port: {{dbt_port}}
+      dbname: {{dbt_database}}
+      schema: {{dbt_schema}}
+      threads: {{dbt_threads}}
+      user: {{dbt_connection_user}}
+      password: {{dbt_password}}
+{% else %}
+      {# Any other adapter in the package: fill in what it needs. The fields below are the ones
+         nearly every dbt adapter takes; the rest belong in this template. #}
+      type: {{dbt_adapter_type}}
+      host: {{dbt_host}}
+      port: {{dbt_port}}
+      schema: {{dbt_schema}}
+      threads: {{dbt_threads}}
+      user: {{dbt_connection_user}}
+{% endif %}
+{% if dbt_ssl_verify %}
+      cert: {{dbt_ssl_verify}}
+{% endif %}
+{% endif %}
+    </value>
+    <value-attributes>
+      <type>content</type>
+      <show-property-name>false</show-property-name>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

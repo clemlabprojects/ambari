@@ -33,10 +33,10 @@ class DbtServiceCheck(Script):
             logoutput=True,
             tries=1)
 
-    # Checking the profile only makes sense when there is one. A service installed for a warehouse
-    # other than Trino, or ahead of the engine existing, has no connection configured, and a check
-    # that insisted on one would fail for a service that is in fact fine.
-    if params.trino_host:
+    # Checking the profile only makes sense when there is one. A service installed ahead of its
+    # warehouse existing has no connection configured, and a check that insisted on one would fail
+    # for a service that is in fact fine.
+    if params.dbt_host:
       # debug --config-dir only reads the profile and reports where it looked; no connection is made.
       Execute(format("{dbt_home}/bin/dbt debug --config-dir"),
               environment={"DBT_PROFILES_DIR": params.dbt_conf_dir},

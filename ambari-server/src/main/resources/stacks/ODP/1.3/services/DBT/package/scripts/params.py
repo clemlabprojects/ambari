@@ -41,24 +41,37 @@ dbt_log_dir = config['configurations']['dbt-env']['dbt_log_dir']
 dbt_profile_name = str(config['configurations']['dbt-env']['dbt_profile_name']).strip() or "trino"
 dbt_target = str(config['configurations']['dbt-env']['dbt_target']).strip() or "prod"
 
-trino_host = str(default("/configurations/dbt-env/dbt_trino_host", "")).strip()
-trino_port = int(default("/configurations/dbt-env/dbt_trino_port", 8443))
-trino_catalog = str(default("/configurations/dbt-env/dbt_trino_catalog", "iceberg")).strip()
-trino_schema = str(default("/configurations/dbt-env/dbt_trino_schema", "analytics")).strip()
-trino_threads = int(default("/configurations/dbt-env/dbt_trino_threads", 4))
-trino_user = str(default("/configurations/dbt-env/dbt_trino_user", "dbt")).strip()
-trino_service_name = str(default("/configurations/dbt-env/dbt_trino_service_name", "trino")).strip()
+# The connection, flat. Every value the profile template can need is read here and handed to it,
+# because a template is rendered from a flat namespace: there is no configuration object to walk.
+# Adding a field to the profile means adding it here and using it there, and nothing else.
+dbt_adapter_type = str(default("/configurations/dbt-env/dbt_adapter_type", "trino")).strip().lower()
+dbt_host = str(default("/configurations/dbt-env/dbt_host", "")).strip()
+dbt_port = int(default("/configurations/dbt-env/dbt_port", 8443))
+dbt_database = str(default("/configurations/dbt-env/dbt_database", "")).strip()
+dbt_schema = str(default("/configurations/dbt-env/dbt_schema", "analytics")).strip()
+dbt_threads = int(default("/configurations/dbt-env/dbt_threads", 4))
+dbt_connection_user = str(default("/configurations/dbt-env/dbt_connection_user", "dbt")).strip()
 
-auth_method = str(default("/configurations/dbt-env/dbt_auth_method", "kerberos")).strip().lower()
-trino_password = default("/configurations/dbt-env/dbt_trino_password", "")
-trino_jwt_token = default("/configurations/dbt-env/dbt_trino_jwt_token", "")
-ssl_verify = str(default("/configurations/dbt-env/dbt_ssl_verify", "")).strip()
+dbt_auth_method = str(default("/configurations/dbt-env/dbt_auth_method", "kerberos")).strip().lower()
+dbt_password = default("/configurations/dbt-env/dbt_password", "")
+dbt_jwt_token = default("/configurations/dbt-env/dbt_jwt_token", "")
+dbt_kerberos_service_name = str(default("/configurations/dbt-env/dbt_kerberos_service_name", "trino")).strip()
+dbt_spark_method = str(default("/configurations/dbt-env/dbt_spark_method", "thrift")).strip().lower()
+dbt_ssl_verify = str(default("/configurations/dbt-env/dbt_ssl_verify", "")).strip()
 
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
-# Every authenticated mode reaches Trino over TLS; only an unauthenticated connection may be plain.
-http_scheme = "http" if auth_method == "none" else "https"
+# Derived, so the template does not have to work it out: every authenticated mode reaches the
+# warehouse over TLS, and only an unauthenticated connection may be plain.
+dbt_http_scheme = "http" if dbt_auth_method == "none" else "https"
 
-# The profile rendered below mirrors, field for field, what the Kubernetes deployment writes, so a
-# project behaves the same whether it runs here or there.
+# The profile itself is a template an operator can edit, the way hue.ini is. Ambari renders it with
+# everything above and rewrites profiles.yml on every configure, so the template is the one place
+# where the shape of the connection is decided — including for the adapters the default template
+# does not spell out.
+# Read with a default rather than directly: a service installed before this configuration existed
+# has no such type yet, and an unhelpful KeyError deep in the configure step is a poor way to say
+# so. The check in dbt_client.py turns the empty value into an explanation.
+dbt_profiles_content = default("/configurations/dbt-profiles-template/content", "")
+
 dbt_env_content = config['configurations']['dbt-env']['content']
