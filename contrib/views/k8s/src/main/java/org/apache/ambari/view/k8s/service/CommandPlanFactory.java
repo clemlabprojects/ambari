@@ -878,11 +878,23 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans the {@code POLARIS_PROVISION_CATALOG} step. Queued before the chart is installed, so
+     * the credential Secret exists by the time the pods mount it. Reuses the generic single-step
+     * queuer: one child, no children of its own, params snapshot from the dispatcher.
+     */
+    public String createPolarisProvision(CommandEntity rootCommand, Map<String, Object> params) {
+        return queueAtlasFederationStep(rootCommand, params,
+                CommandType.POLARIS_PROVISION_CATALOG,
+                "Polaris: provision catalog access for this release",
+                "-polaris-provision-");
+    }
+
+    /**
      * Shared queue-step helper for the three Atlas federation provisioning step
      * types. All follow the same shape (one child, no children of their own,
      * params snapshot from the dispatcher, self-persisting root child list).
      */
-    private void queueAtlasFederationStep(CommandEntity rootCommand,
+    private String queueAtlasFederationStep(CommandEntity rootCommand,
                                           Map<String, Object> params,
                                           CommandType type,
                                           String title,
@@ -925,6 +937,7 @@ public class CommandPlanFactory {
         store(cmd);
         store(rootCommand);
         LOG.info("Queued {} step {} on root {}", type, id, rootCommand.getId());
+        return id;
     }
 
     /**

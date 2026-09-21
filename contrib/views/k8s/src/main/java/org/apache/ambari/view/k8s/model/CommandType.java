@@ -274,6 +274,13 @@ public enum CommandType {
      * admin creds (external CDP / manual) grants over REST; a managed context delegates to the
      * Ambari server. Idempotent (create-or-find + user pre-registration).
      */
+    /**
+     * Provisions what a release needs to use an Apache Polaris catalog: an identity of its own,
+     * optionally the catalog and its bucket, the grants, and the credential written to a Kubernetes
+     * Secret the chart mounts. Runs before the chart is installed, and is replayable: names come
+     * from the release and namespace, so re-installing converges instead of creating duplicates.
+     */
+    POLARIS_PROVISION_CATALOG,
     RANGER_POLICY_GRANT_TRINO_IMPERSONATE,
 
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */

@@ -47,7 +47,10 @@
       "label": "Realm header required",
       "type": "enum",
       "appliesTo": "EXTERNAL,CDP,REMOTE",
-      "options": ["true", "false"],
+      "options": [
+        "true",
+        "false"
+      ],
       "help": "polaris.realm-context.require-header. Trino's iceberg REST client cannot send a custom realm header, so a single-realm Polaris used by Trino must resolve the default realm (require-header=false).",
       "managedResolver": "polaris.realmHeaderRequired",
       "group": "Polaris"
@@ -67,7 +70,11 @@
       "label": "Polaris authentication type",
       "type": "enum",
       "appliesTo": "EXTERNAL,CDP,REMOTE",
-      "options": ["internal", "oidc", "mixed"],
+      "options": [
+        "internal",
+        "oidc",
+        "mixed"
+      ],
       "help": "polaris.authentication.type. 'internal' = Polaris token broker (OAuth2 client-credentials with a principal's client id/secret); 'oidc' = tokens from the external IdP.",
       "managedResolver": "polaris.authType",
       "group": "Polaris"
@@ -77,9 +84,31 @@
       "label": "TLS enabled",
       "type": "enum",
       "appliesTo": "EXTERNAL,CDP,REMOTE",
-      "options": ["true", "false"],
+      "options": [
+        "true",
+        "false"
+      ],
       "managedResolver": "polaris.tlsEnabled",
       "group": "Polaris"
+    },
+    {
+      "name": "adminUsername",
+      "label": "Polaris administrator",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "managedResolver": "polaris.adminUsername",
+      "group": "Polaris",
+      "help": "Account KDPS authenticates as to create a release's catalog access. On an Ambari-managed cluster it is read from the Polaris service; elsewhere provide it here."
+    },
+    {
+      "name": "adminPassword",
+      "label": "Polaris administrator password",
+      "type": "password",
+      "secret": true,
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "managedResolver": "polaris.adminPassword",
+      "group": "Polaris",
+      "help": "Password or client secret of the account above. Stored encrypted and never returned by the API."
     }
   ]
 }
