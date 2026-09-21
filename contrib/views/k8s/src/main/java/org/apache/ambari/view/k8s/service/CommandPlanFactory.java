@@ -878,6 +878,20 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans a single {@code RANGER_POLICY_GRANT_POLARIS_CATALOG} child command — grants the
+     * release's Polaris principal the run of its own catalog through Ranger, on the clusters where
+     * Polaris delegates authorization to Ranger and refuses its own grants. Queued by the
+     * provisioning step at execute time, because whether Polaris refused is only known then. Dual
+     * path (context direct-REST vs Ambari-server) is chosen at execute time too.
+     */
+    public String createRangerPolicyGrantPolarisCatalog(CommandEntity rootCommand, Map<String, Object> params) {
+        return queueAtlasFederationStep(rootCommand, params,
+                CommandType.RANGER_POLICY_GRANT_POLARIS_CATALOG,
+                "Ranger: grant the release its Polaris catalog",
+                "-ranger-polaris-grant-");
+    }
+
+    /**
      * Plans the {@code POLARIS_PROVISION_CATALOG} step. Queued before the chart is installed, so
      * the credential Secret exists by the time the pods mount it. Reuses the generic single-step
      * queuer: one child, no children of its own, params snapshot from the dispatcher.
