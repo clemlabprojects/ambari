@@ -267,6 +267,90 @@
           "help": "Cron expression in the cluster's timezone. '0 * * * *' is hourly, '0 2 * * *' is nightly at 02:00."
         }
       ]
+    },
+    {
+      "name": "airflowIntegration",
+      "label": "Orchestration with Airflow",
+      "type": "group",
+      "fields": [
+        {
+          "name": "airflow.enabled",
+          "label": "Publish an Airflow DAG for this release",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Writes a DAG into a git repository your Airflow already watches, so the transformations can be scheduled and monitored there. The DAG asks Kubernetes to run this release's own job template, so an Airflow run and a scheduled run are the same run. Leave the schedule above off when you use this."
+        },
+        {
+          "name": "airflow.dagRepo",
+          "label": "DAG repository URL",
+          "type": "string",
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true,
+          "help": "Repository your Airflow syncs its DAGs from. Often the same repository as the dbt project. KDPS reuses the project credentials to push."
+        },
+        {
+          "name": "airflow.dagBranch",
+          "label": "Branch",
+          "type": "string",
+          "defaultValue": "main",
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true
+        },
+        {
+          "name": "airflow.dagPath",
+          "label": "Directory inside the repository",
+          "type": "string",
+          "defaultValue": "dags",
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true,
+          "help": "Where your Airflow looks for DAG files."
+        },
+        {
+          "name": "airflow.schedule",
+          "label": "Schedule",
+          "type": "string",
+          "defaultValue": "0 2 * * *",
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true,
+          "help": "Cron expression written into the DAG. Leave blank for a DAG that only runs when triggered by hand."
+        },
+        {
+          "name": "airflow.kubeConnectionId",
+          "label": "Airflow Kubernetes connection",
+          "type": "string",
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true,
+          "help": "Connection id Airflow uses to reach this cluster. Leave blank when Airflow runs inside it and uses its own service account."
+        },
+        {
+          "name": "airflow.runTimeoutMinutes",
+          "label": "Run timeout (minutes)",
+          "type": "number",
+          "defaultValue": 60,
+          "condition": {
+            "field": "airflow.enabled",
+            "value": true
+          },
+          "excludeFromValues": true,
+          "help": "How long the DAG waits for a run before giving up."
+        }
+      ]
     }
   ],
   "variables": [

@@ -5217,6 +5217,44 @@ public class CommandService {
             }
         }
 
+        // 2quater. Airflow: publish this release's DAG to the repository an external Airflow
+        // watches. Queued here so it runs with the rest of the plan; the DAG only refers to the
+        // release's scheduled-run template, so it is valid as soon as the chart is installed.
+        {
+            Map<String, Object> fvDag = (params.get("formValues") instanceof Map)
+                    ? (Map<String, Object>) params.get("formValues") : null;
+            Object airflowRaw = (fvDag == null) ? null
+                    : ConfigResolutionService.getByDottedPath(fvDag, "airflow.enabled");
+            if (airflowRaw != null && isEntryEnabled(airflowRaw)) {
+                Map<String, Object> dp = new LinkedHashMap<>();
+                dp.put("releaseName", request.getReleaseName());
+                dp.put("namespace", request.getNamespace());
+                dp.put("serviceKey", request.getServiceKey());
+                for (String[] pair : new String[][]{
+                        {"dagRepo", "airflow.dagRepo"},
+                        {"dagBranch", "airflow.dagBranch"},
+                        {"dagPath", "airflow.dagPath"},
+                        {"dagSchedule", "airflow.schedule"},
+                        {"kubeConnectionId", "airflow.kubeConnectionId"},
+                        {"runTimeoutMinutes", "airflow.runTimeoutMinutes"}}) {
+                    String v = stringValue(ConfigResolutionService.getByDottedPath(fvDag, pair[1]));
+                    if (!v.isBlank()) dp.put(pair[0], v);
+                }
+                // The DAG repository is usually the project repository, so its credentials are reused.
+                String gitSecret = stringValue(ConfigResolutionService.getByDottedPath(fvDag, "project.git.secretRef.name"));
+                if (!gitSecret.isBlank()) dp.put("gitSecretName", gitSecret);
+                if (params.get("_cluster") != null) dp.put("_cluster", params.get("_cluster"));
+                if (params.get("_baseUri") != null) dp.put("_baseUri", params.get("_baseUri"));
+                if (params.get("_callerHeaders") != null) dp.put("_callerHeaders", params.get("_callerHeaders"));
+                String dagCmdId = this.commandPlanFactory.createDbtPublishAirflowDag(rootCommand, dp);
+                childCommands.add(dagCmdId);
+                rootCommand.setChildListJson(gson.toJson(childCommands));
+                store(rootCommand);
+                LOG.info("Queued DBT_PUBLISH_AIRFLOW_DAG for release '{}' (repository '{}').",
+                        request.getReleaseName(), dp.get("dagRepo"));
+            }
+        }
+
         // 2ter. Polaris: give this release its own catalog access before the chart is installed, so
         // the credential Secret exists by the time the pods mount it. Everything the step touches is
         // named after the release and namespace, so re-installing converges instead of creating a
@@ -6821,6 +6859,10 @@ public class CommandService {
                         String result = grantRangerHiveReadViaAmbari(childParams);
                         if (result != null) childSt.setResultJson(result);
                     }
+                }
+                case DBT_PUBLISH_AIRFLOW_DAG -> {
+                    String result = publishDbtAirflowDag(childParams);
+                    if (result != null) childSt.setResultJson(result);
                 }
                 case POLARIS_PROVISION_CATALOG -> {
                     String result = provisionPolarisCatalog(childParams);
@@ -10107,6 +10149,83 @@ public class CommandService {
         result.put("requestId", req);
         result.put("via", "ambari-server-action");
         return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@link CommandType#DBT_PUBLISH_AIRFLOW_DAG}: writes the release's DAG into the git
+     * repository an external Airflow watches, so the transformations can be orchestrated from there
+     * without anyone hand-writing a DAG or copying the run definition.
+     *
+     * <p>Replayable: the file name and its contents come from the release, so re-installing the same
+     * release rewrites identical text and the commit is skipped. Nothing is pushed when the content
+     * has not moved.
+     */
+    private String publishDbtAirflowDag(Map<String, Object> childParams) throws Exception {
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        String repoUrl     = (String) childParams.get("dagRepo");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(namespace, "namespace");
+        if (repoUrl == null || repoUrl.isBlank()) {
+            throw new IllegalStateException("No repository was given for the Airflow DAG of release "
+                    + releaseName + "; set one or turn the Airflow integration off.");
+        }
+
+        String branch    = firstNonBlank((String) childParams.get("dagBranch"), "main");
+        String dagDir    = firstNonBlank((String) childParams.get("dagPath"), "dags");
+        String schedule  = (String) childParams.get("dagSchedule");
+        String kubeConn  = (String) childParams.get("kubeConnectionId");
+        String token     = (String) childParams.get("gitToken");
+        String sshKey    = (String) childParams.get("gitSshKey");
+        int timeoutMin   = 60;
+        Object rawTimeout = childParams.get("runTimeoutMinutes");
+        if (rawTimeout != null) {
+            try { timeoutMin = Integer.parseInt(String.valueOf(rawTimeout)); } catch (NumberFormatException ignored) { }
+        }
+
+        String fileName = DbtAirflowDagService.dagFileName(releaseName, namespace);
+        String content  = DbtAirflowDagService.renderDag(releaseName, namespace, schedule, kubeConn, timeoutMin);
+
+        java.nio.file.Path workspace = java.nio.file.Files.createTempDirectory("kdps-dbt-dag-");
+        String commitSha = null;
+        boolean changed;
+        try {
+            org.apache.ambari.view.k8s.service.deployment.GitClient git =
+                    new org.apache.ambari.view.k8s.service.deployment.GitClient(workspace, repoUrl, branch, token, sshKey)
+                            .withAuthor("KDPS", "kdps@clemlab.com");
+            git.sync();
+            git.checkoutBranch(branch);
+            git.writeFile(java.nio.file.Path.of(dagDir, fileName), content);
+            changed = git.hasChanges();
+            if (changed) {
+                commitSha = git.commitAndPush("KDPS: dbt DAG for release " + releaseName + " in " + namespace);
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("repository", repoUrl);
+        out.put("branch", branch);
+        out.put("file", dagDir + "/" + fileName);
+        out.put("dagId", DbtAirflowDagService.dagId(releaseName, namespace));
+        out.put("updated", changed);
+        if (commitSha != null) out.put("commit", commitSha);
+        LOG.info("Airflow DAG for release '{}': {} at {}/{} ({})", releaseName,
+                changed ? "published" : "already up to date", dagDir, fileName, repoUrl);
+        return gson.toJson(out);
+    }
+
+    /** Removes a temporary checkout, deepest entries first. */
+    private static void deleteRecursively(java.nio.file.Path root) {
+        if (root == null) return;
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try { java.nio.file.Files.deleteIfExists(p); } catch (Exception ignored) { }
+            });
+        } catch (Exception ex) {
+            LOG.debug("Could not clean the temporary checkout {}: {}", root, ex.toString());
+        }
     }
 
     /**

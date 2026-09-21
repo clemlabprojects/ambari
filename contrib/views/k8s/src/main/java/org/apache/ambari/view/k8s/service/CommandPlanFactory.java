@@ -890,6 +890,17 @@ public class CommandPlanFactory {
     }
 
     /**
+     * Plans the {@code DBT_PUBLISH_AIRFLOW_DAG} step. Queued after the chart is installed, because
+     * the DAG refers to the scheduled-run template the chart creates.
+     */
+    public String createDbtPublishAirflowDag(CommandEntity rootCommand, Map<String, Object> params) {
+        return queueAtlasFederationStep(rootCommand, params,
+                CommandType.DBT_PUBLISH_AIRFLOW_DAG,
+                "Airflow: publish the dbt DAG to git",
+                "-dbt-airflow-dag-");
+    }
+
+    /**
      * Shared queue-step helper for the three Atlas federation provisioning step
      * types. All follow the same shape (one child, no children of their own,
      * params snapshot from the dispatcher, self-persisting root child list).
