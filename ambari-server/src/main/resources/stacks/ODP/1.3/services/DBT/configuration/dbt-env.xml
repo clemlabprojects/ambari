@@ -1,0 +1,213 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_final="false">
+
+  <property>
+    <name>dbt_user</name>
+    <value>dbt</value>
+    <display-name>dbt user</display-name>
+    <description>Account that owns the dbt configuration directory. Analysts run dbt as themselves;
+      this only owns what Ambari writes.</description>
+    <property-type>USER</property-type>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_conf_dir</name>
+    <value>/etc/dbt/conf</value>
+    <display-name>Configuration directory</display-name>
+    <description>Where the connection profile is written. Point DBT_PROFILES_DIR here, which
+      dbt-env.sh does for you.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_log_dir</name>
+    <value>/var/log/dbt</value>
+    <display-name>Log directory</display-name>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_profile_name</name>
+    <value>trino</value>
+    <display-name>Profile name</display-name>
+    <description>Name of the profile written to profiles.yml. A project that names a different
+      profile still runs: pass --profile, or set this to the name the project expects.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_target</name>
+    <value>prod</value>
+    <display-name>Target</display-name>
+    <description>Target inside the profile that dbt uses by default.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <!-- Connection. Trino is not an ODP service: it runs on Kubernetes or elsewhere, so the
+       endpoint is given here rather than discovered from the cluster. -->
+  <property>
+    <name>dbt_trino_host</name>
+    <value></value>
+    <display-name>Trino host</display-name>
+    <description>Host of the Trino coordinator the transformations run in. Trino is deployed
+      outside the stack, so this is the address that host is reachable at from these nodes.</description>
+    <value-attributes>
+      <empty-value-valid>false</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_port</name>
+    <value>8443</value>
+    <display-name>Trino port</display-name>
+    <value-attributes>
+      <type>int</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_catalog</name>
+    <value>iceberg</value>
+    <display-name>Catalog</display-name>
+    <description>Catalog the models are built in. An Iceberg catalog allows tables to be created
+      and replaced; a read-only catalog supports only views and tests.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_schema</name>
+    <value>analytics</value>
+    <display-name>Schema</display-name>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_threads</name>
+    <value>4</value>
+    <display-name>Parallel model threads</display-name>
+    <description>How many models dbt builds at once. Lower it to be gentler on a shared engine.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>64</maximum>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_auth_method</name>
+    <value>kerberos</value>
+    <display-name>Authentication</display-name>
+    <description>How dbt authenticates to Trino. On a secured cluster this is Kerberos; the other
+      modes exist for engines that do not use it.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry><value>kerberos</value><label>Kerberos</label></entry>
+        <entry><value>ldap</value><label>Username and password (LDAP)</label></entry>
+        <entry><value>jwt</value><label>Token (JWT)</label></entry>
+        <entry><value>none</value><label>None (plain HTTP, no login)</label></entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_user</name>
+    <value>dbt</value>
+    <display-name>Trino user</display-name>
+    <description>Identity the transformations run as. Grant it write access on the catalog and
+      schema above. With Kerberos this is overridden by the principal that ran kinit.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="false">
+    <name>dbt_trino_password</name>
+    <value></value>
+    <display-name>Trino password</display-name>
+    <description>Only for username and password authentication.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="false">
+    <name>dbt_trino_jwt_token</name>
+    <value></value>
+    <display-name>Trino token</display-name>
+    <description>Only for token authentication. Use a service token with a long lifetime, since
+      nothing refreshes it between runs.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_trino_service_name</name>
+    <value>trino</value>
+    <display-name>Trino Kerberos service name</display-name>
+    <description>Service part of the Trino principal, for Kerberos authentication.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_ssl_verify</name>
+    <value></value>
+    <display-name>CA bundle</display-name>
+    <description>Path to the certificate authority bundle used to verify Trino's certificate.
+      Leave blank to use the system trust store.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>content</name>
+    <display-name>dbt-env template</display-name>
+    <description>Sourced by users before running dbt, so the profile and the tools are on the path.</description>
+    <value>
+# Sourced before running dbt. Written by Ambari; edit through the service configuration.
+export DBT_HOME={{dbt_home}}
+export DBT_PROFILES_DIR={{dbt_conf_dir}}
+export DBT_LOG_PATH={{dbt_log_dir}}
+export PATH={{dbt_home}}/bin:$PATH
+    </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+</configuration>
