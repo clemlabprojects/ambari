@@ -109,4 +109,16 @@ describe('DBT service definition', () => {
   it('scheduling is off by default, because an orchestrator usually drives dbt', () => {
     expect(field('scheduleIntegration', 'runner.enabled').defaultValue).toBe(false);
   });
+
+  it('the Airflow integration is opt-in and asks only for where the DAG goes', () => {
+    expect(field('airflowIntegration', 'airflow.enabled').defaultValue).toBe(false);
+    const names = fields('airflowIntegration').map((f: any) => f.name);
+    expect(names).toEqual(['airflow.enabled', 'airflow.dagRepo', 'airflow.dagBranch', 'airflow.dagPath',
+                           'airflow.schedule', 'airflow.kubeConnectionId', 'airflow.runTimeoutMinutes']);
+    // These drive a server-side step, not chart values.
+    for (const f of fields('airflowIntegration')) expect(f.excludeFromValues).toBe(true);
+    for (const f of fields('airflowIntegration').slice(1)) {
+      expect(f.condition).toEqual({ field: 'airflow.enabled', value: true });
+    }
+  });
 });

@@ -281,6 +281,13 @@ public enum CommandType {
      * from the release and namespace, so re-installing converges instead of creating duplicates.
      */
     POLARIS_PROVISION_CATALOG,
+
+    /**
+     * Publishes the Airflow DAG that runs a dbt release, into the git repository an external
+     * Airflow already watches. Replayable: the DAG text is derived from the release, so an
+     * unchanged re-install rewrites identical content and produces no commit.
+     */
+    DBT_PUBLISH_AIRFLOW_DAG,
     RANGER_POLICY_GRANT_TRINO_IMPERSONATE,
 
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
