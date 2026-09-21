@@ -37,12 +37,21 @@ class StackDefinitionServiceTest {
   private final StackDefinitionService svc = new StackDefinitionService();
 
   @Test
-  void curatedCatalogServicesAreStillDiscoveredInOrder() {
+  void curatedCatalogServicesAreStillDiscoveredInOrder() throws Exception {
     List<String> keys = svc.discoverServiceKeys();
     assertTrue(keys.contains("SUPERSET"), keys.toString());
     assertTrue(keys.contains("TRINO"), keys.toString());
-    // catalog order is preserved: GITLAB is first in catalog.json
-    assertEquals("GITLAB", keys.get(0));
+    // Catalog order is preserved. Asserted against catalog.json itself rather than a hardcoded
+    // name, so adding a service to the catalog does not fail a test about ordering.
+    List<String> catalog;
+    try (java.io.InputStream in = getClass().getResourceAsStream("/KDPS/services/catalog.json")) {
+      assertNotNull(in, "KDPS/services/catalog.json must be on the classpath");
+      catalog = new com.fasterxml.jackson.databind.ObjectMapper()
+          .readValue(in, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+    }
+    assertEquals(catalog.get(0), keys.get(0));
+    assertEquals(catalog, keys.subList(0, catalog.size()),
+        "curated services come first, in catalog.json order: " + keys);
   }
 
   @Test

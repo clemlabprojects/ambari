@@ -1,0 +1,370 @@
+{
+  "label": "dbt",
+  "chart": "dbt",
+  "version": "0.1.6",
+  "requiredChartVersion": ">=0.1.6",
+  "description": "Transforms data in place with versioned SQL models, runs them against a Trino deployed here, and publishes the generated documentation of every model, test and lineage edge.",
+  "form": [
+    {
+      "name": "trinoIntegration",
+      "label": "Trino connection",
+      "type": "group",
+      "fields": [
+        {
+          "name": "trinoConnection",
+          "label": "Connect to Trino",
+          "type": "k8s-discovery",
+          "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
+          "targetHost": "trino.host",
+          "targetPort": "trino.port",
+          "excludeFromValues": true,
+          "help": "Pick a running Trino to fill in the host and port below. Anything reachable from this namespace works; a Trino deployed by KDPS appears here automatically."
+        },
+        {
+          "name": "trino.host",
+          "label": "Trino host",
+          "type": "string",
+          "required": true,
+          "help": "Service name of the Trino coordinator, filled in by the picker above."
+        },
+        {
+          "name": "trino.port",
+          "label": "Trino port",
+          "type": "number",
+          "defaultValue": 8080
+        },
+        {
+          "name": "trino.catalog",
+          "label": "Catalog",
+          "type": "string",
+          "defaultValue": "iceberg",
+          "help": "Catalog the models are built in. An Iceberg catalog lets dbt create and replace tables; a read-only catalog only supports views and tests."
+        },
+        {
+          "name": "trino.schema",
+          "label": "Schema",
+          "type": "string",
+          "defaultValue": "analytics",
+          "help": "Schema the models are written to. dbt creates it on the first run if the catalog allows it."
+        },
+        {
+          "name": "trino.threads",
+          "label": "Parallel model threads",
+          "type": "number",
+          "defaultValue": 4,
+          "help": "How many models dbt builds at once. Raise it for wide dependency graphs, lower it to be gentle on a shared Trino."
+        },
+        {
+          "name": "trino.auth.method",
+          "label": "Authentication",
+          "type": "select",
+          "defaultValue": "none",
+          "options": [
+            {
+              "label": "None (plain HTTP, no login)",
+              "value": "none"
+            },
+            {
+              "label": "Username and password (LDAP)",
+              "value": "ldap"
+            },
+            {
+              "label": "Kerberos (keytab)",
+              "value": "kerberos"
+            },
+            {
+              "label": "Token (JWT)",
+              "value": "jwt"
+            },
+            {
+              "label": "Client certificate",
+              "value": "certificate"
+            }
+          ],
+          "help": "Must match how the selected Trino authenticates. Every mode except None requires HTTPS on the Trino side."
+        },
+        {
+          "name": "trino.auth.user",
+          "label": "Trino user",
+          "type": "string",
+          "defaultValue": "dbt",
+          "help": "Identity the transformations run as. Grant it write access on the catalog and schema above."
+        },
+        {
+          "name": "trino.auth.password",
+          "label": "Password",
+          "type": "string",
+          "condition": {
+            "field": "trino.auth.method",
+            "value": "ldap"
+          },
+          "help": "Stored in a Kubernetes Secret, never in a ConfigMap."
+        },
+        {
+          "name": "trino.auth.impersonationUser",
+          "label": "Run queries as (impersonation)",
+          "type": "string",
+          "condition": {
+            "field": "trino.auth.method",
+            "value": "ldap"
+          },
+          "help": "Optional. Runs the queries as this user instead of the account above, so Ranger sees the real owner. Trino must allow that account to impersonate."
+        },
+        {
+          "name": "trino.auth.jwtToken",
+          "label": "Token",
+          "type": "string",
+          "condition": {
+            "field": "trino.auth.method",
+            "value": "jwt"
+          },
+          "help": "Bearer token presented on every query. Use a service token with a long lifetime, since nothing refreshes it between scheduled runs."
+        },
+        {
+          "name": "trino.httpScheme",
+          "label": "Scheme",
+          "type": "select",
+          "defaultValue": "http",
+          "condition": {
+            "field": "trino.auth.method",
+            "value": "none"
+          },
+          "options": [
+            {
+              "label": "http",
+              "value": "http"
+            },
+            {
+              "label": "https",
+              "value": "https"
+            }
+          ],
+          "help": "Only unauthenticated connections choose this: the other modes are always HTTPS."
+        }
+      ]
+    },
+    {
+      "name": "projectIntegration",
+      "label": "dbt project",
+      "type": "group",
+      "fields": [
+        {
+          "name": "project.git.enabled",
+          "label": "Pull the project from git",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "ON (recommended): the models live in a repository and every run uses a commit you can point at, which is also what lets an external orchestrator run exactly the same code. OFF: mount the project yourself from an existing volume."
+        },
+        {
+          "name": "project.git.repo",
+          "label": "Repository URL",
+          "type": "string",
+          "condition": {
+            "field": "project.git.enabled",
+            "value": true
+          },
+          "help": "For example https://gitlab.example.com/data/analytics.git or git@gitlab.example.com:data/analytics.git."
+        },
+        {
+          "name": "project.git.branch",
+          "label": "Branch",
+          "type": "string",
+          "defaultValue": "main",
+          "condition": {
+            "field": "project.git.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "project.git.subPath",
+          "label": "Project directory inside the repository",
+          "type": "string",
+          "condition": {
+            "field": "project.git.enabled",
+            "value": true
+          },
+          "help": "Leave blank when dbt_project.yml is at the root."
+        },
+        {
+          "name": "project.git.secretRef.name",
+          "label": "Repository credentials Secret",
+          "type": "secret-discovery",
+          "condition": {
+            "field": "project.git.enabled",
+            "value": true
+          },
+          "help": "Optional, for a private repository. A Secret with a key 'token' for HTTPS, or 'ssh' for an SSH key. Public repositories need nothing."
+        },
+        {
+          "name": "project.existingClaim",
+          "label": "Existing volume holding the project",
+          "type": "string",
+          "condition": {
+            "field": "project.git.enabled",
+            "value": false
+          },
+          "help": "Name of a PersistentVolumeClaim whose root contains dbt_project.yml."
+        }
+      ]
+    },
+    {
+      "name": "docsIntegration",
+      "label": "Documentation site",
+      "type": "group",
+      "fields": [
+        {
+          "name": "docs.enabled",
+          "label": "Publish the documentation site",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Serves the generated documentation: every model, its description, its tests and the lineage between them. Built from the project and the warehouse catalog at pod start."
+        },
+        {
+          "name": "docs.refreshSeconds",
+          "label": "Rebuild the site every (seconds)",
+          "type": "number",
+          "defaultValue": 0,
+          "condition": {
+            "field": "docs.enabled",
+            "value": true
+          },
+          "help": "0 builds once at start. Set it to rebuild periodically so a scheduled run's results appear without restarting the pod."
+        },
+        {
+          "name": "ingress.enabled",
+          "label": "Expose the site",
+          "type": "boolean",
+          "defaultValue": true,
+          "condition": {
+            "field": "docs.enabled",
+            "value": true
+          },
+          "help": "Publishes the documentation through an Ingress, or an OpenShift Route when the cluster has them."
+        }
+      ]
+    },
+    {
+      "name": "scheduleIntegration",
+      "label": "Scheduled runs",
+      "type": "group",
+      "fields": [
+        {
+          "name": "runner.enabled",
+          "label": "Run the transformations on a schedule",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "For a cluster with no orchestrator. Leave it off when Airflow drives dbt: the same image and the same profile are used either way, so the two never drift apart."
+        },
+        {
+          "name": "runner.schedule",
+          "label": "Schedule",
+          "type": "string",
+          "defaultValue": "0 * * * *",
+          "condition": {
+            "field": "runner.enabled",
+            "value": true
+          },
+          "help": "Cron expression in the cluster's timezone. '0 * * * *' is hourly, '0 2 * * *' is nightly at 02:00."
+        }
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "_description": "Authentication mode as a gate, so the security blocks the chart needs can be switched on without the operator ticking a second box.",
+      "name": "authMethod",
+      "from": {
+        "type": "form",
+        "field": "trino.auth.method"
+      }
+    },
+    {
+      "name": "authIsKerberos",
+      "from": {
+        "type": "equals",
+        "var": "authMethod",
+        "value": "kerberos"
+      }
+    },
+    {
+      "name": "authIsSecure",
+      "from": {
+        "type": "equals",
+        "var": "authMethod",
+        "value": "none",
+        "negate": true
+      }
+    },
+    {
+      "_description": "Trust bundle the platform injects for this release. dbt talks to Trino over TLS in every authenticated mode, so it mounts the same material the other services get, reading the PEM entry rather than the Java keystore.",
+      "name": "contextTrustSecret",
+      "from": {
+        "type": "form",
+        "field": "global.security.tls.truststoreSecret"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "_description": "Kerberos: the chart's security block carries the keytab Secret KDPS issued and the principal, and its entrypoint runs kinit before dbt starts. Switched on by the authentication mode so there is no second toggle to forget.",
+      "name": "dbt-kerberos-enable",
+      "skipIfVarEmpty": [
+        "authIsKerberos"
+      ],
+      "targets": [
+        {
+          "path": "global.security.kerberos.enabled",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        }
+      ]
+    },
+    {
+      "_description": "Any authenticated mode reaches Trino over TLS, so the trust bundle is mounted whenever the operator supplied one.",
+      "name": "dbt-truststore-enable",
+      "skipIfVarEmpty": [
+        "authIsSecure",
+        "contextTrustSecret"
+      ],
+      "targets": [
+        {
+          "path": "global.security.tls.truststore.enabled",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "docs",
+      "label": "dbt documentation",
+      "type": "template",
+      "template": "http://{{host}}:{{port}}/",
+      "properties": {
+        "host": {
+          "source": "template",
+          "type": "string",
+          "template": "{{releaseName}}-dbt.{{namespace}}.svc.cluster.local"
+        },
+        "port": {
+          "source": "static",
+          "type": "number",
+          "value": 8080
+        }
+      }
+    }
+  ],
+  "requiresContext": [],
+  "securityCoupling": {
+    "requireIngress": false,
+    "minTlsMode": "signedByAmbariCA",
+    "tlsProvisioning": "k8s-view"
+  }
+}
