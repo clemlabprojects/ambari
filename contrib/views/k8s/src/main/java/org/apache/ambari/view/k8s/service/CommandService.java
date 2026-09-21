@@ -10280,10 +10280,38 @@ public class CommandService {
         if (rc != null && (req.adminClientSecret == null || req.adminClientSecret.isBlank())) {
             req.adminClientSecret = new ContextService(ctx).readSecret(rc.getId(), "adminPassword");
         }
+        // A managed context has no operator-entered secret to read: its Polaris administrator lives
+        // in the cluster's own configuration. The context resolver cannot supply it either, because
+        // it skips every secret field for managed contexts — deliberately, since a resolved context
+        // is serialised straight to the browser. So the password is fetched here, where it is used
+        // and never leaves.
+        if (req.adminClientSecret == null || req.adminClientSecret.isBlank()) {
+            String cluster = (String) childParams.get("_cluster");
+            String baseUriStr = (String) childParams.get("_baseUri");
+            if (cluster != null && baseUriStr != null) {
+                try {
+                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    AmbariActionClient ambari = new AmbariActionClient(ctx,
+                            java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
+                    req.adminClientSecret = ambari.getDesiredConfigProperty(cluster, "polaris-env", "polaris_admin_password");
+                    if (req.adminClientId == null || req.adminClientId.isBlank()) {
+                        req.adminClientId = ambari.getDesiredConfigProperty(cluster, "polaris-env", "polaris_admin_username");
+                    }
+                    LOG.info("Polaris provisioning: took the administrator credentials from the cluster's "
+                            + "Polaris configuration (polaris-env) for release '{}'.", releaseName);
+                } catch (Exception ex) {
+                    LOG.warn("Polaris provisioning: could not read the Polaris administrator from polaris-env: {}",
+                            ex.toString());
+                }
+            }
+        }
         if (req.adminClientId == null || req.adminClientId.isBlank()
                 || req.adminClientSecret == null || req.adminClientSecret.isBlank()) {
-            throw new IllegalStateException("No Polaris administrator credentials are available on the selected "
-                    + "platform context; set them there before deploying a release that provisions catalog access.");
+            throw new IllegalStateException("No Polaris administrator credentials are available for release "
+                    + releaseName + ". On an Ambari-managed cluster they are read from the Polaris service "
+                    + "(polaris-env: polaris_admin_username / polaris_admin_password) — check that POLARIS is "
+                    + "installed and those are set. On an external, CDP or remote platform context, set the "
+                    + "Polaris administrator and password on the context itself.");
         }
 
         req.principalName     = PolarisProvisioningService.deterministicPrincipalName(releaseName, namespace);
