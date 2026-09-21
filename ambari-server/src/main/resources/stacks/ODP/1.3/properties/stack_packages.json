@@ -862,6 +862,20 @@
           ]
         }
       },
+      "DBT": {
+        "DBT_CLIENT": {
+          "STACK-SELECT-PACKAGE": "dbt-client",
+          "INSTALL": [
+            "dbt-client"
+          ],
+          "PATCH": [
+            "dbt-client"
+          ],
+          "STANDARD": [
+            "dbt-client"
+          ]
+        }
+      },
       "SQOOP": {
         "SQOOP": {
           "STACK-SELECT-PACKAGE": "sqoop-client",
@@ -1142,6 +1156,12 @@
         {
           "conf_dir": "/etc/spark3/conf",
           "current_dir": "{0}/current/spark3-client/conf"
+        }
+      ],
+      "dbt": [
+        {
+          "conf_dir": "/etc/dbt/conf",
+          "current_dir": "{0}/current/dbt-client/conf"
         }
       ],
       "sqoop": [

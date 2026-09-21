@@ -1,0 +1,53 @@
+{#
+ # Licensed to the Apache Software Foundation (ASF) under one or more
+ # contributor license agreements.  See the NOTICE file distributed with
+ # this work for additional information regarding copyright ownership.
+ # The ASF licenses this file to You under the Apache License, Version 2.0
+ # (the "License"); you may not use this file except in compliance with
+ # the License.  You may obtain a copy of the License at
+ #
+ #     http://www.apache.org/licenses/LICENSE-2.0
+ #
+ # Unless required by applicable law or agreed to in writing, software
+ # distributed under the License is distributed on an "AS IS" BASIS,
+ # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ #
+ # Connection profile for dbt. Written by Ambari; edit it through the service configuration,
+ # not here. The fields match what the Kubernetes deployment of the same service writes, so a
+ # project behaves the same wherever it runs.
+ #}
+{{dbt_profile_name}}:
+  target: {{dbt_target}}
+  outputs:
+    {{dbt_target}}:
+      type: trino
+      method: {{auth_method}}
+      host: {{trino_host}}
+      port: {{trino_port}}
+      database: {{trino_catalog}}
+      schema: {{trino_schema}}
+      threads: {{trino_threads}}
+      timezone: UTC
+      retries: 3
+      user: {{trino_user}}
+{% if auth_method == 'none' %}
+      http_scheme: {{http_scheme}}
+{% endif %}
+{% if auth_method == 'ldap' %}
+      password: {{trino_password}}
+{% endif %}
+{% if auth_method == 'jwt' %}
+      jwt_token: {{trino_jwt_token}}
+{% endif %}
+{% if auth_method == 'kerberos' %}
+      {# No keytab here on purpose: on a secured cluster people run dbt as themselves after
+         kinit, and dbt uses the ticket in their cache. A headless keytab would make every
+         transformation look like one shared identity in the engine's audit log. #}
+      service_name: {{trino_service_name}}
+      mutual_authentication: false
+{% endif %}
+{% if ssl_verify %}
+      cert: {{ssl_verify}}
+{% endif %}

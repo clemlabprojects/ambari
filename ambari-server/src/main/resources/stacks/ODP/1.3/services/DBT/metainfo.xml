@@ -1,0 +1,88 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<metainfo>
+  <schemaVersion>2.0</schemaVersion>
+  <services>
+    <service>
+      <name>DBT</name>
+      <displayName>dbt</displayName>
+      <comment>Builds and tests data transformations written as versioned SQL, running them in the
+        query engine rather than moving data. Installed on the hosts where analysts and scheduled
+        jobs run it; there is no server to keep running.
+      </comment>
+      <version>1.10.23</version>
+
+      <components>
+        <component>
+          <name>DBT_CLIENT</name>
+          <displayName>dbt Client</displayName>
+          <category>CLIENT</category>
+          <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
+          <commandScript>
+            <script>scripts/dbt_client.py</script>
+            <scriptType>PYTHON</scriptType>
+          </commandScript>
+          <configFiles>
+            <configFile>
+              <type>env</type>
+              <fileName>profiles.yml</fileName>
+              <dictionaryName>dbt-env</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>dbt-env.sh</fileName>
+              <dictionaryName>dbt-env</dictionaryName>
+            </configFile>
+          </configFiles>
+        </component>
+      </components>
+
+      <osSpecifics>
+        <osSpecific>
+          <osFamily>redhat7,redhat8,redhat9,amazonlinux2,suse11,suse12</osFamily>
+          <packages>
+            <package>
+              <name>dbt_${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <packages>
+            <package>
+              <name>dbt-${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+      </osSpecifics>
+
+      <commandScript>
+        <script>scripts/service_check.py</script>
+        <scriptType>PYTHON</scriptType>
+        <timeout>300</timeout>
+      </commandScript>
+
+      <configuration-dependencies>
+        <config-type>dbt-env</config-type>
+      </configuration-dependencies>
+
+      <restartRequiredAfterChange>false</restartRequiredAfterChange>
+    </service>
+  </services>
+</metainfo>
