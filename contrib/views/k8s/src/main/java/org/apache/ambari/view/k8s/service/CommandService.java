@@ -10325,12 +10325,27 @@ public class CommandService {
         String secretName = releaseName + "-polaris-credential";
         Map<String, String> data = PolarisProvisioningService.secretData(res, req.s3AccessKeyId, req.s3SecretAccessKey);
         kubernetesService.createNamespace(namespace);
+        // What an uninstall needs to know to take the credential back, kept next to the credential
+        // itself rather than in the view's database: the release's own namespace is where this
+        // belongs, it disappears with the Secret, and it costs no change to what the view persists.
+        Map<String, String> revokeAnnotations = new LinkedHashMap<>();
+        revokeAnnotations.put(POLARIS_ANN_PRINCIPAL, res.principalName);
+        revokeAnnotations.put(POLARIS_ANN_CATALOG, res.catalogName);
+        revokeAnnotations.put(POLARIS_ANN_PRINCIPAL_ROLE, req.principalRoleName);
+        revokeAnnotations.put(POLARIS_ANN_CATALOG_ROLE, req.catalogRoleName);
+        if (req.restUri != null) revokeAnnotations.put(POLARIS_ANN_REST_URI, req.restUri);
+        if (req.managementUri != null) revokeAnnotations.put(POLARIS_ANN_MANAGEMENT_URI, req.managementUri);
+        if (req.realm != null) revokeAnnotations.put(POLARIS_ANN_REALM, req.realm);
+        String polarisContextId = stringValue(childParams.get("_platformContextId"));
+        if (!polarisContextId.isBlank()) revokeAnnotations.put(POLARIS_ANN_CONTEXT, polarisContextId);
+
         io.fabric8.kubernetes.api.model.Secret secret = new io.fabric8.kubernetes.api.model.SecretBuilder()
                 .withNewMetadata()
                     .withName(secretName)
                     .withNamespace(namespace)
                     .addToLabels("app.kubernetes.io/managed-by", "kdps")
                     .addToLabels("app.kubernetes.io/instance", releaseName)
+                    .addToAnnotations(revokeAnnotations)
                 .endMetadata()
                 .withType("Opaque")
                 .withStringData(data)
@@ -10376,6 +10391,140 @@ public class CommandService {
         for (String v : values) if (v != null && !v.isBlank()) return v;
         return null;
     }
+
+    /**
+     * Takes back what a release was given in Polaris when it is uninstalled, and removes the
+     * credential Secret. Driven from the uninstall endpoint rather than the command plan, because
+     * an uninstall is a single synchronous action and there is nothing left to replay afterwards.
+     *
+     * <p>What to clean up is read from the Secret's own annotations (see
+     * {@link #POLARIS_ANN_PRINCIPAL}), so a release the view has forgotten — or one installed by an
+     * older version that never wrote them — is simply skipped instead of guessed at.
+     *
+     * <p>{@code mode} decides how far it goes:
+     * <ul>
+     *   <li>{@code "principal"} (the default) — the principal and its role. The credential in the
+     *       Secret stops working; the catalog and its data stay.</li>
+     *   <li>{@code "catalog"} — also drops the catalog, which Polaris itself refuses while it still
+     *       holds namespaces or tables. The bucket is never touched.</li>
+     *   <li>{@code "none"} — leaves Polaris alone entirely, including the Secret.</li>
+     * </ul>
+     *
+     * <p>Failures are reported, never thrown: an uninstall that cannot reach Polaris must still
+     * remove the release.
+     *
+     * @return a short human-readable account of what happened, or null when there was nothing to do
+     */
+    public String revokePolarisForRelease(String namespace, String releaseName, String mode) {
+        String cleanupMode = (mode == null || mode.isBlank()) ? "principal" : mode.trim().toLowerCase(Locale.ROOT);
+        if ("none".equals(cleanupMode)) return null;
+
+        String secretName = releaseName + "-polaris-credential";
+        io.fabric8.kubernetes.api.model.Secret secret;
+        try {
+            secret = kubernetesService.getClient().secrets().inNamespace(namespace).withName(secretName).get();
+        } catch (Exception ex) {
+            LOG.warn("Polaris revoke for {}/{}: the credential Secret could not be read ({}); leaving Polaris alone.",
+                    namespace, releaseName, ex.toString());
+            return null;
+        }
+        if (secret == null) return null;
+
+        Map<String, String> ann = secret.getMetadata() != null && secret.getMetadata().getAnnotations() != null
+                ? secret.getMetadata().getAnnotations() : Collections.emptyMap();
+        String principal = ann.get(POLARIS_ANN_PRINCIPAL);
+        if (principal == null || principal.isBlank()) {
+            LOG.info("Polaris revoke for {}/{}: the credential Secret carries no provisioning annotations "
+                    + "(installed before KDPS recorded them) — removing the Secret only.", namespace, releaseName);
+            deleteSecretQuietly(namespace, secretName);
+            return "Removed the Polaris credential Secret. The principal could not be identified, so it is still "
+                    + "present in Polaris and should be removed there.";
+        }
+
+        try {
+            Map<String, Object> ctxParams = new LinkedHashMap<>();
+            String contextId = ann.get(POLARIS_ANN_CONTEXT);
+            if (contextId != null && !contextId.isBlank()) ctxParams.put("_platformContextId", contextId);
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(ctxParams);
+            Map<String, String> resolved = (rc != null && rc.getResolvedFields() != null)
+                    ? rc.getResolvedFields() : Collections.emptyMap();
+
+            PolarisProvisioningService.Request req = new PolarisProvisioningService.Request();
+            req.restUri       = firstNonBlank(ann.get(POLARIS_ANN_REST_URI), resolved.get("polaris.restUri"));
+            req.managementUri = firstNonBlank(ann.get(POLARIS_ANN_MANAGEMENT_URI), resolved.get("polaris.managementUri"));
+            req.realm         = firstNonBlank(ann.get(POLARIS_ANN_REALM), resolved.get("polaris.realm"));
+            req.realmHeaderName = resolved.get("polaris.realmHeaderName");
+            req.realmHeaderRequired = "true".equalsIgnoreCase(String.valueOf(resolved.get("polaris.realmHeaderRequired")));
+            req.principalName     = principal;
+            req.principalRoleName = firstNonBlank(ann.get(POLARIS_ANN_PRINCIPAL_ROLE), principal + "-role");
+            req.catalogName       = ann.get(POLARIS_ANN_CATALOG);
+            req.catalogRoleName   = firstNonBlank(ann.get(POLARIS_ANN_CATALOG_ROLE), "content-admin");
+            req.adminClientId     = resolved.get("polaris.adminUsername");
+            req.adminClientSecret = resolved.get("polaris.adminPassword");
+            if (rc != null && (req.adminClientSecret == null || req.adminClientSecret.isBlank())) {
+                req.adminClientSecret = new ContextService(ctx).readSecret(rc.getId(), "adminPassword");
+            }
+            if (req.restUri == null || req.restUri.isBlank()
+                    || req.adminClientId == null || req.adminClientId.isBlank()
+                    || req.adminClientSecret == null || req.adminClientSecret.isBlank()) {
+                LOG.warn("Polaris revoke for {}/{}: no administrator credentials are available on context '{}' — "
+                        + "the principal '{}' is left in place.", namespace, releaseName, contextId, principal);
+                deleteSecretQuietly(namespace, secretName);
+                return "Removed the Polaris credential Secret, but the principal '" + principal + "' is still in "
+                        + "Polaris: no administrator credentials were available to remove it.";
+            }
+            if (req.managementUri == null || req.managementUri.isBlank()) {
+                req.managementUri = req.restUri.replace("/api/catalog", "/api/management/v1");
+            }
+
+            java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(15))
+                    .build();
+            PolarisProvisioningService.Result res = new PolarisProvisioningService(httpClient)
+                    .revoke(req, "catalog".equals(cleanupMode));
+            deleteSecretQuietly(namespace, secretName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(res.principalCreated
+                    ? "Removed the Polaris principal '" + principal + "'."
+                    : "The Polaris principal '" + principal + "' was already gone.");
+            if ("catalog".equals(cleanupMode)) {
+                sb.append(res.catalogCreated
+                        ? " Dropped the catalog '" + req.catalogName + "'."
+                        : " The catalog '" + req.catalogName + "' was kept.");
+            }
+            if (res.warning != null) sb.append(' ').append(res.warning);
+            LOG.info("Polaris revoke for {}/{}: {}", namespace, releaseName, sb);
+            return sb.toString();
+        } catch (Exception ex) {
+            LOG.warn("Polaris revoke for {}/{} failed: {}", namespace, releaseName, ex.toString());
+            return "Polaris cleanup failed: " + ex.getMessage() + ". The release was still uninstalled; remove the "
+                    + "principal in Polaris by hand.";
+        }
+    }
+
+    /** Deleting the credential Secret must never be what fails an uninstall. */
+    private void deleteSecretQuietly(String namespace, String secretName) {
+        try {
+            kubernetesService.getClient().secrets().inNamespace(namespace).withName(secretName).delete();
+        } catch (Exception ex) {
+            LOG.warn("Could not delete Secret {}/{}: {}", namespace, secretName, ex.toString());
+        }
+    }
+
+    /**
+     * Annotations on a release's Polaris credential Secret, recording what an uninstall has to take
+     * back. They live with the Secret, in the release's own namespace, so nothing is remembered
+     * about a release that no longer exists.
+     */
+    static final String POLARIS_ANN_PRINCIPAL      = "kdps.clemlab.com/polaris-principal";
+    static final String POLARIS_ANN_CATALOG        = "kdps.clemlab.com/polaris-catalog";
+    static final String POLARIS_ANN_PRINCIPAL_ROLE = "kdps.clemlab.com/polaris-principal-role";
+    static final String POLARIS_ANN_CATALOG_ROLE   = "kdps.clemlab.com/polaris-catalog-role";
+    static final String POLARIS_ANN_REST_URI       = "kdps.clemlab.com/polaris-rest-uri";
+    static final String POLARIS_ANN_MANAGEMENT_URI = "kdps.clemlab.com/polaris-management-uri";
+    static final String POLARIS_ANN_REALM          = "kdps.clemlab.com/polaris-realm";
+    static final String POLARIS_ANN_CONTEXT        = "kdps.clemlab.com/polaris-context";
 
     /**
      * The scope of a Polaris catalog, expressed the way Ranger's Polaris service definition

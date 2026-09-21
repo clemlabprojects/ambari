@@ -1084,6 +1084,11 @@ public class HelmResource {
      * @param gitAuthToken optional Git token to override the stored credential (Flux mode only)
      * @param gitSshKey    optional SSH private key to override the stored credential (Flux mode only)
      * @param gitBranch    optional Git branch to override the stored value (Flux mode only)
+     * @param polarisCleanup how far to go in Polaris for a release that was given catalog access:
+     *                     {@code principal} (the default) takes back the principal and its role, so
+     *                     the credential stops working while the catalog and its data stay;
+     *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
+     *                     untouched. The object-store bucket is never deleted.
      * @return HTTP 200 on success, or an error response on failure
      */
     @DELETE
@@ -1093,8 +1098,10 @@ public class HelmResource {
                              @QueryParam("gitRepoUrl") String gitRepoUrl,
                              @QueryParam("gitAuthToken") String gitAuthToken,
                              @QueryParam("gitSshKey") String gitSshKey,
-                             @QueryParam("gitBranch") String gitBranch) {
+                             @QueryParam("gitBranch") String gitBranch,
+                             @QueryParam("polarisCleanup") String polarisCleanup) {
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
+        String polarisCleanupNote = null;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
             if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
@@ -1130,6 +1137,14 @@ public class HelmResource {
                 commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
             }
         } finally {
+            // A release that was given Polaris catalog access leaves a working credential behind
+            // unless it is taken back. Done after the release itself is gone, and never allowed to
+            // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
+            try {
+                polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup);
+            } catch (Exception ex) {
+                LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+            }
             try {
                 if (meta != null) {
                     releaseMetadataService.delete(namespace, releaseName);
@@ -1139,7 +1154,9 @@ public class HelmResource {
             }
             RELEASE_CACHE.clear(); // invalidate cache after mutation
         }
-        return Response.ok().build();
+        return polarisCleanupNote == null
+                ? Response.ok().build()
+                : Response.ok(Map.of("polarisCleanup", polarisCleanupNote)).build();
     }
 
     /**
