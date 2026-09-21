@@ -170,6 +170,63 @@ public class PolarisProvisioningService {
         return out;
     }
 
+    /**
+     * Undoes what {@link #ensure} handed out when a release goes away: the principal, and with it
+     * the credential the release was using. Once the principal is gone the client id and secret in
+     * its Secret authenticate as nobody, which is the point — a deleted release must not leave a
+     * working key behind.
+     *
+     * <p>What it deliberately does not touch is the data. The catalog is dropped only when
+     * {@code dropCatalog} is asked for, and the bucket never: an uninstall is routinely a step in a
+     * reinstall, and tables that took hours to write should not disappear because a release was
+     * removed. Dropping the bucket is an object-store operation an operator can do deliberately,
+     * with the catalog already gone.
+     *
+     * <p>Missing objects are success, not failure: a release uninstalled twice, or one whose
+     * principal an operator already removed, must still finish cleanly.
+     */
+    public Result revoke(Request req, boolean dropCatalog) throws Exception {
+        Result out = new Result();
+        out.principalName = req.principalName;
+        out.catalogName = req.catalogName;
+
+        String token = adminToken(req);
+
+        out.principalCreated = deleteIgnoringMissing(req, token,
+                "/principals/" + enc(req.principalName), "principal " + req.principalName);
+        // The roles exist only to carry this release's grants, so they go with it.
+        deleteIgnoringMissing(req, token,
+                "/principal-roles/" + enc(req.principalRoleName), "principal role " + req.principalRoleName);
+
+        if (dropCatalog) {
+            deleteIgnoringMissing(req, token,
+                    "/catalogs/" + enc(req.catalogName) + "/catalog-roles/" + enc(req.catalogRoleName),
+                    "catalog role " + req.catalogRoleName);
+            out.catalogCreated = deleteIgnoringMissing(req, token,
+                    "/catalogs/" + enc(req.catalogName), "catalog " + req.catalogName);
+            if (!out.catalogCreated) {
+                out.warning = "The Polaris catalog '" + req.catalogName + "' could not be dropped; it usually still "
+                        + "holds namespaces or tables. The data is untouched — drop them first, or leave the catalog "
+                        + "in place and reuse it.";
+            }
+        }
+        LOG.info("Polaris revoke for principal '{}': principal removed={}, catalog dropped={} (bucket left alone).",
+                req.principalName, out.principalCreated, dropCatalog && out.catalogCreated);
+        return out;
+    }
+
+    /** DELETE that treats 404 as done. Returns whether something was actually removed. */
+    private boolean deleteIgnoringMissing(Request req, String token, String path, String what) throws Exception {
+        HttpResponse<String> r = send(req, token, "DELETE", path, null);
+        if (r.statusCode() / 100 == 2) return true;
+        if (r.statusCode() == 404) {
+            LOG.info("Polaris revoke: {} was already gone.", what);
+            return false;
+        }
+        LOG.warn("Polaris revoke: removing {} failed with HTTP {} — {}", what, r.statusCode(), brief(r.body()));
+        return false;
+    }
+
     /** Client-credentials token for the Polaris administrator. */
     private String adminToken(Request req) throws Exception {
         String body = "grant_type=client_credentials"
@@ -403,7 +460,8 @@ public class PolarisProvisioningService {
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json");
         realmHeader(b, req);
-        if (body == null) b.GET();
+        if ("DELETE".equals(method)) b.DELETE();
+        else if (body == null) b.GET();
         else if ("PUT".equals(method)) b.PUT(HttpRequest.BodyPublishers.ofString(body));
         else b.POST(HttpRequest.BodyPublishers.ofString(body));
         return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
