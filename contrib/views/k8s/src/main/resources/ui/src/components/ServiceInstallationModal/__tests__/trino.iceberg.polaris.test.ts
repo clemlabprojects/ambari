@@ -22,7 +22,7 @@ const POLARIS_CAP = path.join(__dirname, '../../../../../KDPS/contexts/capabilit
 const def = JSON.parse(fs.readFileSync(SERVICE_JSON, 'utf8'));
 const polaris = JSON.parse(fs.readFileSync(POLARIS_CAP, 'utf8'));
 
-const VARS = (def.variables || []).filter((v: any) => /^(polaris|iceberg)/.test(v.name));
+const VARS = (def.variables || []).filter((v: any) => /^(polaris|iceberg|releaseNameVar)/.test(v.name));
 const BINDINGS = (def.bindings || []).filter((b: any) => /^iceberg-/.test(b.name));
 
 /** The wizard keeps form state NESTED (a field named `icebergCatalog.enabled` lives at
@@ -57,6 +57,7 @@ describe('TRINO service.json — Iceberg catalog on Polaris', () => {
       'iceberg-catalog-s3-endpoint',
       'iceberg-polaris-credential-inline',
       'iceberg-polaris-credential-secret',
+      'iceberg-provisioned-credentials',
       'iceberg-s3-credential-inline',
       'iceberg-s3-credential-secret',
     ]);
@@ -141,6 +142,30 @@ describe('TRINO service.json — Iceberg catalog on Polaris', () => {
   it('no S3 keys → no s3Credential block at all', () => {
     const { merged } = resolve({ ...ON, 'icebergCatalog.clientId': 'x', 'icebergCatalog.clientSecret': 'y' }, CTX);
     expect(merged.s3Credential).toBeUndefined();
+  });
+
+  it('provisioning is on by default and points both credential blocks at the Secret KDPS writes', () => {
+    const { merged } = resolve({ ...ON, 'icebergCatalog.provision': true, releaseName: 'lake', namespace: 'analytics' }, CTX);
+    expect(merged.polarisCredential.secretRef.name).toBe('lake-polaris-credential');
+    expect(merged.s3Credential.secretRef.name).toBe('lake-polaris-credential');
+    const toggle = def.form.find((g: any) => g.name === 'icebergIntegration').fields.find((f: any) => f.name === 'icebergCatalog.provision');
+    expect(toggle.defaultValue).toBe(true);
+  });
+
+  it('with provisioning off nothing is auto-wired, so the operator supplies catalog and credentials', () => {
+    const { merged } = resolve({ ...ON, 'icebergCatalog.provision': false, releaseName: 'lake', namespace: 'analytics',
+      'icebergCatalog.warehouse': 'their_catalog', 'icebergCatalog.clientId': 'cid', 'icebergCatalog.clientSecret': 'csec' }, CTX);
+    expect(merged.polarisCredential.secretRef).toBeUndefined();
+    expect(merged.polarisCredential.clientId).toBe('cid');
+    expect(merged.additionalCatalogs.iceberg).toContain('iceberg.rest-catalog.warehouse=their_catalog');
+  });
+
+  it('the provisioned catalog name is applied server-side, from the same release and namespace formula', () => {
+    const e = (def.catalogEnrichments || []).find((x: any) => x.name === 'iceberg-provisioned-warehouse');
+    expect(e).toBeTruthy();
+    expect(e.when.form).toEqual({ 'icebergCatalog.enabled': true, 'icebergCatalog.provision': true });
+    expect(e.target.path).toBe('additionalCatalogs.iceberg');
+    expect(e.properties[0]).toEqual({ key: 'iceberg.rest-catalog.warehouse', valueFromTemplate: '{{releaseName}}-{{namespace}}' });
   });
 
   it('documents WHY the credential line lives in the chart: the view interpolator blanks unknown ${…} tokens', () => {

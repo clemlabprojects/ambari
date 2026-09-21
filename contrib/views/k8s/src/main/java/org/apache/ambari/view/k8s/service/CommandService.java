@@ -5217,6 +5217,52 @@ public class CommandService {
             }
         }
 
+        // 2ter. Polaris: give this release its own catalog access before the chart is installed, so
+        // the credential Secret exists by the time the pods mount it. Everything the step touches is
+        // named after the release and namespace, so re-installing converges instead of creating a
+        // second catalog or bucket. The operator can turn creation off and attach the release to a
+        // catalog they already manage; the identity and the grants are still provisioned.
+        {
+            Map<String, Object> fvPolaris = (params.get("formValues") instanceof Map)
+                    ? (Map<String, Object>) params.get("formValues") : null;
+            // isEntryEnabled treats an absent value as enabled, which is right for chart entries but
+            // wrong for a wizard toggle: an untouched form must not provision anything.
+            Object icebergRaw = (fvPolaris == null) ? null
+                    : ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.enabled");
+            boolean icebergOn = icebergRaw != null && isEntryEnabled(icebergRaw);
+            if (icebergOn) {
+                Object provisionRaw = ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.provision");
+                boolean provision = provisionRaw == null || isEntryEnabled(provisionRaw);
+                if (provision) {
+                    Map<String, Object> pp = new LinkedHashMap<>();
+                    pp.put("releaseName", request.getReleaseName());
+                    pp.put("namespace", request.getNamespace());
+                    pp.put("serviceKey", request.getServiceKey());
+                    // The same toggle governs creation: provisioning without creation attaches the
+                    // release to a catalog the operator already owns.
+                    pp.put("_createCatalog", "true");
+                    pp.put("catalogName", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.warehouse")));
+                    pp.put("s3Endpoint", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Endpoint")));
+                    pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
+                    pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
+                    pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
+                    pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
+                    String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
+                    if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
+                    if (params.get("_cluster") != null) pp.put("_cluster", params.get("_cluster"));
+                    if (params.get("_baseUri") != null) pp.put("_baseUri", params.get("_baseUri"));
+                    if (params.get("_callerHeaders") != null) pp.put("_callerHeaders", params.get("_callerHeaders"));
+                    String polarisCmdId = this.commandPlanFactory.createPolarisProvision(rootCommand, pp);
+                    childCommands.add(polarisCmdId);
+                    rootCommand.setChildListJson(gson.toJson(childCommands));
+                    store(rootCommand);
+                    LOG.info("Queued POLARIS_PROVISION_CATALOG for release '{}' in namespace '{}' (catalog creation {}).",
+                            request.getReleaseName(), request.getNamespace(),
+                            "true".equals(pp.get("_createCatalog")) ? "enabled" : "disabled");
+                }
+            }
+        }
+
         // 2bis. Materialize stack configurations into Secrets before Helm install
         if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
             String cfgCmdId = this.commandPlanFactory.createConfigMaterializeCommand(
@@ -6775,6 +6821,10 @@ public class CommandService {
                         String result = grantRangerHiveReadViaAmbari(childParams);
                         if (result != null) childSt.setResultJson(result);
                     }
+                }
+                case POLARIS_PROVISION_CATALOG -> {
+                    String result = provisionPolarisCatalog(childParams);
+                    if (result != null) childSt.setResultJson(result);
                 }
                 case RANGER_POLICY_GRANT_TRINO_IMPERSONATE -> {
                     if (!remoteConfigGate(childParams, "Ranger Trino impersonate grant", childSt, id)) {
@@ -10057,6 +10107,131 @@ public class CommandService {
         result.put("requestId", req);
         result.put("via", "ambari-server-action");
         return gson.toJson(result);
+    }
+
+    /**
+     * Body of {@link CommandType#POLARIS_PROVISION_CATALOG}: gives this release its own identity
+     * on the Apache Polaris catalog, optionally creates the catalog and its bucket, and writes the
+     * credential into a Kubernetes Secret the chart mounts.
+     *
+     * <p>Replayable by construction: the principal, catalog, role and bucket names are derived from
+     * the release name and namespace, so installing the same release twice converges on the same
+     * objects rather than creating a second catalog or bucket. Only the principal's secret changes,
+     * because Polaris discloses it once and the Secret is rewritten with the rotated value.
+     *
+     * <p>With creation turned off the catalog and bucket are left alone and only the identity, the
+     * grants and the Secret are handled, which is how an operator attaches a release to a catalog
+     * they already own.
+     */
+    private String provisionPolarisCatalog(Map<String, Object> childParams) throws Exception {
+        String releaseName = (String) childParams.get("releaseName");
+        String namespace   = (String) childParams.get("namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        Objects.requireNonNull(namespace, "namespace");
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        Map<String, String> resolved = (rc != null && rc.getResolvedFields() != null)
+                ? rc.getResolvedFields() : Collections.emptyMap();
+
+        PolarisProvisioningService.Request req = new PolarisProvisioningService.Request();
+        req.restUri       = firstNonBlank((String) childParams.get("polarisRestUri"), resolved.get("polaris.restUri"));
+        req.managementUri = firstNonBlank((String) childParams.get("polarisManagementUri"), resolved.get("polaris.managementUri"));
+        req.realm         = resolved.get("polaris.realm");
+        req.realmHeaderName = resolved.get("polaris.realmHeaderName");
+        req.realmHeaderRequired = "true".equalsIgnoreCase(String.valueOf(resolved.get("polaris.realmHeaderRequired")));
+        if (req.restUri == null || req.restUri.isBlank()) {
+            throw new IllegalStateException("The selected platform context exposes no Apache Polaris endpoint, "
+                    + "so catalog access cannot be provisioned for release " + releaseName + ".");
+        }
+        if (req.managementUri == null || req.managementUri.isBlank()) {
+            req.managementUri = req.restUri.replace("/api/catalog", "/api/management/v1");
+        }
+
+        // Administrator identity: resolved from the managed cluster, or supplied on the context.
+        req.adminClientId = firstNonBlank(resolved.get("polaris.adminUsername"),
+                (String) childParams.get("polarisAdminUsername"));
+        req.adminClientSecret = firstNonBlank(resolved.get("polaris.adminPassword"),
+                (String) childParams.get("polarisAdminPassword"));
+        if (rc != null && (req.adminClientSecret == null || req.adminClientSecret.isBlank())) {
+            req.adminClientSecret = new ContextService(ctx).readSecret(rc.getId(), "adminPassword");
+        }
+        if (req.adminClientId == null || req.adminClientId.isBlank()
+                || req.adminClientSecret == null || req.adminClientSecret.isBlank()) {
+            throw new IllegalStateException("No Polaris administrator credentials are available on the selected "
+                    + "platform context; set them there before deploying a release that provisions catalog access.");
+        }
+
+        req.principalName     = PolarisProvisioningService.deterministicPrincipalName(releaseName, namespace);
+        req.principalRoleName = req.principalName + "-role";
+        req.catalogRoleName   = "content-admin";
+        req.createCatalog     = !"false".equalsIgnoreCase(String.valueOf(childParams.get("_createCatalog")));
+
+        String requestedCatalog = (String) childParams.get("catalogName");
+        req.catalogName = (requestedCatalog != null && !requestedCatalog.isBlank())
+                ? requestedCatalog
+                : (req.createCatalog
+                    ? PolarisProvisioningService.deterministicCatalogName(releaseName, namespace)
+                    : resolved.get("polaris.catalog"));
+        if (req.catalogName == null || req.catalogName.isBlank()) {
+            throw new IllegalStateException("No Polaris catalog name was given and the platform context exposes "
+                    + "none, so release " + releaseName + " has nothing to attach to.");
+        }
+
+        String bucket = firstNonBlank((String) childParams.get("bucketName"),
+                PolarisProvisioningService.deterministicBucketName(releaseName, namespace));
+        req.baseLocation = firstNonBlank((String) childParams.get("baseLocation"),
+                "s3://" + bucket + "/warehouse/");
+        req.allowedLocations = List.of("s3://" + bucket + "/");
+        req.s3Endpoint = (String) childParams.get("s3Endpoint");
+        req.s3Region = firstNonBlank((String) childParams.get("s3Region"), "us-east-1");
+        req.s3PathStyleAccess = !"false".equalsIgnoreCase(String.valueOf(childParams.getOrDefault("s3PathStyleAccess", "true")));
+        req.stsUnavailable = !"false".equalsIgnoreCase(String.valueOf(childParams.getOrDefault("stsUnavailable", "true")));
+        req.s3AccessKeyId = (String) childParams.get("s3AccessKeyId");
+        req.s3SecretAccessKey = (String) childParams.get("s3SecretAccessKey");
+
+        java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .build();
+        PolarisProvisioningService svc = new PolarisProvisioningService(httpClient);
+        PolarisProvisioningService.Result res = svc.ensure(req);
+
+        // The credential the chart mounts. Named after the release so a redeploy replaces it
+        // instead of leaving a second one behind.
+        String secretName = releaseName + "-polaris-credential";
+        Map<String, String> data = PolarisProvisioningService.secretData(res, req.s3AccessKeyId, req.s3SecretAccessKey);
+        kubernetesService.createNamespace(namespace);
+        io.fabric8.kubernetes.api.model.Secret secret = new io.fabric8.kubernetes.api.model.SecretBuilder()
+                .withNewMetadata()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .addToLabels("app.kubernetes.io/managed-by", "kdps")
+                    .addToLabels("app.kubernetes.io/instance", releaseName)
+                .endMetadata()
+                .withType("Opaque")
+                .withStringData(data)
+                .build();
+        kubernetesService.getClient().secrets().inNamespace(namespace).resource(secret).createOrReplace();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("principal", res.principalName);
+        out.put("catalog", res.catalogName);
+        out.put("secretName", secretName);
+        out.put("principalCreated", res.principalCreated);
+        out.put("catalogCreated", res.catalogCreated);
+        out.put("bucketCreated", res.bucketCreated);
+        out.put("grantsApplied", res.grantsApplied);
+        if (res.warning != null) out.put("warning", res.warning);
+        LOG.info("Polaris provisioning for release '{}': principal '{}' ({}), catalog '{}' ({}), bucket {}, secret '{}'.",
+                releaseName, res.principalName, res.principalCreated ? "created" : "rotated",
+                res.catalogName, res.catalogCreated ? "created" : "existing",
+                res.bucketCreated ? "created" : "existing", secretName);
+        return gson.toJson(out);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String v : values) if (v != null && !v.isBlank()) return v;
+        return null;
     }
 
     /**

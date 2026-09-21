@@ -96,7 +96,9 @@ public class ManagedContextResolver {
                 case "polaris.realmHeaderRequired":return polarisAvailable() ? t(cfg("polaris-application-properties", "polaris.realm-context.require-header")) : null;
                 case "polaris.catalog":            return polarisAvailable() ? t(cfg("polaris-env", "polaris_ozone_catalog_name")) : null;
                 case "polaris.authType":           return polarisAvailable() ? t(cfg("polaris-application-properties", "polaris.authentication.type")) : null;
-                case "polaris.tlsEnabled":         return polarisAvailable() ? String.valueOf(polarisTls()) : null;
+      case "polaris.adminUsername":      return polarisAvailable() ? t(cfg("polaris-env", "polaris_admin_username")) : null;
+      case "polaris.adminPassword":      return polarisAvailable() ? t(cfg("polaris-env", "polaris_admin_password")) : null;
+      case "polaris.tlsEnabled":         return polarisAvailable() ? String.valueOf(polarisTls()) : null;
                 default:
                     return null;
             }

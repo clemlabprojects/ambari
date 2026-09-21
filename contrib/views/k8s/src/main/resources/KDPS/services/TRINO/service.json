@@ -226,6 +226,26 @@
   ],
   "catalogEnrichments": [
     {
+      "_description": "When KDPS provisions the catalog it names it after the release and namespace, so the rendered Trino catalog must point at that name rather than the one the platform context advertises. Applied here, server-side, because it is the same value the provisioning step derives.",
+      "name": "iceberg-provisioned-warehouse",
+      "target": {
+        "path": "additionalCatalogs.iceberg",
+        "basePaths": [
+          "catalogs.iceberg",
+          "additionalCatalogs.iceberg"
+        ]
+      },
+      "when": {
+        "form": { "icebergCatalog.enabled": true, "icebergCatalog.provision": true }
+      },
+      "properties": [
+        {
+          "key": "iceberg.rest-catalog.warehouse",
+          "valueFromTemplate": "{{releaseName}}-{{namespace}}"
+        }
+      ]
+    },
+    {
       "name": "hive-metastore-config-resources",
       "target": {
         "path": "additionalCatalogs.hive"
@@ -727,6 +747,8 @@
     { "name": "icebergS3AccessKey",      "from": { "type": "form", "field": "icebergCatalog.s3AccessKey" } },
     { "name": "icebergS3SecretKey",      "from": { "type": "form", "field": "icebergCatalog.s3SecretKey" } },
     { "name": "icebergS3CredentialSecret","from": { "type": "form", "field": "icebergCatalog.s3CredentialSecret" } },
+    { "name": "releaseNameVar",          "from": { "type": "form", "field": "releaseName" } },
+    { "name": "icebergProvision",        "from": { "type": "form", "field": "icebergCatalog.provision" } },
     {
       "name": "internalSharedSecret",
       "from": {
@@ -1674,6 +1696,15 @@
       "skipIfVarEmpty": ["polarisRestUri", "icebergS3CredentialSecret"],
       "targets": [
         { "path": "s3Credential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${icebergS3CredentialSecret}" } }
+      ]
+    },
+    {
+      "_description": "KDPS-provisioned access. The provisioning step runs before the chart is installed: it mints this release's Polaris identity, creates the catalog and bucket named <release>-<namespace> unless creation was turned off, and writes <release>-polaris-credential. Both credential blocks read that one Secret, whose keys match the chart's defaults.",
+      "name": "iceberg-provisioned-credentials",
+      "skipIfVarEmpty": ["polarisRestUri", "icebergProvision"],
+      "targets": [
+        { "path": "polarisCredential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } },
+        { "path": "s3Credential.secretRef.name",      "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } }
       ]
     },
     {
@@ -2700,6 +2731,15 @@
           "help": "When ON, KDPS creates a Trino 'iceberg' catalog backed by the Apache Polaris REST catalog of the selected Platform Context (right panel), so Trino reads and writes Iceberg tables natively. Auto-enabled when the selected context exposes Polaris (ODP: the Ambari-managed POLARIS service). Prerequisites on the Polaris side: polaris.realm-context.require-header=false (Trino cannot send the realm header) and the Polaris TLS CA in the Trino truststore."
         },
         {
+          "name": "icebergCatalog.provision",
+          "label": "Let KDPS create the catalog and its bucket",
+          "type": "boolean",
+          "defaultValue": true,
+          "condition": { "field": "icebergCatalog.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "ON (default): KDPS gives this release its own Polaris identity and creates a catalog and object-store bucket named after the release and namespace. Re-installing the same release re-uses them instead of creating more. OFF: nothing is created — KDPS only mints the identity and grants it on the catalog named below, which is how you attach a release to a catalog you already manage."
+        },
+        {
           "name": "icebergCatalog.restUri",
           "label": "Polaris REST catalog URI",
           "type": "context-resolved",
@@ -2715,7 +2755,7 @@
           "contextField": "polaris.catalog",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Name of the Polaris catalog Trino mounts as its 'iceberg' catalog (ODP default: the pre-provisioned Ozone catalog). Toggle Override to point at another Polaris catalog."
+          "help": "Name of the Polaris catalog Trino mounts as its 'iceberg' catalog. When KDPS creates the catalog it is named after the release and namespace and this field is ignored; with creation off, override it with the name of the catalog you want this release to use."
         },
         {
           "name": "icebergCatalog.credentialSecret",
