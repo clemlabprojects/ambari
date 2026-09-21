@@ -6865,12 +6865,18 @@ public class CommandService {
                     if (result != null) childSt.setResultJson(result);
                 }
                 case POLARIS_PROVISION_CATALOG -> {
-                    String result = provisionPolarisCatalog(childParams);
+                    String result = provisionPolarisCatalog(childParams, root);
                     if (result != null) childSt.setResultJson(result);
                 }
                 case RANGER_POLICY_GRANT_TRINO_IMPERSONATE -> {
                     if (!remoteConfigGate(childParams, "Ranger Trino impersonate grant", childSt, id)) {
                         String result = grantRangerTrinoImpersonate(childParams);
+                        if (result != null) childSt.setResultJson(result);
+                    }
+                }
+                case RANGER_POLICY_GRANT_POLARIS_CATALOG -> {
+                    if (!remoteConfigGate(childParams, "Ranger Polaris catalog grant", childSt, id)) {
+                        String result = grantRangerPolarisCatalog(childParams);
                         if (result != null) childSt.setResultJson(result);
                     }
                 }
@@ -10242,7 +10248,7 @@ public class CommandService {
      * grants and the Secret are handled, which is how an operator attaches a release to a catalog
      * they already own.
      */
-    private String provisionPolarisCatalog(Map<String, Object> childParams) throws Exception {
+    private String provisionPolarisCatalog(Map<String, Object> childParams, CommandEntity root) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
         String namespace   = (String) childParams.get("namespace");
         Objects.requireNonNull(releaseName, "releaseName");
@@ -10331,6 +10337,23 @@ public class CommandService {
                 .build();
         kubernetesService.getClient().secrets().inNamespace(namespace).resource(secret).createOrReplace();
 
+        // When Polaris delegates authorization to Ranger it refuses role grants even to the
+        // administrator, so the principal exists with a catalog it cannot read. The equivalent
+        // Ranger policies are queued as their own replayable step rather than written here: it is
+        // a different system, with its own credentials and its own failure modes, and an operator
+        // who fixes a Ranger problem can re-run that step alone.
+        String rangerFallbackStep = null;
+        if (!res.grantsApplied) {
+            Map<String, Object> grantParams = new LinkedHashMap<>(childParams);
+            grantParams.put("_polarisPrincipal", res.principalName);
+            grantParams.put("_polarisCatalog", res.catalogName);
+            rangerFallbackStep = this.commandPlanFactory.createRangerPolicyGrantPolarisCatalog(
+                    root, grantParams);
+            LOG.info("Polaris provisioning: Polaris refused its own grants for '{}' on catalog '{}' — "
+                            + "queued RANGER_POLICY_GRANT_POLARIS_CATALOG ({}) to grant it in Ranger instead.",
+                    res.principalName, res.catalogName, rangerFallbackStep);
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("principal", res.principalName);
         out.put("catalog", res.catalogName);
@@ -10339,6 +10362,7 @@ public class CommandService {
         out.put("catalogCreated", res.catalogCreated);
         out.put("bucketCreated", res.bucketCreated);
         out.put("grantsApplied", res.grantsApplied);
+        if (rangerFallbackStep != null) out.put("rangerGrantStep", rangerFallbackStep);
         if (res.warning != null) out.put("warning", res.warning);
         LOG.info("Polaris provisioning for release '{}': principal '{}' ({}), catalog '{}' ({}), bucket {}, secret '{}'.",
                 releaseName, res.principalName, res.principalCreated ? "created" : "rotated",
@@ -10351,6 +10375,137 @@ public class CommandService {
         if (values == null) return null;
         for (String v : values) if (v != null && !v.isBlank()) return v;
         return null;
+    }
+
+    /**
+     * The scope of a Polaris catalog, expressed the way Ranger's Polaris service definition
+     * describes it: one entry per resource level, because Ranger matches a request against the
+     * levels it actually carries. A request to create a table names catalog, namespace and table; a
+     * request to write catalog properties names only the catalog. A single policy therefore cannot
+     * cover the catalog and everything inside it — each level needs its own.
+     *
+     * <p>The access types are the definition's own names (hyphenated, resource first:
+     * {@code catalog-content-manage}, {@code table-data-write}), not the privilege names Polaris
+     * uses internally ({@code CATALOG_MANAGE_CONTENT}). Together they are the Ranger equivalent of
+     * the {@code CATALOG_MANAGE_CONTENT} grant {@link PolarisProvisioningService} makes when
+     * Polaris manages its own roles, so a release behaves the same either way.
+     */
+    private static final java.util.List<String[]> POLARIS_CATALOG_GRANT_LEVELS = java.util.List.of(
+            new String[]{"catalog", "",
+                    "catalog-content-manage,catalog-metadata-full,catalog-list,"
+                    + "catalog-properties-read,catalog-properties-write"},
+            new String[]{"namespace", "namespace",
+                    "namespace-create,namespace-drop,namespace-list,namespace-metadata-full,"
+                    + "namespace-properties-read,namespace-properties-write"},
+            new String[]{"table", "namespace,table",
+                    "table-create,table-drop,table-list,table-data-read,table-data-write,"
+                    + "table-metadata-full,table-properties-read,table-properties-write,"
+                    + "view-create,view-drop,view-list,view-metadata-full"});
+
+    /**
+     * Body of {@link CommandType#RANGER_POLICY_GRANT_POLARIS_CATALOG}: gives a release's Polaris
+     * principal the run of its own catalog through Ranger, on the clusters where Polaris delegates
+     * authorization to Ranger and so refuses the grants it would otherwise make itself.
+     *
+     * <p>Three policies are written, one per resource level — see
+     * {@link #POLARIS_CATALOG_GRANT_LEVELS}. Same dual routing as
+     * {@link #grantRangerTrinoImpersonate}: a context carrying its own Ranger admin credentials
+     * grants over REST, a managed context delegates to the Ambari server, which holds the password.
+     *
+     * <p>Params (threaded from the provisioning step): {@code _cluster}, {@code _baseUri},
+     * {@code _callerHeaders}, {@code _polarisPrincipal} (the principal Polaris provisioning
+     * created), {@code _polarisCatalog} (its catalog), {@code _polarisRangerServiceName} (defaults
+     * to {@code <cluster>_polaris}), {@code releaseName} (policy-name uniqueness).
+     */
+    String grantRangerPolarisCatalog(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String releaseName = (String) childParams.get("releaseName");
+        String baseUriStr = (String) childParams.get("_baseUri");
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String polarisService = resolvePolarisRangerServiceName(childParams, rc, cluster);
+
+        String principal = stringValue(childParams.get("_polarisPrincipal"));
+        String catalog = stringValue(childParams.get("_polarisCatalog"));
+        if (principal.isBlank() || catalog.isBlank()) {
+            throw new IllegalStateException(
+                    "Missing _polarisPrincipal/_polarisCatalog in RANGER_POLICY_GRANT_POLARIS_CATALOG params.");
+        }
+
+        int timeoutSeconds = 60;
+        boolean direct = rc != null && rc.hasDirectRangerCreds();
+        AmbariActionClient ambari = null;
+        if (!direct) {
+            if (cluster == null || baseUriStr == null) {
+                throw new IllegalStateException("Missing _cluster/_baseUri in RANGER_POLICY_GRANT_POLARIS_CATALOG "
+                        + "params (and the selected context supplies no Ranger admin credentials for the "
+                        + "direct-REST path).");
+            }
+            Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+            java.net.URI baseUri = java.net.URI.create(baseUriStr);
+            ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        }
+
+        Map<String, Object> levels = new LinkedHashMap<>();
+        for (String[] level : POLARIS_CATALOG_GRANT_LEVELS) {
+            String levelName = level[0];
+            String policyName = "kdps-" + releaseName + "-polaris-" + levelName;
+            String description = "KDPS: " + principal + " manages the content of Polaris catalog " + catalog;
+
+            // root and catalog are always present; deeper levels are wildcarded so the grant covers
+            // everything the release creates inside its own catalog.
+            java.util.Map<String, java.util.List<String>> resources = new LinkedHashMap<>();
+            resources.put("root", java.util.List.of("*"));
+            resources.put("catalog", java.util.List.of(catalog));
+            if (!level[1].isBlank()) {
+                for (String extra : level[1].split(",")) resources.put(extra, java.util.List.of("*"));
+            }
+
+            if (direct) {
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                        rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        polarisService, policyName, description, resources,
+                        java.util.List.of(level[2].split(",")), principal,
+                        java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+                levels.put(levelName, Map.of("policyId", pid, "via", "context-ranger-rest"));
+            } else {
+                int req = ambari.submitRangerPolicyGrant(
+                        polarisService, principal, level[2], gson.toJson(resources),
+                        policyName, description, timeoutSeconds,
+                        "KDPS Polaris: grant " + principal + " on catalog " + catalog + " (" + levelName + ")");
+                if (!ambari.waitUntilComplete(req, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Ambari ranger_policy request " + req
+                            + " (polaris " + levelName + ") did not complete successfully");
+                }
+                levels.put(levelName, Map.of("requestId", req, "via", "ambari-server-action"));
+            }
+        }
+
+        LOG.info("RANGER_POLICY_GRANT_POLARIS_CATALOG: granted '{}' the content of catalog '{}' on '{}' ({} levels, {})",
+                principal, catalog, polarisService, levels.size(), direct ? "direct REST" : "Ambari server");
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("polarisServiceName", polarisService);
+        result.put("principal", principal);
+        result.put("catalog", catalog);
+        result.put("levels", levels);
+        return gson.toJson(result);
+    }
+
+    /**
+     * The Ranger service repo that holds the Polaris policies: an explicit step param wins, then the
+     * platform context, then the Ambari convention {@code <cluster>_polaris} — which is what the
+     * Polaris plugin's {@code ranger.plugin.polaris.service.name} is set to on a managed cluster.
+     */
+    private String resolvePolarisRangerServiceName(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc, String cluster) {
+        String explicit = stringValue(childParams.get("_polarisRangerServiceName"));
+        if (!explicit.isBlank()) return explicit;
+        if (rc != null && rc.getResolvedFields() != null) {
+            Object v = rc.getResolvedFields().get("polaris.rangerServiceName");
+            if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
+        }
+        return (cluster == null || cluster.isBlank()) ? "polaris" : cluster + "_polaris";
     }
 
     /**

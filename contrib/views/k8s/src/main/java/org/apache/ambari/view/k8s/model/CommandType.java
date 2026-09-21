@@ -290,6 +290,28 @@ public enum CommandType {
     DBT_PUBLISH_AIRFLOW_DAG,
     RANGER_POLICY_GRANT_TRINO_IMPERSONATE,
 
+    /**
+     * Grants a release's Polaris principal the run of its own catalog through Ranger, for the
+     * clusters where Polaris delegates authorization to Ranger and therefore refuses the grants
+     * {@link #POLARIS_PROVISION_CATALOG} would otherwise make through Polaris' own roles.
+     *
+     * <p>Queued by the provisioning step itself, and only when Polaris actually refused: a cluster
+     * that manages its own roles never sees this step. Same dual routing as
+     * {@link #RANGER_POLICY_GRANT_TRINO_IMPERSONATE} — a context carrying its own Ranger admin
+     * credentials grants over REST, a managed context delegates to the Ambari server, which holds
+     * the Ranger password.
+     *
+     * <p>Ranger matches a request against the resource levels it carries, so one policy per level
+     * is needed to cover a catalog: the catalog itself, the namespaces under it, and the tables
+     * under those. The names come from the Polaris service definition Ranger ships
+     * ({@code root → catalog → namespace → table}, hyphenated access types such as
+     * {@code catalog-content-manage}), not from the privilege names Polaris uses internally.
+     *
+     * <p>Replayable: the policies are named after the release, and re-running either finds them
+     * already present or appends the principal to the policy that owns the same resource scope.
+     */
+    RANGER_POLICY_GRANT_POLARIS_CATALOG,
+
     /** Automatically provisions a linked Ambari view instance after a successful deploy. */
     AMBARI_VIEW_PROVISION,
 

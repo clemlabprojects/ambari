@@ -783,6 +783,86 @@ public final class OmAtlasProvisioning {
         return id;
     }
 
+    /**
+     * Creates, or finds, a policy granting {@code accessTypes} to one user on an arbitrary resource
+     * scope of any Ranger service. The Trino and Hive helpers above each speak one service's
+     * resource shape; this one takes the scope as given, so a caller that knows its service
+     * definition — Polaris, say, whose hierarchy is {@code root → catalog → namespace → table} —
+     * can grant at whichever level it needs without a helper per service.
+     *
+     * <p>Idempotent by policy name: an existing policy of that name is left exactly as it is and
+     * its id returned, so re-running an install never edits a policy an operator has since adjusted.
+     *
+     * @param resources   resource level → values, e.g. {@code {"root": ["*"], "catalog": ["c1"]}};
+     *                    Ranger validates these against the service definition and rejects unknown
+     *                    levels, so a wrong name fails the call rather than granting nothing
+     * @param accessTypes access type names as the service definition spells them
+     */
+    public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                          String serviceName, String policyName, String description,
+                                          java.util.Map<String, java.util.List<String>> resources,
+                                          java.util.List<String> accessTypes, String grantee,
+                                          long timeoutMs) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        ensureRangerUserExists(rangerAdminUrl, basic, grantee);
+
+        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, serviceName, policyName);
+        if (existing != null) {
+            LOG.info("OmAtlasProvisioning: Ranger policy '{}' on service '{}' already exists (id={}) — left unchanged",
+                    policyName, serviceName, existing);
+            return existing;
+        }
+
+        JsonObject p = new JsonObject();
+        p.addProperty("service", serviceName);
+        p.addProperty("name", policyName);
+        p.addProperty("description", description);
+        p.addProperty("isAuditEnabled", true);
+        p.addProperty("isEnabled", true);
+        p.addProperty("policyType", 0);
+        p.addProperty("policyPriority", 0);
+        JsonObject resourceObj = new JsonObject();
+        for (java.util.Map.Entry<String, java.util.List<String>> e : resources.entrySet()) {
+            JsonObject r = new JsonObject();
+            JsonArray values = new JsonArray();
+            for (String v : e.getValue()) values.add(v);
+            r.add("values", values);
+            r.addProperty("isExcludes", false);
+            r.addProperty("isRecursive", false);
+            resourceObj.add(e.getKey(), r);
+        }
+        p.add("resources", resourceObj);
+        JsonObject item = new JsonObject();
+        item.add("users", arrayOf(grantee));
+        item.add("groups", new JsonArray());
+        item.add("roles", new JsonArray());
+        item.add("accesses", arrayOfObjects(accessTypes.toArray(new String[0]), "isAllowed", true));
+        item.addProperty("delegateAdmin", false);
+        JsonArray items = new JsonArray();
+        items.add(item);
+        p.add("policyItems", items);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
+        configureSsl(conn);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", basic);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        try (var os = conn.getOutputStream()) {
+            os.write(GSON.toJson(p).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IllegalStateException("Ranger policy create failed for '" + policyName
+                    + "' on service '" + serviceName + "': HTTP " + code + " — " + readBody(conn, true));
+        }
+        long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
+        LOG.info("OmAtlasProvisioning: Ranger policy '{}' created on service '{}' (id={})", policyName, serviceName, id);
+        return id;
+    }
+
     /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
     private static long appendHiveSelectToPolicy(String rangerAdminUrl, String basic, String policyName,
                                                  long policyId, String omUser, long timeoutMs) throws Exception {
