@@ -15,16 +15,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import os
-
-from resource_management.core.exceptions import ClientComponentHasNoStatus
+from resource_management.core.exceptions import ClientComponentHasNoStatus, Fail
 from resource_management.core.resources.system import Directory, File
-from resource_management.core.source import InlineTemplate, Template
+from resource_management.core.source import InlineTemplate
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.constants import StackFeature
-from resource_management.core.logger import Logger
 from resource_management.libraries.script.script import Script
 
 
@@ -49,20 +46,20 @@ class DbtClient(Script):
     # The connection profile carries a password or a token in two of the four modes, so it is
     # readable by the group that runs dbt and by nobody else.
     #
-    # Ambari owns this file only while a Trino host is configured. With no host there is nothing to
-    # connect to, so it writes a placeholder once and then keeps its hands off: an operator running
-    # dbt against another warehouse writes their own profile there, and it has to survive every
-    # later configure. Setting a Trino host hands the file back to Ambari, which overwrites it.
-    profile_path = format("{dbt_conf_dir}/profiles.yml")
-    if params.trino_host or not os.path.exists(profile_path):
-      File(profile_path,
-           content=Template("profiles.yml.j2"),
-           owner=params.dbt_user,
-           group=params.user_group,
-           mode=0o640)
-    else:
-      Logger.info("No Trino host is configured and %s already exists; leaving it as it is."
-                  % profile_path)
+    # It is rewritten on every configure, from the template in the service configuration. That is
+    # what makes the template the place to change the connection: editing the file on the host would
+    # be undone here, while editing the template is preserved and applied to every host at once.
+    if not params.dbt_profiles_content.strip():
+      raise Fail("The DBT profiles template configuration is empty or missing. A service installed "
+                 "before this configuration was introduced does not have it yet: add the "
+                 "dbt-profiles-template configuration to the service, or remove and re-add DBT, "
+                 "and the profile will be written from it.")
+
+    File(format("{dbt_conf_dir}/profiles.yml"),
+         content=InlineTemplate(params.dbt_profiles_content),
+         owner=params.dbt_user,
+         group=params.user_group,
+         mode=0o640)
 
     File(format("{dbt_conf_dir}/dbt-env.sh"),
          content=InlineTemplate(params.dbt_env_content),

@@ -68,14 +68,40 @@
   <!-- Connection. Trino is not an ODP service: it runs on Kubernetes or elsewhere, so the
        endpoint is given here rather than discovered from the cluster. -->
   <property>
-    <name>dbt_trino_host</name>
+    <name>dbt_adapter_type</name>
+    <value>trino</value>
+    <display-name>Warehouse type</display-name>
+    <description>The kind of warehouse dbt connects to, which decides both the adapter it loads and
+      the shape of the profile. The package carries an adapter for each of trino, spark, impala,
+      postgres, oracle, snowflake, bigquery, redshift, databricks, duckdb, athena, sqlserver,
+      teradata and clickhouse. The four in the list below are rendered by the default profile
+      template; any other value is rendered from its generic branch, which you complete by editing
+      the template in the DBT profiles template configuration.
+
+      Hive is reached with spark: HiveServer2 speaks the same thrift protocol.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry><value>trino</value><label>Trino</label></entry>
+        <entry><value>spark</value><label>Spark or Hive (thrift)</label></entry>
+        <entry><value>impala</value><label>Impala</label></entry>
+        <entry><value>postgres</value><label>PostgreSQL</label></entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_host</name>
     <value></value>
-    <display-name>Trino host</display-name>
-    <description>Host of the Trino coordinator the transformations run in, if there is one. Trino is
-      deployed outside the stack, so this is the address that host is reachable at from these nodes.
-      Leave it empty when dbt is installed for a warehouse other than Trino, or before the engine
-      exists: the tool and its configuration directory are installed either way, and no connection
-      profile is written until a host is given.</description>
+    <display-name>Warehouse host</display-name>
+    <description>Host of the coordinator, HiveServer2, Impala daemon or database server the
+      transformations run in, if there is one. Leave it empty to install dbt before the engine
+      exists, or for a warehouse you configure by hand: the tool and its configuration directory are
+      installed either way, and the profile is left as a commented placeholder until a host is
+      given.</description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
@@ -83,36 +109,41 @@
   </property>
 
   <property>
-    <name>dbt_trino_port</name>
+    <name>dbt_port</name>
     <value>8443</value>
-    <display-name>Trino port</display-name>
+    <display-name>Warehouse port</display-name>
+    <description>Port that host listens on: 8443 for a TLS Trino, 10000 for HiveServer2 thrift,
+      21050 for Impala, 5432 for PostgreSQL.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_database</name>
+    <value>iceberg</value>
+    <display-name>Database or catalog</display-name>
+    <description>The catalog in Trino, the database elsewhere. Not used by the Spark and Hive
+      profile, which addresses a schema directly.</description>
     <value-attributes>
-      <type>int</type>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
-    <name>dbt_trino_catalog</name>
-    <value>iceberg</value>
-    <display-name>Catalog</display-name>
-    <description>Catalog the models are built in. An Iceberg catalog allows tables to be created
-      and replaced; a read-only catalog supports only views and tests.</description>
-    <on-ambari-upgrade add="true"/>
-  </property>
-
-  <property>
-    <name>dbt_trino_schema</name>
+    <name>dbt_schema</name>
     <value>analytics</value>
     <display-name>Schema</display-name>
+    <description>Schema the models are built in. dbt creates it if it is missing and the connecting
+      identity may do so.</description>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
-    <name>dbt_trino_threads</name>
+    <name>dbt_threads</name>
     <value>4</value>
-    <display-name>Parallel model threads</display-name>
-    <description>How many models dbt builds at once. Lower it to be gentler on a shared engine.</description>
+    <display-name>Threads</display-name>
+    <description>How many models dbt builds at once. Each thread is one connection to the
+      warehouse.</description>
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
@@ -125,34 +156,40 @@
     <name>dbt_auth_method</name>
     <value>kerberos</value>
     <display-name>Authentication</display-name>
-    <description>How dbt authenticates to Trino. On a secured cluster this is Kerberos; the other
-      modes exist for engines that do not use it.</description>
+    <description>How dbt authenticates to the warehouse. On a secured cluster this is kerberos, and
+      people run dbt as themselves after kinit: no keytab is written into the profile, so every
+      transformation appears in the engine's audit log as the person who ran it rather than as one
+      shared identity.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>
         <entry><value>kerberos</value><label>Kerberos</label></entry>
-        <entry><value>ldap</value><label>Username and password (LDAP)</label></entry>
-        <entry><value>jwt</value><label>Token (JWT)</label></entry>
-        <entry><value>none</value><label>None (plain HTTP, no login)</label></entry>
+        <entry><value>ldap</value><label>Username and password</label></entry>
+        <entry><value>jwt</value><label>JWT token (Trino)</label></entry>
+        <entry><value>none</value><label>None</label></entry>
       </entries>
       <selection-cardinality>1</selection-cardinality>
+      <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
-    <name>dbt_trino_user</name>
+    <name>dbt_connection_user</name>
     <value>dbt</value>
-    <display-name>Trino user</display-name>
-    <description>Identity the transformations run as. Grant it write access on the catalog and
-      schema above. With Kerberos this is overridden by the principal that ran kinit.</description>
+    <display-name>Connection user</display-name>
+    <description>The user dbt presents to the warehouse. With Kerberos the ticket decides the
+      identity and this is only what the client reports.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property require-input="false">
-    <name>dbt_trino_password</name>
+    <name>dbt_password</name>
     <value></value>
-    <display-name>Trino password</display-name>
+    <display-name>Password</display-name>
     <description>Only for username and password authentication.</description>
     <property-type>PASSWORD</property-type>
     <value-attributes>
@@ -164,11 +201,10 @@
   </property>
 
   <property require-input="false">
-    <name>dbt_trino_jwt_token</name>
+    <name>dbt_jwt_token</name>
     <value></value>
-    <display-name>Trino token</display-name>
-    <description>Only for token authentication. Use a service token with a long lifetime, since
-      nothing refreshes it between runs.</description>
+    <display-name>JWT token</display-name>
+    <description>Only for JWT authentication against Trino.</description>
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
@@ -179,19 +215,42 @@
   </property>
 
   <property>
-    <name>dbt_trino_service_name</name>
+    <name>dbt_kerberos_service_name</name>
     <value>trino</value>
-    <display-name>Trino Kerberos service name</display-name>
-    <description>Service part of the Trino principal, for Kerberos authentication.</description>
+    <display-name>Kerberos service name</display-name>
+    <description>Service part of the warehouse's principal: trino, hive or impala.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>dbt_spark_method</name>
+    <value>thrift</value>
+    <display-name>Spark and Hive connection method</display-name>
+    <description>How the Spark adapter reaches the server, when the warehouse type is spark. thrift
+      is HiveServer2 and Spark thrift server; http is a Spark cluster endpoint; odbc needs a driver
+      installed on these hosts.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry><value>thrift</value><label>thrift (HiveServer2)</label></entry>
+        <entry><value>http</value><label>http</label></entry>
+        <entry><value>odbc</value><label>odbc</label></entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+      <overridable>false</overridable>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
     <name>dbt_ssl_verify</name>
     <value></value>
-    <display-name>CA bundle</display-name>
-    <description>Path to the certificate authority bundle used to verify Trino's certificate.
-      Leave blank to use the system trust store.</description>
+    <display-name>TLS certificate bundle</display-name>
+    <description>Path to the CA bundle used to verify the warehouse's certificate. Empty uses the
+      system trust store.</description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
