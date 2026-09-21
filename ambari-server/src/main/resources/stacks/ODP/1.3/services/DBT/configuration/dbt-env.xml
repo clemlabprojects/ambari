@@ -21,7 +21,7 @@
   <property>
     <name>dbt_user</name>
     <value>dbt</value>
-    <display-name>dbt user</display-name>
+    <display-name>DBT user</display-name>
     <description>Account that owns the dbt configuration directory. Analysts run dbt as themselves;
       this only owns what Ambari writes.</description>
     <property-type>USER</property-type>
@@ -71,10 +71,13 @@
     <name>dbt_trino_host</name>
     <value></value>
     <display-name>Trino host</display-name>
-    <description>Host of the Trino coordinator the transformations run in. Trino is deployed
-      outside the stack, so this is the address that host is reachable at from these nodes.</description>
+    <description>Host of the Trino coordinator the transformations run in, if there is one. Trino is
+      deployed outside the stack, so this is the address that host is reachable at from these nodes.
+      Leave it empty when dbt is installed for a warehouse other than Trino, or before the engine
+      exists: the tool and its configuration directory are installed either way, and no connection
+      profile is written until a host is given.</description>
     <value-attributes>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -155,6 +158,7 @@
     <value-attributes>
       <type>password</type>
       <overridable>false</overridable>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -169,6 +173,7 @@
     <value-attributes>
       <type>password</type>
       <overridable>false</overridable>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -195,7 +200,7 @@
 
   <property>
     <name>content</name>
-    <display-name>dbt-env template</display-name>
+    <display-name>DBT env template</display-name>
     <description>Sourced by users before running dbt, so the profile and the tools are on the path.</description>
     <value>
 # Sourced before running dbt. Written by Ambari; edit through the service configuration.

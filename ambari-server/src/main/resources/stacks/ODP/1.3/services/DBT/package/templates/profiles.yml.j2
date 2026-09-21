@@ -18,6 +18,17 @@
  # not here. The fields match what the Kubernetes deployment of the same service writes, so a
  # project behaves the same wherever it runs.
  #}
+{% if not trino_host %}
+# No Trino coordinator is configured for this service, so there is no connection profile to write.
+# dbt itself is installed and works: `dbt --version`, `dbt compile`, `dbt parse`.
+#
+# To connect it to something, either set the Trino host in the service configuration, or replace
+# this file with a profile of your own. dbt reads whatever is here, and the adapter for another
+# warehouse has to be installed into the environment at {{dbt_home}} first — only dbt-trino ships
+# with the package.
+#
+# A profile you write here is kept: Ambari rewrites this file only once a Trino host is configured.
+{% else %}
 {{dbt_profile_name}}:
   target: {{dbt_target}}
   outputs:
@@ -50,4 +61,5 @@
 {% endif %}
 {% if ssl_verify %}
       cert: {{ssl_verify}}
+{% endif %}
 {% endif %}
