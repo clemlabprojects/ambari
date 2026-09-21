@@ -20,7 +20,7 @@
   <services>
     <service>
       <name>DBT</name>
-      <displayName>dbt</displayName>
+      <displayName>DBT</displayName>
       <comment>Builds and tests data transformations written as versioned SQL, running them in the
         query engine rather than moving data. Installed on the hosts where analysts and scheduled
         jobs run it; there is no server to keep running.
@@ -30,7 +30,7 @@
       <components>
         <component>
           <name>DBT_CLIENT</name>
-          <displayName>dbt Client</displayName>
+          <displayName>DBT Client</displayName>
           <category>CLIENT</category>
           <cardinality>1+</cardinality>
           <versionAdvertised>true</versionAdvertised>
