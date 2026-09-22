@@ -55,7 +55,10 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat7,redhat8,redhat9,amazonlinux2,suse11,suse12</osFamily>
+          <!-- Only the families a dbt package is built for and can run on. dbt needs Python 3.9 or
+               newer: RHEL 7 ships 3.6 and Amazon Linux 2 ships 3.7, so neither is listed — offering
+               the service there would mean an install that cannot succeed. -->
+          <osFamily>redhat8,redhat9</osFamily>
           <packages>
             <package>
               <name>dbt-client_${stack_version}</name>
@@ -63,7 +66,8 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <!-- Likewise: the releases the pipeline builds a dbt package for, whose Python is new enough. -->
+          <osFamily>ubuntu22,ubuntu24</osFamily>
           <packages>
             <package>
               <name>dbt-client-${stack_version}</name>
