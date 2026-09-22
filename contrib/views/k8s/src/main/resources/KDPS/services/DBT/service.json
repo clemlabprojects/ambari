@@ -1,8 +1,8 @@
 {
   "label": "dbt",
   "chart": "dbt",
-  "version": "0.1.6",
-  "requiredChartVersion": ">=0.1.6",
+  "version": "0.1.8",
+  "requiredChartVersion": ">=0.1.8",
   "description": "Transforms data in place with versioned SQL models, runs them against a Trino deployed here, and publishes the generated documentation of every model, test and lineage edge.",
   "form": [
     {
