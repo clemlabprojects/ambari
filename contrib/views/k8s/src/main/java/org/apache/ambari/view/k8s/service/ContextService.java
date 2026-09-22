@@ -653,6 +653,18 @@ public class ContextService {
                     boolean set = !managed && entity != null && entity.getSecretKeys() != null
                             && java.util.Arrays.asList(entity.getSecretKeys().split(",")).contains(f.name);
                     if (set) rc.getSecretFieldsSet().add(key);
+                    // A secret never travels on a resolved context: this object is serialised
+                    // straight to the browser. That is right, but it means a secret field's
+                    // managedResolver never runs, and a step that expected the value gets nothing
+                    // with no hint why — which cost an afternoon once already, for
+                    // polaris.adminPassword. Whoever adds the next one is told here, and the step
+                    // that needs it has to fetch it itself, on the server, where it is used.
+                    if (managed && f.managedResolver != null && !f.managedResolver.isBlank()) {
+                        LOG.warn("Context {}: '{}' is a secret, so its managedResolver '{}' is not run and the "
+                                + "value is not resolved. A step that needs it must read it server-side itself, "
+                                + "the way Polaris provisioning reads the administrator password from polaris-env.",
+                                rc.getId(), key, f.managedResolver);
+                    }
                     continue;
                 }
                 String value = null;
