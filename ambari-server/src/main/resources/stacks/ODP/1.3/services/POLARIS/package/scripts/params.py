@@ -107,12 +107,15 @@ polaris_console_home = default("/configurations/polaris-env/polaris_console_home
 # These are kept in params.py so both configure-time templating and runtime actions
 # use the same normalized values.
 polaris_env_content = config['configurations']['polaris-env']['content']
+# A service installed before the logging configuration existed still gets the Ranger categories:
+# without them a plugin that cannot deliver audits fails silently. WARN, not INFO — the Iceberg
+# catalog is busy and the per-request chatter is not worth the disk.
 polaris_logging_properties_content = default(
   "/configurations/polaris-logging-properties/content",
   "# Additional Quarkus logging categories for Polaris.\n"
-  "# Example:\n"
-  "# quarkus.log.category.\"org.apache.polaris.extension.auth.ranger\".level=DEBUG\n"
-  "# quarkus.log.category.\"org.apache.ranger.plugin.util.PolicyRefresher\".level=DEBUG\n"
+  "quarkus.log.category.\"org.apache.ranger\".level=WARN\n"
+  "quarkus.log.category.\"org.apache.ranger.audit\".level=WARN\n"
+  "quarkus.log.category.\"org.apache.polaris.extension.auth.ranger\".level=WARN\n"
 )
 polaris_opts = config['configurations']['polaris-env']['polaris_opts']
 polaris_admin_username = config['configurations']['polaris-env']['polaris_admin_username']
@@ -879,4 +882,20 @@ if enable_ranger_polaris:
       immutable_paths=get_not_managed_resources(),
       dfs_type=dfs_type,
     )
+# Quarkus reads its logging configuration from application.properties. A file called
+# logging.properties is the JUL configuration, and Quarkus never looks at it — so every
+# quarkus.log.category line written there was silently ignored, and a Ranger plugin that could not
+# deliver a single audit record said nothing about it in the log. The categories stay where an
+# operator expects to edit them, in the Polaris logging configuration, and are folded in here so
+# they take effect. Anything set explicitly in the application properties wins.
+for _logging_line in (polaris_logging_properties_content or "").splitlines():
+  _logging_line = _logging_line.strip()
+  if not _logging_line or _logging_line.startswith("#") or "=" not in _logging_line:
+    continue
+  _log_key, _log_value = _logging_line.split("=", 1)
+  _log_key = _log_key.strip()
+  _log_value = _log_value.strip()
+  if _log_key.startswith("quarkus.log") and _log_key not in application_properties:
+    application_properties[_log_key] = _log_value
+
 smoke_test_user = config['configurations']['cluster-env']['smokeuser']
