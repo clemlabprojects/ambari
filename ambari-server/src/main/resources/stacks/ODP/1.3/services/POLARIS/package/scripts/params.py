@@ -827,6 +827,15 @@ if enable_ranger_polaris:
     # than emitting it empty -- is the correct contract for a disabled audit destination.
     if audit_value is None or str(audit_value).strip() == "" or "{{" in str(audit_value) or "}}" in str(audit_value):
       continue
+    # Ranger does not expand _HOST in a JAAS principal the way Hadoop's SecurityUtil does for the
+    # UGI login below. Left as polaris/_HOST@REALM, the Solr audit client authenticates as a
+    # principal that does not exist, so every audit record is dropped — while policy download keeps
+    # working, because that uses the UGI principal, which is resolved. The result is a plugin that
+    # looks healthy in Ranger Admin and produces no audit trail at all.
+    # security_enabled guards current_host, which is only defined on a kerberized cluster -- and a
+    # principal is only meaningful there anyway.
+    if security_enabled and ranger_key.endswith(".principal") and "_HOST" in str(audit_value):
+      audit_value = str(audit_value).replace("_HOST", current_host)
     application_properties["{0}.{1}".format(authz_prefix, ranger_key)] = audit_value
 
   # Kerberos to Ranger Admin: upstream performs NO explicit keytab login. The embedded plugin
