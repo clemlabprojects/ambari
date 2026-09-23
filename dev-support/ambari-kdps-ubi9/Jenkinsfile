@@ -1,0 +1,120 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Standalone pipeline for the Ambari + KDPS container image.
+//
+// This is deliberately NOT a stage bolted onto the release Jenkinsfile at the repository root:
+// that one builds the RPMs, and this one consumes them. It runs after a release build has
+// published its repository, and it is re-runnable on its own when only the image needs a rebuild
+// (a UBI CVE refresh, a new helm, an updated view jar).
+//
+// Set up as a Pipeline job with "Pipeline script from SCM", script path
+// dev-support/ambari-kdps-ubi9/Jenkinsfile.
+//
+// Both agents must already be logged in to Harbor, which is how the ODP image stages work too.
+
+pipeline {
+    agent none
+
+    parameters {
+        string(name: 'AMBARI_VERSION', defaultValue: '2.8.2.0-137',
+               description: 'ambari-server RPM version to install, and the image tag')
+        string(name: 'AMBARI_REPO_BASE', defaultValue: '',
+               description: 'Required. Base of the published Ambari repository tree, e.g. http://<build-host>/ambari-release/dist')
+        string(name: 'UBI_VERSION', defaultValue: '9.6', description: 'ubi9/ubi base image tag')
+        string(name: 'HELM_VERSION', defaultValue: '3.16.3', description: 'helm shipped in the image')
+        string(name: 'HARBOR', defaultValue: 'registry.clemlab.com', description: 'Target registry')
+        string(name: 'PROJECT', defaultValue: 'clemlabprojects', description: 'Target registry project')
+        booleanParam(name: 'BUILD_AMD64', defaultValue: true, description: 'Build the amd64 image')
+        booleanParam(name: 'BUILD_ARM64', defaultValue: true, description: 'Build the arm64 image')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Slack Notif Start') {
+            agent { label 'ubuntu24' }
+            steps {
+                slackSend channel: 'build',
+                          message: "AMBARI KDPS image build started - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
+            }
+        }
+
+        // Native per-arch builds, no emulation: each agent builds only its own architecture and
+        // pushes an arch-suffixed tag.
+        stage('Build image') {
+            parallel {
+                stage('amd64') {
+                    agent { label 'ubuntu24' }
+                    when { expression { params.BUILD_AMD64 } }
+                    steps { buildAmbariImage('centos9', 'x86_64') }
+                }
+                stage('arm64') {
+                    agent { label 'rhel9-arm' }
+                    when { expression { params.BUILD_ARM64 } }
+                    steps { buildAmbariImage('centos9-aarch64', 'aarch64') }
+                }
+            }
+        }
+
+        // Only worth doing when both halves exist; otherwise the bare tag would point at a
+        // manifest with a missing member.
+        stage('Merge manifest') {
+            agent { label 'rhel9-arm' }
+            when { expression { params.BUILD_AMD64 && params.BUILD_ARM64 } }
+            steps {
+                sh """
+                    export HARBOR='${params.HARBOR}'
+                    export PROJECT='${params.PROJECT}'
+                    export AMBARI_VERSION='${params.AMBARI_VERSION}'
+                    ./dev-support/ambari-kdps-ubi9/merge-manifest.sh
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend channel: 'build',
+                      message: "AMBARI KDPS image ${params.AMBARI_VERSION} published - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
+        }
+        failure {
+            slackSend channel: 'build',
+                      message: "AMBARI KDPS image build FAILED - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
+        }
+    }
+}
+
+// osDist selects the published repository for the architecture being built: the RPM has to match
+// the image, so an aarch64 image installs from the aarch64 repository.
+void buildAmbariImage(String osDist, String osArch) {
+    if (!params.AMBARI_REPO_BASE?.trim()) {
+        error('AMBARI_REPO_BASE is required: point it at the tree the release build published.')
+    }
+    checkout scm
+    sh """
+        export HARBOR='${params.HARBOR}'
+        export PROJECT='${params.PROJECT}'
+        export AMBARI_VERSION='${params.AMBARI_VERSION}'
+        export UBI_VERSION='${params.UBI_VERSION}'
+        export HELM_VERSION='${params.HELM_VERSION}'
+        export AMBARI_REPO_URL='${params.AMBARI_REPO_BASE}/${osDist}/1.x/BUILDS/${params.AMBARI_VERSION}/rpms'
+        export OS_ARCH='${osArch}'
+        ./dev-support/ambari-kdps-ubi9/build-image.sh
+    """
+}
