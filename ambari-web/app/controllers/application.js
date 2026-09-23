@@ -43,6 +43,16 @@ App.ApplicationController = Em.Controller.extend(App.Persist, {
   enableLinks: Em.computed.and('isExistingClusterDataLoaded', '!App.isOnlyViewUser'),
 
   /**
+   * Whether the Views menu should be offered in the header.
+   *
+   * Unlike <code>enableLinks</code> this does not wait for an installed cluster. A views-only
+   * Ambari — one that manages no cluster and exists to host a view — would otherwise hide the only
+   * way to reach it, leaving the URL to be typed by hand. The views list is already loaded in that
+   * state (see routes/installer.js), so there is nothing else to wait for.
+   */
+  enableViewsMenu: Em.computed.not('App.isOnlyViewUser'),
+
+  /**
    * Determines if "Exit" menu-item should be shown
    * It should if cluster isn't installed
    * If cluster is installer, <code>isClusterDataLoaded</code> is checked

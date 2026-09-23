@@ -37,6 +37,30 @@ describe('App.ApplicationController', function () {
 
   App.TestAliases.testAsComputedAnd(getController(), 'enableLinks', ['isExistingClusterDataLoaded','!App.isOnlyViewUser']);
 
+  describe('#enableViewsMenu', function () {
+    var isOnlyViewUser;
+
+    beforeEach(function () {
+      isOnlyViewUser = App.get('isOnlyViewUser');
+    });
+
+    afterEach(function () {
+      App.set('isOnlyViewUser', isOnlyViewUser);
+    });
+
+    it('is offered even when no cluster is installed', function () {
+      // A views-only Ambari manages no cluster, so gating the menu on an installed cluster (as
+      // enableLinks does) would leave the view reachable only by typing its URL.
+      App.set('isOnlyViewUser', false);
+      expect(getController().get('enableViewsMenu')).to.be.true;
+    });
+
+    it('is hidden from a views-only user, who lands on the views list anyway', function () {
+      App.set('isOnlyViewUser', true);
+      expect(getController().get('enableViewsMenu')).to.be.false;
+    });
+  });
+
   describe('#showAboutPopup', function() {
     var dataToShowRes = {};
     beforeEach(function () {
