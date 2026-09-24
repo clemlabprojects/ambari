@@ -37,6 +37,12 @@ public class FormField {
     public boolean excludeFromValues;
     public String serviceType; // for service-select / discovery backed fields
     public String discoveryType; // e.g. monitoring-discovery
+    /**
+     * For {@code type: "context-resolved"} fields — the {@code <capability>.<field>} key
+     * (e.g. {@code hive.hs2HostPort}) whose value the selected platform context supplies when
+     * the operator does not override it.
+     */
+    public String contextField;
 
     /**
      * For {@code type: "external-auth-target"} fields — references a key in the

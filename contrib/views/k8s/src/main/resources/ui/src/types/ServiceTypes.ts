@@ -3,6 +3,12 @@ export interface FormFieldBase {
   name: string;
   label: string;
   help?: string;
+  /**
+   * Makes the field mandatory when the selected Platform Context is not the Ambari-managed one
+   * and the context resolves `field` (a "<capability>.<field>" key) to `equals` — e.g. the
+   * external keytab Secret once a CDP/EXTERNAL context's Hive resolves to Kerberos.
+   */
+  requiredWhenContext?: { field: string; equals: string };
 }
 export interface StandardFormField extends FormFieldBase {
   type: 'string' | 'number' | 'boolean' | 'select';

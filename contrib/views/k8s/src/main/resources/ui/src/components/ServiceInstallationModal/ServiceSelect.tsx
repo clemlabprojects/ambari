@@ -27,9 +27,9 @@ import { useClusterStatus } from '../../context/ClusterStatusContext';
 const { Option } = Select;
 const { Text } = Typography;
 
-type ServiceSelectProps = { field: any; onValueSelect?: (value: any) => void };
+type ServiceSelectProps = { field: any; onValueSelect?: (value: any) => void; rules?: any[] };
 
-const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) => {
+const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rules }) => {
   const [services, setServices] = useState<ClusterService[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -137,7 +137,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
   // freeform: true → AutoComplete (discovered options as suggestions + free text input)
   if (field.freeform) {
     return (
-      <Form.Item name={nameParts} label={field.label} help={field.help}>
+      <Form.Item name={nameParts} label={field.label} help={field.help} rules={rules}>
         <AutoComplete
           options={services.map(s => ({ label: s.label, value: s.value }))}
           allowClear
@@ -149,7 +149,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect }) =
   }
 
   return (
-      <Form.Item name={nameParts} label={field.label} help={field.help}>
+      <Form.Item name={nameParts} label={field.label} help={field.help} rules={rules}>
         <Select
             loading={isLoading}
             allowClear
