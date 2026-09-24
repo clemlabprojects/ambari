@@ -433,6 +433,7 @@
           "label": "Enable Ingress",
           "type": "boolean",
           "defaultValue": false,
+          "autoEnableWhenCapability": "ingress",
           "help": "Expose the SQL Assistant API externally via an Ingress."
         },
         {

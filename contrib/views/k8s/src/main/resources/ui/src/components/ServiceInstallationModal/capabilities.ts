@@ -104,5 +104,7 @@ export const fieldCapabilityAvailable = (
   if (!caps) return true; // fail-open while loading
   if (cap === 'certManager') return !!caps.certManager?.installed;
   if (cap === 'externalSecrets') return !!caps.externalSecrets?.installed;
+  // Fail-OPEN for an older backend that does not report it, so the field still renders.
+  if (cap === 'ingress') return caps.ingress ? !!caps.ingress.available : true;
   return true;
 };

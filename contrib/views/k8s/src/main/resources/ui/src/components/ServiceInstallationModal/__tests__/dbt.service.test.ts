@@ -40,7 +40,7 @@ describe('DBT service definition', () => {
   it('is registered in the catalog and pinned to the published chart', () => {
     expect(JSON.parse(fs.readFileSync(CATALOG, 'utf8'))).toContain('DBT');
     expect(def.chart).toBe('dbt');
-    expect(def.version).toBe('0.1.6');
+    expect(def.version).toBe('0.1.8');
   });
 
   it('the Trino picker fills the two fields the chart profile needs', () => {
