@@ -5323,6 +5323,7 @@ public class CommandService {
                     pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
                     pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
                     pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
+                    pp.put("s3CredentialSecret", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3CredentialSecret")));
                     pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
                     String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
                     if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
@@ -10374,12 +10375,74 @@ public class CommandService {
         req.baseLocation = firstNonBlank((String) childParams.get("baseLocation"),
                 "s3://" + bucket + "/warehouse/");
         req.allowedLocations = List.of("s3://" + bucket + "/");
-        req.s3Endpoint = (String) childParams.get("s3Endpoint");
-        req.s3Region = firstNonBlank((String) childParams.get("s3Region"), "us-east-1");
-        req.s3PathStyleAccess = !"false".equalsIgnoreCase(String.valueOf(childParams.getOrDefault("s3PathStyleAccess", "true")));
+        // Object store: an operator override from the form wins; otherwise the context's Ozone S3
+        // gateway, the way Polaris on the cluster stores its own tables. Blank everywhere means
+        // AWS, which is only right when the operator also brought AWS credentials — see the gate.
+        req.s3Endpoint = firstNonBlank((String) childParams.get("s3Endpoint"), resolved.get("ozone.s3Endpoint"));
+        req.s3Region = firstNonBlank((String) childParams.get("s3Region"), resolved.get("ozone.s3Region"), "us-east-1");
+        String pathStyle = firstNonBlank((String) childParams.get("s3PathStyleAccess"), resolved.get("ozone.s3PathStyleAccess"), "true");
+        req.s3PathStyleAccess = !"false".equalsIgnoreCase(pathStyle);
         req.stsUnavailable = !"false".equalsIgnoreCase(String.valueOf(childParams.getOrDefault("stsUnavailable", "true")));
+        // Object-store identity, by who can act as the Ozone admin for us:
+        //  - operator-supplied static key (any context)                      -> used as given;
+        //  - MANAGED (or REMOTE with an Ambari that has the command): the cluster mints a
+        //    per-release identity through PROVISION_OZONE_BUCKET and creates the bucket. The
+        //    Polaris service's own Ozone secret is a password-typed property the Ambari API never
+        //    returns, so it cannot be reused here even if sharing it were desirable;
+        //  - CDP / EXTERNAL: the identity the operator put on the context, over SigV4.
         req.s3AccessKeyId = (String) childParams.get("s3AccessKeyId");
         req.s3SecretAccessKey = (String) childParams.get("s3SecretAccessKey");
+        boolean operatorKey = req.s3AccessKeyId != null && !req.s3AccessKeyId.isBlank();
+        String cluster = (String) childParams.get("_cluster");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        boolean managedCtx = rc == null || rc.getKind() == null || "MANAGED".equalsIgnoreCase(rc.getKind());
+        if (!operatorKey && req.createCatalog && req.s3Endpoint != null && !req.s3Endpoint.isBlank()
+                && managedCtx && cluster != null && baseUriStr != null) {
+            String realm = resolved.get("kerberos.realm");
+            String accessId = (realm == null || realm.isBlank()) ? req.principalName : req.principalName + "@" + realm;
+            byte[] rnd = new byte[30]; new java.security.SecureRandom().nextBytes(rnd);
+            String secret = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(rnd);
+            AmbariActionClient ambari = new AmbariActionClient(ctx,
+                    java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster,
+                    AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")));
+            Map<String, String> cmdParams = new LinkedHashMap<>();
+            cmdParams.put("kdps_bucket", bucket);
+            cmdParams.put("kdps_access_id", accessId);
+            cmdParams.put("kdps_s3_password", secret);
+            int reqId = ambari.submitCustomCommand("POLARIS", "POLARIS_SERVER", "PROVISION_OZONE_BUCKET", cmdParams,
+                    "KDPS: Ozone bucket " + bucket + " and S3 identity for release " + releaseName);
+            LOG.info("Polaris provisioning for release '{}': submitted PROVISION_OZONE_BUCKET (Ambari request {}).", releaseName, reqId);
+            if (!ambari.waitUntilComplete(reqId, 10, java.util.concurrent.TimeUnit.MINUTES)) {
+                throw new IllegalStateException("The cluster could not provision the Ozone bucket '" + bucket
+                        + "' for release " + releaseName + " (Ambari request " + reqId + " ended "
+                        + ambari.getRequestStatus(reqId) + "). See that request's task output in Ambari.");
+            }
+            req.s3AccessKeyId = accessId;
+            req.s3SecretAccessKey = secret;
+            req.bucketProvisioned = true;
+        } else if (!operatorKey) {
+            // No admin channel: the context's operator-supplied identity, secret read server-side.
+            req.s3AccessKeyId = resolved.get("ozone.s3AccessKeyId");
+            if (rc != null && req.s3AccessKeyId != null && !req.s3AccessKeyId.isBlank()) {
+                req.s3SecretAccessKey = new ContextService(ctx).readSecret(rc.getId(), "s3SecretKey");
+            }
+        }
+        boolean hasEndpoint = req.s3Endpoint != null && !req.s3Endpoint.isBlank();
+        boolean hasStaticKey = req.s3AccessKeyId != null && !req.s3AccessKeyId.isBlank()
+                && req.s3SecretAccessKey != null && !req.s3SecretAccessKey.isBlank();
+        String operatorSecretRef = (String) childParams.get("s3CredentialSecret");
+        boolean hasSecretRef = operatorSecretRef != null && !operatorSecretRef.isBlank();
+        if (req.createCatalog && !hasEndpoint && !hasStaticKey && !hasSecretRef) {
+            // Polaris would accept this and quietly point the catalog at AWS with no credentials,
+            // and the first CREATE TABLE would fail against s3.amazonaws.com.
+            throw new IllegalStateException("No object store for the Iceberg catalog of release " + releaseName
+                    + ": the platform context exposes no Ozone S3 gateway and no S3 endpoint or credentials were"
+                    + " given. Select a context whose cluster runs Ozone, or fill in the object store override"
+                    + " (endpoint and credentials, or an existing S3 credential Secret) for AWS or another S3.");
+        }
+        LOG.info("Polaris provisioning for release '{}': object store {} (region {}, path-style {}, key {}).",
+                releaseName, hasEndpoint ? req.s3Endpoint : "AWS S3", req.s3Region, req.s3PathStyleAccess,
+                hasStaticKey ? "present" : (hasSecretRef ? "from Secret " + operatorSecretRef : "none"));
 
         java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
                 .connectTimeout(java.time.Duration.ofSeconds(15))
