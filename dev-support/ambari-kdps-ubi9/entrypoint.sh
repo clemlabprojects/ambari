@@ -53,22 +53,16 @@ timeout 2 bash -c ">/dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null \
   || { log "postgres is not reachable at ${DB_HOST}:${DB_PORT}"; exit 1; }
 
 log "pointing the server at the database"
+# No --jdbc-driver: the RPM already puts postgresql-*.jar on the server's classpath, and pointing
+# the option at a path that does not exist only makes setup fail.
 ambari-server setup -s \
+  --ambari-java-home="${AMBARI_JAVA_HOME:-/usr/lib/jvm/ambari-java}" \
   --database=postgres \
   --databasehost="${DB_HOST}" \
   --databaseport="${DB_PORT}" \
   --databasename="${DB_NAME}" \
   --databaseusername="${DB_USER}" \
-  --databasepassword="${DB_PASSWORD}" \
-  --jdbc-db=postgres \
-  --jdbc-driver=/usr/share/java/postgresql-jdbc.jar 2>/dev/null \
-  || ambari-server setup -s \
-       --database=postgres \
-       --databasehost="${DB_HOST}" \
-       --databaseport="${DB_PORT}" \
-       --databasename="${DB_NAME}" \
-       --databaseusername="${DB_USER}" \
-       --databasepassword="${DB_PASSWORD}"
+  --databasepassword="${DB_PASSWORD}"
 
 # The schema is created once, by whoever gets there first. A second pod, or a restart, finds the
 # tables already present: psql exits non-zero on the duplicate-object errors, which is expected and
@@ -82,6 +76,18 @@ else
   log "schema already present"
 fi
 
+# Ambari refuses to start unless the invoking user matches ambari-server.user, and the packaged
+# value is root, which no OpenShift pod can be. Everything the server writes to is group-0 writable
+# in this image, so the arbitrary UID -- named through the passwd entry added above -- is the
+# correct value to record. setup rewrites the properties file, so this has to come after it.
+AMBARI_RUN_USER="$(id -u -n)"
+export USER="${AMBARI_RUN_USER}" LOGNAME="${AMBARI_RUN_USER}"
+if [ "$(id -u)" -ne 0 ] && [ -w /etc/ambari-server/conf/ambari.properties ]; then
+  sed -i "s|^ambari-server.user=.*|ambari-server.user=${AMBARI_RUN_USER}|" \
+    /etc/ambari-server/conf/ambari.properties
+  log "running as ${AMBARI_RUN_USER} (uid $(id -u)); recorded it as ambari-server.user"
+fi
+
 # A view jar mounted at run time (a ConfigMap or a PVC) is copied in before the server starts, so
 # the KDPS view can be updated without rebuilding the image.
 if [ -d /opt/ambari-views ] && compgen -G "/opt/ambari-views/*.jar" >/dev/null; then
@@ -93,9 +99,17 @@ fi
 # way to notice the server dying. Tail the log, and exit when the server process is gone so the pod
 # restarts rather than sitting there looking healthy with nothing running.
 log "starting the server"
-ambari-server start --skip-database-check </dev/null
+# When start fails the container is replaced and its filesystem, including the only copy of the
+# server's own log, goes with it -- so the pod logs would show the failure and none of the reason.
+if ! ambari-server start --skip-database-check </dev/null; then
+  log "the server did not come up. Its log, which this container is about to take with it:"
+  tail -n 200 /var/log/ambari-server/ambari-server.log 2>/dev/null || true
+  tail -n 60 /var/log/ambari-server/ambari-server.out 2>/dev/null || true
+  exit 1
+fi
 
 LOG=/var/log/ambari-server/ambari-server.log
+PIDFILE=/var/run/ambari-server/ambari-server.pid
 for _ in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
 
 terminate() { log "stopping the server"; ambari-server stop >/dev/null 2>&1 || true; exit 0; }
@@ -104,7 +118,14 @@ trap terminate TERM INT
 tail -F "$LOG" &
 TAIL_PID=$!
 
-while ambari-server status >/dev/null 2>&1; do
+# Watch the process, not "ambari-server status": that command decides the server is gone whenever
+# it cannot read something it expects to own, which under an arbitrary UID means it says the server
+# is gone while the server is serving.
+while :; do
+  SERVER_PID="$(cat "${PIDFILE}" 2>/dev/null || true)"
+  if [ -z "${SERVER_PID}" ] || ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+    break
+  fi
   sleep 10
 done
 
