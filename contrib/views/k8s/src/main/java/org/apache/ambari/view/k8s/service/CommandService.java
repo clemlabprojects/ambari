@@ -5587,6 +5587,13 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", trinoPrincipal);
+                            // Which Ranger repo to grant in: the operator's override, else the repo the
+                            // target Trino release actually registered (<release>-<namespace>). Without
+                            // this the grant falls back to <cluster>_trino, which does not exist for a
+                            // KDPS-deployed Trino and Ranger rejects with "no service found with name".
+                            String trinoRepo = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_ranger_service"));
+                            if (trinoRepo.isBlank()) trinoRepo = stringValue(deriveTrinoRangerServiceName(trinoHost));
+                            if (!trinoRepo.isBlank()) grantParams.put("_trinoRangerServiceName", trinoRepo);
                             String trinoGrantPcId = stringValue(ConfigResolutionService.getByDottedPath(fv, "platformContextId"));
                             if (!trinoGrantPcId.isBlank()) grantParams.put("_platformContextId", trinoGrantPcId);
                             if (params.get("_cluster") != null) grantParams.put("_cluster", params.get("_cluster"));
@@ -9467,6 +9474,34 @@ public class CommandService {
             if (v != null && !String.valueOf(v).isBlank()) return String.valueOf(v).trim();
         }
         return (cluster == null || cluster.isBlank()) ? "trino" : cluster + "_trino";
+    }
+
+    /**
+     * The Ranger repo a KDPS-deployed Trino registers is {@code <release>-<namespace>} — not the
+     * managed-cluster convention {@code <cluster>_trino} that {@link #resolveTrinoRangerServiceName}
+     * falls back to. Derive it from the Trino host the operator gave this service: the first DNS
+     * label is the coordinator Service, the second its namespace, and the Service carries Helm's
+     * {@code app.kubernetes.io/instance} label, which is the release name.
+     *
+     * @param trinoHost the in-cluster Trino host (e.g. {@code trino-clemlab-trino.trino-ns.svc.cluster.local})
+     * @return the Ranger repo name, or null for an external Trino or when the lookup fails — the
+     *         caller then leaves the name unset and the operator supplies it
+     */
+    private String deriveTrinoRangerServiceName(String trinoHost) {
+        try {
+            if (trinoHost == null || trinoHost.isBlank()) return null;
+            String[] labels = trinoHost.trim().split("\\.");
+            if (labels.length < 2) return null;
+            io.fabric8.kubernetes.api.model.Service svc = this.kubernetesService.getClient()
+                    .services().inNamespace(labels[1]).withName(labels[0]).get();
+            if (svc == null || svc.getMetadata() == null || svc.getMetadata().getLabels() == null) return null;
+            String instance = svc.getMetadata().getLabels().get("app.kubernetes.io/instance");
+            if (instance == null || instance.isBlank()) return null;
+            return instance + "-" + labels[1];
+        } catch (Exception e) {
+            LOG.warn("Could not derive the Trino Ranger repo from host '{}': {}", trinoHost, e.toString());
+            return null;
+        }
     }
 
     private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
