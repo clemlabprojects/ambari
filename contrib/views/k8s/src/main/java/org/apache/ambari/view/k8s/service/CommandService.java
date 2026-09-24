@@ -6904,6 +6904,21 @@ public class CommandService {
                         throw new IllegalStateException(
                                 "Ambari Ranger plugin repository request " + reqId + " did not complete successfully");
                     }
+                    if ("trino".equalsIgnoreCase(serviceType)) {
+                        // Same default as the direct path, through the Ambari server this time.
+                        try {
+                            int polReq = ambariActionClient.submitRangerPolicyGrant(
+                                    rangerRepositoryName, "{USER}", "impersonate", "{\"trinouser\":[\"*\"]}",
+                                    "kdps - users impersonate themselves",
+                                    "KDPS-managed: let every authenticated user run Trino queries as themselves.",
+                                    timeoutSeconds, "KDPS: Trino self-impersonation policy on " + rangerRepositoryName);
+                            if (!ambariActionClient.waitUntilComplete(polReq, timeoutSeconds.longValue(), java.util.concurrent.TimeUnit.SECONDS)) {
+                                LOG.warn("Ranger repository '{}': self-impersonation policy request {} did not complete", rangerRepositoryName, polReq);
+                            }
+                        } catch (Exception e) {
+                            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+                        }
+                    }
 
                     LOG.info("Ranger plugin repository '{}' configured successfully via Ambari request {}",
                             rangerRepositoryName, reqId);
