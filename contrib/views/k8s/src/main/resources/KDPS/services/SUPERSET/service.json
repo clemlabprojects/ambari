@@ -161,10 +161,22 @@
       "from": { "type": "equals", "var": "hiveTransportMode", "value": "binary", "caseInsensitive": true }
     },
     {
-      "comment": "true for anything that is NOT binary (http / all / unresolved) → use the impyla impala:// driver. This is the safe default that preserves the pre-existing behaviour when a context does not report a transport mode.",
+      "comment": "true for anything that is NOT binary (http / all / unresolved): the Hive datasource uses PyHive over HTTP(S). Safe default when a context does not report a transport mode.",
       "name": "hiveModeHttp",
       "from": { "type": "equals", "var": "hiveTransportMode", "value": "binary", "negate": true, "caseInsensitive": true }
     },
+    {
+      "comment": "Scheme of HiveServer2's HTTP endpoint (https/http), from the context; override with hiveDb.scheme (Knox is always https).",
+      "name": "hiveScheme",
+      "from": { "type": "context", "key": "hive.scheme", "enabledField": "hiveDb.enabled", "overrideFields": ["hiveDb.scheme"] }
+    },
+    { "name": "hiveAuthKerberos", "from": { "type": "equals", "var": "hiveAuthMode", "value": "kerberos", "caseInsensitive": true } },
+    { "name": "hiveAuthLdap", "from": { "type": "equals", "var": "hiveAuthMode", "value": "ldap", "caseInsensitive": true } },
+    { "name": "hiveAuthNone", "from": { "type": "equals", "var": "hiveAuthMode", "value": "none", "caseInsensitive": true } },
+    { "name": "hiveHttpPath", "from": { "type": "form", "field": "hiveDb.httpPath" } },
+    { "name": "hiveSslCert", "from": { "type": "form", "field": "hiveDb.sslCert" } },
+    { "name": "hiveLdapUser", "from": { "type": "form", "field": "hiveDb.ldapUser" } },
+    { "name": "hiveLdapPassword", "from": { "type": "form", "field": "hiveDb.ldapPassword" } },
     {
       "name": "ingressEnabled",
       "from": {
@@ -696,26 +708,9 @@
       ]
     },
     {
-      "comment": "HTTP-transport Hive (hive.server2.transport.mode=http, or unknown → safe default): reached over impyla (impala:// SQLAlchemy driver) with HTTP+GSSAPI+SSL. The database is LABELLED 'Platform Hive (impyla, HTTP)' so customers understand it targets HiveServer2 over the impyla driver, NOT an Impala daemon. Fires only when Hive is enabled (hiveHostPort) AND the transport is not binary (hiveModeHttp).",
-      "name": "superset-hive-datasource-http",
-      "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp"],
-      "targets": [
-        {
-          "path": "extraConfigs",
-          "op": "merge",
-          "from": {
-            "type": "template",
-            "template": {
-              "import_datasources.yaml": "databases:\n- database_name: Platform Hive (impyla, HTTP)\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "comment": "Binary-transport Hive (hive.server2.transport.mode=binary or all): reached over PyHive (hive:// SQLAlchemy driver) with Kerberos (SASL). Correctly named 'Platform Hive' — no impyla/Impala ambiguity. Fires only when Hive is enabled (hiveHostPort) AND the transport is binary (hiveModeBinary).",
-      "name": "superset-hive-datasource-binary",
-      "skipIfVarEmpty": ["hiveHostPort", "hiveModeBinary"],
+      "comment": "Hive over PyHive, binary transport + Kerberos (SASL/GSSAPI with the pod's ccache). Superset impersonates the logged-in user through hive.server2.proxy.user, so Ranger authorizes and audits the END USER; the service principal only needs hadoop.proxyuser rights on the cluster.",
+      "name": "superset-hive-datasource-kerberos-binary",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeBinary", "hiveAuthKerberos"],
       "targets": [
         {
           "path": "extraConfigs",
@@ -724,6 +719,91 @@
             "type": "template",
             "template": {
               "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Hive over PyHive, HTTP(S) transport + Kerberos (SPNEGO, ODP-patched PyHive: requests transport, HS2 auth cookie, http_path for Knox). Same end-user impersonation via hive.server2.proxy.user. ssl_cert=none skips certificate verification; 'required' verifies against the pod's CA bundle.",
+      "name": "superset-hive-datasource-kerberos-http",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp", "hiveAuthKerberos", "hiveScheme"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive+${hiveScheme}://${hiveHostPort}/default?auth=KERBEROS&kerberos_service_name=hive&http_path=${hiveHttpPath}&ssl_cert=${hiveSslCert}\n  extra: '{\"engine_params\": {\"connect_args\": {}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Hive over PyHive, binary transport + LDAP: the connection authenticates with the operator's LDAP service account and impersonates the logged-in user (hive.server2.proxy.user).",
+      "name": "superset-hive-datasource-ldap-binary",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeBinary", "hiveAuthLdap", "hiveLdapUser"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveLdapUser}:${hiveLdapPassword}@${hiveHostPort}/default?auth=LDAP\n  extra: '{\"engine_params\": {\"connect_args\": {}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Hive over PyHive, HTTP(S) transport + LDAP/Basic (direct HS2 in LDAP mode, or through Knox with http_path=gateway/<topology>/hive). Service account authenticates, the logged-in user is impersonated.",
+      "name": "superset-hive-datasource-ldap-http",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp", "hiveAuthLdap", "hiveScheme", "hiveLdapUser"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive+${hiveScheme}://${hiveLdapUser}:${hiveLdapPassword}@${hiveHostPort}/default?auth=BASIC&http_path=${hiveHttpPath}&ssl_cert=${hiveSslCert}\n  extra: '{\"engine_params\": {\"connect_args\": {}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Hive over PyHive, binary transport, unsecured HiveServer2 (hive.server2.authentication=NONE). Still impersonates the logged-in user so per-user authorization applies where configured.",
+      "name": "superset-hive-datasource-none-binary",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeBinary", "hiveAuthNone"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default?auth=NONE\n  extra: '{\"engine_params\": {\"connect_args\": {}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Hive over PyHive, HTTP(S) transport, unsecured HiveServer2 (authentication NONE).",
+      "name": "superset-hive-datasource-none-http",
+      "skipIfVarEmpty": ["hiveHostPort", "hiveModeHttp", "hiveAuthNone", "hiveScheme"],
+      "targets": [
+        {
+          "path": "extraConfigs",
+          "op": "merge",
+          "from": {
+            "type": "template",
+            "template": {
+              "import_datasources.yaml": "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive+${hiveScheme}://${hiveHostPort}/default?auth=NONE&http_path=${hiveHttpPath}&ssl_cert=${hiveSslCert}\n  extra: '{\"engine_params\": {\"connect_args\": {}}}'\n  impersonate_user: true\n  allow_run_async: true\n  allow_ctas: false\n  allow_cvas: false\n  tables: []\n"
             }
           }
         }
@@ -954,7 +1034,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenContext": "hive",
-          "help": "When ON, KDPS creates a Superset database connection to the HiveServer2 of the selected Platform Context (right panel). Auth follows the context (Kerberos uses the keytab/ccache already mounted in the Superset pod)."
+          "help": "When ON, KDPS creates a Superset database connection (PyHive) to the HiveServer2 of the selected Platform Context (right panel). Auth and transport follow the context; queries impersonate the logged-in user (hive.server2.proxy.user), so Ranger authorizes and audits the end user."
         },
         {
           "name": "hiveDb.hostPort",
@@ -984,12 +1064,60 @@
           "help": "Delivered by KDPS from the context (hive.server2.transport.mode). binary → the connection uses the PyHive hive:// driver; http (or unknown) → the impyla impala:// driver over HTTP. Override only to force a driver."
         },
         {
+          "name": "hiveDb.scheme",
+          "label": "HS2 HTTP scheme",
+          "type": "context-resolved",
+          "contextField": "hive.scheme",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "http or https for an HTTP-transport HiveServer2 (Knox is always https). Delivered by KDPS from the context; Override only to force it."
+        },
+        {
+          "name": "hiveDb.httpPath",
+          "label": "HS2 HTTP path",
+          "type": "string",
+          "defaultValue": "cliservice",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "HTTP transport only. 'cliservice' for a direct HiveServer2; through Knox use the topology path, e.g. gateway/default/hive."
+        },
+        {
+          "name": "hiveDb.sslCert",
+          "label": "Verify HS2 TLS certificate",
+          "type": "select",
+          "defaultValue": "none",
+          "options": [
+            { "label": "No verification (self-signed / unknown CA)", "value": "none" },
+            { "label": "Verify against the pod's CA bundle", "value": "required" }
+          ],
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "HTTPS transport only. 'Verify' uses the CA bundle the chart mounts (REQUESTS_CA_BUNDLE); the HiveServer2/Knox certificate must chain to it."
+        },
+        {
+          "name": "hiveDb.ldapUser",
+          "label": "Hive LDAP service account",
+          "type": "string",
+          "condition": { "field": "hiveDb.enabled", "value": true },
+          "excludeFromValues": true,
+          "help": "Only when the context's Hive authentication is LDAP (HiveServer2 in LDAP mode, or Knox). Superset authenticates the connection with this account and impersonates the logged-in user (hive.server2.proxy.user), so the account needs hadoop.proxyuser rights on the cluster."
+        },
+        {
+          "name": "hiveDb.ldapPassword",
+          "label": "Hive LDAP service account password",
+          "type": "password",
+          "condition": { "field": "hiveDb.ldapUser", "operator": "non-empty" },
+          "excludeFromValues": true,
+          "help": "Password of the LDAP service account above. It is written into the release's datasource import file and encrypted by Superset in its metadata database."
+        },
+        {
           "name": "hiveDb.externalKeytabSecret",
           "label": "External Superset service keytab Secret",
           "type": "secret-discovery",
           "condition": { "field": "hiveDb.enabled", "value": true },
+          "requiredWhenContext": { "field": "hive.authMode", "equals": "kerberos" },
           "excludeFromValues": true,
-          "help": "Only when the selected Platform Context is EXTERNAL and its Hive lives in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding key 'keytab' (the service keytab issued by the backend realm's KDC). Set the matching principal in the field below. Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab. Leave blank when the context's realm is the same as the Ambari cluster (the pod then uses the Ambari-issued keytab)."
+          "help": "Required when the selected Platform Context is EXTERNAL/CDP/REMOTE and its Hive uses Kerberos: KDPS cannot mint a principal in that realm, so the pod authenticates with this keytab. Pick a Kubernetes Secret in the release namespace holding key 'keytab' (the service keytab issued by the backend realm's KDC) and set the matching principal below. Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab. Leave blank on the Ambari-managed context (the pod then uses the Ambari-issued keytab)."
         },
         {
           "name": "hiveDb.externalKeytabPrincipal",
@@ -1389,7 +1517,6 @@
     { "capability": "hive", "fields": ["hs2HostPort", "authMode"], "when": "hiveDb.enabled" }
   ],
   "platformOps": [
-    { "op": "ranger.hiveGrant", "when": "hiveDb.enabled" },
     { "op": "ranger.trinoImpersonateGrant", "when": "ui_trino_host" }
   ],
   "securityCoupling": {

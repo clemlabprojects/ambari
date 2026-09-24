@@ -1,107 +1,89 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { buildVarContext, applyBindingTargets } from '../bindings';
 
 /**
- * End-to-end (in-process) test of the Superset → platform-Hive wiring: a resolved context +
- * the hiveDb.enabled toggle must drive the `import_datasources.yaml` extraConfig that the chart's
- * init-job imports, with the context-resolved HiveServer2 host:port and impersonation enabled.
- *
- * The SQLAlchemy driver is chosen from the resolved HS2 transport mode (hive.transportMode):
- *   - binary  → hive://  (PyHive),   database labelled "Platform Hive"
- *   - http    → impala:// (impyla),  database labelled "Platform Hive (impyla, HTTP)"
- *   - unknown → impala:// (safe default, preserves the pre-transport-detection behaviour)
- * When the toggle is off, no Hive datasource is emitted.
- *
- * The var/binding shapes below mirror KDPS/services/SUPERSET/service.json.
+ * Superset → platform-Hive wiring, driven by the real KDPS/services/SUPERSET/service.json: the
+ * resolved context + the hiveDb.enabled toggle produce the `import_datasources.yaml` extraConfig
+ * the chart's init job imports. Every datasource is PyHive (hive:// or hive+http(s)://) with
+ * impersonate_user, so Ranger authorizes and audits the logged-in user, and the binding is picked
+ * from the context's transport (binary/http) × authentication (kerberos/ldap/none).
  */
-const HIVE_VARS = [
-  { name: 'hiveHostPort', from: { type: 'context' as const, key: 'hive.hs2HostPort', enabledField: 'hiveDb.enabled', overrideFields: ['hiveDb.hostPort'] } },
-  { name: 'hiveTransportMode', from: { type: 'context' as const, key: 'hive.transportMode', enabledField: 'hiveDb.enabled', overrideFields: ['hiveDb.transportMode'] } },
-  { name: 'hiveModeBinary', from: { type: 'equals' as const, var: 'hiveTransportMode', value: 'binary', caseInsensitive: true } },
-  { name: 'hiveModeHttp', from: { type: 'equals' as const, var: 'hiveTransportMode', value: 'binary', negate: true, caseInsensitive: true } },
-];
+const def = JSON.parse(fs.readFileSync(
+  path.join(__dirname, '../../../../../KDPS/services/SUPERSET/service.json'), 'utf8'));
+const HIVE_VARS = def.variables.filter((v: any) => /^hive/.test(v.name));
+const HIVE_BINDINGS = def.bindings.filter((b: any) => /^superset-hive-datasource-/.test(b.name));
 
-const HTTP_BINDING = {
-  name: 'superset-hive-datasource-http',
-  skipIfVarEmpty: ['hiveHostPort', 'hiveModeHttp'],
-  targets: [
-    { path: 'extraConfigs', op: 'merge', from: { type: 'template', template: {
-      'import_datasources.yaml':
-        "databases:\n- database_name: Platform Hive (impyla, HTTP)\n  sqlalchemy_uri: impala://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth_mechanism\": \"GSSAPI\", \"kerberos_service_name\": \"hive\", \"use_http_transport\": true, \"http_path\": \"cliservice\", \"use_ssl\": true}}}'\n  impersonate_user: true\n  tables: []\n",
-    } } },
-  ],
-};
-const BINARY_BINDING = {
-  name: 'superset-hive-datasource-binary',
-  skipIfVarEmpty: ['hiveHostPort', 'hiveModeBinary'],
-  targets: [
-    { path: 'extraConfigs', op: 'merge', from: { type: 'template', template: {
-      'import_datasources.yaml':
-        "databases:\n- database_name: Platform Hive\n  sqlalchemy_uri: hive://${hiveHostPort}/default\n  extra: '{\"engine_params\": {\"connect_args\": {\"auth\": \"KERBEROS\", \"kerberos_service_name\": \"hive\"}}}'\n  impersonate_user: true\n  tables: []\n",
-    } } },
-  ],
-};
-const ALL_BINDINGS = [HTTP_BINDING, BINARY_BINDING] as any[];
+const base = { 'hive.hs2HostPort': 'master02.dev01:10001', 'hive.authMode': 'kerberos', 'hive.scheme': 'https' };
+const form = (extra: Record<string, any> = {}) => ({ hiveDb: { enabled: true, httpPath: 'cliservice', sslCert: 'none', ...extra } });
 
-const base = { 'hive.hs2HostPort': 'master02.dev01:10001', 'hive.authMode': 'kerberos' };
+function render(resolved: Record<string, string>, formValues: any) {
+  const varCtx = buildVarContext(HIVE_VARS as any, formValues, {}, resolved);
+  const merged: any = {};
+  applyBindingTargets(merged, HIVE_BINDINGS as any, {}, formValues, 'superset', varCtx);
+  return { varCtx, yaml: merged.extraConfigs?.['import_datasources.yaml'] as string | undefined };
+}
 
-describe('Superset → platform Hive import_datasources', () => {
-  it('http transport → impala:// (impyla) with the "(impyla, HTTP)" label', () => {
-    const form = { hiveDb: { enabled: true } };
-    const resolved = { ...base, 'hive.transportMode': 'http' };
-    const varCtx = buildVarContext(HIVE_VARS as any, form, {}, resolved);
-    expect(varCtx.hiveHostPort).toBe('master02.dev01:10001');
-    expect(varCtx.hiveModeHttp).toBe('true');
-    expect(varCtx.hiveModeBinary).toBe('');
-    const merged: any = {};
-    applyBindingTargets(merged, ALL_BINDINGS, {}, form, 'superset', varCtx);
-    const yaml = merged.extraConfigs?.['import_datasources.yaml'];
-    expect(yaml).toContain('database_name: Platform Hive (impyla, HTTP)');
-    expect(yaml).toContain('sqlalchemy_uri: impala://master02.dev01:10001/default');
-    expect(yaml).toContain('"use_http_transport": true');
-    expect(yaml).toContain('impersonate_user: true');
+describe('Superset → platform Hive import_datasources (PyHive, impersonation)', () => {
+  it('declares only PyHive datasources and no Hive SELECT grant', () => {
+    expect(HIVE_BINDINGS.length).toBe(6);
+    for (const b of HIVE_BINDINGS) {
+      const tpl = b.targets[0].from.template['import_datasources.yaml'];
+      expect(tpl).toMatch(/sqlalchemy_uri: hive(\+\$\{hiveScheme\})?:\/\//);
+      expect(tpl).not.toContain('impala://');
+      expect(tpl).toContain('impersonate_user: true');
+      // Always emitted: the v0 importer keeps a database's existing `extra` when the file omits it,
+      // so an upgrade would inherit stale connect_args from a previous driver.
+      expect(tpl).toContain("extra: '{");
+    }
+    expect((def.platformOps || []).map((o: any) => o.op)).not.toContain('ranger.hiveGrant');
   });
 
-  it('binary transport → hive:// (PyHive), labelled plain "Platform Hive"', () => {
-    const form = { hiveDb: { enabled: true } };
-    const resolved = { ...base, 'hive.transportMode': 'binary' };
-    const varCtx = buildVarContext(HIVE_VARS as any, form, {}, resolved);
+  it('http + kerberos → hive+https with SPNEGO, http_path and ssl_cert from the form', () => {
+    const { varCtx, yaml } = render({ ...base, 'hive.transportMode': 'http' }, form());
+    expect(varCtx.hiveModeHttp).toBe('true');
+    expect(varCtx.hiveAuthKerberos).toBe('true');
+    expect(yaml).toContain('sqlalchemy_uri: hive+https://master02.dev01:10001/default?auth=KERBEROS&kerberos_service_name=hive&http_path=cliservice&ssl_cert=none');
+    expect(yaml!.match(/database_name:/g)!.length).toBe(1);
+  });
+
+  it('binary + kerberos → hive:// with SASL Kerberos connect_args', () => {
+    const { varCtx, yaml } = render({ ...base, 'hive.transportMode': 'binary' }, form());
     expect(varCtx.hiveModeBinary).toBe('true');
-    expect(varCtx.hiveModeHttp).toBe('');
-    const merged: any = {};
-    applyBindingTargets(merged, ALL_BINDINGS, {}, form, 'superset', varCtx);
-    const yaml = merged.extraConfigs?.['import_datasources.yaml'];
-    expect(yaml).toContain('sqlalchemy_uri: hive://master02.dev01:10001/default');
-    expect(yaml).toContain('database_name: Platform Hive\n');
+    expect(yaml).toContain('sqlalchemy_uri: hive://master02.dev01:10001/default\n');
     expect(yaml).toContain('"auth": "KERBEROS"');
-    expect(yaml).not.toContain('impala://');
+    expect(yaml!.match(/database_name:/g)!.length).toBe(1);
   });
 
-  it('unknown transport → impala:// default (no regression when the context omits the mode)', () => {
-    const form = { hiveDb: { enabled: true } };
-    const varCtx = buildVarContext(HIVE_VARS as any, form, {}, base); // no hive.transportMode
-    expect(varCtx.hiveModeHttp).toBe('true');
-    expect(varCtx.hiveModeBinary).toBe('');
-    const merged: any = {};
-    applyBindingTargets(merged, ALL_BINDINGS, {}, form, 'superset', varCtx);
-    expect(merged.extraConfigs?.['import_datasources.yaml']).toContain('impala://master02.dev01:10001/default');
+  it('unknown transport is treated as http', () => {
+    const { yaml } = render(base, form());
+    expect(yaml).toContain('hive+https://master02.dev01:10001/default?auth=KERBEROS');
   });
 
-  it('toggle OFF → no Hive datasource emitted (both bindings skipped)', () => {
-    const form = { hiveDb: { enabled: false } };
-    const resolved = { ...base, 'hive.transportMode': 'binary' };
-    const varCtx = buildVarContext(HIVE_VARS as any, form, {}, resolved);
+  it('http + ldap through Knox → BASIC with the service account and the topology path', () => {
+    const { yaml } = render({ ...base, 'hive.authMode': 'ldap', 'hive.transportMode': 'http', 'hive.hs2HostPort': 'knox.example.com:8443' },
+      form({ ldapUser: 'svc-superset', ldapPassword: 's3cret', httpPath: 'gateway/default/hive', sslCert: 'required' }));
+    expect(yaml).toContain('sqlalchemy_uri: hive+https://svc-superset:s3cret@knox.example.com:8443/default?auth=BASIC&http_path=gateway/default/hive&ssl_cert=required');
+  });
+
+  it('ldap without a service account emits nothing rather than a broken URL', () => {
+    const { yaml } = render({ ...base, 'hive.authMode': 'ldap', 'hive.transportMode': 'binary' }, form());
+    expect(yaml).toBeUndefined();
+  });
+
+  it('binary + none → plain hive:// auth=NONE', () => {
+    const { yaml } = render({ ...base, 'hive.authMode': 'none', 'hive.transportMode': 'binary' }, form());
+    expect(yaml).toContain('sqlalchemy_uri: hive://master02.dev01:10001/default?auth=NONE');
+  });
+
+  it('toggle OFF → no Hive datasource emitted', () => {
+    const { varCtx, yaml } = render({ ...base, 'hive.transportMode': 'http' }, { hiveDb: { enabled: false } });
     expect(varCtx.hiveHostPort).toBeUndefined();
-    const merged: any = {};
-    applyBindingTargets(merged, ALL_BINDINGS, {}, form, 'superset', varCtx);
-    expect(merged.extraConfigs?.['import_datasources.yaml']).toBeUndefined();
+    expect(yaml).toBeUndefined();
   });
 
-  it('operator override host:port wins over the context value', () => {
-    const form = { hiveDb: { enabled: true, hostPort: 'my-hs2:10000' } };
-    const resolved = { ...base, 'hive.transportMode': 'http' };
-    const varCtx = buildVarContext(HIVE_VARS as any, form, {}, resolved);
-    const merged: any = {};
-    applyBindingTargets(merged, ALL_BINDINGS, {}, form, 'superset', varCtx);
-    expect(merged.extraConfigs['import_datasources.yaml']).toContain('impala://my-hs2:10000/default');
+  it('operator overrides (host:port, scheme) win over the context', () => {
+    const { yaml } = render({ ...base, 'hive.transportMode': 'http' }, form({ hostPort: 'my-hs2:10001', scheme: 'http' }));
+    expect(yaml).toContain('hive+http://my-hs2:10001/default?auth=KERBEROS');
   });
 });
