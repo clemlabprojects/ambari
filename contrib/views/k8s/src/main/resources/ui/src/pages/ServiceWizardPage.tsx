@@ -489,6 +489,42 @@ const ServiceWizardPage: React.FC = () => {
     }
   };
 
+  /**
+   * TLS SANs for the keystore KDPS generates, resolved at SUBMIT time from the service definition's
+   * `tls[].dnsTemplates`. It cannot be done when the definition loads: `{{ingress.host}}` is only
+   * known once the operator has filled in step 3. Without this the backend falls back to a single
+   * `<release>.<namespace>.svc` SAN, which matches neither the coordinator Service DNS nor the
+   * Route host, and every client that verifies the certificate fails the handshake.
+   */
+  const buildTlsPayload = () => {
+    const specs = (def as any)?.tls;
+    if (!Array.isArray(specs) || !specs.length) return (installValues as any)?.tls || undefined;
+    const render = (tpl: string | undefined) =>
+      (tpl || '').replace(/{{\s*([^}]+)\s*}}/g, (_m: string, raw: string) => {
+        const path = String(raw || '').trim().split('.').filter(Boolean);
+        let cur: any = installValues;
+        for (const part of path) { if (cur == null) return ''; cur = cur[part]; }
+        return cur == null ? '' : String(cur);
+      });
+    const out: any = { ...((installValues as any)?.tls || {}) };
+    for (const spec of specs) {
+      const key = spec?.key;
+      if (!key) continue;
+      const entry = { ...(out[key] || {}) };
+      const names: string[] = [];
+      for (const tpl of (Array.isArray(spec.dnsTemplates) ? spec.dnsTemplates : [])) {
+        const rendered = render(tpl);
+        if (rendered && !names.includes(rendered)) names.push(rendered);
+      }
+      for (const extra of (Array.isArray(entry.extraDns) ? entry.extraDns : [])) {
+        if (extra && !names.includes(String(extra))) names.push(String(extra));
+      }
+      if (names.length) entry.dnsNames = names;
+      out[key] = entry;
+    }
+    return out;
+  };
+
   const buildFinalValues = () => {
     // Start from form values
     const base = JSON.parse(JSON.stringify(installValues || {}));

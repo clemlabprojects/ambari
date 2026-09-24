@@ -4163,6 +4163,11 @@ public class CommandService {
             LOG.info("Kerberos injection mode is WEBHOOK; mutating webhook dependency remains enabled.");
         }
         if (request.getTls() != null && !request.getTls().isEmpty()) {
+            // The wizard resolves tls[].dnsTemplates at submit time; an API-driven deploy may not.
+            // Fill them in here too, because the fallback SAN (<release>.<namespace>.svc) matches
+            // neither the chart's Service DNS nor the ingress host, and a certificate with the wrong
+            // SAN fails every client that verifies it — silently, at handshake time.
+            resolveTlsDnsNames(request);
             TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
             tlsManager.applyTls(request.getTls(), request, params);
         }
