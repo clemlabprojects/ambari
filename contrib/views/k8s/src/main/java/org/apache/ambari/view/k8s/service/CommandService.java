@@ -5407,10 +5407,12 @@ public class CommandService {
             try {
                 StackDefinitionService stackDefSvc = new StackDefinitionService(this.ctx);
                 var serviceDef = stackDefSvc.getServiceDefinition(request.getServiceKey());
-                if (serviceDef != null && serviceDef.postDeploy != null) {
+                // platformOps are post-deploy work too: a definition that declares only those (Trino)
+                // must enter this block, not just one carrying a postDeploy section.
+                if (serviceDef != null && (serviceDef.postDeploy != null || serviceDef.platformOps != null)) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> viewSpec =
-                            (Map<String, Object>) serviceDef.postDeploy.get("ambariViewInstance");
+                            (Map<String, Object>) postDeployOf(serviceDef).get("ambariViewInstance");
                     if (viewSpec != null) {
                         this.commandPlanFactory.createAmbariViewProvisionCommand(
                                 rootCommand,
@@ -5445,7 +5447,7 @@ public class CommandService {
                     // enrichment-only). Declared via platformOp (op=hive.baseIngestion) or the
                     // postDeploy.baseIngestionHive marker, gated on baseIngestion.hiveEnabled=true.
                     boolean hiveBaseDeclared = hasPlatformOp(serviceDef, "hive.baseIngestion")
-                            || (serviceDef.postDeploy != null && serviceDef.postDeploy.get("baseIngestionHive") != null);
+                            || (serviceDef.postDeploy != null && postDeployOf(serviceDef).get("baseIngestionHive") != null);
                     if (hiveBaseDeclared) {
                         Object hiveEnabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
@@ -5476,13 +5478,16 @@ public class CommandService {
                     // (op=ranger.hiveGrant), gated on hiveDb.enabled=true. Delegated to the Ambari
                     // server so the view never handles the Ranger admin password.
                     if (hasPlatformOp(serviceDef, "ranger.hiveGrant")) {
+                        // The op's own `when` names the toggle (Superset: hiveDb.enabled, Trino:
+                        // hiveCatalog.enabled); the Superset field stays the default for older defs.
+                        String hiveGrantWhen = platformOpWhen(serviceDef, "ranger.hiveGrant", "hiveDb.enabled");
                         Object hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
-                                "hiveDb.enabled");
+                                hiveGrantWhen);
                         if (hiveDbEnabledRaw == null) {
                             hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
                                     request.getFormValues() != null ? request.getFormValues()
-                                            : Collections.emptyMap(), "hiveDb.enabled");
+                                            : Collections.emptyMap(), hiveGrantWhen);
                         }
                         if (hiveDbEnabledRaw != null && "true".equalsIgnoreCase(String.valueOf(hiveDbEnabledRaw))) {
                             // Ranger short name = <kerberos serviceName>-<namespace> (the realm is
@@ -5494,6 +5499,14 @@ public class CommandService {
                                         serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
                             }
                             String principal = kerbServiceName + "-" + request.getNamespace();
+                            // With an operator-supplied keytab the identity Hive sees is that keytab's
+                            // principal (short name), not the one KDPS would have minted.
+                            Map<String, Object> fvGrant = request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap();
+                            if (deployUsesExternalKeytab(fvGrant)) {
+                                String ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hive.externalKeytabPrincipal"));
+                                if (ext.isBlank()) ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hiveDb.externalKeytabPrincipal"));
+                                if (!ext.isBlank()) principal = ext.replaceAll("[/@].*$", "");
+                            }
 
                             Map<String, Object> grantParams = new LinkedHashMap<>();
                             grantParams.put("releaseName", request.getReleaseName());
@@ -5595,7 +5608,7 @@ public class CommandService {
                     // (op=atlas.federation, the framework path) OR via the legacy
                     // postDeploy.atlasFederation block (backward compat) — and the toggle is on.
                     boolean federationDeclared = hasPlatformOp(serviceDef, "atlas.federation")
-                            || (serviceDef.postDeploy != null && serviceDef.postDeploy.get("atlasFederation") != null);
+                            || (serviceDef.postDeploy != null && postDeployOf(serviceDef).get("atlasFederation") != null);
                     if (federationDeclared) {
                         Object enabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
@@ -9507,6 +9520,23 @@ public class CommandService {
      * the caller's OM_ATLAS_FEDERATION_REGISTER step uses operator-supplied creds.
      */
     @SuppressWarnings("unchecked")
+    /** A definition's postDeploy section, or an empty map when it declares none. */
+    private static Map<String, Object> postDeployOf(StackServiceDef def) {
+        return (def != null && def.postDeploy != null) ? def.postDeploy : Collections.emptyMap();
+    }
+
+    /** The {@code when} of a platformOps entry (a dotted form field), or the given default. */
+    private static String platformOpWhen(StackServiceDef def, String opName, String dflt) {
+        if (def == null || def.platformOps == null) return dflt;
+        for (Map<String, Object> op : def.platformOps) {
+            if (op != null && opName.equals(String.valueOf(op.get("op")))) {
+                Object w = op.get("when");
+                return (w == null || String.valueOf(w).isBlank()) ? dflt : String.valueOf(w);
+            }
+        }
+        return dflt;
+    }
+
     /** True when the service definition declares a {@code platformOps} entry with the given op name. */
     private static boolean hasPlatformOp(StackServiceDef def, String opName) {
         if (def == null || def.platformOps == null) return false;

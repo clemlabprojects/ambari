@@ -2868,6 +2868,10 @@
     }
   },
   "requiredChartVersion": ">=1.43.0",
+  "platformOps": [
+    { "op": "ranger.hiveGrant", "when": "hiveCatalog.enabled",
+      "_description": "Trino reads Hive tables as its own service identity (hive.hdfs.trino.principal); the Hive metastore's Ranger plugin therefore authorises that identity, not the end user. Grant it SELECT on the context's Hive repository, the way Superset's Hive connection is granted." }
+  ],
   "requiresContext": [
     {
       "capability": "hive",
