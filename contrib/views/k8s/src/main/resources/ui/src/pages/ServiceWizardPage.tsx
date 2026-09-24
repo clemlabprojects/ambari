@@ -418,23 +418,15 @@ const ServiceWizardPage: React.FC = () => {
     });
   }, [def, (installValues as any)?.securityProfile, (installValues as any)?.ingress?.enabled, (installValues as any)?.ingress?.tlsMode]);
 
-  // When launched in upgrade mode, pre-load current values from the existing release
-  useEffect(() => {
-    if (!isUpgrade || !upgradeState || !upgradeState.releaseName || !upgradeState.namespace) return;
-    void (async () => {
-      try {
-        const currentValues = await getReleaseValues(upgradeState.namespace, upgradeState.releaseName);
-        const rawYaml = yaml.stringify(currentValues || {});
-        parsedRef.current = currentValues || {};
-        setEditorYaml(rawYaml);
-        setView('editor');
-        setEditMode(true);
-        setParseError(null);
-      } catch (e: any) {
-        message.error(e?.message || 'Failed to load current values for upgrade');
-      }
-    })();
-  }, [isUpgrade, upgradeState]);
+  // NOTE: the deployed values are already merged into the form by the definition-load effect above
+  // (`deepMerge(initial, deployed)`), so an upgrade starts from the running config and every wizard
+  // control edits it. There used to be a second effect here that ALSO parked those values in
+  // `parsedRef` and forced the YAML editor on, which made buildFinalValues() return
+  // `{ ...form, ...deployedValues }` — a shallow spread in which each deployed top-level block
+  // replaced the form's. Toggling "Expose the site" on a dbt upgrade therefore shipped the deployed
+  // `ingress: { enabled: false }` and the operator's change vanished without a word. An upgrade is
+  // an install with different inputs: the form drives the payload, and the editor overrides it only
+  // when the operator actually edits it.
 
   // --- helpers ---
   const getExcludedPaths = (fields: any[]): string[] => {
@@ -527,9 +519,11 @@ const ServiceWizardPage: React.FC = () => {
        delete (base as any)[k];
      });
 
-    // If YAML editor overrides are present and valid, merge them in
-    if (editMode && parsedRef.current && !parseError) {
-      return { ...base, ...parsedRef.current };
+    // Hand-written YAML wins, but only once the operator has actually typed in the editor
+    // (isDirtyRef) — merely opening it must not freeze a stale snapshot over the form. Merge deeply:
+    // a shallow spread would let an edit to one key of a block drop every sibling the form produced.
+    if (editMode && isDirtyRef.current && parsedRef.current && !parseError) {
+      deepMerge(base, parsedRef.current);
     }
     return base;
   };
