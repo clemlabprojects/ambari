@@ -99,6 +99,12 @@ public class ManagedContextResolver {
       case "polaris.adminUsername":      return polarisAvailable() ? t(cfg("polaris-env", "polaris_admin_username")) : null;
       case "polaris.adminPassword":      return polarisAvailable() ? t(cfg("polaris-env", "polaris_admin_password")) : null;
       case "polaris.tlsEnabled":         return polarisAvailable() ? String.valueOf(polarisTls()) : null;
+                // ----- Apache Ozone S3 gateway: where Polaris-provisioned Iceberg tables live -----
+                case "ozone.s3Endpoint":           return ozoneS3Endpoint();
+                case "ozone.s3Region":             return ozoneAvailable() ? firstNonBlank(t(cfg("polaris-env", "polaris_ozone_s3_region")), "us-east-1") : null;
+                case "ozone.s3PathStyleAccess":    return ozoneAvailable() ? firstNonBlank(t(cfg("polaris-env", "polaris_ozone_s3_path_style_access")), "true").toLowerCase() : null;
+                case "ozone.s3AccessKeyId":        return ozoneS3AccessKeyId();
+                case "ozone.omServiceId":          return ozoneAvailable() ? firstNonBlank(t(cfg("ozone-site", "ozone.om.internal.service.id")), firstOf(cfg("ozone-site", "ozone.om.service.ids"))) : null;
                 default:
                     return null;
             }
@@ -321,6 +327,61 @@ public class ManagedContextResolver {
         if (blank(realms)) return "POLARIS";
         return realms.split(",")[0].trim();
     }
+
+    // ----- Ozone -----
+
+    private List<String> ozoneS3gHosts;
+    private Boolean ozoneResolved;
+
+    private boolean ozoneAvailable() throws Exception {
+        if (ozoneResolved == null) {
+            try {
+                ozoneS3gHosts = ambari.getComponentHosts(cluster, "OZONE", "OZONE_S3_GATEWAY");
+            } catch (Exception e) {
+                ozoneS3gHosts = Collections.emptyList();
+            }
+            ozoneResolved = ozoneS3gHosts != null && !ozoneS3gHosts.isEmpty();
+        }
+        return ozoneResolved;
+    }
+
+    /**
+     * The S3 gateway URL, the way the Polaris service itself derives it (params.py): an explicit
+     * polaris_ozone_s3_endpoint wins; otherwise the https then http address from ozone-site, with a
+     * wildcard bind host replaced by the first S3 gateway host.
+     */
+    private String ozoneS3Endpoint() throws Exception {
+        if (!ozoneAvailable()) return null;
+        String explicit = t(cfg("polaris-env", "polaris_ozone_s3_endpoint"));
+        if (!blank(explicit)) return explicit;
+        String https = t(cfg("ozone-site", "ozone.s3g.https-address"));
+        String http  = t(cfg("ozone-site", "ozone.s3g.http-address"));
+        String scheme; String address; String port;
+        if (!blank(https)) { scheme = "https"; address = https; port = firstNonBlank(t(cfg("ozone-site", "ozone.s3g.https-port")), "9879"); }
+        else if (!blank(http)) { scheme = "http"; address = http; port = firstNonBlank(t(cfg("ozone-site", "ozone.s3g.http-port")), "9878"); }
+        else { scheme = "http"; address = ozoneS3gHosts.get(0); port = firstNonBlank(t(cfg("ozone-site", "ozone.s3g.http-port")), "9878"); }
+        String host = address.contains(":") ? address.substring(0, address.indexOf(':')) : address;
+        if (blank(host) || "0.0.0.0".equals(host) || "::".equals(host) || "localhost".equals(host)) host = ozoneS3gHosts.get(0);
+        return scheme + "://" + host + ":" + port;
+    }
+
+    /**
+     * The identity Polaris uses on the gateway: `ozone s3 getsecret` names the access id after the
+     * Kerberos principal, so it is polaris/<host>@REALM on a kerberized cluster and the polaris user
+     * otherwise — the same rule params.py applies for the server's own AWS_ACCESS_KEY_ID.
+     */
+    private String ozoneS3AccessKeyId() throws Exception {
+        if (!ozoneAvailable() || !polarisAvailable()) return null;
+        String realm = t(cfg("kerberos-env", "realm"));
+        String user = firstNonBlank(t(cfg("polaris-env", "polaris_user")), "polaris");
+        if (blank(realm)) return user;
+        String principal = t(cfg("polaris-env", "polaris_principal_name"));
+        if (blank(principal)) principal = user + "/_HOST@" + realm;
+        return principal.replace("_HOST", polarisHosts.get(0).toLowerCase());
+    }
+
+    private static String firstNonBlank(String... v) { for (String s : v) if (!blank(s)) return s; return null; }
+    private static String firstOf(String csv) { return blank(csv) ? null : csv.split(",")[0].trim(); }
 
     private String cfg(String type, String key) {
         try {

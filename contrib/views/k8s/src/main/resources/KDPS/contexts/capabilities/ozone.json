@@ -1,0 +1,65 @@
+{
+  "capability": "ozone",
+  "label": "Apache Ozone (S3 gateway)",
+  "order": 44,
+  "fields": [
+    {
+      "name": "s3Endpoint",
+      "label": "S3 gateway endpoint",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "http://ozone-s3g.example.com:9878",
+      "help": "Where Iceberg tables are stored when a release is provisioned against this context's Polaris. For a MANAGED context KDPS takes it from the Polaris service (polaris_ozone_s3_endpoint) or derives it from the S3 gateway in ozone-site.",
+      "managedResolver": "ozone.s3Endpoint",
+      "group": "Ozone"
+    },
+    {
+      "name": "s3Region",
+      "label": "S3 region",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "us-east-1",
+      "help": "Region string sent with S3 requests. Ozone accepts any value; us-east-1 when unset.",
+      "managedResolver": "ozone.s3Region",
+      "group": "Ozone"
+    },
+    {
+      "name": "s3PathStyleAccess",
+      "label": "Path-style access",
+      "type": "enum",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "options": ["true", "false"],
+      "default": "true",
+      "help": "The Ozone S3 gateway addresses buckets by path, not by virtual host.",
+      "managedResolver": "ozone.s3PathStyleAccess",
+      "group": "Ozone"
+    },
+    {
+      "name": "s3AccessKeyId",
+      "label": "S3 access key id",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "help": "Identity KDPS uses to create the bucket behind a provisioned Polaris catalog. For a MANAGED context this is the Polaris service's own Ozone identity (ozone s3 getsecret names it after the Kerberos principal).",
+      "managedResolver": "ozone.s3AccessKeyId",
+      "group": "Ozone"
+    },
+    {
+      "name": "s3SecretKey",
+      "label": "S3 secret key",
+      "type": "password",
+      "secret": true,
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "help": "Secret matching the access key id. For a MANAGED context KDPS reads polaris_ozone_principal_secret from the Polaris service on the server side; it never travels to the browser.",
+      "group": "Ozone"
+    },
+    {
+      "name": "omServiceId",
+      "label": "Ozone Manager service id",
+      "type": "string",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "placeholder": "omservice",
+      "managedResolver": "ozone.omServiceId",
+      "group": "Ozone"
+    }
+  ]
+}
