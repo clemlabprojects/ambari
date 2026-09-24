@@ -742,8 +742,12 @@ const ServiceWizardPage: React.FC = () => {
               // Pass image pull secret if defined by the service definition or form
               secretName: (def as any)?.secretName || (installValues as any)?.secretName || undefined,
               endpoints: (def as any)?.endpoints || undefined,
-              mounts: isUpgrade ? null : ((installValues as any)?.mounts || (def as any)?.mounts || null),
-              dependencies: isUpgrade ? null : ((def as any)?.dependencies || null),
+              // An upgrade is the install path with different inputs: every def-seeded block is sent
+              // every time and the backend steps converge (PVCs, dependencies, Ranger, ConfigMaps are
+              // all ensure-or-skip). Stripping them on upgrade meant a feature turned on in
+              // Upgrade/Config never got the mounts, dependencies or values it needed.
+              mounts: (installValues as any)?.mounts || (def as any)?.mounts || null,
+              dependencies: (def as any)?.dependencies || null,
               // Context-dependent blocks are omitted only when the deploy is wired to NO platform
               // context (standalone service, 'none'): there is no backend to source Ranger or the
               // hadoop-conf site XML from. For a MANAGED context the backend materializes
@@ -753,11 +757,18 @@ const ServiceWizardPage: React.FC = () => {
               // every real context, not just MANAGED. Gating it to MANAGED-only left external deploys
               // with no trino-hadoop-conf ConfigMap while Trino still referenced /etc/hadoop/conf/*.xml,
               // failing with "file does not exist". Mirror the Ranger gate (context-agnostic).
-              ranger: isUpgrade || selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
-              requiredConfigMaps: (isUpgrade || selectedCtxId === 'none')
+              // Not gated on isUpgrade: an upgrade is how Ranger gets turned on for a release
+              // installed without it, and dropping the block meant the policy repository was never
+              // planned, so the chart rendered without ranger.serviceName. Re-running is supported
+              // — the same path backs the Reapply Ranger repository action.
+              ranger: selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
+              // Same reasoning, and the other half of it: Trino's Ranger plugin reads
+              // /etc/hadoop/conf/*.xml, which only exists if trino-hadoop-conf is materialised. Send
+              // the Ranger block without this and the coordinator crashes on "file does not exist".
+              requiredConfigMaps: selectedCtxId === 'none'
                 ? null : ((def as any)?.requiredConfigMaps || null),
-              dynamicValues: isUpgrade ? null : ((def as any)?.dynamicValues || null),
-              tls: (installValues as any)?.tls || undefined,
+              dynamicValues: (def as any)?.dynamicValues || null,
+              tls: buildTlsPayload(),
               kerberos: (installValues as any)?.kerberos || undefined,
               // Translate ingress.tlsMode (form select) into the wire payload the backend
               // expects. Mirrors ServiceInstallationModal/index.tsx so the wizard and the
