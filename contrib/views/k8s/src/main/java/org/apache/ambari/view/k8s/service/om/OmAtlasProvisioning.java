@@ -483,6 +483,9 @@ public final class OmAtlasProvisioning {
      */
     private static void ensureRangerUserExists(String rangerAdminUrl, String basic,
                                                 String userName) throws Exception {
+        // Ranger macros ({USER}, {OWNER}) are resolved by Ranger at evaluation time; there is no
+        // account to create for them.
+        if (userName == null || userName.startsWith("{")) return;
         // Check existence first via the v2 xusers list filtered by name.
         HttpURLConnection check = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/xusers/users?name=" + pathSegmentEncode(userName)).openConnection();
@@ -731,6 +734,13 @@ public final class OmAtlasProvisioning {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
         ensureRangerUserExists(rangerAdminUrl, basic, trinoUser);
+        // Ranger allows one policy per resource set, and a new Trino repository already owns
+        // trinouser=* through its default 'all - trinouser' policy. Append to that one when present.
+        final String DEFAULT_TRINOUSER_POLICY = "all - trinouser";
+        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, DEFAULT_TRINOUSER_POLICY);
+        if (defaultId != null) {
+            return appendAccessToPolicy(rangerAdminUrl, basic, DEFAULT_TRINOUSER_POLICY, defaultId, trinoUser, "impersonate", timeoutMs);
+        }
 
         Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, policyName);
         if (existing != null) {
@@ -866,6 +876,11 @@ public final class OmAtlasProvisioning {
     /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
     private static long appendHiveSelectToPolicy(String rangerAdminUrl, String basic, String policyName,
                                                  long policyId, String omUser, long timeoutMs) throws Exception {
+        return appendAccessToPolicy(rangerAdminUrl, basic, policyName, policyId, omUser, "select", timeoutMs);
+    }
+
+    private static long appendAccessToPolicy(String rangerAdminUrl, String basic, String policyName,
+                                             long policyId, String omUser, String accessType, long timeoutMs) throws Exception {
         HttpURLConnection get = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
         configureSsl(get);
@@ -885,10 +900,10 @@ public final class OmAtlasProvisioning {
             JsonArray accesses = ex.has("accesses") ? ex.getAsJsonArray("accesses") : new JsonArray();
             for (int k = 0; k < accesses.size(); k++) {
                 JsonObject a = accesses.get(k).getAsJsonObject();
-                if ("select".equals(a.has("type") ? a.get("type").getAsString() : null)
+                if (accessType.equals(a.has("type") ? a.get("type").getAsString() : null)
                         && a.has("isAllowed") && a.get("isAllowed").getAsBoolean()) {
-                    LOG.info("OmAtlasProvisioning: Hive policy '{}' (id={}) already grants 'select' to '{}' — no-op",
-                            policyName, policyId, omUser);
+                    LOG.info("OmAtlasProvisioning: Hive policy '{}' (id={}) already grants '{}' to '{}' — no-op",
+                            policyName, policyId, accessType, omUser);
                     return policyId;
                 }
             }
@@ -897,7 +912,7 @@ public final class OmAtlasProvisioning {
         newItem.add("users", arrayOf(omUser));
         newItem.add("groups", new JsonArray());
         newItem.add("roles", new JsonArray());
-        newItem.add("accesses", arrayOfObjects(new String[]{"select"}, "isAllowed", true));
+        newItem.add("accesses", arrayOfObjects(new String[]{accessType}, "isAllowed", true));
         newItem.addProperty("delegateAdmin", false);
         policyItems.add(newItem);
         policy.add("policyItems", policyItems);
@@ -916,7 +931,8 @@ public final class OmAtlasProvisioning {
         if (pc < 200 || pc >= 300) {
             throw new IllegalStateException("Ranger Hive policy update failed: HTTP " + pc + " — " + readBody(put, true));
         }
-        LOG.info("OmAtlasProvisioning: appended Hive 'select' for '{}' to policy '{}' (id={})", omUser, policyName, policyId);
+        LOG.info("OmAtlasProvisioning: appended '{}' for '{}' to policy '{}' (id={})",
+                accessType, omUser, policyName, policyId);
         return policyId;
     }
 
