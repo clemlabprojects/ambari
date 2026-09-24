@@ -1648,7 +1648,7 @@
           "op": "set",
           "from": {
             "type": "template",
-            "template": "connector.name=iceberg\niceberg.catalog.type=rest\niceberg.rest-catalog.uri=${polarisRestUri}\niceberg.rest-catalog.warehouse=${polarisWarehouse}\niceberg.rest-catalog.security=OAUTH2\niceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL\niceberg.rest-catalog.vended-credentials-enabled=true\nfs.native-s3.enabled=true\n"
+            "template": "connector.name=iceberg\niceberg.catalog.type=rest\niceberg.rest-catalog.uri=${polarisRestUri}\niceberg.rest-catalog.warehouse=${polarisWarehouse}\niceberg.rest-catalog.security=OAUTH2\niceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL\niceberg.rest-catalog.vended-credentials-enabled=true\nfs.native-s3.enabled=true\ns3.region=${icebergS3Region}\n"
           }
         }
       ]
