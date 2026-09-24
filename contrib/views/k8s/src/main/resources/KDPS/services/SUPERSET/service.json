@@ -1016,6 +1016,14 @@
       "help": "Password for the Trino service account above."
     },
     {
+      "name": "ui_trino_ranger_service",
+      "label": "Trino Ranger service name",
+      "type": "string",
+      "excludeFromValues": true,
+      "condition": { "field": "ui_trino_host", "operator": "non-empty" },
+      "help": "Optional. The Ranger repository that governs the target Trino. Leave blank for a Trino deployed by KDPS: the repo it registered (<release>-<namespace>) is looked up from the host above. Set it only when the repo is named differently, e.g. an externally managed Trino."
+    },
+    {
       "name": "ui_trino_oidc_principal",
       "label": "Trino service principal (for the impersonation grant)",
       "type": "string",
