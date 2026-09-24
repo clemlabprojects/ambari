@@ -1149,6 +1149,9 @@ export interface ClusterCapabilities {
   openshift: { routeCrd: boolean };
   certManager: { installed: boolean; clusterIssuerCrd: boolean; certificateCrd: boolean };
   externalSecrets: { installed: boolean; secretStoreCrd: boolean; clusterSecretStoreCrd: boolean; externalSecretCrd: boolean };
+  // Whether an Ingress would be served: always on OpenShift (Route), on Kubernetes only with an
+  // ingress controller (IngressClass present). defaultClass is the one to write into the values.
+  ingress?: { available: boolean; classes: string[]; defaultClass: string | null };
 }
 export const getClusterCapabilities = async (): Promise<ClusterCapabilities> => {
   return fetchJson<ClusterCapabilities>('/cluster/capabilities');

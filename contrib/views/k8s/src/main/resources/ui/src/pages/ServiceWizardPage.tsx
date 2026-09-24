@@ -29,7 +29,7 @@ import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
 import { applyBindingTargets, buildVarContext, deleteAtStr, deepMerge } from '../components/ServiceInstallationModal/bindings';
-import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
+import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -709,6 +709,51 @@ const ServiceWizardPage: React.FC = () => {
       return next;
     });
   }, [def, resolvedSel, selectedCtxId]);
+
+  // Auto-enable a toggle when the CLUSTER provides its capability — declared per-field via
+  // `autoEnableWhenCapability: "ingress"`. Same contract as autoEnableWhenContext: applied once per
+  // field so it seeds the default without fighting a later manual toggle. For ingress it also seeds
+  // the class field with the detected default class, so a Kubernetes cluster with an nginx or
+  // other controller gets a served Ingress, OpenShift gets a Route, and a cluster with neither is
+  // left with the toggle off instead of a dead Ingress object.
+  const capAutoEnabledRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    if (!def || !caps) return;
+    const provides = (cap: string) => cap === 'ingress' ? !!caps.ingress?.available : fieldCapabilityAvailable(cap, caps);
+    const collect = (fields: any[], out: any[] = []): any[] => {
+      for (const f of fields || []) {
+        if (f && typeof f === 'object') {
+          if (f.autoEnableWhenCapability && f.name) out.push(f);
+          if (Array.isArray(f.fields)) collect(f.fields, out);
+        }
+      }
+      return out;
+    };
+    const allFields = collect((def as any).form || []);
+    const toEnable = allFields.filter((f) => provides(f.autoEnableWhenCapability) && !capAutoEnabledRef.current.has(f.name));
+    if (!toEnable.length) return;
+    const classFields = ['ingress.ingressClassName', 'ingress.className'];
+    const declared = new Set<string>();
+    const walk = (fields: any[]) => { for (const f of fields || []) { if (f?.name) declared.add(f.name); if (Array.isArray(f?.fields)) walk(f.fields); } };
+    walk((def as any).form || []);
+    setInstallValues((prev: any) => {
+      const next = { ...prev };
+      const setPath = (name: string, value: any) => {
+        const parts = String(name).split('.');
+        let o: any = next;
+        for (let i = 0; i < parts.length - 1; i++) { o[parts[i]] = { ...(o[parts[i]] || {}) }; o = o[parts[i]]; }
+        o[parts[parts.length - 1]] = value;
+      };
+      for (const f of toEnable) {
+        capAutoEnabledRef.current.add(f.name);
+        setPath(f.name, true);
+        if (f.autoEnableWhenCapability === 'ingress' && caps.ingress?.defaultClass) {
+          for (const cf of classFields) if (declared.has(cf)) setPath(cf, caps.ingress.defaultClass);
+        }
+      }
+      return next;
+    });
+  }, [def, caps]);
 
   // Actual deploy submit. `atlasRestartAuthorized` carries the operator's choice from the
   // pre-deploy restart-confirmation modal (true = let KDPS restart Atlas to activate the OM

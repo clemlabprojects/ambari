@@ -109,8 +109,20 @@ public class ClusterCapabilitiesResource {
         eso.put("externalSecretCrd", esoExternalSecret);
         result.put("externalSecrets", eso);
 
-        LOG.info("Cluster capability probe: platform={} certManager={} externalSecrets={}",
-                result.get("platform"), cm.get("installed"), eso.get("installed"));
+        // ---- ingress ----
+        // Whether an Ingress the wizard emits would actually be served. On OpenShift the router
+        // always is (charts emit a Route there). On Kubernetes it needs an ingress controller,
+        // which announces itself through IngressClass objects; without one, an Ingress is a dead
+        // object and the wizard should not default a service to it.
+        java.util.List<String> ingressClasses = isOcp ? java.util.List.of() : safeIngressClasses();
+        Map<String, Object> ingress = new LinkedHashMap<>();
+        ingress.put("available", isOcp || !ingressClasses.isEmpty());
+        ingress.put("classes", ingressClasses);
+        ingress.put("defaultClass", ingressClasses.isEmpty() ? null : ingressClasses.get(0));
+        result.put("ingress", ingress);
+
+        LOG.info("Cluster capability probe: platform={} certManager={} externalSecrets={} ingress={}",
+                result.get("platform"), cm.get("installed"), eso.get("installed"), ingress);
         return result;
     }
 
@@ -119,6 +131,15 @@ public class ClusterCapabilitiesResource {
      * unreachable API doesn't crash the whole capability probe — caller still gets
      * a payload, just with that flag set to {@code false}.
      */
+    private java.util.List<String> safeIngressClasses() {
+        try {
+            return kubernetesService.listIngressClasses();
+        } catch (Exception ex) {
+            LOG.debug("IngressClass probe failed: {}", ex.toString());
+            return java.util.List.of();
+        }
+    }
+
     private boolean safeCrdExists(String crdName) {
         try {
             return kubernetesService.crdExists(crdName);

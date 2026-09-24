@@ -1952,7 +1952,8 @@
           "name": "ingress.enabled",
           "label": "Enable Ingress",
           "type": "boolean",
-          "defaultValue": true,
+          "defaultValue": false,
+          "autoEnableWhenCapability": "ingress",
           "help": "Expose the service through a Kubernetes Ingress. Required when an authentication profile (OIDC / LDAP-over-SSL) is selected in Step 1 — OAuth callbacks need a public hostname and HTTPS."
         },
         {

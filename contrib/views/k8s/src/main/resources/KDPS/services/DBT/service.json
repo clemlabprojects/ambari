@@ -234,7 +234,8 @@
           "name": "ingress.enabled",
           "label": "Expose the site",
           "type": "boolean",
-          "defaultValue": true,
+          "defaultValue": false,
+          "autoEnableWhenCapability": "ingress",
           "condition": {
             "field": "docs.enabled",
             "value": true
