@@ -30,6 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed, Fail
 from resource_management.core.resources.system import Directory, Execute, File
@@ -780,6 +781,35 @@ def _ozone_getsecret(require_kerberos):
   elif access_id:
     Logger.info("Resolved access id '{0}' but no secret from getsecret output.".format(access_id))
   return access_id, secret
+
+
+def provision_ozone_bucket(bucket_name, access_id, secret):
+  """PROVISION_OZONE_BUCKET custom command body, driven by KDPS for a release it installs:
+  give the release its own S3 identity on the gateway, create its bucket under s3v and grant the
+  identity access to it. Runs as the Ozone admin, which is why this lives on the cluster and not in
+  the view: only the cluster holds the admin keytab, and the Ozone secret is a password-typed
+  property the Ambari API never returns to a client."""
+  import params
+
+  if not bucket_name or not access_id or not secret:
+    raise Fail("PROVISION_OZONE_BUCKET needs kdps_bucket, kdps_access_id and kdps_s3_password.")
+  ozone_security = getattr(params, "ozone_security_enabled", False)
+  volume_name = "s3v"
+
+  # setsecret only updates an existing access id (ACCESS_ID_NOT_FOUND otherwise); getsecret is what
+  # creates one, and the admin form creates it for another user. The value it prints is discarded:
+  # the secret KDPS chose is applied right after, so nothing but commandParams ever carries it.
+  Logger.info("Step 1/3: Creating the S3 identity '{0}' and setting its secret.".format(access_id))
+  _run_ozone(["s3", "getsecret", "-u", access_id, "-e"], run_as="admin", require_kerberos=ozone_security, checked=False)
+  applied = _ozone_setsecret_admin(access_id, secret, ozone_security)
+  if not applied:
+    raise Fail("Could not set the S3 secret for '{0}'; see the setsecret errors above.".format(access_id))
+
+  Logger.info("Step 2/3: Ensuring bucket '{0}/{1}'.".format(volume_name, bucket_name))
+  _create_ozone_storage(volume_name, bucket_name, ozone_security)
+
+  Logger.info("Step 3/3: Granting '{0}' access to '{1}/{2}'.".format(access_id, volume_name, bucket_name))
+  _grant_ozone_access(access_id, volume_name, bucket_name, ozone_security)
 
 
 def _ozone_setsecret_admin(access_id, secret, require_kerberos):
