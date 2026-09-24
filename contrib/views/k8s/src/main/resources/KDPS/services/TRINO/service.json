@@ -188,12 +188,14 @@
       "autoGenerate": true,
       "validityDays": 365,
       "dnsTemplates": [
-        "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc",
-        "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc.cluster.local",
-        "{{ingress.host}}"
-      ],
+    "{{releaseName}}-{{nameOverride}}.{{namespace}}.svc",
+    "{{releaseName}}-{{nameOverride}}.{{namespace}}.svc.cluster.local",
+    "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc",
+    "{{releaseName}}-{{nameOverride}}-coordinator.{{namespace}}.svc.cluster.local",
+    "{{ingress.host}}"
+   ],
       "defaults": {
-        "enabled": false,
+        "enabled": true,
         "autoGenerate": true,
         "port": 8443,
         "keystoreKey": "keystore.p12",
@@ -707,6 +709,11 @@
         "type": "form",
         "field": "tls.https.keystorePath"
       }
+    },
+    {
+      "comment": "true only when Trino does NOT terminate TLS itself. Gates the forwarded-header trust below: with TLS on the coordinator, trusting X-Forwarded-Proto would let anything inside the cluster reach the plain HTTP port and claim the request arrived over TLS — the very check that guards authenticated traffic.",
+      "name": "tlsHttpsDisabled",
+      "from": { "type": "equals", "var": "tlsHttpsEnabled", "value": "true", "negate": true, "caseInsensitive": true }
     },
     {
       "name": "tlsHttpsKeystoreType",
@@ -1511,8 +1518,9 @@
           }
         },
         {
+          "comment": "Only when the operator typed a keystore password. Left blank, KDPS generates one and the chart's init container appends it from the Secret — writing an empty key= line here would shadow nothing but is noise at best.",
           "path": "coordinator.additionalConfigProperties[]",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
+          "skipIfVarEmpty": ["tlsHttpsEnabled", "tlsHttpsPassword"],
           "from": {
             "type": "template",
             "template": "http-server.https.keystore.key=${tlsHttpsPassword}"
@@ -1527,57 +1535,20 @@
           }
         },
         {
+          "comment": "Flags only. The truststore SECRET is deliberately NOT set from this release's keystore: it is the CA bundle KDPS wires from the platform context (trino-truststore), and repointing it at the server keystore would leave Trino unable to verify the Keycloak JWKS endpoint or Ranger — breaking the very OIDC path TLS is being enabled for.",
           "path": "global.security.tls.truststore.enabled",
           "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
             "type": "template",
             "template": "${tlsHttpsEnabled}"
           }
-        },
-        {
-          "path": "global.security.tls.truststoreSecret",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": {
-            "type": "template",
-            "template": "${tlsHttpsSecretName}"
-          }
-        },
-        {
-          "path": "global.security.tls.truststoreKey",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": {
-            "type": "template",
-            "template": "${tlsHttpsKeystoreKey}"
-          }
-        },
-        {
-          "path": "global.security.tls.truststorePasswordKey",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": {
-            "type": "template",
-            "template": "truststore.password"
-          }
-        },
-        {
-          "path": "global.security.tls.truststore.format",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": {
-            "type": "template",
-            "template": "${tlsHttpsKeystoreType}"
-          }
-        },
-        {
-          "path": "global.security.tls.truststore.pemKey",
-          "skipIfVarEmpty": "tlsHttpsEnabled",
-          "from": {
-            "type": "template",
-            "template": "ca.crt"
-          }
         }
       ]
     },
     {
+      "comment": "Edge-terminated TLS only: Trino then has to believe the router about the original scheme. Skipped once Trino terminates TLS itself — see tlsHttpsDisabled.",
       "name": "trust-proxy-headers",
+      "skipIfVarEmpty": "tlsHttpsDisabled",
       "targets": [
         {
           "path": "additionalConfigProperties[]",
@@ -2233,9 +2204,9 @@
           "name": "tls.https.enabled",
           "label": "Activer HTTPS interne",
           "type": "boolean",
-          "defaultValue": false,
+          "defaultValue": true,
           "excludeFromValues": true,
-          "help": "Active le serveur HTTPS de Trino. Génère un keystore signé par l'autorité interne si demandé."
+          "help": "Activé par défaut : Trino termine lui-même le TLS (keystore signé par l'autorité interne). La Route OpenShift passe alors en passthrough et les clients internes (Superset, dbt, OpenMetadata) doivent utiliser https sur le port HTTPS. Désactiver ne laisse le TLS qu'en bordure : le trafic authentifié, jeton compris, traverse le réseau des pods en clair."
         },
         {
           "name": "tls.https.autoGenerate",
