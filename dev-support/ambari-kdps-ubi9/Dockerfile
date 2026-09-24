@@ -36,7 +36,8 @@ ARG UBI_VERSION
 ARG AMBARI_VERSION=2.8.2.0-137
 ARG AMBARI_REPO_URL
 ARG HELM_VERSION=3.16.3
-ARG JAVA_PACKAGE=java-11-openjdk-headless
+# Ambari 2.8 refuses to set up on anything older: "Ambari Server requires JDK 17 or 21".
+ARG JAVA_PACKAGE=java-17-openjdk-headless
 
 LABEL org.opencontainers.image.title="Ambari (standalone) with the KDPS view" \
       org.opencontainers.image.description="Cluster-less Ambari hosting the Kubernetes Data Platform Services view, for running inside the cluster it deploys to" \
@@ -75,7 +76,37 @@ RUN set -eux; \
 # Silent setup at build time so the container starts without an interactive step. The database is
 # configured at run time instead: it is external, and its address is not known when the image is
 # built.
-RUN ambari-server setup -s -j /usr/lib/jvm/jre-11 || ambari-server setup -s
+# Ambari 2.8 wants BOTH JDKs named: -j is the stack JDK it hands to agents, --ambari-java-home is
+# the one the server itself runs on. Without the second it refuses with "Path to AMBARI_JAVA_HOME
+# should be specified". The path is resolved from the installed java rather than hardcoded, because
+# the JRE directory name carries the package version and moves with every UBI refresh.
+# A stable path for the JDK, so the entrypoint does not have to rediscover a directory whose name
+# carries the package version.
+RUN set -eux; \
+    JH="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"; \
+    ln -sfn "${JH}" /usr/lib/jvm/ambari-java; \
+    echo "ambari java home -> ${JH}"
+ENV AMBARI_JAVA_HOME=/usr/lib/jvm/ambari-java
+
+# Bake the JDK configuration into ambari.properties. The database arguments are placeholders: silent
+# setup with no --database falls back to Ambari's EMBEDDED PostgreSQL and runs initdb, which cannot
+# work in a build container and fails with "Unable to start PostgreSQL server". Naming an external
+# postgres keeps setup to writing properties; the entrypoint re-runs it with the real address.
+RUN set -eux; \
+    ambari-server setup -s \
+        -j "${AMBARI_JAVA_HOME}" --ambari-java-home="${AMBARI_JAVA_HOME}" \
+        --database=postgres --databasehost=localhost --databaseport=5432 \
+        --databasename=ambari --databaseusername=ambari --databasepassword=placeholder
+
+# Two things in the packaging assume the server runs as root. Relax both; see the script.
+COPY openshift-nonroot.py /tmp/openshift-nonroot.py
+RUN python3 /tmp/openshift-nonroot.py && rm -f /tmp/openshift-nonroot.py
+
+# The server re-packs every stack's package directory at start-up when the archive is out of date.
+# Doing it here, as root, means the pod finds the hashes already current and only has to read them.
+RUN python3 -c "import sys; sys.path.insert(0, '/usr/lib/ambari-server/lib'); \
+from ambari_server.resourceFilesKeeper import ResourceFilesKeeper; \
+ResourceFilesKeeper('/var/lib/ambari-server/resources', '/var/lib/ambari-server/resources/stacks').perform_housekeeping()"
 
 # OpenShift runs containers as an arbitrary UID in group 0. Everything Ambari writes to therefore
 # has to be group-owned by root and group-writable, or the server cannot start. Note what is NOT
