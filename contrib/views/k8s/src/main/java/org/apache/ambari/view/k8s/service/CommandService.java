@@ -6805,11 +6805,33 @@ public class CommandService {
                     // Ambari server as before (the default managed context, unchanged).
                     org.apache.ambari.view.k8s.model.ResolvedContext repoRc = resolvePlatformContextForStep(childParams);
                     if (repoRc != null && repoRc.hasDirectRangerCreds()) {
+                        // Ranger validates 'username' as a required service config (error 1011). The
+                        // Ambari server action fills it from the plugin user, so the direct path must too,
+                        // or every external/CDP context is refused with a 400.
+                        Map<String, String> directConfigs = new LinkedHashMap<>();
+                        if (rangerServiceConfigs != null) directConfigs.putAll(rangerServiceConfigs);
+                        directConfigs.putIfAbsent("username",
+                                (pluginUserName != null && !pluginUserName.isBlank()) ? pluginUserName : repoRc.getRangerAdminUsername());
+                        if (pluginUserPassword != null && !pluginUserPassword.isBlank()) directConfigs.putIfAbsent("password", pluginUserPassword);
                         long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(
                                 repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
-                                rangerRepositoryName, serviceType, rangerServiceConfigs);
+                                rangerRepositoryName, serviceType, directConfigs);
                         LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
                                 rangerRepositoryName, serviceType, svcId);
+                        if ("trino".equalsIgnoreCase(serviceType)) {
+                            // A fresh Trino repository only lets the service user impersonate. Without
+                            // this, every authenticated person is refused with "Principal X cannot become
+                            // user X" before any table policy is consulted. Table access stays governed by
+                            // the operator's policies; this only lets a user be themselves.
+                            try {
+                                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+                                        repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
+                                        rangerRepositoryName, "kdps - users impersonate themselves", "{USER}",
+                                        java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+                            } catch (Exception e) {
+                                LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+                            }
+                        }
                         Map<String,Object> res = new LinkedHashMap<>();
                         res.put("rangerRepositoryName", rangerRepositoryName);
                         res.put("serviceId", svcId);
